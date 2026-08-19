@@ -162,7 +162,13 @@ envVarGroups:
       - key: DRY_RUN
         value: "false"
       - key: AGENT_WRITES_ENABLED
-        value: "false"
+        # Deliberately NOT a static `value:` -- a hardcoded blueprint default
+        # here would get silently re-applied on the next blueprint sync,
+        # wiping out a manual flip to "true" made in the dashboard. sync:
+        # false makes it a one-time-entered, dashboard-owned value that a
+        # blueprint sync never touches again. Defaults to Python's own
+        # `False` (see Settings.agent_writes_enabled) until you set it.
+        sync: false
       - key: SAP_BASE_URL
         sync: false
       - key: SAP_COMPANY_DB
