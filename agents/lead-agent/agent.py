@@ -39,6 +39,7 @@ from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
 from integrations.search.tavily_client import TavilyClient, TavilyError
 from integrations.telegram.bot import TelegramBot, escape
+from integrations.tenders.uzex_client import UzExClient
 from integrations.tenders.worldbank_client import WorldBankClient, WorldBankError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -56,6 +57,28 @@ SHEET_COLUMNS = [
     "confidence", "priority", "recheck_date", "notes", "date_added",
     "dedupe_key", "track",
 ]
+
+# Domains that can never contain a lead, only noise. Booking/review sites in
+# particular flooded earlier runs — a hotel having a Booking.com page says
+# nothing about whether it is buying laundry equipment, and one such URL was
+# the exact hallucinated "source" the grounding check caught in a prior run.
+# Filtering here (rather than asking the model to ignore them) cuts prompt
+# size, cost, and the opportunity to cite them at all.
+JUNK_DOMAINS = {
+    "booking.com", "expedia.com", "tripadvisor.com", "agoda.com", "hotels.com",
+    "airbnb.com", "trivago.com", "kayak.com", "makemytrip.com", "hostelworld.com",
+    "youtube.com", "pinterest.com", "reddit.com", "quora.com", "wikipedia.org",
+    "facebook.com", "twitter.com", "x.com", "tiktok.com",
+    "amazon.com", "alibaba.com", "aliexpress.com", "ebay.com", "made-in-china.com",
+    "indeed.com", "glassdoor.com",
+}
+
+# How many candidates go to the model per qualification call. One 600-item
+# prompt is both a reliability risk (large payloads fail more often on
+# congested free models) and a quality one (attention spread thin across
+# hundreds of items). Batching also means a single failed batch costs one
+# slice of the day's leads, not all of them.
+QUALIFY_BATCH_SIZE = 60
 
 # Starting query set — tune freely, this is not meant to be exhaustive.
 # (query text, track hint for logging only; the AI decides the real track).
@@ -141,24 +164,68 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
             log.error("World Bank failed: {}", err)
             return []
 
-    # The three sources themselves also run concurrently, not one after another.
-    for batch in await asyncio.gather(_serpapi_all(), _tavily_all(), _worldbank(), return_exceptions=True):
+    async def _uzex() -> list[RawLead]:
+        """Official government procurement — the highest-signal source."""
+        try:
+            async with UzExClient(agent=AGENT, run_id=run_id) as client:
+                return await client.search_all_keywords()
+        except Exception as err:  # noqa: BLE001 — never let one source kill the run
+            log.error("UzEx failed: {}", err)
+            return []
+
+    # All sources run concurrently, not one after another.
+    for batch in await asyncio.gather(
+        _serpapi_all(), _tavily_all(), _worldbank(), _uzex(), return_exceptions=True
+    ):
         if isinstance(batch, BaseException):
             log.error("A source raised unexpectedly: {}", batch)
         else:
             results.extend(batch)
 
     seen: dict[str, RawLead] = {}
+    junked = 0
     for lead in results:
-        if lead.url and lead.dedupe_key not in seen:
+        if not lead.url:
+            continue
+        if _is_junk(lead.url):
+            junked += 1
+            continue
+        if lead.dedupe_key not in seen:
             seen[lead.dedupe_key] = lead
 
+    if junked:
+        log.info("Filtered {} result(s) from non-lead domains before qualification", junked)
+
     log.info("Collected {} raw result(s), {} unique by URL", len(results), len(seen))
-    return list(seen.values())
+    # Government tenders first: they carry named buyers, budgets and firm
+    # deadlines, so if a batch or the model budget runs short, the most
+    # actionable material has already been seen.
+    ordered = sorted(seen.values(), key=lambda l: 0 if l.source.startswith("uzex") else 1)
+    return ordered
+
+
+def _is_junk(url: str) -> bool:
+    """True if a URL is from a domain that cannot contain a real lead.
+
+    Args:
+        url: The result URL.
+
+    Returns:
+        Whether to discard it before qualification. Matches the registered
+        domain and its subdomains, so ``www.booking.com`` and
+        ``uz.booking.com`` are both caught.
+    """
+    host = url.split("//")[-1].split("/")[0].lower().removeprefix("www.")
+    return any(host == d or host.endswith("." + d) for d in JUNK_DOMAINS)
 
 
 async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dict]:
-    """Run the two-track qualification prompt over the raw pool.
+    """Run the two-track qualification prompt over the raw pool, in batches.
+
+    Batching matters for both reliability and quality: one prompt carrying
+    600+ candidates is a large payload that fails more often on congested
+    models, and it spreads the model's attention thin. With batches, a single
+    failure costs one slice of the day's leads rather than the entire run.
 
     Args:
         raw_leads: Deduplicated raw search results.
@@ -170,44 +237,79 @@ async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dic
         does not match a real raw URL is dropped and logged — a code-level
         backstop against the model citing a source it wasn't given.
 
+        Returns whatever succeeded; raises only if EVERY batch failed.
+
     Raises:
-        OpenRouterError: if the qualification call itself fails.
+        OpenRouterError: if no batch could be qualified at all.
     """
     if not raw_leads:
         return []
 
-    candidates = [
-        {
-            "source": r.source,
-            "title": r.title,
-            "url": r.url,
-            "snippet": r.snippet,
-            "published_at": str(r.published_at) if r.published_at else None,
-        }
-        for r in raw_leads
-    ]
     known_urls = {r.url for r in raw_leads}
+    batches = [
+        raw_leads[i : i + QUALIFY_BATCH_SIZE]
+        for i in range(0, len(raw_leads), QUALIFY_BATCH_SIZE)
+    ]
+    log.info("Qualifying {} candidate(s) in {} batch(es)", len(raw_leads), len(batches))
+
+    all_leads: list[dict] = []
+    failures = 0
 
     async with OpenRouterClient(agent=AGENT, run_id=run_id) as ai:
-        body = await ai.complete_json(SYSTEM_PROMPT, build_user_message(candidates))
+        for index, batch in enumerate(batches, start=1):
+            candidates = [
+                {
+                    "source": r.source,
+                    "title": r.title,
+                    "url": r.url,
+                    "snippet": r.snippet,
+                    "published_at": str(r.published_at) if r.published_at else None,
+                }
+                for r in batch
+            ]
+            try:
+                body = await ai.complete_json(SYSTEM_PROMPT, build_user_message(candidates))
+            except OpenRouterError as err:
+                failures += 1
+                log.error("Batch {}/{} failed, continuing: {}", index, len(batches), err)
+                continue
 
-    leads = body.get("leads", [])
-    if not isinstance(leads, list):
-        log.warning("OpenRouter did not return a leads array, got: {}", type(leads))
-        return []
+            leads = body.get("leads", [])
+            if not isinstance(leads, list):
+                log.warning("Batch {}: no leads array returned, got {}", index, type(leads))
+                continue
+            log.info("Batch {}/{}: {} lead(s) proposed", index, len(batches), len(leads))
+            all_leads.extend(leads)
+
+    if failures == len(batches):
+        raise OpenRouterError(f"All {len(batches)} qualification batch(es) failed")
 
     grounded: list[dict] = []
-    for lead in leads:
+    for lead in all_leads:
         url = (lead.get("signal_source_url") or "").strip()
         if url not in known_urls:
-            log.warning("Dropping ungrounded lead (URL not in search results): {} -> {}", lead.get("company_name"), url)
+            log.warning(
+                "Dropping ungrounded lead (URL not in search results): {} -> {}",
+                lead.get("company_name"),
+                url,
+            )
             continue
         if lead.get("track") not in ("equipment_sales", "service_maintenance"):
-            log.warning("Dropping lead with invalid track '{}': {}", lead.get("track"), lead.get("company_name"))
+            log.warning(
+                "Dropping lead with invalid track '{}': {}",
+                lead.get("track"),
+                lead.get("company_name"),
+            )
             continue
         grounded.append(lead)
 
-    log.info("Qualified {} lead(s), {} passed the grounding check", len(leads), len(grounded))
+    log.info(
+        "Qualified {} lead(s) across {} batch(es) ({} failed), {} passed grounding",
+        len(all_leads),
+        len(batches),
+        failures,
+        len(grounded),
+    )
     return grounded
 
 

@@ -54,12 +54,36 @@ restricted or non-public. Do not fabricate a lead for these — if you cannot fi
 public source, mark it as "requires direct institutional contact, not web-sourced"
 in the notes field instead of inventing a contact.
 
+# SOURCE QUALITY — READ THIS BEFORE JUDGING ANYTHING
+
+Results tagged ``uzex_tender`` or ``uzex_competitive`` come from Uzbekistan's
+OFFICIAL government procurement portal. They are categorically stronger than
+any news article or social post, because they carry a named buying
+organization, an exact budget, and a firm submission deadline — a real
+purchase actually in progress, not a rumour that one might happen.
+
+For these:
+- Put the buying organization in ``company_name`` (it is given as "Buyer:" in
+  the snippet) — it is the actual procuring entity, not a guess.
+- Put the tender's own deadline in ``recheck_date``.
+- Set ``estimated_size`` from the stated budget.
+- ``project_stage`` is "tender open".
+- Default ``confidence`` 0.9+ — this is primary-source procurement data.
+
+Judge them on RELEVANCE, not credibility: a tender for laptops or road repair
+is irrelevant no matter how official, while one for hotel/hospital
+construction, laundry or hygiene equipment, textile services, or facility
+fit-out is exactly the target. A general hospital or hotel construction
+tender is worth including even without the word "laundry" in it — equipment
+procurement typically follows 6-12 months later, so mark it TIER 1 with a
+``recheck_date`` set accordingly and say so in the notes.
+
 # QUALIFICATION LOGIC
 
 Signal strength tiers (prioritize accordingly):
-- TIER 1 (highest): confirmed under construction with a stated or estimated opening
-  date 3-12 months out; active tender for construction or equipment; pre-opening
-  leadership hiring.
+- TIER 1 (highest): an official tender (uzex_*) for relevant construction or
+  equipment; confirmed under construction with a stated or estimated opening
+  date 3-12 months out; pre-opening leadership hiring.
 - TIER 2 (medium): announced/funded but construction not yet visibly started;
   permit approved but no groundbreaking news yet; FEZ investor list entry.
 - TIER 3 (low, include only if nothing better found): recently opened (under 2

@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     # --- OpenRouter (Lead Agent qualification) ---
     openrouter_api_key: SecretStr = SecretStr("")
     openrouter_model: str = "google/gemini-3.7-flash"
+    # Comma-separated models tried in order when the primary fails. Free
+    # (":free") models share a congested pool and returned 429 on 3 of 4 local
+    # test runs, so a chain ending on cheap paid capacity is what makes this
+    # agent survive unattended every morning.
+    openrouter_fallback_models: str = "google/gemini-3.7-flash"
 
     # --- Google Sheets (Lead Agent storage) ---
     google_service_account_json: SecretStr = SecretStr("")  # full JSON key, not a file path

@@ -75,6 +75,9 @@ class OpenRouterClient:
     async def complete(self, system: str, user: str, *, json_mode: bool = False) -> str:
         """Run one chat completion.
 
+        Tries each model in the fallback chain in turn (see ``model_chain``),
+        so a single congested or rate-limited model cannot fail the run.
+
         Args:
             system: System prompt.
             user: User message.
@@ -86,11 +89,66 @@ class OpenRouterClient:
             The model's reply text.
 
         Raises:
-            OpenRouterError: on a non-200 response or an empty completion.
+            OpenRouterError: only if EVERY model in the chain failed.
+        """
+        chain = self.model_chain()
+        last_error: Exception | None = None
+
+        for index, model in enumerate(chain, start=1):
+            try:
+                return await self._complete_with_model(model, system, user, json_mode)
+            except OpenRouterError as exc:
+                last_error = exc
+                if index < len(chain):
+                    log.warning(
+                        "Model '{}' failed ({}), falling back to '{}'",
+                        model,
+                        str(exc)[:120],
+                        chain[index],
+                    )
+
+        raise OpenRouterError(
+            f"All {len(chain)} model(s) failed ({', '.join(chain)}). Last error: {last_error}"
+        )
+
+    @staticmethod
+    def model_chain() -> list[str]:
+        """Return the ordered list of models to try.
+
+        ``OPENROUTER_MODEL`` is always tried first, then any comma-separated
+        entries in ``OPENROUTER_FALLBACK_MODELS``, deduplicated while
+        preserving order.
+
+        Returns:
+            At least one model id.
+        """
+        chain = [settings.openrouter_model.strip()]
+        for fallback in settings.openrouter_fallback_models.split(","):
+            fallback = fallback.strip()
+            if fallback and fallback not in chain:
+                chain.append(fallback)
+        return [m for m in chain if m]
+
+    async def _complete_with_model(
+        self, model: str, system: str, user: str, json_mode: bool
+    ) -> str:
+        """Run one completion against one specific model.
+
+        Args:
+            model: OpenRouter model id.
+            system: System prompt.
+            user: User message.
+            json_mode: Request JSON-only output.
+
+        Returns:
+            The model's reply text.
+
+        Raises:
+            OpenRouterError: on any failure with this particular model.
         """
         assert self._client is not None
         payload: dict = {
-            "model": settings.openrouter_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -104,8 +162,8 @@ class OpenRouterClient:
             action="api_call",
             target_system="openrouter",
             run_id=self.run_id,
-            target_ref=settings.openrouter_model,
-            payload={"prompt_chars": len(system) + len(user)},
+            target_ref=model,
+            payload={"prompt_chars": len(system) + len(user), "model": model},
         ) as ctx:
             # request_with_retry raises the raw httpx exception once retries
             # are exhausted (e.g. a 429 that never clears) rather than

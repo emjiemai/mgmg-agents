@@ -226,7 +226,9 @@ envVarGroups:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: google/gemma-4-26b-a4b-it:free
+        sync: false  # set per-environment; a ':free' model will 429 unreliably
+      - key: OPENROUTER_FALLBACK_MODELS
+        sync: false  # comma-separated; end the chain on cheap PAID capacity
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID
