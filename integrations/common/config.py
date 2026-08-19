@@ -84,12 +84,32 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr = SecretStr("")
     telegram_ceo_chat_id: str = ""
     telegram_alerts_chat_id: str = ""
+    telegram_leads_chat_id: str = ""  # Lead Agent posts new leads to this group
 
     # --- Verifix ---
     verifix_mode: str = "csv"
     verifix_base_url: str = ""
     verifix_api_token: SecretStr = SecretStr("")
     verifix_csv_dir: str = str(PROJECT_ROOT / "data" / "verifix")
+
+    # --- Lead Agent sources ---
+    serpapi_api_key: SecretStr = SecretStr("")
+    tavily_api_key: SecretStr = SecretStr("")
+    worldbank_search_url: str = "https://search.worldbank.org/api/v3/projects"
+    # eTender UZEX / xt-xarid / data.egov.uz endpoints: added once confirmed
+    # against the real n8n workflow (their sites serve an SPA shell, not JSON,
+    # at any plausible guessed API path — see integrations/tenders/README.md).
+    etender_uzex_url: str = ""
+    xt_xarid_url: str = ""
+    egov_opendata_url: str = ""
+
+    # --- OpenRouter (Lead Agent qualification) ---
+    openrouter_api_key: SecretStr = SecretStr("")
+    openrouter_model: str = "google/gemini-3.7-flash"
+
+    # --- Google Sheets (Lead Agent storage) ---
+    google_service_account_json: SecretStr = SecretStr("")  # full JSON key, not a file path
+    google_leads_sheet_id: str = ""
 
     # --- Agent write gate (security rule #1) ---
     agent_writes_enabled: bool = False
