@@ -1,0 +1,92 @@
+# MGMG Digital Command Center — VPS stack
+# Usage: docker compose up -d
+# Services: postgres (central store + n8n backend), n8n (integration hub), api (webhook receiver)
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mgmg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Extra DB for n8n's own state, created by the init script below
+      N8N_DB_NAME: ${N8N_DB_NAME:-n8n}
+      TZ: ${TZ:-Asia/Tashkent}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - ./scripts/setup/init_n8n_db.sh:/docker-entrypoint-initdb.d/20-init-n8n-db.sh:ro
+    ports:
+      # Bind to localhost only — Power BI connects over an SSH tunnel, not the open internet.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [mgmg]
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: mgmg-n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL}
+      GENERIC_TIMEZONE: ${TZ:-Asia/Tashkent}
+      TZ: ${TZ:-Asia/Tashkent}
+      # Encrypts stored credentials — losing this key makes saved credentials unreadable.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_RUNNERS_ENABLED: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"  # hours (14 days)
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/files:/files
+    ports:
+      # Put a reverse proxy (Caddy/nginx) in front for TLS before exposing publicly.
+      - "127.0.0.1:5678:5678"
+    networks: [mgmg]
+
+  api:
+    # FastAPI service: amoCRM webhooks + Telegram approval callbacks
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mgmg-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      TZ: ${TZ:-Asia/Tashkent}
+    command: uvicorn integrations.amocrm.webhook_handler:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [mgmg]
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  mgmg:
+    driver: bridge

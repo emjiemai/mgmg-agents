@@ -1,0 +1,18 @@
+# MGMG Command Center — scheduled agents
+# Times are UTC. Tashkent is UTC+5, no DST.
+# Install with:  crontab scripts/setup/crontab.txt
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MGMG_HOME=/opt/mgmg-command-center
+
+# 08:00 Tashkent — CEO daily brief
+0 3 * * * cd $MGMG_HOME && docker compose run --rm api python agents/ceo-daily-brief/agent.py >> logs/cron-brief.log 2>&1
+
+# 09:00 Tashkent — receivables alert
+0 4 * * * cd $MGMG_HOME && docker compose run --rm api python agents/receivables/agent.py >> logs/cron-receivables.log 2>&1
+
+# 21:00 Tashkent — follow-up sweep, catches deals whose webhook was missed
+0 16 * * * cd $MGMG_HOME && docker compose run --rm api python agents/amocrm-followup/agent.py --sweep >> logs/cron-followup.log 2>&1
+
+# Every 15 min — replay webhook events that were stored but not processed
+*/15 * * * * cd $MGMG_HOME && docker compose run --rm api python agents/amocrm-followup/agent.py --drain >> logs/cron-drain.log 2>&1

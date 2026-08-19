@@ -1,0 +1,208 @@
+// ============================================================================
+// MGMG CEO Dashboard v1 — DAX measures
+// Create a blank table named "Measures" and paste these in, one per measure.
+//
+// Model assumptions:
+//   * One shared Date table (from 02_pipeline_and_ops.sql, QUERY: Date),
+//     marked as a date table, related 1:* to every fact table on [Date].
+//   * Facts are daily snapshots, so almost every measure is a
+//     "value on the latest date in context" measure, not a SUM over time.
+//     Summing snapshots across days would multiply the same money by the
+//     number of days — the single most common way this kind of model breaks.
+// ============================================================================
+
+// --- Helpers ----------------------------------------------------------------
+
+Last Snapshot Date =
+CALCULATE(
+    MAX( 'AR Aging'[Date] ),
+    REMOVEFILTERS( 'Date' ),
+    'Date'[Date] <= MAX( 'Date'[Date] )
+)
+
+Snapshot Date Label =
+VAR d = [Last Snapshot Date]
+RETURN IF( ISBLANK( d ), "no data", FORMAT( d, "dd.mm.yyyy" ) )
+
+
+// --- Cash -------------------------------------------------------------------
+
+Cash Balance =
+VAR LatestDate =
+    CALCULATE( MAX( 'Cash'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN
+    CALCULATE( SUM( 'Cash'[Balance UZS] ), 'Cash'[Date] = LatestDate )
+
+Cash Balance Prior Day =
+CALCULATE( [Cash Balance], DATEADD( 'Date'[Date], -1, DAY ) )
+
+Cash Change 1D =
+[Cash Balance] - [Cash Balance Prior Day]
+
+Cash Change 1D % =
+DIVIDE( [Cash Change 1D], [Cash Balance Prior Day] )
+
+
+// --- Receivables ------------------------------------------------------------
+
+Open AR =
+VAR LatestDate = [Last Snapshot Date]
+RETURN CALCULATE( SUM( 'AR Aging'[Balance Due UZS] ), 'AR Aging'[Date] = LatestDate )
+
+Overdue AR =
+VAR LatestDate = [Last Snapshot Date]
+RETURN
+    CALCULATE(
+        SUM( 'AR Aging'[Balance Due UZS] ),
+        'AR Aging'[Date] = LatestDate,
+        'AR Aging'[Is Overdue] = TRUE()
+    )
+
+Overdue AR 90+ =
+VAR LatestDate = [Last Snapshot Date]
+RETURN
+    CALCULATE(
+        SUM( 'AR Aging'[Balance Due UZS] ),
+        'AR Aging'[Date] = LatestDate,
+        'AR Aging'[Bucket Key] = "90_plus"
+    )
+
+Overdue AR % =
+DIVIDE( [Overdue AR], [Open AR] )
+
+Overdue Invoice Count =
+VAR LatestDate = [Last Snapshot Date]
+RETURN
+    CALCULATE(
+        DISTINCTCOUNT( 'AR Aging'[Doc Entry] ),
+        'AR Aging'[Date] = LatestDate,
+        'AR Aging'[Is Overdue] = TRUE()
+    )
+
+Average Days Overdue =
+VAR LatestDate = [Last Snapshot Date]
+RETURN
+    CALCULATE(
+        AVERAGE( 'AR Aging'[Days Overdue] ),
+        'AR Aging'[Date] = LatestDate,
+        'AR Aging'[Is Overdue] = TRUE()
+    )
+
+// Weighted by money, which is what actually matters for collection priority.
+DSO Weighted Days =
+VAR LatestDate = [Last Snapshot Date]
+VAR T =
+    CALCULATETABLE(
+        'AR Aging',
+        'AR Aging'[Date] = LatestDate,
+        'AR Aging'[Is Overdue] = TRUE()
+    )
+RETURN
+    DIVIDE(
+        SUMX( T, 'AR Aging'[Balance Due UZS] * 'AR Aging'[Days Overdue] ),
+        SUMX( T, 'AR Aging'[Balance Due UZS] )
+    )
+
+
+// --- Sales ------------------------------------------------------------------
+
+Sales MTD =
+VAR LatestDate =
+    CALCULATE( MAX( 'Sales'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN CALCULATE( SUM( 'Sales'[Sales UZS] ), 'Sales'[Date] = LatestDate )
+
+Sales MTD Last Month =
+CALCULATE( [Sales MTD], DATEADD( 'Date'[Date], -1, MONTH ) )
+
+Sales MoM % =
+DIVIDE( [Sales MTD] - [Sales MTD Last Month], [Sales MTD Last Month] )
+
+
+// --- Pipeline ---------------------------------------------------------------
+
+Pipeline Value =
+VAR LatestDate =
+    CALCULATE( MAX( 'Pipeline'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN CALCULATE( SUM( 'Pipeline'[Pipeline Value UZS] ), 'Pipeline'[Date] = LatestDate )
+
+Open Deals =
+VAR LatestDate =
+    CALCULATE( MAX( 'Pipeline'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN CALCULATE( SUM( 'Pipeline'[Deals] ), 'Pipeline'[Date] = LatestDate )
+
+Average Deal Size =
+DIVIDE( [Pipeline Value], [Open Deals] )
+
+Stalled Deals =
+VAR LatestDate =
+    CALCULATE( MAX( 'Pipeline'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN CALCULATE( SUM( 'Pipeline'[Deals Without Task] ), 'Pipeline'[Date] = LatestDate )
+
+Stalled Deals % =
+DIVIDE( [Stalled Deals], [Open Deals] )
+
+New Leads 24h =
+VAR LatestDate =
+    CALCULATE( MAX( 'Pipeline'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN
+    CALCULATE( MAX( 'Pipeline'[New Leads 24h] ), 'Pipeline'[Date] = LatestDate )
+
+
+// --- Operations -------------------------------------------------------------
+
+Employees Late =
+CALCULATE( COUNTROWS( 'Attendance' ), 'Attendance'[Status] = "late" )
+
+Employees Absent =
+CALCULATE( COUNTROWS( 'Attendance' ), 'Attendance'[Status] = "absent" )
+
+Overdue Tasks =
+VAR LatestDate =
+    CALCULATE( MAX( 'Overdue Tasks'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
+RETURN CALCULATE( DISTINCTCOUNT( 'Overdue Tasks'[Task Id] ), 'Overdue Tasks'[Date] = LatestDate )
+
+
+// --- Data trust -------------------------------------------------------------
+// A dashboard that silently shows yesterday's numbers is worse than one that
+// says it is stale. Put "Data Freshness" on the CEO page.
+
+Data Age Days =
+DATEDIFF( [Last Snapshot Date], TODAY(), DAY )
+
+Data Freshness =
+VAR AgeDays = [Data Age Days]
+RETURN
+    SWITCH(
+        TRUE(),
+        ISBLANK( AgeDays ), "⚠ No data",
+        AgeDays <= 1,      "● Current (" & [Snapshot Date Label] & ")",
+        AgeDays <= 3,      "▲ " & AgeDays & " days old",
+        "✕ Stale — " & AgeDays & " days old"
+    )
+
+Agent Failures 7D =
+CALCULATE(
+    SUM( 'Agent Health'[Calls] ),
+    'Agent Health'[Status] = "failure",
+    'Date'[Date] > TODAY() - 7
+)
+
+
+// --- Conditional formatting helpers -----------------------------------------
+// Use these as "Format by field value" on card and table visuals.
+
+Overdue AR Color =
+SWITCH(
+    TRUE(),
+    [Overdue AR 90+] > 0,                     "#D13438",  // red
+    DIVIDE( [Overdue AR], [Open AR] ) > 0.25, "#F7A501",  // amber
+    "#107C10"                                             // green
+)
+
+Stalled Deals Color =
+SWITCH(
+    TRUE(),
+    [Stalled Deals] > 10, "#D13438",
+    [Stalled Deals] > 0,  "#F7A501",
+    "#107C10"
+)

@@ -1,0 +1,195 @@
+# ============================================================================
+# Render Blueprint — LOW-COST TEST DEPLOYMENT (~$4/month).
+#
+# This deploys just enough to test the three agents end-to-end against
+# sandbox accounts. What it creates:
+#   mgmg-db          PostgreSQL, free plan — EXPIRES 30 DAYS after creation
+#                     unless upgraded (Render deletes it, not just suspends it)
+#   mgmg-api         FastAPI webhook receiver, free plan — sleeps after 15 min
+#                     idle, ~30-50s cold start on the next webhook
+#   mgmg-brief       cron: CEO daily brief             (starter, ~$1/mo)
+#   mgmg-receivables cron: receivables alert            (starter, ~$1/mo)
+#   mgmg-followup-sweep  cron: nightly stalled-deal sweep (starter, ~$1/mo)
+#   mgmg-followup-drain  cron: replay missed webhook events (starter, ~$1/mo)
+#
+# Cost: Render has no free tier for cron jobs at all (confirmed against
+# docs.render.com/blueprint-spec) — minimum is the "starter" plan, billed
+# per-minute with a ~$1/month minimum per cron service. Four separate cron
+# services therefore run about $4/month total; the database and web service
+# stay on Render's genuine free plan. Total: ~$4/month, not $0.
+#
+# n8n is NOT deployed here: it needs a persistent disk, and disks require a
+# paid instance on Render. None of the three agents depend on n8n — they talk
+# to SAP/amoCRM/Verifix/Graph/Telegram directly — so it's safe to leave out
+# until you're ready to pay for a disk. Add it back from git history
+# (`git log -- render.yaml`, the n8n block from before this comment was added)
+# when you upgrade.
+#
+# Before you fill in secrets: use sandbox/trial accounts, not MGMG's real
+# SAP, amoCRM or Microsoft 365 — see the chat for where to get each for free.
+#
+# Deploy: push this repo to GitHub, then in the Render dashboard choose
+# New → Blueprint and point it at the repo. Secrets marked `sync: false` are
+# NOT filled in here — Render prompts for each one during setup and stores
+# them in its own secret store, never in this repo.
+#
+# When you're ready for production: bump mgmg-db and mgmg-api off the free
+# plan (`basic-256mb` / `starter`), add n8n back, and point every credential
+# at MGMG's real systems.
+# ============================================================================
+
+databases:
+  - name: mgmg-db
+    databaseName: mgmg
+    user: mgmg
+    plan: free  # expires 30 days after creation — see note above
+    postgresMajorVersion: 16
+
+services:
+  # ------------------------------------------------------------- api (FastAPI)
+  - type: web
+    name: mgmg-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # Every secret now lives in exactly one place: the mgmg-shared
+      # environment group, edited from Render's dashboard under
+      # "Environment Groups" — not on this service directly. All 5 services
+      # (this one + 4 cron jobs) read from that single group, so a value
+      # filled in once is picked up everywhere.
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
+  # n8n intentionally omitted from this free-tier blueprint — see the header
+  # comment. Bring it back once you're on paid plans and want the SAP/bank/
+  # CCTV workflows that live in n8n rather than in these Python agents.
+
+  # --------------------------------------------------------- Agent 1: brief
+  - type: cron
+    name: mgmg-brief
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
+    schedule: "0 3 * * *"  # 08:00 Asia/Tashkent
+    dockerCommand: python agents/ceo-daily-brief/agent.py
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
+  # ---------------------------------------------------- Agent 3: receivables
+  - type: cron
+    name: mgmg-receivables
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
+    schedule: "0 4 * * *"  # 09:00 Asia/Tashkent
+    dockerCommand: python agents/receivables/agent.py
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
+  # --------------------------------------------- Agent 2: nightly safety net
+  - type: cron
+    name: mgmg-followup-sweep
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
+    schedule: "0 16 * * *"  # 21:00 Asia/Tashkent
+    dockerCommand: python agents/amocrm-followup/agent.py --sweep
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
+  # ------------------------------------------- Agent 2: replay missed events
+  - type: cron
+    name: mgmg-followup-drain
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
+    schedule: "0 * * * *"  # hourly — the live webhook handles the common case
+    dockerCommand: python agents/amocrm-followup/agent.py --drain
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
+# ----------------------------------------------------------------------------
+# Shared secrets for the four cron jobs. Render prompts for each `sync: false`
+# value once, at blueprint creation, and reuses it across every service in
+# the group — you do not re-enter SAP/amoCRM/Telegram credentials four times.
+# ----------------------------------------------------------------------------
+envVarGroups:
+  - name: mgmg-shared
+    envVars:
+      - key: TZ
+        value: Asia/Tashkent
+      - key: ENVIRONMENT
+        value: production
+      - key: DRY_RUN
+        value: "false"
+      - key: AGENT_WRITES_ENABLED
+        value: "false"
+      - key: SAP_BASE_URL
+        sync: false
+      - key: SAP_COMPANY_DB
+        sync: false
+      - key: SAP_USERNAME
+        sync: false
+      - key: SAP_PASSWORD
+        sync: false
+      - key: CRM_BASE_URL
+        value: https://sales-crm-roan-six.vercel.app
+      - key: CRM_API_KEY
+        sync: false
+      - key: AMOCRM_SUBDOMAIN
+        sync: false
+      - key: AMOCRM_DOMAIN
+        value: amocrm.ru
+      - key: AMOCRM_LONG_LIVED_TOKEN
+        sync: false
+      - key: AMOCRM_WEBHOOK_SECRET
+        sync: false
+      - key: MS_TENANT_ID
+        sync: false
+      - key: MS_CLIENT_ID
+        sync: false
+      - key: MS_CLIENT_SECRET
+        sync: false
+      - key: MS_TEAM_OWNER_UPN
+        sync: false
+      - key: MS_PLANNER_GROUP_ID
+        sync: false
+      - key: MS_PLANNER_DEFAULT_PLAN_ID
+        sync: false
+      - key: TEAMS_SALES_WEBHOOK_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CEO_CHAT_ID
+        sync: false
+      - key: TELEGRAM_ALERTS_CHAT_ID
+        sync: false
+      - key: VERIFIX_MODE
+        value: csv
+      - key: VERIFIX_BASE_URL
+        sync: false
+      - key: VERIFIX_API_TOKEN
+        sync: false
+      - key: VERIFIX_CSV_DIR
+        value: /app/data/verifix
