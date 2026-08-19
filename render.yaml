@@ -229,12 +229,20 @@ envVarGroups:
         value: https://xt-xarid.uz/api/search
       - key: EGOV_OPENDATA_URL
         value: https://data.egov.uz/apiPartner/Partner
+      - key: AI_PROVIDER
+        value: deepseek  # "openrouter" or "deepseek" -- switching is a one-line change here
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
         sync: false  # set per-environment; a ':free' model will 429 unreliably
       - key: OPENROUTER_FALLBACK_MODELS
         sync: false  # comma-separated; end the chain on cheap PAID capacity
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_FALLBACK_MODELS
+        value: deepseek-v4-flash,deepseek-v4-pro
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID

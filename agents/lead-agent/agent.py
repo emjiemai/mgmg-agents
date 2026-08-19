@@ -485,9 +485,12 @@ async def run(dry_run: bool = False) -> int:
     # settings.missing_placeholders() scans the ENTIRE config (SAP, CRM,
     # amoCRM, MS Graph, Verifix included) -- checking only the fields this
     # agent actually touches, so a machine set up for one agent isn't blocked
-    # by another agent's unrelated placeholders.
+    # by another agent's unrelated placeholders. Only the active AI
+    # provider's key is required -- the other provider's is allowed to stay
+    # a placeholder.
+    ai_key_field = "deepseek_api_key" if settings.ai_provider.strip().lower() == "deepseek" else "openrouter_api_key"
     required = {
-        "serpapi_api_key", "tavily_api_key", "openrouter_api_key",
+        "serpapi_api_key", "tavily_api_key", ai_key_field,
         "google_service_account_json", "google_leads_sheet_id",
         "telegram_bot_token", "telegram_leads_chat_id",
     }

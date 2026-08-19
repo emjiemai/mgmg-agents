@@ -103,7 +103,13 @@ class Settings(BaseSettings):
     xt_xarid_url: str = ""
     egov_opendata_url: str = ""
 
-    # --- OpenRouter (Lead Agent qualification) ---
+    # --- AI provider (Lead Agent qualification) ---
+    # Both OpenRouter and DeepSeek's own API are OpenAI-compatible chat
+    # completion endpoints, so one client handles either — this setting picks
+    # which one, so switching back later is a one-line env change, not a
+    # code change.
+    ai_provider: str = "openrouter"  # "openrouter" | "deepseek"
+
     openrouter_api_key: SecretStr = SecretStr("")
     openrouter_model: str = "google/gemini-3.7-flash"
     # Comma-separated models tried in order when the primary fails. Free
@@ -111,6 +117,10 @@ class Settings(BaseSettings):
     # test runs, so a chain ending on cheap paid capacity is what makes this
     # agent survive unattended every morning.
     openrouter_fallback_models: str = "google/gemini-3.7-flash"
+
+    deepseek_api_key: SecretStr = SecretStr("")
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_fallback_models: str = "deepseek-v4-flash,deepseek-v4-pro"
 
     # --- Google Sheets (Lead Agent storage) ---
     google_service_account_json: SecretStr = SecretStr("")  # full JSON key, not a file path
