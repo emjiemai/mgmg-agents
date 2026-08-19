@@ -482,9 +482,18 @@ async def run(dry_run: bool = False) -> int:
     run_id = uuid.uuid4()
     log.info("Lead Agent run {} starting (dry_run={})", run_id, settings.dry_run)
 
-    unfilled = settings.missing_placeholders()
+    # settings.missing_placeholders() scans the ENTIRE config (SAP, CRM,
+    # amoCRM, MS Graph, Verifix included) -- checking only the fields this
+    # agent actually touches, so a machine set up for one agent isn't blocked
+    # by another agent's unrelated placeholders.
+    required = {
+        "serpapi_api_key", "tavily_api_key", "openrouter_api_key",
+        "google_service_account_json", "google_leads_sheet_id",
+        "telegram_bot_token", "telegram_leads_chat_id",
+    }
+    unfilled = required & set(settings.missing_placeholders())
     if unfilled and not settings.dry_run:
-        log.error("Refusing to run — unfilled placeholders in .env: {}", ", ".join(unfilled))
+        log.error("Refusing to run — unfilled placeholders in .env: {}", ", ".join(sorted(unfilled)))
         return 2
 
     raw_leads = await collect_raw_leads(run_id)

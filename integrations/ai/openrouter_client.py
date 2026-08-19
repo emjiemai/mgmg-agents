@@ -23,6 +23,12 @@ from integrations.common.logging_setup import setup_logging
 
 log = setup_logging("openrouter")
 
+# A batch of 60 leads' worth of structured JSON comfortably fits in well
+# under this; the cap exists to stop OpenRouter defaulting to a model's full
+# max output (which a low-credit account can be refused outright for — see
+# the comment at the call site).
+DEFAULT_MAX_TOKENS = 8000
+
 BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
@@ -153,6 +159,13 @@ class OpenRouterClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
+            # Without an explicit cap, OpenRouter defaults to the model's own
+            # max output (65,536 for some models) and then checks that
+            # against account balance -- a low-credit account gets a hard 402
+            # ("requested up to 65536 tokens, but can only afford X") even
+            # though the actual reply needed is a few thousand tokens. Capping
+            # here avoids that regardless of account balance.
+            "max_tokens": DEFAULT_MAX_TOKENS,
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
