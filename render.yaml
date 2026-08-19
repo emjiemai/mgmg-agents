@@ -1,8 +1,8 @@
 # ============================================================================
-# Render Blueprint — LOW-COST TEST DEPLOYMENT (~$4/month).
+# Render Blueprint — LOW-COST TEST DEPLOYMENT (~$5/month).
 #
-# This deploys just enough to test the three agents end-to-end against
-# sandbox accounts. What it creates:
+# This deploys just enough to test the agents end-to-end against sandbox
+# accounts. What it creates:
 #   mgmg-db          PostgreSQL, free plan — EXPIRES 30 DAYS after creation
 #                     unless upgraded (Render deletes it, not just suspends it)
 #   mgmg-api         FastAPI webhook receiver, free plan — sleeps after 15 min
@@ -11,12 +11,14 @@
 #   mgmg-receivables cron: receivables alert            (starter, ~$1/mo)
 #   mgmg-followup-sweep  cron: nightly stalled-deal sweep (starter, ~$1/mo)
 #   mgmg-followup-drain  cron: replay missed webhook events (starter, ~$1/mo)
+#   mgmg-lead-agent  cron: daily B2B lead sourcing (starter, ~$1/mo) — replaces
+#                    the n8n Lead Agent workflow to avoid paying for n8n hosting
 #
 # Cost: Render has no free tier for cron jobs at all (confirmed against
 # docs.render.com/blueprint-spec) — minimum is the "starter" plan, billed
-# per-minute with a ~$1/month minimum per cron service. Four separate cron
-# services therefore run about $4/month total; the database and web service
-# stay on Render's genuine free plan. Total: ~$4/month, not $0.
+# per-minute with a ~$1/month minimum per cron service. Five separate cron
+# services therefore run about $5/month total; the database and web service
+# stay on Render's genuine free plan. Total: ~$5/month, not $0.
 #
 # n8n is NOT deployed here: it needs a persistent disk, and disks require a
 # paid instance on Render. None of the three agents depend on n8n — they talk
@@ -129,6 +131,22 @@ services:
           name: mgmg-db
           property: connectionString
 
+  # ---------------------------------------------- Lead Agent (Primus Laundry)
+  - type: cron
+    name: mgmg-lead-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
+    schedule: "0 3 * * *"  # 08:00 Asia/Tashkent — same slot as the CEO brief,
+                            # independent processes, no shared resource conflict
+    dockerCommand: python agents/lead-agent/agent.py
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
 # ----------------------------------------------------------------------------
 # Shared secrets for the four cron jobs. Render prompts for each `sync: false`
 # value once, at blueprint creation, and reuses it across every service in
@@ -193,3 +211,25 @@ envVarGroups:
         sync: false
       - key: VERIFIX_CSV_DIR
         value: /app/data/verifix
+      - key: SERPAPI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: WORLDBANK_SEARCH_URL
+        value: https://search.worldbank.org/api/v3/projects
+      - key: ETENDER_UZEX_URL
+        value: https://etender.uzex.uz/api/lots
+      - key: XT_XARID_URL
+        value: https://xt-xarid.uz/api/search
+      - key: EGOV_OPENDATA_URL
+        value: https://data.egov.uz/apiPartner/Partner
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: google/gemma-4-26b-a4b-it:free
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_LEADS_SHEET_ID
+        sync: false
+      - key: TELEGRAM_LEADS_CHAT_ID
+        sync: false

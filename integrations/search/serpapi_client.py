@@ -79,9 +79,13 @@ class SerpAPIClient:
             SerpAPIError: on a non-200 response.
         """
         assert self._client is not None
+        # Confirmed live 2026-08-19: Yandex takes `text`, not `q` — Google and
+        # Bing both use `q`. SerpAPI's own error message names the field, so
+        # this isn't guessed.
+        query_param = "text" if engine == "yandex" else "q"
         params = {
             "engine": engine,
-            "q": query,
+            query_param: query,
             "api_key": settings.serpapi_api_key.get_secret_value(),
             "num": num,
         }

@@ -107,7 +107,17 @@ class OpenRouterClient:
             target_ref=settings.openrouter_model,
             payload={"prompt_chars": len(system) + len(user)},
         ) as ctx:
-            response = await request_with_retry(self._client, "POST", BASE_URL, json=payload)
+            # request_with_retry raises the raw httpx exception once retries
+            # are exhausted (e.g. a 429 that never clears) rather than
+            # returning a response — that must still surface as OpenRouterError
+            # so callers catching our typed error (not just Exception) degrade
+            # gracefully instead of crashing the whole agent run.
+            try:
+                response = await request_with_retry(self._client, "POST", BASE_URL, json=payload)
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                ctx["http_status"] = getattr(getattr(exc, "response", None), "status_code", None)
+                raise OpenRouterError(f"OpenRouter completion failed after retries: {exc}") from exc
+
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
                 raise OpenRouterError(
