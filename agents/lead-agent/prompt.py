@@ -73,6 +73,20 @@ Industry match required: hospitality, healthcare with in-house laundry,
 laundry/dry-cleaning services, fitness/wellness with high towel volume, or one of
 the institutional categories listed under Track 1.
 
+# TWO SPECIFIC MISTAKES TO AVOID (found in a prior run's output — do not repeat them)
+1. A "lead" must be a specific business or project that will itself buy or
+   maintain laundry equipment — never an organization that merely runs or
+   publishes tenders (e.g. a tender board, a procurement institute, a listing
+   marketplace's own operator). If a search result is *about* the existence of
+   a tender channel rather than a specific opportunity on it, skip it.
+2. A property listed for resale (a "business for sale" / real-estate listing
+   marketplace) is NOT the same as a business under construction that will
+   need equipment soon — a listing saying a half-built hotel is for sale means
+   someone is trying to exit the project, not that a buyer with an equipment
+   budget has been confirmed. Only include it if the listing or a
+   corroborating source names an actual buyer, operator, or construction
+   timeline — otherwise treat it as TIER 3 at best, not TIER 1.
+
 # QUALITY BAR — THIS IS THE MOST IMPORTANT RULE
 You will be given a numbered list of real search results below (title, URL,
 snippet, source, date where known). You may ONLY produce leads grounded in that

@@ -75,7 +75,19 @@ TRACK2_QUERIES = [
     ("ремонт прачечного оборудования Узбекистан", "service_maintenance"),
     ("laundry equipment service maintenance contract Uzbekistan", "service_maintenance"),
 ]
-ALL_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES
+# Site-scoped searches of real tender portals — a stopgap for eTender UZEX /
+# xt-xarid / data.egov.uz until their real API shapes are confirmed (see the
+# module docstring). Added 2026-08-19 after comparing against n8n workflow
+# output: the tender-portal leads were visibly the highest-signal category
+# (real tender numbers, deadlines, budgets) versus social-media guesses.
+TENDER_SITE_QUERIES = [
+    ("site:bicotender.ru гостиница OR больница OR поликлиника тендер Узбекистан", "equipment_sales"),
+    ("site:bicotender.ru прачечное оборудование техническое обслуживание", "service_maintenance"),
+    ("site:etender.uzex.uz гостиница строительство", "equipment_sales"),
+    ("site:etender.uzex.uz кир ювиш ускунаси", "equipment_sales"),
+    ("site:xarid.uzex.uz прачечное оборудование гостиница больница", "equipment_sales"),
+]
+ALL_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES + TENDER_SITE_QUERIES
 
 
 async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
