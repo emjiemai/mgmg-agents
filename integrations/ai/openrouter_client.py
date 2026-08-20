@@ -46,11 +46,20 @@ PROVIDERS: dict[str, dict[str, object]] = {
             "HTTP-Referer": "https://mgmg-command-center.internal",
             "X-Title": "MGMG Lead Agent",
         },
+        "extra_payload": {},
     },
     "deepseek": {
         "base_url": "https://api.deepseek.com/chat/completions",
         "supports_json_mode": False,
         "extra_headers": {},
+        # DeepSeek's reasoning-capable models emit chain-of-thought into a
+        # SEPARATE `reasoning_content` field before the final answer in
+        # `content` -- confirmed 2026-08-20 after batches failed with an
+        # empty `content` (the model spent its turn reasoning without ever
+        # committing to a final answer). This is a plain classification
+        # task with no need for that, so thinking is turned off: faster,
+        # cheaper, and removes the empty-content failure mode entirely.
+        "extra_payload": {"thinking": {"type": "disabled"}},
     },
 }
 
@@ -208,6 +217,7 @@ class OpenRouterClient:
             # though the actual reply needed is a few thousand tokens. Capping
             # here avoids that regardless of account balance.
             "max_tokens": DEFAULT_MAX_TOKENS,
+            **PROVIDERS[self.provider]["extra_payload"],
         }
         if json_mode and PROVIDERS[self.provider]["supports_json_mode"]:
             payload["response_format"] = {"type": "json_object"}
@@ -240,7 +250,26 @@ class OpenRouterClient:
             choices = body.get("choices", [])
             if not choices:
                 raise OpenRouterError(f"{self.provider} returned no choices: {body}")
-            text = choices[0].get("message", {}).get("content", "")
+
+            message = choices[0].get("message", {})
+            text = message.get("content") or ""
+            if not text.strip() and message.get("reasoning_content"):
+                # Rescue path: a reasoning-capable model occasionally puts its
+                # actual answer at the tail of the chain-of-thought instead of
+                # committing it to `content` — try to salvage it rather than
+                # failing outright when `content` came back empty.
+                log.warning(
+                    "{}: empty content, falling back to reasoning_content ({} chars)",
+                    self.provider,
+                    len(message["reasoning_content"]),
+                )
+                text = message["reasoning_content"]
+
+            if not text.strip():
+                raise OpenRouterError(
+                    f"{self.provider} returned empty content. finish_reason="
+                    f"{choices[0].get('finish_reason')}, raw={str(body)[:400]}"
+                )
             ctx["payload"]["completion_chars"] = len(text)
 
         return text
