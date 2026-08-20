@@ -40,10 +40,11 @@ ROLES: list[Role] = [
 ]
 
 AGENTS: list[Agent] = [
-    Agent("lead_agent", "Lead Agent", "Leads Google Sheet (latest rows)"),
-    Agent("finance_agent", "Finance Agent", "v_ar_aging_latest + recent receivables alerts"),
-    Agent("crm_agent", "CRM Agent", "v_pipeline_latest + recent amoCRM deal events"),
-    Agent("reporter_agent", "Reporter Agent", "latest daily_briefs.message_text"),
+    Agent("lead_agent", "Lead Agent", "Leads Google Sheet, every row"),
+    Agent("finance_agent", "Finance Agent", "every open receivable + recent alerts"),
+    Agent("crm_agent", "CRM Agent", "full CRM pipeline snapshot"),
+    Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
+    Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from all four of the above"),
 ]
 
 ROLE_SLUGS: set[str] = {r.slug for r in ROLES}

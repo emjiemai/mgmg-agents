@@ -118,6 +118,45 @@ gated on task status. Resolution order:
 Every update is stored in `task_updates` (a paper trail) and relayed to the
 Director live, tagged with the task's current stage.
 
+## Grounding — the model must know what it can't do
+
+Live testing (2026-08-20) surfaced a real failure: "bu lidni o'chirib tashla"
+("delete this lead") was classified as a task and routed to the B2B Sotuv
+role — because the lead happened to be tagged B2B, not because deleting a
+spreadsheet row is anything a human role does via a task card. With zero
+grounding in its own capabilities, the model invented a plausible-sounding
+route instead of recognizing the request was impossible through this bot.
+
+Fixed by adding `COMPANY_CONTEXT` to both prompts: who MGMG/Primus Laundry
+are, and an explicit, forceful capability boundary — "you can route a task
+to a human, or answer from already-collected data; you cannot create, edit,
+delete, or otherwise change any record in any system, no matter how the
+request is phrased." A request to modify data now gets `target_type="none"`
+with an honest explanation in `task_summary` ("I can't delete this directly
+— do it manually in Google Sheets") instead of a routing guess. Verified
+live against the exact reported input — reproduced the original bug first,
+confirmed the fix, then confirmed a real task with a similar B2B lead
+reference still routes correctly (the fix isn't "never route to B2B", it's
+"don't invent capabilities that don't exist").
+
+Two related gaps fixed at the same time, both found by reasoning about *why*
+the model had nothing better to fall back on:
+- A vague status question ("ishlar qanaqa ketmoqda" — "how are things going")
+  used to fall through to `target_type="none"` ("couldn't understand, please
+  clarify") — now explicitly routed to `reporter_agent`, since that's
+  exactly what a general status question means and the daily brief already
+  covers it.
+- A question spanning multiple systems ("leads, CRM va hamma ma'lumotlar" —
+  "leads, CRM, and everything") used to silently answer from only one system
+  (whichever the model picked) with no signal the rest was ignored — a new
+  `all_systems` pseudo-agent (`roles.py`) now combines all four fetchers,
+  labeled per section, for exactly this case.
+- The code side of "none" had its own bug: it always showed a hardcoded
+  "couldn't understand" message regardless of what the model actually
+  determined — including for the capability-boundary case above, where the
+  model's own `task_summary` explains *why* and *what to do instead*. Fixed
+  to use the model's `task_summary` (same pattern `"refused"` already used).
+
 ## Guardrails
 
 Both AI prompts (`integrations/org_bot/prompt.py`'s shared `GUARDRAILS`
@@ -170,6 +209,7 @@ to see or remove themselves, by design.
 | Finance Agent | `agents/receivables` | `v_ar_aging_latest` (every open receivable) + recent `alerts WHERE agent='receivables'` |
 | CRM agent | `agents/amocrm-followup`'s table, but really the **in-house CRM** (see below) | `v_pipeline_latest` |
 | Reporter Agent | `agents/ceo-daily-brief` | `daily_briefs`, last 14 days |
+| All Systems (`all_systems`) | not a real agent — a `roles.py` pseudo-entry | all four fetchers above, run and concatenated, labeled per section |
 
 **A gotcha worth knowing**: `v_pipeline_latest` sits on top of `amocrm_pipeline_snapshots` — a legacy table name from before this business migrated off amoCRM to its own CRM (`CRM_BASE_URL`/`CRM_API_KEY`). Despite the name, it is NOT populated by `agents/amocrm-followup` (that agent still targets the real, unconfigured amoCRM API and has no code path that writes here at all). It's populated by `agents/ceo-daily-brief`'s own daily `_fetch_crm() → persist_crm_pipeline()`, which reuses this table on purpose rather than adding a parallel one. If the CRM agent ever reports "no data," the fix is almost always `CRM_API_KEY` being an unfilled placeholder, not anything in `org_bot` — `_fetch_crm_agent_data`'s own "no data" message says this directly. `amocrm_deal_events` (a webhook-driven amoCRM event log) has no in-house-CRM equivalent and is intentionally not queried — reporting stale pre-migration amoCRM events would be worse than reporting nothing.
 

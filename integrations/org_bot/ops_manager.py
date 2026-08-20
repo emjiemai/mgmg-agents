@@ -565,10 +565,15 @@ async def _dispatch_director_task(
             log.info("Classification refused a message from {}", director_telegram_user_id)
             await _reply_and_log(director_telegram_user_id, run_id, task_summary)
         else:  # "none"
+            # Use the model's own explanation (e.g. "I can't delete records,
+            # that needs to be done manually in the Sheet") rather than a
+            # generic "couldn't understand" — "none" covers both genuine
+            # ambiguity AND out-of-capability requests, and those need
+            # different messages to actually be useful to the Director.
             await _reply_and_log(
                 director_telegram_user_id,
                 run_id,
-                "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?",
+                task_summary or "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?",
             )
 
     except OpenRouterError as exc:
@@ -862,13 +867,26 @@ async def _answer_from_agent(
 
 
 async def _fetch_agent_data(agent_slug: str) -> str:
-    """Dispatch to the per-agent data fetcher below."""
+    """Dispatch to the per-agent data fetcher below.
+
+    ``all_systems`` runs every fetcher and concatenates them, labeled, for
+    questions that span more than one system ("leads and CRM and everything")
+    — Sonnet 5's context window makes this a non-issue size-wise; the
+    alternative (silently picking one system and ignoring the rest of the
+    question) is the actual problem this exists to avoid.
+    """
     fetchers = {
         "lead_agent": _fetch_lead_agent_data,
         "finance_agent": _fetch_finance_agent_data,
         "crm_agent": _fetch_crm_agent_data,
         "reporter_agent": _fetch_reporter_agent_data,
     }
+    if agent_slug == "all_systems":
+        sections = []
+        for slug, fetcher in fetchers.items():
+            sections.append(f"=== {AGENT_LABELS[slug]} ===\n{await fetcher()}")
+        return "\n\n".join(sections)
+
     fetcher = fetchers.get(agent_slug)
     if fetcher is None:
         return "(no data source configured for this agent)"
