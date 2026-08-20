@@ -33,6 +33,7 @@ from integrations.org_bot.prompt import (
     CLASSIFY_SYSTEM_PROMPT,
     build_answer_message,
     build_classify_message,
+    format_history,
 )
 from integrations.org_bot.roles import (
     AGENT_LABELS,
@@ -104,16 +105,18 @@ def validate_classification(result: dict[str, Any]) -> tuple[str, str | None, st
 
     Returns:
         ``(target_type, target_role, target_agent)`` if the output is
-        internally consistent and every slug is real, else None — callers
-        must treat None the same as an explicit "none" (ask the Director to
+        internally consistent and every slug is real (``target_type`` is
+        "none" or "refused" — refused is the guardrail path, its refusal
+        text lives in ``task_summary``, not here) — else None. Callers must
+        treat None the same as an explicit "none" (ask the Director to
         clarify), never as a silent default route.
     """
     target_type = result.get("target_type")
     target_role = result.get("target_role")
     target_agent = result.get("target_agent")
 
-    if target_type == "none":
-        return "none", None, None
+    if target_type in ("none", "refused"):
+        return target_type, None, None
     if target_type == "employee" and target_role in ROLE_SLUGS:
         return "employee", target_role, None
     if target_type == "agent" and target_agent in AGENT_SLUGS:
@@ -383,13 +386,7 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await _handle_unregistered_sender(telegram_user_id, sender, run_id)
 
     if employee["role"] != DIRECTOR_ROLE:
-        await _reply(
-            telegram_user_id,
-            run_id,
-            "Bu botda faqat Operatsion Direktor topshiriq bera oladi.\n"
-            "Only the Operations Director can assign tasks here.",
-        )
-        return "not_director"
+        return await _handle_employee_message(employee, message, run_id)
 
     has_media = any(message.get(field) for field in MEDIA_FIELDS)
     text = (message.get("text") or "").strip()
@@ -445,6 +442,69 @@ async def _reply(
         await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup)
 
 
+async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text: str) -> None:
+    """Send the Director a substantive reply and remember it as conversation
+    memory — used for the actual outcome of a request, not UX filler like the
+    "got it, routing..." ack (logging every ack would bury real content in noise)."""
+    await _reply(director_telegram_user_id, run_id, text)
+    await store.log_conversation_turn(director_telegram_user_id, "bot", text)
+
+
+# -------------------------------------------------------------- employee updates
+
+
+async def _handle_employee_message(employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Relay a non-Director employee's free-text note about their task.
+
+    Employees can write at any stage — before starting, mid-task, after
+    finishing — this isn't gated on task status. If the message is a reply
+    to a specific task card, that's unambiguous; otherwise it's attached to
+    their one open task if they have exactly one, and if that's also
+    ambiguous, they're asked to reply to the right card directly rather than
+    the note being silently dropped or misattached.
+    """
+    telegram_user_id = employee["telegram_user_id"]
+    text = (message.get("text") or message.get("caption") or "").strip()
+    if not text:
+        return "ignored"
+
+    reply_to = message.get("reply_to_message") or {}
+    task = None
+    if reply_to.get("message_id"):
+        task = await store.find_task_by_message_id(reply_to["message_id"], telegram_user_id)
+    if task is None:
+        task = await store.find_open_task_for_employee(telegram_user_id)
+
+    if task is None:
+        await _reply(
+            telegram_user_id,
+            run_id,
+            "Qaysi topshiriq haqida ekanini bilmadim — iltimos, o'sha topshiriq kartasiga javob tarzida yozing.\n"
+            "I couldn't tell which task this is about — please reply directly to that task's card.",
+        )
+        return "no_task_context"
+
+    await store.create_task_update(
+        task_id=str(task["id"]), employee_telegram_user_id=telegram_user_id, message_text=text
+    )
+    await _reply(telegram_user_id, run_id, "👍 Qabul qildim, direktorga yubordim. / Got it, sent to the Director.")
+
+    stage_label = {"sent": "boshlanmagan", "started": "davom etmoqda", "done": "bajarilgan"}.get(
+        task["status"], task["status"]
+    )
+    try:
+        await _reply(
+            task["director_telegram_user_id"],
+            run_id,
+            f"💬 {escape(employee['display_name'])} ({stage_label}):\n{escape(text)}\n\n"
+            f"<i>Topshiriq / Task: {escape(task['task_summary'])}</i>",
+        )
+    except TelegramError as exc:
+        log.warning("Could not relay employee update to Director: {}", exc)
+
+    return "task_update"
+
+
 # ----------------------------------------------------- director task routing
 
 
@@ -464,7 +524,10 @@ async def _dispatch_director_task(
             against duplicate webhook delivery re-dispatching the same task.
         run_id: UUID grouping this webhook call's audit rows.
     """
+    await store.log_conversation_turn(director_telegram_user_id, "director", raw_message)
+
     try:
+        history = format_history(await store.recent_conversation(director_telegram_user_id))
         async with OpenRouterClient(
             agent=AGENT,
             run_id=run_id,
@@ -472,7 +535,7 @@ async def _dispatch_director_task(
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
-            result = await ai.complete_json(CLASSIFY_SYSTEM_PROMPT, build_classify_message(raw_message))
+            result = await ai.complete_json(CLASSIFY_SYSTEM_PROMPT, build_classify_message(raw_message, history))
 
         task_summary = (result.get("task_summary") or raw_message[:200]).strip()
         validated = validate_classification(result)
@@ -480,12 +543,12 @@ async def _dispatch_director_task(
         if validated is None:
             # Model returned an out-of-enum value -- code-level backstop,
             # the proportionate equivalent of Lead Agent's second AI pass for
-            # this much narrower (12-way) classification task.
+            # this much narrower classification task.
             log.warning("Classification returned unrecognized target: {}", result)
-            await _reply(
+            await _reply_and_log(
                 director_telegram_user_id,
                 run_id,
-                "Aniq tushunmadim — iltimos, aniqroq yozing.\nCouldn't tell — could you clarify?",
+                "Aniq tushunmadim — iltimos, aniqroq yozing.",
             )
             return
 
@@ -495,13 +558,17 @@ async def _dispatch_director_task(
                 director_telegram_user_id, source_message_id, raw_message, target_role, task_summary, run_id
             )
         elif target_type == "agent":
-            await _answer_from_agent(director_telegram_user_id, target_agent, raw_message, run_id)
+            await _answer_from_agent(director_telegram_user_id, target_agent, raw_message, run_id, history)
+        elif target_type == "refused":
+            # The guardrail path — the model's own polite refusal, already in
+            # Uzbek/Russian per prompt.py's GUARDRAILS block.
+            log.info("Classification refused a message from {}", director_telegram_user_id)
+            await _reply_and_log(director_telegram_user_id, run_id, task_summary)
         else:  # "none"
-            await _reply(
+            await _reply_and_log(
                 director_telegram_user_id,
                 run_id,
-                "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?\n"
-                "I couldn't tell who this is for — could you rephrase it?",
+                "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?",
             )
 
     except OpenRouterError as exc:
@@ -543,11 +610,10 @@ async def _dispatch_to_role(
     """Create + send one task card per active employee holding ``role_slug``."""
     employees = await store.active_employees_by_role(role_slug)
     if not employees:
-        await _reply(
+        await _reply_and_log(
             director_id,
             run_id,
-            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.\n"
-            f"No one is registered for {ROLE_LABELS[role_slug]} yet.",
+            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.",
         )
         return
 
@@ -580,7 +646,7 @@ async def _dispatch_to_role(
 
     if sent_names:
         names = ", ".join(escape(n) for n in sent_names)
-        await _reply(director_id, run_id, f"Yuborildi / Sent to: {names} ({ROLE_LABELS[role_slug]}).")
+        await _reply_and_log(director_id, run_id, f"Yuborildi: {names} ({ROLE_LABELS[role_slug]}).")
 
 
 # ------------------------------------------------------------------- media/files
@@ -610,6 +676,7 @@ async def _dispatch_director_media(
         return
 
     validated = None
+    refusal_text: str | None = None
     if caption:
         try:
             async with OpenRouterClient(
@@ -621,6 +688,8 @@ async def _dispatch_director_media(
             ) as ai:
                 result = await ai.complete_json(CLASSIFY_SYSTEM_PROMPT, build_classify_message(caption))
             validated = validate_classification(result)
+            if validated is not None and validated[0] == "refused":
+                refusal_text = (result.get("task_summary") or "").strip() or None
         except OpenRouterError as exc:
             log.warning("Media caption classification failed, falling back to a role picker: {}", exc)
 
@@ -629,6 +698,12 @@ async def _dispatch_director_media(
             await _dispatch_media_to_role(
                 director_telegram_user_id, source_message_id, caption or "Media fayl / Media file", validated[1], run_id
             )
+        elif validated is not None and validated[0] == "refused":
+            # Guardrail path — refuse and stop, same as the text-task flow.
+            # Do NOT fall through to the role picker: an inappropriate
+            # caption shouldn't still get its attached file forwarded.
+            log.info("Media caption classification refused a message from {}", director_telegram_user_id)
+            await _reply(director_telegram_user_id, run_id, refusal_text or "Kechirasiz, bunga yordam bera olmayman.")
         else:
             await _ask_media_target(director_telegram_user_id, source_message_id, caption, run_id)
     except Exception as exc:  # noqa: BLE001 — a background failure must be recorded, not raised
@@ -701,11 +776,10 @@ async def _dispatch_media_to_role(
     """
     employees = await store.active_employees_by_role(role_slug)
     if not employees:
-        await _reply(
+        await _reply_and_log(
             director_id,
             run_id,
-            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.\n"
-            f"No one is registered for {ROLE_LABELS[role_slug]} yet.",
+            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.",
         )
         return
 
@@ -747,11 +821,27 @@ async def _dispatch_media_to_role(
 
     if sent_names:
         names = ", ".join(escape(n) for n in sent_names)
-        await _reply(director_id, run_id, f"Yuborildi / Sent to: {names} ({ROLE_LABELS[role_slug]}).")
+        await _reply_and_log(director_id, run_id, f"Yuborildi: {names} ({ROLE_LABELS[role_slug]}).")
 
 
-async def _answer_from_agent(director_id: int, agent_slug: str, question: str, run_id: uuid.UUID) -> None:
-    """Answer a Director's question using one agent's already-computed data."""
+async def _answer_from_agent(
+    director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = ""
+) -> None:
+    """Answer a Director's question using one agent's already-computed data.
+
+    Args:
+        director_id: The Director's Telegram numeric id.
+        agent_slug: One of ``roles.AGENT_SLUGS``.
+        question: The Director's original question.
+        run_id: UUID grouping this webhook call's audit rows.
+        history: Formatted recent conversation (``prompt.format_history``) —
+            fetched by the caller so a message already known to be a
+            classification result doesn't pay for a second DB round trip;
+            fetched fresh here if called with the default when history
+            wasn't already on hand.
+    """
+    if not history:
+        history = format_history(await store.recent_conversation(director_id))
     data = await _fetch_agent_data(agent_slug)
     async with OpenRouterClient(
         agent=AGENT,
@@ -760,8 +850,10 @@ async def _answer_from_agent(director_id: int, agent_slug: str, question: str, r
         model_override=settings.ops_manager_bot_model,
         fallback_override=settings.ops_manager_bot_fallback_models,
     ) as ai:
-        answer = await ai.complete(ANSWER_SYSTEM_PROMPT, build_answer_message(AGENT_LABELS[agent_slug], data, question))
-    await _reply(director_id, run_id, escape(answer))
+        answer = await ai.complete(
+            ANSWER_SYSTEM_PROMPT, build_answer_message(AGENT_LABELS[agent_slug], data, question, history)
+        )
+    await _reply_and_log(director_id, run_id, escape(answer))
 
 
 # ------------------------------------------------------------- agent data reads

@@ -232,7 +232,7 @@ async def telegram_webhook(secret: str, request: Request) -> dict[str, str]:
 
 @app.post("/webhooks/telegram/admin/{secret}")
 async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
-    """Receive an Admin Bot update (employee access Accept/Reject).
+    """Receive an Admin Bot update (access Accept/Reject, employee list/remove).
 
     Register this URL once with:
         https://api.telegram.org/bot<ADMIN_BOT_TOKEN>/setWebhook?url=https://<host>/webhooks/telegram/admin/<secret>
@@ -250,12 +250,19 @@ async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
         return {"status": "unauthorized"}
 
     update = await request.json()
-    callback = update.get("callback_query")
-    if not callback:
-        return {"status": "ignored"}
+    run_id = uuid.uuid4()
 
-    outcome = await org_admin.handle_admin_callback(callback, uuid.uuid4())
-    return {"status": outcome}
+    callback = update.get("callback_query")
+    if callback:
+        outcome = await org_admin.handle_admin_callback(callback, run_id)
+        return {"status": outcome}
+
+    message = update.get("message")
+    if message:
+        outcome = await org_admin.handle_admin_message(message, run_id)
+        return {"status": outcome}
+
+    return {"status": "ignored"}
 
 
 @app.post("/webhooks/telegram/ops/{secret}")

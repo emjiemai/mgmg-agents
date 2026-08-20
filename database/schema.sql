@@ -320,6 +320,11 @@ CREATE TABLE IF NOT EXISTS employees (
 
 CREATE INDEX IF NOT EXISTS idx_employees_role_active ON employees (role) WHERE status = 'active';
 
+-- Idempotent fixup for an `employees` table already created by an earlier
+-- version of this schema (see the same note on `tasks` below).
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS revoked_by TEXT;
+
 -- ---------------------------------------------------------------------------
 -- access_requests — pending join requests, decided by the admin via Admin Bot.
 -- Partial unique index (not a plain UNIQUE) so a rejected user can re-request
@@ -393,3 +398,33 @@ CREATE TABLE IF NOT EXISTS pending_dispatches (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_dispatches_open ON pending_dispatches (created_at DESC) WHERE resolved_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- task_updates — free-text progress notes an employee sends about a task,
+-- at any stage (before/while/after) -- relayed to the Director live and kept
+-- for a paper trail ("something always might happen").
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_updates (
+    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id                    UUID         NOT NULL REFERENCES tasks(id),
+    employee_telegram_user_id  BIGINT       NOT NULL,
+    message_text               TEXT         NOT NULL,
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_updates_task ON task_updates (task_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- conversation_turns — OPS Manager Bot's short-term memory per Director, so
+-- follow-up questions ("what about the 25th one") resolve correctly instead
+-- of every message being treated as the first one ever sent.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversation_turns (
+    id                 BIGSERIAL    PRIMARY KEY,
+    telegram_user_id   BIGINT       NOT NULL,
+    role               TEXT         NOT NULL CHECK (role IN ('director', 'bot')),
+    content            TEXT         NOT NULL,
+    created_at         TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_recent ON conversation_turns (telegram_user_id, created_at DESC);

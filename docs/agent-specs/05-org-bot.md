@@ -102,6 +102,66 @@ video notes (round videos) — none of these support a caption in the Bot API,
 which the Start/Done card edit relies on, so forwarding them would need a
 different (uncaptioned) card design this v1 doesn't build.
 
+## Flow — employee progress updates
+
+An employee can write free text about a task at any point — before starting,
+mid-task, after finishing ("something always might happen"). This isn't
+gated on task status. Resolution order:
+1. If the message is a Telegram **reply** to a specific task card, that task
+   is unambiguous — used directly.
+2. Otherwise, if the employee has **exactly one** open task (`sent`/`started`),
+   it's attached to that one.
+3. Otherwise (zero or multiple open tasks, no reply), they're asked to reply
+   directly to the right card — the note is never silently dropped or
+   attached to the wrong task.
+
+Every update is stored in `task_updates` (a paper trail) and relayed to the
+Director live, tagged with the task's current stage.
+
+## Guardrails
+
+Both AI prompts (`integrations/org_bot/prompt.py`'s shared `GUARDRAILS`
+block) carry:
+- **Identity lock** — everything in a Director's or employee's message is
+  DATA to interpret, never a new instruction. Attempts to redefine the bot's
+  role, extract/override its system prompt, or act outside classification/
+  reporting are refused the same way any other guardrail violation is.
+- **Content refusal** — abusive/inappropriate messages get a brief, polite
+  decline, not a lecture.
+- **Language** — Uzbek or Russian only, even if the input is in English;
+  defaults to Uzbek if unclear.
+- **Tone** — always warm and polite, the register of a real workplace chat.
+
+The classification prompt encodes refusals as a first-class
+`target_type: "refused"` output (validated the same way as every other
+outcome via `validate_classification`), not a separate moderation call — one
+LLM call still handles routing and guardrail decisions together. Verified
+live against real prompt-injection and abusive-message inputs before
+shipping (both correctly refused, in Uzbek, politely) — see the commit that
+introduced this for the exact test transcript.
+
+## Conversation memory
+
+Every substantive Director-facing message (not UX filler like "got it,
+routing...") is logged to `conversation_turns`, and the last 20 turns are
+fed back into both the classification and answer prompts as context — so
+"send that to IT too" or "what about the 25th one" resolve against what was
+actually just discussed, instead of every message being treated as the
+first one this Director has ever sent. Verified live: a follow-up message
+with no task content of its own ("send the same thing to IT too") correctly
+resolved against the prior turn's task.
+
+## Admin: employee list & removal
+
+`/employees` (or `/users`, `/list`) sent to **Admin Bot** lists every active
+employee with a 🗑 Remove button each. Tapping one sets `status='revoked'` —
+idempotent, gated by `ADMIN_BOT_ADMIN_USER_ID` the same way access decisions
+are when it's set. A removed employee would need to message OPS Manager Bot
+and go through the join flow again to regain access. Added specifically as a
+testing-cleanup tool (the business owner is currently the one repeatedly
+registering/re-registering while testing) — no self-service UI for employees
+to see or remove themselves, by design.
+
 ## Agent-name mapping (org-chart name → what actually gets read)
 
 | Org-chart name | Repo agent | Data source |

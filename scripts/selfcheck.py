@@ -192,6 +192,11 @@ def test_org_bot() -> None:
         ("none", None, None),
     )
     check(
+        "classify: refused (guardrail path) is valid, not an error",
+        validate_classification({"target_type": "refused", "task_summary": "Kechirasiz, bunga yordam bera olmayman."}),
+        ("refused", None, None),
+    )
+    check(
         "classify: employee with unknown role slug is rejected",
         validate_classification({"target_type": "employee", "target_role": "made_up_role"}),
         None,

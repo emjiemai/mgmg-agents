@@ -90,6 +90,37 @@ async def active_employees_by_role(role: str) -> list[dict[str, Any]]:
     )
 
 
+async def list_active_employees() -> list[dict[str, Any]]:
+    """List every active employee, for Admin Bot's removal UI.
+
+    Returns:
+        All active employee rows, ordered by role then name.
+    """
+    return await fetch_all("SELECT * FROM employees WHERE status = 'active' ORDER BY role, display_name")
+
+
+async def revoke_employee(employee_id: str, revoked_by: str) -> dict[str, Any] | None:
+    """Revoke an employee's access, idempotently.
+
+    Args:
+        employee_id: ``employees.id``.
+        revoked_by: The admin's identifier, for the audit trail.
+
+    Returns:
+        The updated row if this call actually changed it, else None —
+        callers must treat None as "already revoked / not found", not an error.
+    """
+    return await fetch_one(
+        """
+        UPDATE employees
+        SET status = 'revoked', revoked_at = now(), revoked_by = %s
+        WHERE id = %s AND status = 'active'
+        RETURNING *
+        """,
+        (revoked_by, employee_id),
+    )
+
+
 # ------------------------------------------------------------- access requests
 
 
@@ -366,3 +397,115 @@ async def resolve_pending_dispatch(pending_id: str) -> dict[str, Any] | None:
         """,
         (pending_id,),
     )
+
+
+# --------------------------------------------------------------- task updates
+
+
+async def create_task_update(*, task_id: str, employee_telegram_user_id: int, message_text: str) -> dict[str, Any]:
+    """Record a free-text progress note an employee sent about a task.
+
+    Args:
+        task_id: ``tasks.id`` this note is about.
+        employee_telegram_user_id: The sender's Telegram numeric id.
+        message_text: The note itself.
+
+    Returns:
+        The new row.
+    """
+    row = await fetch_one(
+        """
+        INSERT INTO task_updates (task_id, employee_telegram_user_id, message_text)
+        VALUES (%s, %s, %s)
+        RETURNING *
+        """,
+        (task_id, employee_telegram_user_id, message_text),
+    )
+    assert row is not None
+    return row
+
+
+async def find_task_by_message_id(telegram_message_id: int, employee_telegram_user_id: int) -> dict[str, Any] | None:
+    """Find the task a reply-to-message references, scoped to that recipient.
+
+    Scoping by the replying employee (not just the message id) means one
+    employee can't attach an update to a task card that was actually sent to
+    someone else, even though message ids aren't otherwise employee-specific.
+
+    Args:
+        telegram_message_id: ``message.reply_to_message.message_id`` from the update.
+        employee_telegram_user_id: The replying employee's Telegram numeric id.
+
+    Returns:
+        The matching task, or None.
+    """
+    return await fetch_one(
+        """
+        SELECT t.* FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.telegram_message_id = %s AND e.telegram_user_id = %s
+        """,
+        (telegram_message_id, employee_telegram_user_id),
+    )
+
+
+async def find_open_task_for_employee(employee_telegram_user_id: int) -> dict[str, Any] | None:
+    """The employee's single open task, if exactly one exists.
+
+    Used as a fallback when a progress-update message isn't a reply to any
+    specific task card — if the employee has exactly one task in flight, it's
+    unambiguous which one they mean; with zero or multiple, it isn't, and
+    callers should ask them to reply directly to the right card instead.
+
+    Args:
+        employee_telegram_user_id: The employee's Telegram numeric id.
+
+    Returns:
+        The task, or None if there isn't exactly one open task.
+    """
+    rows = await fetch_all(
+        """
+        SELECT t.* FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE e.telegram_user_id = %s AND t.status IN ('sent', 'started')
+        ORDER BY t.created_at DESC
+        """,
+        (employee_telegram_user_id,),
+    )
+    return rows[0] if len(rows) == 1 else None
+
+
+# ---------------------------------------------------------- conversation memory
+
+
+async def log_conversation_turn(telegram_user_id: int, role: Literal["director", "bot"], content: str) -> None:
+    """Record one turn of OPS Manager Bot's short-term memory.
+
+    Args:
+        telegram_user_id: Whose conversation this belongs to (the Director).
+        role: 'director' or 'bot'.
+        content: The message text.
+    """
+    await execute(
+        "INSERT INTO conversation_turns (telegram_user_id, role, content) VALUES (%s, %s, %s)",
+        (telegram_user_id, role, content),
+    )
+
+
+async def recent_conversation(telegram_user_id: int, limit: int = 20) -> list[dict[str, Any]]:
+    """Fetch recent conversation turns, oldest first (prompt-ready order).
+
+    Args:
+        telegram_user_id: Whose conversation to fetch.
+        limit: Maximum turns to return — bounded so history can't grow
+            unboundedly relevant/irrelevant into every future prompt.
+
+    Returns:
+        Up to ``limit`` most recent turns, in chronological order.
+    """
+    rows = await fetch_all(
+        "SELECT role, content, created_at FROM conversation_turns "
+        "WHERE telegram_user_id = %s ORDER BY created_at DESC LIMIT %s",
+        (telegram_user_id, limit),
+    )
+    return list(reversed(rows))
