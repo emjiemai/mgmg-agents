@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from integrations.amocrm.webhook_handler import _extract_lead_events
 from integrations.common.money import format_uzs, format_uzs_short, from_tiyin, to_tiyin, uzs_to_usd
 from integrations.common.timeutil import TASHKENT, days_between, parse_sap_date, to_local, to_utc
+from integrations.org_bot.ops_manager import parse_callback_data, parse_role_and_request, validate_classification
+from integrations.org_bot.roles import AGENT_SLUGS, ROLE_SLUGS
 from integrations.sap.client import aging_bucket
 from integrations.telegram.bot import escape, split_message
 
@@ -151,6 +153,55 @@ def test_webhook_parsing() -> None:
 
     check("empty payload", _extract_lead_events({}), [])
     check("unrelated payload", _extract_lead_events({"contacts[add][0][id]": "5"}), [])
+
+
+def test_org_bot() -> None:
+    """OPS Manager Bot's callback parsers and classification validator."""
+    print("org_bot")
+
+    check("callback: setrole splits once", parse_callback_data("setrole:it:req-1"), ("setrole", "it:req-1"))
+    check("callback: taskdone splits once", parse_callback_data("taskdone:task-1"), ("taskdone", "task-1"))
+    check("callback: no colon is malformed", parse_callback_data("garbage"), None)
+
+    check("role+request: splits once", parse_role_and_request("it:req-1"), ("it", "req-1"))
+    check("role+request: id itself may contain colons", parse_role_and_request("it:req:1"), ("it", "req:1"))
+    check("role+request: no colon is malformed", parse_role_and_request("it"), None)
+
+    check_true("every role slug is a known role", all(r in ROLE_SLUGS for r in ("it", "hr", "ombor")))
+    check_true("bogus role slug is rejected", "not_a_role" not in ROLE_SLUGS)
+
+    check(
+        "classify: valid employee route",
+        validate_classification({"target_type": "employee", "target_role": "it", "target_agent": None}),
+        ("employee", "it", None),
+    )
+    check(
+        "classify: valid agent route",
+        validate_classification({"target_type": "agent", "target_role": None, "target_agent": "lead_agent"}),
+        ("agent", None, "lead_agent"),
+    )
+    check(
+        "classify: explicit none is valid, not an error",
+        validate_classification({"target_type": "none"}),
+        ("none", None, None),
+    )
+    check(
+        "classify: employee with unknown role slug is rejected",
+        validate_classification({"target_type": "employee", "target_role": "made_up_role"}),
+        None,
+    )
+    check(
+        "classify: agent with unknown agent slug is rejected",
+        validate_classification({"target_type": "agent", "target_agent": "made_up_agent"}),
+        None,
+    )
+    check(
+        "classify: employee route missing its role is rejected",
+        validate_classification({"target_type": "employee", "target_role": None}),
+        None,
+    )
+    check("classify: malformed response is rejected", validate_classification({}), None)
+    check_true("agent vocabulary is non-empty", len(AGENT_SLUGS) > 0)
 
 
 def test_verifix_csv() -> None:
@@ -289,6 +340,7 @@ def main() -> int:
         test_aging,
         test_telegram,
         test_webhook_parsing,
+        test_org_bot,
         test_verifix_csv,
         test_brief_rendering,
         test_receivables_rendering,

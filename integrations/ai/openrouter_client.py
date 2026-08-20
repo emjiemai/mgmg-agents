@@ -79,13 +79,28 @@ class OpenRouterClient:
     Args:
         agent: Calling agent name, recorded on every audit row.
         run_id: UUID grouping this run's audit rows.
+        model_override: If set, used as the primary model instead of the
+            active provider's global ``*_model`` setting — lets one caller
+            (e.g. OPS Manager Bot) run a stronger/cheaper model than another
+            (e.g. Lead Agent) without a second settings switch.
+        fallback_override: Comma-separated fallback chain to use alongside
+            ``model_override``. Ignored if ``model_override`` is unset.
     """
 
-    def __init__(self, agent: str = "-", run_id: uuid.UUID | str | None = None) -> None:
+    def __init__(
+        self,
+        agent: str = "-",
+        run_id: uuid.UUID | str | None = None,
+        *,
+        model_override: str | None = None,
+        fallback_override: str | None = None,
+    ) -> None:
         self.agent = agent
         self.run_id = run_id
         self._client: httpx.AsyncClient | None = None
         self.provider = settings.ai_provider.strip().lower()
+        self._model_override = model_override
+        self._fallback_override = fallback_override
 
     async def __aenter__(self) -> "OpenRouterClient":
         """Open the HTTP client with the configured provider's auth attached.
@@ -197,7 +212,9 @@ class OpenRouterClient:
         Returns:
             At least one model id.
         """
-        if self.provider == "deepseek":
+        if self._model_override:
+            primary, fallbacks = self._model_override, (self._fallback_override or "")
+        elif self.provider == "deepseek":
             primary, fallbacks = settings.deepseek_model, settings.deepseek_fallback_models
         else:
             primary, fallbacks = settings.openrouter_model, settings.openrouter_fallback_models

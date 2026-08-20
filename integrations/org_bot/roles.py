@@ -1,0 +1,73 @@
+"""Single source of truth for the org-chart vocabulary: the 8 human roles and
+4 AI agents OPS Manager Bot can route a task to.
+
+Consumed by ``admin.py`` (role-picker buttons), ``ops_manager.py`` (dispatch +
+output validation), and ``prompt.py`` (the classification enum) so this
+vocabulary is defined exactly once.
+
+The role slugs must match ``database/schema.sql``'s ``employees.role`` CHECK
+constraint exactly — Postgres can't import this file, so keep the two in sync
+by hand (same pre-existing limitation as ``approvals.category``).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Role:
+    slug: str
+    label: str
+
+
+@dataclass(frozen=True)
+class Agent:
+    slug: str
+    label: str
+    data_source: str  # human-readable description of what gets fetched, for docs/logs
+
+
+ROLES: list[Role] = [
+    Role("b2b_sotuv", "B2B Sotuv"),
+    Role("it", "IT"),
+    Role("buxgalteriya", "Buxgalteriya"),
+    Role("hr", "HR"),
+    Role("ombor", "Ombor"),
+    Role("operatsion_direktor", "Operatsion Direktor"),
+    Role("mobilograf", "Mobilograf"),
+    Role("aloqa_markazi", "Aloqa Markazi (Call Center)"),
+]
+
+AGENTS: list[Agent] = [
+    Agent("lead_agent", "Lead Agent", "Leads Google Sheet (latest rows)"),
+    Agent("finance_agent", "Finance Agent", "v_ar_aging_latest + recent receivables alerts"),
+    Agent("crm_agent", "CRM Agent", "v_pipeline_latest + recent amoCRM deal events"),
+    Agent("reporter_agent", "Reporter Agent", "latest daily_briefs.message_text"),
+]
+
+ROLE_SLUGS: set[str] = {r.slug for r in ROLES}
+AGENT_SLUGS: set[str] = {a.slug for a in AGENTS}
+
+ROLE_LABELS: dict[str, str] = {r.slug: r.label for r in ROLES}
+AGENT_LABELS: dict[str, str] = {a.slug: a.label for a in AGENTS}
+
+DIRECTOR_ROLE = "operatsion_direktor"
+
+
+def role_picker_keyboard(request_id: str) -> dict:
+    """Build the inline keyboard shown to a newly-approved employee.
+
+    Args:
+        request_id: The ``access_requests.id`` this pick will resolve.
+
+    Returns:
+        A Telegram ``reply_markup`` dict, one role per row (8 rows) so labels
+        never truncate on a narrow phone screen.
+    """
+    return {
+        "inline_keyboard": [
+            [{"text": role.label, "callback_data": f"setrole:{role.slug}:{request_id}"}]
+            for role in ROLES
+        ]
+    }

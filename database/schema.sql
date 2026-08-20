@@ -299,3 +299,68 @@ SELECT
     (p.deals_value_tiyin / 100.0)::numeric(18,2) AS deals_value_uzs
 FROM amocrm_pipeline_snapshots p
 WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM amocrm_pipeline_snapshots);
+
+-- ---------------------------------------------------------------------------
+-- employees — registered via Admin Bot + OPS Manager Bot's role picker.
+-- Role list is a hardcoded CHECK, mirrored in integrations/org_bot/roles.py —
+-- Postgres can't import that file, keep the two in sync by hand.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS employees (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_user_id  BIGINT       NOT NULL UNIQUE,
+    telegram_username TEXT,
+    display_name      TEXT         NOT NULL,
+    role              TEXT         NOT NULL
+                          CHECK (role IN ('b2b_sotuv','it','buxgalteriya','hr','ombor',
+                                           'operatsion_direktor','mobilograf','aloqa_markazi')),
+    status            TEXT         NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+    approved_by       TEXT,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_employees_role_active ON employees (role) WHERE status = 'active';
+
+-- ---------------------------------------------------------------------------
+-- access_requests — pending join requests, decided by the admin via Admin Bot.
+-- Partial unique index (not a plain UNIQUE) so a rejected user can re-request
+-- later — only one row may be 'pending' per user at a time.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS access_requests (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_user_id  BIGINT       NOT NULL,
+    telegram_username TEXT,
+    display_name      TEXT,
+    status            TEXT         NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+    requested_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ  NOT NULL DEFAULT (now() + INTERVAL '7 days'),
+    decided_at        TIMESTAMPTZ,
+    decided_by        TEXT,
+    admin_message_id  BIGINT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_access_requests_pending ON access_requests (telegram_user_id) WHERE status = 'pending';
+
+-- ---------------------------------------------------------------------------
+-- tasks — one row per (employee recipient) of a task OPS Manager Bot routed.
+-- The unique constraint is a backstop against Telegram's own occasionally-
+-- duplicate webhook delivery re-dispatching the same Director message.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tasks (
+    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    director_telegram_user_id  BIGINT       NOT NULL,
+    source_message_id          BIGINT       NOT NULL,
+    raw_message                TEXT         NOT NULL,
+    target_type                TEXT         NOT NULL CHECK (target_type IN ('employee','agent')),
+    target_role                TEXT,
+    target_agent                TEXT,
+    assigned_employee_id       UUID         REFERENCES employees(id),
+    task_summary                TEXT        NOT NULL,
+    status                      TEXT        NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','done')),
+    telegram_message_id        BIGINT,
+    completed_at                TIMESTAMPTZ,
+    completed_by                TEXT,
+    CONSTRAINT uq_task_dispatch UNIQUE (director_telegram_user_id, source_message_id, assigned_employee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_open ON tasks (created_at DESC) WHERE status = 'sent';

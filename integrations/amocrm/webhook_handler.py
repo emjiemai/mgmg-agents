@@ -3,14 +3,23 @@
 Runs as the ``api`` service in docker-compose, behind a reverse proxy.
 
 Endpoints:
-    GET  /health                         liveness + dependency check
-    POST /webhooks/amocrm/{secret}       amoCRM deal events
-    POST /webhooks/telegram/{secret}     Telegram updates (approval buttons)
+    GET  /health                              liveness + dependency check
+    POST /webhooks/amocrm/{secret}            amoCRM deal events
+    POST /webhooks/telegram/{secret}          Telegram updates (approval buttons)
+    POST /webhooks/telegram/admin/{secret}    Admin Bot (employee access decisions)
+    POST /webhooks/telegram/ops/{secret}      OPS Manager Bot (task routing)
 
 Security:
-    * Both webhook paths carry a shared secret compared in constant time.
+    * Every webhook path carries a shared secret compared in constant time.
       amoCRM does not sign its webhooks, so a secret in the path is the
       available authentication; keep the URL out of shared documents.
+    * The three Telegram routes each check a DIFFERENT secret and each always
+      construct ``TelegramBot`` with that specific bot's own token — never the
+      shared ``telegram_primary_bot_token`` fallback. Telegram can only edit a
+      message using the same bot token that sent it, so mixing bots on one
+      route silently breaks message edits (this is a real, separate latent
+      issue on the original `/webhooks/telegram/{secret}` route, which does
+      use the fallback — not fixed here, but not repeated either).
     * Payloads are persisted **before** any processing, so a crash mid-handler
       leaves a replayable row rather than a lost event
       (``agents/amocrm-followup/agent.py --drain``).
@@ -35,6 +44,8 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import to_tiyin
+from integrations.org_bot import admin as org_admin
+from integrations.org_bot import ops_manager as org_ops_manager
 from integrations.telegram.bot import TelegramBot
 
 AGENT = "amocrm-webhook"
@@ -219,22 +230,85 @@ async def telegram_webhook(secret: str, request: Request) -> dict[str, str]:
     return {"status": outcome}
 
 
+@app.post("/webhooks/telegram/admin/{secret}")
+async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
+    """Receive an Admin Bot update (employee access Accept/Reject).
+
+    Register this URL once with:
+        https://api.telegram.org/bot<ADMIN_BOT_TOKEN>/setWebhook?url=https://<host>/webhooks/telegram/admin/<secret>
+
+    Args:
+        secret: Shared secret from the URL path, checked against
+            ``ADMIN_BOT_WEBHOOK_SECRET`` (not the amoCRM secret — each bot's
+            route uses its own, see the module Security note).
+        request: The incoming request.
+
+    Returns:
+        ``{"status": ...}`` describing what was done.
+    """
+    if not _secret_ok(secret, settings.admin_bot_webhook_secret.get_secret_value(), "ADMIN_BOT_WEBHOOK_SECRET"):
+        return {"status": "unauthorized"}
+
+    update = await request.json()
+    callback = update.get("callback_query")
+    if not callback:
+        return {"status": "ignored"}
+
+    outcome = await org_admin.handle_admin_callback(callback, uuid.uuid4())
+    return {"status": outcome}
+
+
+@app.post("/webhooks/telegram/ops/{secret}")
+async def ops_manager_bot_webhook(secret: str, request: Request, background: BackgroundTasks) -> dict[str, str]:
+    """Receive an OPS Manager Bot update (a Director task, a role pick, Mark Done).
+
+    Register this URL once with:
+        https://api.telegram.org/bot<OPS_MANAGER_BOT_TOKEN>/setWebhook?url=https://<host>/webhooks/telegram/ops/<secret>
+
+    Unlike the other two Telegram routes, this one also handles plain
+    ``message`` updates, not just ``callback_query`` — a Director's
+    free-text task is new territory (see ``ops_manager.py``'s module
+    docstring), so classification+dispatch runs via ``background`` rather
+    than inline: a slow AI call must not risk a Telegram-side retry
+    re-running classification and double-dispatching the task.
+
+    Args:
+        secret: Shared secret from the URL path, checked against
+            ``OPS_MANAGER_BOT_WEBHOOK_SECRET``.
+        request: The incoming request.
+        background: FastAPI background queue.
+
+    Returns:
+        ``{"status": ...}`` describing what was done.
+    """
+    if not _secret_ok(
+        secret, settings.ops_manager_bot_webhook_secret.get_secret_value(), "OPS_MANAGER_BOT_WEBHOOK_SECRET"
+    ):
+        return {"status": "unauthorized"}
+
+    update = await request.json()
+    outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
+    return {"status": outcome}
+
+
 # -------------------------------------------------------------------- helpers
 
 
-def _secret_ok(provided: str, expected: str) -> bool:
+def _secret_ok(provided: str, expected: str, setting_name: str = "AMOCRM_WEBHOOK_SECRET") -> bool:
     """Compare webhook secrets in constant time.
 
     Args:
         provided: Secret from the request path.
         expected: Configured secret.
+        setting_name: Env var name to name in the log if unconfigured — each
+            of the four webhook routes checks a different secret.
 
     Returns:
         True only when both are non-empty and equal. An unset secret always
         fails — an open webhook endpoint is never the safe default.
     """
     if not expected or expected.startswith("["):
-        log.error("AMOCRM_WEBHOOK_SECRET is not configured — rejecting all webhook calls")
+        log.error("{} is not configured — rejecting all webhook calls", setting_name)
         return False
     return secrets.compare_digest(provided, expected)
 

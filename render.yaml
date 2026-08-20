@@ -261,3 +261,22 @@ envVarGroups:
         sync: false
       - key: LEAD_AGENT_TELEGRAM_CHAT_ID
         sync: false
+      # Admin Bot (employee access approval) + OPS Manager Bot (AI task
+      # routing) -- see docs/agent-specs/05-org-bot.md. Both are handled by
+      # the always-on mgmg-api web service, not a cron job.
+      - key: ADMIN_BOT_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_BOT_TELEGRAM_CHAT_ID
+        sync: false
+      - key: ADMIN_BOT_WEBHOOK_SECRET
+        sync: false
+      - key: ADMIN_BOT_ADMIN_USER_ID
+        sync: false  # optional hardening; blank/0 = disabled
+      - key: OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OPS_MANAGER_BOT_WEBHOOK_SECRET
+        sync: false
+      - key: OPS_MANAGER_BOT_MODEL
+        value: deepseek-v4-pro
+      - key: OPS_MANAGER_BOT_FALLBACK_MODELS
+        value: deepseek-v4-pro,deepseek-v4-flash

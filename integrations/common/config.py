@@ -106,6 +106,30 @@ class Settings(BaseSettings):
     lead_agent_telegram_bot_token: SecretStr = SecretStr("")
     lead_agent_telegram_chat_id: str = ""
 
+    # --- Admin Bot (employee access approval) ---
+    admin_bot_telegram_bot_token: SecretStr = SecretStr("")
+    admin_bot_telegram_chat_id: str = ""  # the admin's own chat -- join-request cards land here
+    admin_bot_webhook_secret: SecretStr = SecretStr("")
+    # Optional hardening: if set, only this Telegram user id's Accept/Reject
+    # taps are honored -- granting system access is a bigger blast radius
+    # than approving one payment, so this checks the clicker, not just the
+    # button. 0 = disabled (whoever can see the button is trusted), matching
+    # the existing approvals flow's own implicit trust model.
+    admin_bot_admin_user_id: int = 0
+
+    # --- OPS Manager Bot (AI task routing) ---
+    # No ops_manager_bot_telegram_chat_id -- it replies to whoever messaged
+    # it, resolved per-sender via the employees table, not a fixed destination.
+    ops_manager_bot_telegram_bot_token: SecretStr = SecretStr("")
+    ops_manager_bot_webhook_secret: SecretStr = SecretStr("")
+    # Routing real tasks to real employees warrants a stronger model than
+    # Lead Agent's cheap/flash tier (which had empty-JSON reliability issues
+    # under load) -- deepseek-v4-pro has only run as someone else's fallback
+    # tier before now, so it keeps deepseek-v4-flash as ITS fallback rather
+    # than betting everything on an unproven-as-primary model.
+    ops_manager_bot_model: str = "deepseek-v4-pro"
+    ops_manager_bot_fallback_models: str = "deepseek-v4-pro,deepseek-v4-flash"
+
     # --- Verifix ---
     verifix_mode: str = "csv"
     verifix_base_url: str = ""
