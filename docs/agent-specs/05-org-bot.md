@@ -61,10 +61,11 @@ exists only to receive the admin's own Accept/Reject tap.
    their own `tasks` row and their own task card with a "✅ Mark Done" button.
    Zero active employees for that role → the Director is told so explicitly,
    not left with silence.
-9. **Target is an AI agent**: no live invocation. Each agent's most recently
-   *already-computed* output is read and handed to a second AI call along
-   with the Director's question, which answers directly. Deferred
-   deliberately — see Known gaps.
+9. **Target is an AI agent**: no live invocation. Each agent's *full*
+   already-computed output is read (every lead, every open receivable, the
+   full pipeline, 14 days of daily briefs — not a truncated preview) and
+   handed to a second AI call along with the Director's question, which
+   answers directly. Still no write access — see Known gaps/cut-from-v1.
 10. Any employee tapping "Mark Done" resolves their task idempotently and
     best-effort notifies the Director. Free text from a non-Director employee
     gets a canned "only the Director can assign tasks here" reply — no NLP on
@@ -146,7 +147,12 @@ confirm-before-send on routing decisions — routing is auditable via
   the primary token. Neither issue is inherited here (every org_bot guarded
   update checks rows-affected; every org_bot route uses its own bot's token
   explicitly) — but the original route itself is unfixed.
-- Model choice (`OPS_MANAGER_BOT_MODEL=deepseek-v4-pro`) is unproven as a
-  *primary* model under real traffic — it has only run as someone else's
-  fallback tier before. Watch early runs the way Lead Agent's DeepSeek
-  reliability was watched.
+- Runs on `anthropic/claude-sonnet-5` via OpenRouter (`OPS_MANAGER_BOT_PROVIDER=
+  openrouter`), independent of `AI_PROVIDER` which Lead Agent uses (DeepSeek)
+  — `OpenRouterClient` takes a `provider_override`/`model_override` per call
+  precisely so two agents can run different providers without a second
+  settings switch. Confirmed live (both the JSON-mode classification call and
+  the plain-text answer call) before this was wired in. No write access comes
+  with the model upgrade — it can now see everything across all four agents
+  in full, not a truncated preview, but every write still goes through the
+  same human-approval pattern as the rest of this project (see "cut from v1").

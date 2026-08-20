@@ -276,7 +276,12 @@ envVarGroups:
         sync: false
       - key: OPS_MANAGER_BOT_WEBHOOK_SECRET
         sync: false
+      # Runs on its own provider, independent of AI_PROVIDER above (which
+      # Lead Agent uses) -- confirmed working live via OpenRouterClient's
+      # provider_override for both JSON-mode and plain-text calls.
+      - key: OPS_MANAGER_BOT_PROVIDER
+        value: openrouter
       - key: OPS_MANAGER_BOT_MODEL
-        value: deepseek-v4-pro
+        value: anthropic/claude-sonnet-5
       - key: OPS_MANAGER_BOT_FALLBACK_MODELS
-        value: deepseek-v4-pro,deepseek-v4-flash
+        value: google/gemini-3.7-flash

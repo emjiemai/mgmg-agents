@@ -122,13 +122,15 @@ class Settings(BaseSettings):
     # it, resolved per-sender via the employees table, not a fixed destination.
     ops_manager_bot_telegram_bot_token: SecretStr = SecretStr("")
     ops_manager_bot_webhook_secret: SecretStr = SecretStr("")
-    # Routing real tasks to real employees warrants a stronger model than
-    # Lead Agent's cheap/flash tier (which had empty-JSON reliability issues
-    # under load) -- deepseek-v4-pro has only run as someone else's fallback
-    # tier before now, so it keeps deepseek-v4-flash as ITS fallback rather
-    # than betting everything on an unproven-as-primary model.
-    ops_manager_bot_model: str = "deepseek-v4-pro"
-    ops_manager_bot_fallback_models: str = "deepseek-v4-pro,deepseek-v4-flash"
+    # Runs on its OWN provider, independent of the global ai_provider switch
+    # Lead Agent uses -- this bot answers business-wide questions across all
+    # four agents' full data, which warrants a stronger model than Lead
+    # Agent's classification-only task needs. Fallback stays on the SAME
+    # provider (OpenRouterClient opens one httpx client per provider; a
+    # cross-provider fallback would need a second client entirely).
+    ops_manager_bot_provider: str = "openrouter"  # "openrouter" | "deepseek"
+    ops_manager_bot_model: str = "anthropic/claude-sonnet-5"
+    ops_manager_bot_fallback_models: str = "google/gemini-3.7-flash"
 
     # --- Verifix ---
     verifix_mode: str = "csv"

@@ -374,6 +374,7 @@ async def _dispatch_director_task(
         async with OpenRouterClient(
             agent=AGENT,
             run_id=run_id,
+            provider_override=settings.ops_manager_bot_provider,
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
@@ -494,6 +495,7 @@ async def _answer_from_agent(director_id: int, agent_slug: str, question: str, r
     async with OpenRouterClient(
         agent=AGENT,
         run_id=run_id,
+        provider_override=settings.ops_manager_bot_provider,
         model_override=settings.ops_manager_bot_model,
         fallback_override=settings.ops_manager_bot_fallback_models,
     ) as ai:
@@ -520,7 +522,19 @@ async def _fetch_agent_data(agent_slug: str) -> str:
     return await fetcher()
 
 
+LEAD_SHEET_COLUMNS = [
+    "company_name", "project_name", "industry", "location", "project_stage",
+    "estimated_opening", "signal", "signal_source_url", "signal_date",
+    "estimated_size", "contact_name", "contact_role", "contact_method",
+    "confidence", "priority", "recheck_date", "notes", "date_added",
+    "dedupe_key", "track",
+]
+
+
 async def _fetch_lead_agent_data() -> str:
+    """Every lead, every column — Claude Sonnet 5's 200k context makes the
+    old 15-row/4-column preview an unnecessary limitation (it was sized for
+    DeepSeek's much smaller effective window and cost per token)."""
     try:
         async with SheetsClient(agent=AGENT) as sheets:
             rows = await sheets.get_values("Sheet1!A:T")
@@ -531,79 +545,90 @@ async def _fetch_lead_agent_data() -> str:
     if not data_rows:
         return "No leads recorded yet."
 
-    lines = [f"{len(data_rows)} total leads on record. Most recent:"]
-    for row in data_rows[-15:]:
-        name = row[0] if len(row) > 0 else ""
-        stage = row[4] if len(row) > 4 else ""
-        priority = row[14] if len(row) > 14 else ""
-        track = row[19] if len(row) > 19 else ""
-        lines.append(f"- {name} | stage={stage} | priority={priority} | {track}")
+    lines = [f"{len(data_rows)} total leads on record, numbered in sheet order:"]
+    for i, row in enumerate(data_rows, start=1):
+        fields = {LEAD_SHEET_COLUMNS[j]: (row[j] if j < len(row) else "") for j in range(len(LEAD_SHEET_COLUMNS))}
+        lines.append(
+            f"{i}. {fields['company_name']} | {fields['industry']} | {fields['location']} | "
+            f"stage={fields['project_stage']} | opening={fields['estimated_opening']} | "
+            f"priority={fields['priority']} | confidence={fields['confidence']} | {fields['track']}\n"
+            f"   signal: {fields['signal']} ({fields['signal_source_url']})\n"
+            f"   contact: {fields['contact_name']} {fields['contact_role']} {fields['contact_method']}\n"
+            f"   notes: {fields['notes']}"
+        )
     return "\n".join(lines)
 
 
 async def _fetch_finance_agent_data() -> str:
+    """All open receivables + recent alerts, not just the top 15/5."""
     aging = await fetch_all(
-        "SELECT card_name, days_overdue, aging_bucket, balance_due_uzs "
-        "FROM v_ar_aging_latest ORDER BY balance_due_uzs DESC LIMIT 15"
+        "SELECT card_name, days_overdue, aging_bucket, balance_due_uzs, due_date, sales_person_name "
+        "FROM v_ar_aging_latest ORDER BY balance_due_uzs DESC LIMIT 200"
     )
     alerts = await fetch_all(
-        "SELECT title, created_at FROM alerts WHERE agent = 'receivables' ORDER BY created_at DESC LIMIT 5"
+        "SELECT title, body, created_at FROM alerts WHERE agent = 'receivables' ORDER BY created_at DESC LIMIT 30"
     )
     if not aging and not alerts:
         return "No receivables data recorded yet."
 
-    lines = ["Top overdue receivables:"]
+    lines = [f"{len(aging)} open receivable(s):"]
     for r in aging:
-        lines.append(f"- {r['card_name']}: {r['balance_due_uzs']} UZS overdue, {r['days_overdue']}d ({r['aging_bucket']})")
+        lines.append(
+            f"- {r['card_name']}: {r['balance_due_uzs']} UZS, {r['days_overdue']}d overdue "
+            f"({r['aging_bucket']}), due {r['due_date']}, owner={r['sales_person_name']}"
+        )
     if alerts:
         lines.append("\nRecent receivables alerts:")
         for a in alerts:
-            lines.append(f"- {a['title']} ({a['created_at']})")
+            lines.append(f"- {a['title']}: {a.get('body') or ''} ({a['created_at']})")
     return "\n".join(lines)
 
 
 async def _fetch_crm_agent_data() -> str:
+    """The full pipeline snapshot + recent deal events, not just the last 10."""
     pipeline = await fetch_all(
-        "SELECT pipeline_name, status_name, deals_count, deals_value_uzs FROM v_pipeline_latest"
+        "SELECT pipeline_name, status_name, deals_count, deals_value_uzs, division FROM v_pipeline_latest"
     )
     events = await fetch_all(
-        "SELECT event_type, lead_id, price_tiyin, received_at FROM amocrm_deal_events "
-        "ORDER BY received_at DESC LIMIT 10"
+        "SELECT event_type, lead_id, price_tiyin, received_at, processing_status FROM amocrm_deal_events "
+        "ORDER BY received_at DESC LIMIT 100"
     )
     if not pipeline and not events:
         return "No CRM pipeline data recorded yet."
 
-    lines = ["Pipeline snapshot:"]
+    lines = ["Pipeline snapshot (every stage):"]
     for p in pipeline:
         lines.append(
-            f"- {p.get('pipeline_name')} / {p.get('status_name')}: "
+            f"- {p.get('pipeline_name')} / {p.get('status_name')} ({p.get('division')}): "
             f"{p.get('deals_count')} deal(s), {p.get('deals_value_uzs')} UZS"
         )
     if events:
-        lines.append("\nRecent deal events:")
+        lines.append(f"\nRecent deal events ({len(events)}):")
         for e in events:
-            lines.append(f"- {e['event_type']} lead {e['lead_id']} ({e['received_at']})")
+            price = f", {e['price_tiyin'] / 100:.0f} UZS" if e.get("price_tiyin") else ""
+            lines.append(f"- {e['event_type']} lead {e['lead_id']}{price} ({e['received_at']}, {e['processing_status']})")
     return "\n".join(lines)
 
 
 async def _fetch_reporter_agent_data() -> str:
-    brief = await fetch_one(
+    """The last 14 days of daily briefs, so trend questions aren't limited
+    to a single snapshot the way a one-day-only fetch would be."""
+    briefs = await fetch_all(
         "SELECT brief_date, cash_total_tiyin, ar_overdue_total_tiyin, pipeline_total_tiyin, "
         "new_leads_24h, deals_without_task, employees_late, employees_absent, planner_tasks_overdue "
-        "FROM daily_briefs ORDER BY generated_at DESC LIMIT 1"
+        "FROM daily_briefs ORDER BY generated_at DESC LIMIT 14"
     )
-    if brief is None:
+    if not briefs:
         return "No daily brief has been generated yet."
 
-    return "\n".join(
-        [
-            f"Latest daily brief ({brief['brief_date']}):",
-            f"- Cash: {format_uzs(brief['cash_total_tiyin'] or 0)}",
-            f"- AR overdue: {format_uzs(brief['ar_overdue_total_tiyin'] or 0)}",
-            f"- Pipeline: {format_uzs(brief['pipeline_total_tiyin'] or 0)}",
-            f"- New leads (24h): {brief['new_leads_24h']}",
-            f"- Deals without a task: {brief['deals_without_task']}",
-            f"- Employees late/absent: {brief['employees_late']}/{brief['employees_absent']}",
-            f"- Overdue Planner tasks: {brief['planner_tasks_overdue']}",
-        ]
-    )
+    lines = [f"Daily brief history, most recent first ({len(briefs)} day(s)):"]
+    for brief in briefs:
+        lines.append(
+            f"- {brief['brief_date']}: cash={format_uzs(brief['cash_total_tiyin'] or 0)}, "
+            f"AR overdue={format_uzs(brief['ar_overdue_total_tiyin'] or 0)}, "
+            f"pipeline={format_uzs(brief['pipeline_total_tiyin'] or 0)}, "
+            f"new leads={brief['new_leads_24h']}, deals w/o task={brief['deals_without_task']}, "
+            f"late/absent={brief['employees_late']}/{brief['employees_absent']}, "
+            f"overdue Planner tasks={brief['planner_tasks_overdue']}"
+        )
+    return "\n".join(lines)

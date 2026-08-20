@@ -79,12 +79,17 @@ class OpenRouterClient:
     Args:
         agent: Calling agent name, recorded on every audit row.
         run_id: UUID grouping this run's audit rows.
+        provider_override: If set, used instead of the global ``ai_provider``
+            setting — lets one caller (e.g. OPS Manager Bot) run on a
+            different provider than another (e.g. Lead Agent) without a
+            second settings switch. Must be a key in ``PROVIDERS``.
         model_override: If set, used as the primary model instead of the
-            active provider's global ``*_model`` setting — lets one caller
-            (e.g. OPS Manager Bot) run a stronger/cheaper model than another
-            (e.g. Lead Agent) without a second settings switch.
+            active provider's global ``*_model`` setting.
         fallback_override: Comma-separated fallback chain to use alongside
-            ``model_override``. Ignored if ``model_override`` is unset.
+            ``model_override``. Ignored if ``model_override`` is unset. Must
+            name models on the SAME provider — this client opens one HTTP
+            client against one provider's base URL, so a cross-provider
+            fallback isn't possible within a single instance.
     """
 
     def __init__(
@@ -92,13 +97,14 @@ class OpenRouterClient:
         agent: str = "-",
         run_id: uuid.UUID | str | None = None,
         *,
+        provider_override: str | None = None,
         model_override: str | None = None,
         fallback_override: str | None = None,
     ) -> None:
         self.agent = agent
         self.run_id = run_id
         self._client: httpx.AsyncClient | None = None
-        self.provider = settings.ai_provider.strip().lower()
+        self.provider = (provider_override or settings.ai_provider).strip().lower()
         self._model_override = model_override
         self._fallback_override = fallback_override
 
