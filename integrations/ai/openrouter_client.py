@@ -38,6 +38,11 @@ log = setup_logging("ai")
 # see the comment at the call site).
 DEFAULT_MAX_TOKENS = 8000
 
+# Same-model retries specifically for an empty-content response, before
+# falling through to the next model in the chain. See the comment at the
+# call site in complete() for why this is scoped to that one failure mode.
+EMPTY_CONTENT_RETRIES = 2
+
 PROVIDERS: dict[str, dict[str, object]] = {
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1/chat/completions",
@@ -147,17 +152,36 @@ class OpenRouterClient:
         last_error: Exception | None = None
 
         for index, model in enumerate(chain, start=1):
-            try:
-                return await self._complete_with_model(model, system, user, json_mode)
-            except OpenRouterError as exc:
-                last_error = exc
-                if index < len(chain):
-                    log.warning(
-                        "Model '{}' failed ({}), falling back to '{}'",
-                        model,
-                        str(exc)[:120],
-                        chain[index],
-                    )
+            # Empty-content responses (the model's turn ends with nothing in
+            # `content`) showed up on ~46% of batches in production even with
+            # reasoning disabled — a rate consistent with transient flakiness
+            # rather than a deterministic per-model failure, so the same
+            # model gets a couple of same-model retries before the run pays
+            # for a fallback model. Other failure modes (HTTP errors, auth,
+            # malformed JSON) are not retried here — those already had their
+            # own retry pass in request_with_retry, or retrying won't help.
+            for attempt in range(1, EMPTY_CONTENT_RETRIES + 2):
+                try:
+                    return await self._complete_with_model(model, system, user, json_mode)
+                except OpenRouterError as exc:
+                    last_error = exc
+                    if "empty content" in str(exc) and attempt <= EMPTY_CONTENT_RETRIES:
+                        log.warning(
+                            "'{}' returned empty content (attempt {}/{}), retrying same model",
+                            model,
+                            attempt,
+                            EMPTY_CONTENT_RETRIES + 1,
+                        )
+                        continue
+                    break
+
+            if index < len(chain):
+                log.warning(
+                    "Model '{}' failed ({}), falling back to '{}'",
+                    model,
+                    str(last_error)[:120],
+                    chain[index],
+                )
 
         raise OpenRouterError(
             f"All {len(chain)} model(s) failed ({', '.join(chain)}). Last error: {last_error}"

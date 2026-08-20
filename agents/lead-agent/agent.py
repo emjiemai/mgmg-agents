@@ -38,7 +38,7 @@ from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
 from integrations.search.tavily_client import TavilyClient, TavilyError
-from integrations.telegram.bot import TelegramBot, escape
+from integrations.telegram.bot import TelegramBot, TelegramError, escape
 from integrations.tenders.uzex_client import UzExClient
 from integrations.tenders.worldbank_client import WorldBankClient, WorldBankError
 
@@ -540,7 +540,18 @@ async def run(dry_run: bool = False) -> int:
             print()
     else:
         await store_new_leads(new_leads, run_id)
-        await notify_telegram(new_leads, run_id)
+        # The sheet write is the part that matters and has already happened
+        # by this point — a broken Telegram destination (wrong chat id, bot
+        # not in the group, etc.) must not make a run that successfully
+        # wrote leads report as a failure. Log it loudly and move on.
+        try:
+            await notify_telegram(new_leads, run_id)
+        except TelegramError as exc:
+            log.error(
+                "Leads were written to the sheet, but the Telegram summary failed: {}. "
+                "Check TELEGRAM_LEADS_CHAT_ID.",
+                exc,
+            )
 
     return 0
 
