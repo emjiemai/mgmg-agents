@@ -110,7 +110,14 @@ TENDER_SITE_QUERIES = [
     ("site:etender.uzex.uz кир ювиш ускунаси", "equipment_sales"),
     ("site:xarid.uzex.uz прачечное оборудование гостиница больница", "equipment_sales"),
 ]
-ALL_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES + TENDER_SITE_QUERIES
+# Freshness matters differently by query type: a hiring post or investment
+# announcement is only a "new signal" if it's actually new, but a tender
+# portal page can rank in Google days after posting while the tender itself
+# is still open — restricting that to "indexed in the last 24h" would drop
+# real open tenders for no reason. So only the news-style queries are time-
+# boxed to the past day; tender-portal searches run unrestricted.
+FRESH_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES
+ALL_QUERIES = FRESH_QUERIES + TENDER_SITE_QUERIES
 
 
 async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
@@ -130,30 +137,37 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
     # any undocumented rate limit.
     concurrency = asyncio.Semaphore(4)
 
-    async def _serpapi_one(client: SerpAPIClient, query: str) -> list[RawLead]:
+    async def _serpapi_one(client: SerpAPIClient, query: str, past_day_only: bool) -> list[RawLead]:
         async with concurrency:
             try:
-                return await client.search_all_engines(query, num=10)
+                return await client.search_all_engines(query, num=10, past_day_only=past_day_only)
             except SerpAPIError as err:
                 log.error("SerpAPI failed for '{}': {}", query, err)
                 return []
 
     async def _serpapi_all() -> list[RawLead]:
         async with SerpAPIClient(agent=AGENT, run_id=run_id) as client:
-            batches = await asyncio.gather(*(_serpapi_one(client, q) for q, _t in ALL_QUERIES))
+            tasks = [_serpapi_one(client, q, True) for q, _t in FRESH_QUERIES]
+            tasks += [_serpapi_one(client, q, False) for q, _t in TENDER_SITE_QUERIES]
+            batches = await asyncio.gather(*tasks)
         return [lead for batch in batches for lead in batch]
 
-    async def _tavily_one(client: TavilyClient, query: str) -> list[RawLead]:
+    async def _tavily_one(client: TavilyClient, query: str, days: int) -> list[RawLead]:
         async with concurrency:
             try:
-                return await client.search_news(query, days=3, max_results=10)
+                return await client.search_news(query, days=days, max_results=10)
             except TavilyError as err:
                 log.error("Tavily failed for '{}': {}", query, err)
                 return []
 
     async def _tavily_all() -> list[RawLead]:
         async with TavilyClient(agent=AGENT, run_id=run_id) as client:
-            batches = await asyncio.gather(*(_tavily_one(client, q) for q, _t in ALL_QUERIES))
+            # 1 day for news-style queries (matches SerpAPI's past_day_only);
+            # tender-portal pages are left at Tavily's "week" bucket for the
+            # same reason SerpAPI skips the freshness filter on them.
+            tasks = [_tavily_one(client, q, 1) for q, _t in FRESH_QUERIES]
+            tasks += [_tavily_one(client, q, 3) for q, _t in TENDER_SITE_QUERIES]
+            batches = await asyncio.gather(*tasks)
         return [lead for batch in batches for lead in batch]
 
     async def _worldbank() -> list[RawLead]:
