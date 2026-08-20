@@ -43,7 +43,12 @@ from integrations.tenders.uzex_client import UzExClient
 from integrations.tenders.worldbank_client import WorldBankClient, WorldBankError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from prompt import SYSTEM_PROMPT, build_user_message  # noqa: E402
+from prompt import (  # noqa: E402
+    SYSTEM_PROMPT,
+    VERIFY_SYSTEM_PROMPT,
+    build_user_message,
+    build_verify_message,
+)
 
 AGENT = "lead-agent"
 log = setup_logging(AGENT)
@@ -70,8 +75,86 @@ JUNK_DOMAINS = {
     "youtube.com", "pinterest.com", "reddit.com", "quora.com", "wikipedia.org",
     "facebook.com", "twitter.com", "x.com", "tiktok.com",
     "amazon.com", "alibaba.com", "aliexpress.com", "ebay.com", "made-in-china.com",
-    "indeed.com", "glassdoor.com",
+    "indeed.com", "glassdoor.com", "olx.uz",
 }
+
+# ---------------------------------------------------------------------------
+# Code-level qualification backstops (added 2026-08-20).
+#
+# The AI qualification prompt is the primary filter, but a live audit of the
+# real sheet found 17 of 80 rows with no real laundry/textile-care connection
+# — catering tenders, a bank IT tender, oxygen-generator maintenance, a state-
+# share valuation, a furniture tender with invented "implies dorm laundry"
+# reasoning, and one hotel that was actually in Russia, not Uzbekistan. Every
+# one of those slipped past the prompt's own rules. These checks catch the
+# same failure modes independent of whether the model followed the prompt —
+# the same defense-in-depth idea as the existing URL-grounding check below,
+# just aimed at content instead of source authenticity.
+# ---------------------------------------------------------------------------
+
+# Specific procurement categories that showed up as false positives. Kept to
+# multi-word, specific phrases rather than single ambiguous words (e.g. not
+# bare "bank" or "mebel") to avoid rejecting genuine leads that merely mention
+# an adjacent word in passing.
+DISQUALIFYING_KEYWORDS = [
+    # catering / food service — the exact mistake that triggered this fix
+    "приготовлен", "обществен питани", "meal preparation", "meal service",
+    "food service", "food outsourcing", "catering", "taomnoma", "ovqat tayyorlash",
+    "ovkat tayyorlash", "овкат тайёрлаш", "иссик овкат", "issiq ovqat", "nutrition service",
+    # banking / financial IT — wrong industry entirely
+    "payment terminal", "платежный терминал", "платёжный терминал",
+    "core banking", "банковской инфраструктур", "банковская инфраструктур",
+    # medical gas systems — a different equipment category
+    "oxygen generator", "oxygen concentrator", "кислородный генератор",
+    "кислородная станция", "psa plant", "medical gas",
+    # furniture-only procurement
+    "furniture supply", "поставка мебели", "mebel yetkazib berish",
+    # ownership / privatization actions, not equipment purchases
+    "privatization", "приватизаци", "valuation of state share",
+    "оценка государственной доли", "давлат улуши",
+]
+
+# Laundry/textile-care terms across every language these sources appear in.
+# Checked against the model's own signal/notes/relevance_quote text.
+LAUNDRY_KEYWORDS = [
+    "laundry", "washer-extractor", "washer extractor", "tumble dryer",
+    "flatwork ironer", "dry-clean", "dry clean", "textile care", "linen",
+    "прачечн", "стиральн", "гладильн", "сушильн", "химчист", "текстил",
+    "kir yuvish", "kir yuvuvchi", "kimyoviy tozalash", "dazmol",
+    "quritish mashinasi", "кир ювиш", "кимёвий тозалаш", "дазмол",
+]
+
+# Facility types that inherently run their own laundry — allowed to qualify
+# without a literal laundry keyword ONLY when the signal is specifically about
+# that facility being built/opened (see is_construction_stage in
+# passes_hard_filters). This is the code counterpart of the prompt's rule 2.
+QUALIFYING_FACILITY_KEYWORDS = [
+    "hotel", "гостиниц", "mehmonxona", "hostel", "resort",
+    "hospital", "больниц", "shifoxona", "clinic", "поликлиник", "klinika",
+    "dry-clean", "химчист", "kimyoviy tozalash", "laundry", "прачечн", "kir yuvish",
+]
+
+UZ_LOCATION_KEYWORDS = [
+    "uzbekistan", "o'zbekiston", "ozbekiston", "ўзбекистон", "узбекистон",
+    "tashkent", "toshkent", "ташкент", "samarkand", "samarqand", "самарканд",
+    "bukhara", "buxoro", "бухара", "khiva", "xiva", "хива", "fergana",
+    "farg'ona", "fargona", "фергана", "namangan", "наманган", "andijan",
+    "andijon", "андижан", "nukus", "нукус", "qarshi", "карши", "termez",
+    "термез", "navoiy", "navoi", "навои", "jizzax", "джизак", "guliston",
+    "гулистон", "urgench", "urganch", "ургенч",
+]
+
+# Countries a brand-name search ("Hilton Uzbekistan") can accidentally surface
+# a property from. If one of these appears with no Uzbekistan marker also
+# present, the lead is almost certainly geographically wrong — this is exactly
+# how a Russian AZIMUT hotel (Repino, Leningrad Oblast) slipped through.
+FOREIGN_RED_FLAGS = [
+    "russia", "rossiya", "росси", "moscow", "москва", "saint petersburg",
+    "petersburg", "санкт-петербург", "repino", "kazakhstan", "qozog'iston",
+    "казахстан", "kyrgyzstan", "киргизия", "кыргызстан", "tajikistan",
+    "таджикистан", "turkmenistan", "туркменистан", "ukraine", "украина",
+    "belarus", "беларусь",
+]
 
 # How many candidates go to the model per qualification call. One 600-item
 # prompt is both a reliability risk (large payloads fail more often on
@@ -233,6 +316,67 @@ def _is_junk(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in JUNK_DOMAINS)
 
 
+def _normalize(text: str) -> str:
+    """Lowercase and collapse whitespace, for loose substring comparison."""
+    return " ".join(text.lower().split())
+
+
+def passes_hard_filters(lead: dict, source: RawLead | None) -> tuple[bool, str]:
+    """Code-level backstop the AI's own judgment cannot skip, no matter the prompt.
+
+    Mirrors the URL-grounding check already applied to every lead, but aimed
+    at content: a specific-category denylist (catering/banking/medical-gas/
+    valuation/furniture — the exact categories that slipped through before),
+    a requirement that the laundry connection be either an explicit keyword or
+    a genuine facility-under-construction signal, a check that
+    ``relevance_quote`` is both present and actually appears in the source text
+    it claims to quote, and a Uzbekistan-geography check.
+
+    Args:
+        lead: A qualified lead dict that already passed URL-grounding and the
+            track check.
+        source: The raw candidate this lead's ``signal_source_url`` matched,
+            for checking ``relevance_quote`` against real source text.
+
+    Returns:
+        ``(True, "")`` if the lead passes every backstop, else
+        ``(False, reason)`` with a short human-readable reason for the drop.
+    """
+    combined = " ".join(
+        str(lead.get(f, "") or "") for f in ("signal", "notes", "project_name", "industry")
+    ).lower()
+    quote = str(lead.get("relevance_quote", "") or "").strip()
+
+    if any(kw in combined for kw in DISQUALIFYING_KEYWORDS):
+        return False, "matched a disqualifying-category keyword (catering/banking/medical-gas/valuation/furniture)"
+
+    if not quote:
+        return False, "no relevance_quote provided"
+
+    if source is not None:
+        source_text = _normalize(f"{source.title} {source.snippet or ''}")
+        if _normalize(quote) not in source_text:
+            return False, "relevance_quote does not appear in the original source text"
+
+    has_laundry_kw = any(kw in combined or kw in quote.lower() for kw in LAUNDRY_KEYWORDS)
+    is_construction_stage = lead.get("project_stage") in {
+        "under construction", "permitted", "pre-opening hiring", "tender open",
+    }
+    qualifying_facility = any(kw in combined for kw in QUALIFYING_FACILITY_KEYWORDS)
+    if not has_laundry_kw and not (is_construction_stage and qualifying_facility):
+        return False, "no explicit laundry/textile-care connection and not a qualifying facility under construction"
+
+    location_text = _normalize(
+        f"{lead.get('location', '')} {lead.get('signal', '')} {lead.get('notes', '')}"
+    )
+    has_foreign_flag = any(kw in location_text for kw in FOREIGN_RED_FLAGS)
+    has_uz_marker = any(kw in location_text for kw in UZ_LOCATION_KEYWORDS)
+    if has_foreign_flag and not has_uz_marker:
+        return False, "location matches a foreign-country red flag with no Uzbekistan marker"
+
+    return True, ""
+
+
 async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dict]:
     """Run the two-track qualification prompt over the raw pool, in batches.
 
@@ -259,7 +403,8 @@ async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dic
     if not raw_leads:
         return []
 
-    known_urls = {r.url for r in raw_leads}
+    by_url = {r.url: r for r in raw_leads}
+    known_urls = set(by_url)
     batches = [
         raw_leads[i : i + QUALIFY_BATCH_SIZE]
         for i in range(0, len(raw_leads), QUALIFY_BATCH_SIZE)
@@ -299,9 +444,11 @@ async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dic
         raise OpenRouterError(f"All {len(batches)} qualification batch(es) failed")
 
     grounded: list[dict] = []
+    hard_filtered = 0
     for lead in all_leads:
         url = (lead.get("signal_source_url") or "").strip()
-        if url not in known_urls:
+        source = by_url.get(url)
+        if source is None:
             log.warning(
                 "Dropping ungrounded lead (URL not in search results): {} -> {}",
                 lead.get("company_name"),
@@ -315,16 +462,103 @@ async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dic
                 lead.get("company_name"),
             )
             continue
+        ok, reason = passes_hard_filters(lead, source)
+        if not ok:
+            hard_filtered += 1
+            log.warning("Hard filter rejected '{}': {}", lead.get("company_name"), reason)
+            continue
         grounded.append(lead)
 
     log.info(
-        "Qualified {} lead(s) across {} batch(es) ({} failed), {} passed grounding",
+        "Qualified {} lead(s) across {} batch(es) ({} failed), {} passed grounding+hard filters ({} hard-filtered)",
         len(all_leads),
         len(batches),
         failures,
         len(grounded),
+        hard_filtered,
     )
     return grounded
+
+
+async def verify_leads(leads: list[dict], raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dict]:
+    """Second qualification pass: a strict, adversarial re-check of the first pass.
+
+    Explicitly requested after the live-sheet audit: the first pass alone was
+    not reliable enough, so every lead that survives it (AI judgment + code
+    hard filters) is shown a second time — alongside its original source text
+    — to a reviewer prompt whose only job is to find a reason to reject it.
+    Defaults to rejecting on any doubt or failure, since the point of this pass
+    is fewer, trustworthy leads rather than more, uncertain ones.
+
+    Args:
+        leads: Leads that already passed ``qualify_leads``'s grounding, track,
+            and hard-filter checks.
+        raw_leads: The full deduplicated raw pool, used to look up each lead's
+            original source text by URL.
+        run_id: UUID grouping this run's audit rows.
+
+    Returns:
+        Only the leads this pass explicitly approved. A batch that fails
+        outright (API error, unparseable response) drops its leads rather than
+        passing them through unverified — and a lead with no verdict at all
+        (the model skipped it) is dropped for the same reason.
+    """
+    if not leads:
+        return []
+
+    source_by_url = {r.url: r for r in raw_leads}
+    batches = [leads[i : i + QUALIFY_BATCH_SIZE] for i in range(0, len(leads), QUALIFY_BATCH_SIZE)]
+    log.info("Second pass: verifying {} lead(s) in {} batch(es)", len(leads), len(batches))
+
+    approved: list[dict] = []
+    rejected = 0
+    async with OpenRouterClient(agent=AGENT, run_id=run_id) as ai:
+        for index, batch in enumerate(batches, start=1):
+            source_snippets = {
+                url: {"title": src.title, "snippet": src.snippet}
+                for url, src in source_by_url.items()
+            }
+            try:
+                body = await ai.complete_json(
+                    VERIFY_SYSTEM_PROMPT, build_verify_message(batch, source_snippets)
+                )
+            except OpenRouterError as err:
+                rejected += len(batch)
+                log.error(
+                    "Verify batch {}/{} failed — dropping its {} lead(s) rather than shipping them unverified: {}",
+                    index, len(batches), len(batch), err,
+                )
+                continue
+
+            verdicts = body.get("verified", [])
+            if not isinstance(verdicts, list):
+                rejected += len(batch)
+                log.warning("Verify batch {}: no verified array returned, dropping batch", index)
+                continue
+
+            decisions = {(v.get("signal_source_url") or "").strip(): v for v in verdicts}
+            for lead in batch:
+                url = (lead.get("signal_source_url") or "").strip()
+                verdict = decisions.get(url)
+                if verdict is None:
+                    rejected += 1
+                    log.warning(
+                        "Verify pass gave no verdict for '{}' — dropping (fail-closed)",
+                        lead.get("company_name"),
+                    )
+                    continue
+                if verdict.get("decision") != "approve":
+                    rejected += 1
+                    log.info(
+                        "Verify pass rejected '{}': {}",
+                        lead.get("company_name"),
+                        verdict.get("reason"),
+                    )
+                    continue
+                approved.append(lead)
+
+    log.info("Second pass: {} approved, {} rejected (of {})", len(approved), rejected, len(leads))
+    return approved
 
 
 async def existing_keys(run_id: uuid.UUID) -> tuple[set[str], set[str]]:
@@ -525,6 +759,12 @@ async def run(dry_run: bool = False) -> int:
     except OpenRouterError as exc:
         log.error("Qualification failed: {}", exc)
         return 1
+
+    try:
+        qualified = await verify_leads(qualified, raw_leads, run_id)
+    except OpenRouterError as exc:
+        log.error("Second-pass verification failed entirely — refusing to ship unverified leads: {}", exc)
+        qualified = []
 
     try:
         known_urls, known_keys = await existing_keys(run_id)

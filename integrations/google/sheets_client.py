@@ -227,3 +227,108 @@ class SheetsClient:
 
         log.info("Sheets: appended {} row(s) to {}", len(rows), a1_range)
         return len(rows)
+
+    async def get_sheet_id(self, sheet_name: str) -> int:
+        """Look up a tab's numeric ``sheetId`` (gid), required for row deletion.
+
+        Args:
+            sheet_name: The tab name as shown in the spreadsheet UI, e.g. ``'Sheet1'``.
+
+        Returns:
+            The tab's numeric sheetId.
+
+        Raises:
+            SheetsError: on a non-200 response, or if no tab has that name.
+        """
+        await self._ensure_token()
+        assert self._client is not None
+        url = f"{SHEETS_API_ROOT}/{self.spreadsheet_id}"
+
+        async with audited(
+            agent=self.agent,
+            action="api_call",
+            target_system="google_sheets",
+            run_id=self.run_id,
+            target_ref="spreadsheets.get",
+            mode="read",
+        ) as ctx:
+            response = await request_with_retry(
+                self._client,
+                "GET",
+                url,
+                params={"fields": "sheets.properties"},
+                headers={"Authorization": f"Bearer {self._access_token}"},
+            )
+            ctx["http_status"] = response.status_code
+            if response.status_code != 200:
+                raise SheetsError(f"Sheets metadata read failed: HTTP {response.status_code} {response.text[:300]}")
+            body = response.json()
+
+        for sheet in body.get("sheets", []):
+            props = sheet.get("properties", {})
+            if props.get("title") == sheet_name:
+                return props["sheetId"]
+        raise SheetsError(f"No tab named '{sheet_name}' in spreadsheet {self.spreadsheet_id}")
+
+    async def delete_rows(self, sheet_id: int, row_numbers: list[int]) -> int:
+        """Delete specific rows (1-indexed, as shown in the sheet UI) via batchUpdate.
+
+        Args:
+            sheet_id: Numeric tab id from :meth:`get_sheet_id`.
+            row_numbers: 1-indexed row numbers to delete, e.g. row 5 = the 5th
+                row including the header. Order does not matter — deletion is
+                always applied highest-row-first internally so earlier deletes
+                cannot shift the indices of later ones.
+
+        Returns:
+            Number of rows deleted.
+
+        Raises:
+            SheetsError: on a non-200 response.
+        """
+        if not row_numbers:
+            return 0
+
+        await self._ensure_token()
+        assert self._client is not None
+        url = f"{SHEETS_API_ROOT}/{self.spreadsheet_id}:batchUpdate"
+
+        # Descending order: deleting row 10 then row 5 is safe, but deleting
+        # row 5 then row 10 would delete the wrong row the second time since
+        # everything below row 5 has already shifted up by one.
+        requests = [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row - 1,  # API is 0-indexed
+                        "endIndex": row,
+                    }
+                }
+            }
+            for row in sorted(set(row_numbers), reverse=True)
+        ]
+
+        async with audited(
+            agent=self.agent,
+            action="delete_rows",
+            target_system="google_sheets",
+            run_id=self.run_id,
+            target_ref=f"sheetId={sheet_id}",
+            mode="write",
+            payload={"row_count": len(requests), "rows": sorted(set(row_numbers))},
+        ) as ctx:
+            response = await request_with_retry(
+                self._client,
+                "POST",
+                url,
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                json={"requests": requests},
+            )
+            ctx["http_status"] = response.status_code
+            if response.status_code != 200:
+                raise SheetsError(f"Sheets row delete failed: HTTP {response.status_code} {response.text[:300]}")
+
+        log.info("Sheets: deleted {} row(s) from sheetId {}", len(requests), sheet_id)
+        return len(requests)

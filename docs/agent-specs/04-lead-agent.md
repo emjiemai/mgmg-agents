@@ -14,6 +14,14 @@ made. A hotel that has already opened has already bought its machines.
 Replaces the n8n "Lead Agent" workflow, which needed a paid n8n host plus a
 persistent disk on Render; as a native cron job it costs ~$1/month instead.
 
+**Product scope** (`prompt.py`'s grounding, confirmed live against
+`primuslaundry.uz/products` and `/services` 2026-08-20): hardware is
+Washer-Extractors, Tumble Dryers, and Flatwork Ironers; services are Design,
+Installation, Maintenance, and Spare Parts. Laundry chemicals/detergents are
+also in scope per the business owner directly — that line isn't shown on the
+public site, so it can't be independently re-confirmed the way the rest of the
+catalog was.
+
 ## Sources, ranked by signal quality
 
 | Source | What it gives | Notes |
@@ -64,11 +72,13 @@ so the unfiltered pass is what catches a relevant lot phrased unexpectedly.
 
 ```
 fetch all sources concurrently
-  → drop junk domains (booking/review/social/marketplace)
+  → drop junk domains (booking/review/social/marketplace/classifieds)
   → dedupe by normalized URL
   → sort UzEx first (most actionable)
-  → AI-qualify in batches of 60
+  → AI-qualify in batches of 60 (pass 1)
   → drop any lead whose source URL wasn't in the search results
+  → drop any lead that fails the code-level hard filters (see below)
+  → AI-verify pass 2 — adversarial re-check of whatever survived pass 1
   → dedupe against the existing sheet
   → append new rows + post Telegram summary
 ```
@@ -91,6 +101,56 @@ drops mismatches. Prompt instructions are not a substitute for this.
 Notably, the old n8n workflow's output contained the *same* unverified Hyatt
 Regency claim (sourced from an unrelated Facebook page) — independent
 corroboration that this backstop catches real noise.
+
+### Two-pass qualification + hard filters (added 2026-08-20)
+
+A live audit of the real sheet (80 rows) found 17 with no genuine laundry/
+textile-care connection — catering tenders, a bank IT tender, oxygen-generator
+maintenance, a state-share valuation, and one hotel that was actually in
+Russia — despite passing the grounding check above. The common root cause:
+the model's own reasoning *inferred* a laundry connection ("large facility
+likely needs X") instead of finding one stated in the source text. All 17 were
+removed from the live sheet after re-confirming each against fresh data.
+
+Two layers were added on top of the existing grounding check, neither of which
+depends on the model choosing to follow prompt instructions correctly:
+
+1. **`passes_hard_filters()` in `agent.py`** — runs on every lead pass 1
+   proposes, right after the URL/track checks. Rejects on:
+   - a match against `DISQUALIFYING_KEYWORDS` (catering, banking/payment,
+     medical gas, furniture-only, privatization/valuation — the exact
+     categories that slipped through before), checked first and overriding
+     everything else;
+   - a missing or ungrounded `relevance_quote` — a new required output field
+     the model must fill with real text copied from the source, checked in
+     code against that source's actual title/snippet (same idea as the URL
+     check, aimed at content instead of the citation itself);
+   - no match against `LAUNDRY_KEYWORDS`, unless the lead is a qualifying
+     facility type (`QUALIFYING_FACILITY_KEYWORDS`) genuinely under
+     construction/tender (the code counterpart of the prompt's "hotel/hospital
+     construction needs no literal word 'laundry'" rule);
+   - a `FOREIGN_RED_FLAGS` match (Russia, Kazakhstan, etc.) with no
+     `UZ_LOCATION_KEYWORDS` match — this is what would have caught the Repino
+     (Russia) hotel in code even if the prompt had been ignored.
+
+   `relevance_quote` is internal to the pipeline — it is not one of the 20
+   sheet columns and is never written to the sheet.
+
+2. **Pass 2 — `verify_leads()` / `VERIFY_SYSTEM_PROMPT`** — a second, separate
+   AI call shown each surviving lead *alongside its original source snippet*,
+   told explicitly that a prior pass has made these exact mistakes before, and
+   instructed to default to rejecting on any doubt. This catches judgment
+   calls the keyword filters can't, e.g. rejecting a tender for outsourced
+   laundry *services* (the buyer wants someone to run their laundry for them,
+   which is a different business than buying/maintaining Primus equipment) —
+   confirmed on a live test run, along with a generic government policy
+   announcement and an OLX classifieds listing.
+
+   Fails **closed**, unlike pass 1: if a verify batch's API call fails, or the
+   model skips a lead without giving it a verdict, that lead is dropped rather
+   than shipped unverified. If the entire pass fails to run, `run()` ships zero
+   leads that day rather than falling back to pass-1-only output — consistent
+   with "an empty result is correct and expected, a wrong one is not."
 
 ### Model fallback
 
@@ -150,3 +210,8 @@ provider congestion, then add a paid model to the chain.
 - Chamber of Commerce tender board (`chamber.uz`) — covers *private* company
   tenders, but the host was unreachable during testing.
 - ADB / Islamic Development Bank pipelines are not yet integrated (World Bank is).
+- SerpAPI returned HTTP 429 on roughly half of queries during a 2026-08-20 test
+  run (some exhausted all 3 retries and were dropped entirely) — unrelated to
+  the qualification-quality fix made that day. Worth checking the SerpAPI
+  dashboard's plan/quota before assuming every low-volume day is the new
+  filters being too strict; Tavily and UzEx were unaffected in the same run.
