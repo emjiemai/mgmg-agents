@@ -203,11 +203,21 @@ envVarGroups:
         sync: false
       - key: TEAMS_SALES_WEBHOOK_URL
         sync: false
-      - key: TELEGRAM_BOT_TOKEN
+      # One bot per agent -- see integrations/telegram/bot.py. Create each
+      # via @BotFather (free); do not reuse one bot token across agents.
+      - key: TELEGRAM_PRIMARY_BOT_TOKEN
+        sync: false  # used only by the approval-callback webhook handler
+      - key: CEO_BRIEF_TELEGRAM_BOT_TOKEN
         sync: false
-      - key: TELEGRAM_CEO_CHAT_ID
+      - key: CEO_BRIEF_TELEGRAM_CHAT_ID
         sync: false
-      - key: TELEGRAM_ALERTS_CHAT_ID
+      - key: RECEIVABLES_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: RECEIVABLES_TELEGRAM_CHAT_ID
+        sync: false
+      - key: CRM_AGENT_TELEGRAM_BOT_TOKEN
+        sync: false  # not sent to yet -- amoCRM follow-up currently notifies via Teams
+      - key: CRM_AGENT_TELEGRAM_CHAT_ID
         sync: false
       - key: VERIFIX_MODE
         value: csv
@@ -247,5 +257,7 @@ envVarGroups:
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID
         sync: false
-      - key: TELEGRAM_LEADS_CHAT_ID
+      - key: LEAD_AGENT_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: LEAD_AGENT_TELEGRAM_CHAT_ID
         sync: false

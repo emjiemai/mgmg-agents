@@ -265,7 +265,12 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
     except Exception as exc:  # noqa: BLE001 — surface SAP failure as an alert, not a stack trace
         log.error("Could not read AR aging from SAP: {}", exc)
         try:
-            async with TelegramBot(agent=AGENT, run_id=run_id) as bot:
+            async with TelegramBot(
+                agent=AGENT,
+                run_id=run_id,
+                bot_token=settings.receivables_telegram_bot_token.get_secret_value(),
+                default_chat_id=settings.receivables_telegram_chat_id,
+            ) as bot:
                 await bot.send_alert(
                     "Receivables agent could not reach SAP",
                     f"<code>{escape(str(exc)[:300])}</code>",
@@ -278,7 +283,12 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
     message = render(aging, min_days)
 
     message_id: int | None = None
-    async with TelegramBot(agent=AGENT, run_id=run_id) as bot:
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.receivables_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.receivables_telegram_chat_id,
+    ) as bot:
         if settings.dry_run:
             print(message)
         else:

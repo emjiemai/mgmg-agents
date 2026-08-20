@@ -43,14 +43,33 @@ class TelegramError(RuntimeError):
 class TelegramBot:
     """Async Telegram Bot API client.
 
+    Each agent has its own bot (own token, own destination chat) rather than
+    one bot shared across agents — keeps messages visibly separated by
+    source, and is what makes a future per-bot KPI/usage tracker possible.
+
     Args:
+        bot_token: This agent's bot token. If omitted, falls back to
+            ``settings.telegram_primary_bot_token`` — used by the webhook
+            handler's approval-callback responder, which isn't tied to one
+            specific agent (it replies on whichever bot's button was pressed).
+        default_chat_id: Chat used when a call site doesn't pass one
+            explicitly (e.g. ``send_alert`` with no ``chat_id``).
         agent: Calling agent name, recorded on every audit row.
         run_id: UUID grouping this run's audit rows.
     """
 
-    def __init__(self, agent: str = "-", run_id: uuid.UUID | str | None = None) -> None:
+    def __init__(
+        self,
+        agent: str = "-",
+        run_id: uuid.UUID | str | None = None,
+        *,
+        bot_token: str | None = None,
+        default_chat_id: str | None = None,
+    ) -> None:
         self.agent = agent
         self.run_id = run_id
+        self._bot_token = bot_token
+        self.default_chat_id = default_chat_id or ""
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "TelegramBot":
@@ -60,11 +79,14 @@ class TelegramBot:
             The ready bot client.
 
         Raises:
-            TelegramError: if the bot token is unset.
+            TelegramError: if no bot token was given and no primary fallback
+                is configured either.
         """
-        token = settings.telegram_bot_token.get_secret_value()
+        token = self._bot_token or settings.telegram_primary_bot_token.get_secret_value()
         if not token:
-            raise TelegramError("TELEGRAM_BOT_TOKEN is not configured")
+            raise TelegramError(
+                "No bot token given and TELEGRAM_PRIMARY_BOT_TOKEN is not configured"
+            )
 
         self._client = httpx.AsyncClient(
             base_url=f"https://api.telegram.org/bot{token}",
@@ -92,7 +114,7 @@ class TelegramBot:
 
         Args:
             text: HTML body (use ``escape`` for untrusted substrings).
-            chat_id: Destination; defaults to the CEO chat.
+            chat_id: Destination; defaults to this bot's ``default_chat_id``.
             reply_markup: Inline keyboard, attached to the final chunk only.
             disable_notification: Send silently.
 
@@ -102,7 +124,7 @@ class TelegramBot:
         Raises:
             TelegramError: if Telegram rejects a chunk.
         """
-        chat = chat_id or settings.telegram_ceo_chat_id
+        chat = chat_id or self.default_chat_id
         chunks = split_message(text)
         message_ids: list[int] = []
 
@@ -137,7 +159,7 @@ class TelegramBot:
             title: Short headline.
             body: HTML body text.
             severity: 'critical' | 'warning' | 'info' — sets the emoji.
-            chat_id: Destination; defaults to the alerts chat.
+            chat_id: Destination; defaults to this bot's ``default_chat_id``.
 
         Returns:
             The message ids created.
@@ -147,10 +169,7 @@ class TelegramBot:
         """
         emoji = SEVERITY_EMOJI.get(severity, "🟢")
         text = f"{emoji} <b>{escape(title)}</b>\n\n{body}"
-        return await self.send_message(
-            text,
-            chat_id or settings.telegram_alerts_chat_id or settings.telegram_ceo_chat_id,
-        )
+        return await self.send_message(text, chat_id)
 
     async def request_approval(
         self,
@@ -174,7 +193,7 @@ class TelegramBot:
             proposed_action: Machine-readable description of what runs on
                 approval — the agent reads this back, it is not free text.
             amount_tiyin: Amount at stake, for payment approvals.
-            chat_id: Destination; defaults to the CEO chat.
+            chat_id: Destination; defaults to this bot's ``default_chat_id``.
 
         Returns:
             The approval id (UUID string).
@@ -185,7 +204,7 @@ class TelegramBot:
         """
         import json
 
-        chat = chat_id or settings.telegram_ceo_chat_id
+        chat = chat_id or self.default_chat_id
         row = await fetch_one(
             """
             INSERT INTO approvals

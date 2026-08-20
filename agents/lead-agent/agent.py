@@ -454,8 +454,8 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
         new_leads: Leads that were (or would be) added this run.
         run_id: UUID grouping this run's audit rows.
     """
-    if not settings.telegram_leads_chat_id:
-        log.warning("TELEGRAM_LEADS_CHAT_ID is not set — skipping the Telegram summary")
+    if not settings.lead_agent_telegram_chat_id:
+        log.warning("LEAD_AGENT_TELEGRAM_CHAT_ID is not set — skipping the Telegram summary")
         return
 
     if not new_leads:
@@ -477,8 +477,13 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
             lines.append("")
         text = "\n".join(lines)
 
-    async with TelegramBot(agent=AGENT, run_id=run_id) as bot:
-        await bot.send_message(text, chat_id=settings.telegram_leads_chat_id)
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.lead_agent_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.lead_agent_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text)
 
 
 async def run(dry_run: bool = False) -> int:
@@ -506,7 +511,7 @@ async def run(dry_run: bool = False) -> int:
     required = {
         "serpapi_api_key", "tavily_api_key", ai_key_field,
         "google_service_account_json", "google_leads_sheet_id",
-        "telegram_bot_token", "telegram_leads_chat_id",
+        "lead_agent_telegram_bot_token", "lead_agent_telegram_chat_id",
     }
     unfilled = required & set(settings.missing_placeholders())
     if unfilled and not settings.dry_run:
@@ -549,7 +554,7 @@ async def run(dry_run: bool = False) -> int:
         except TelegramError as exc:
             log.error(
                 "Leads were written to the sheet, but the Telegram summary failed: {}. "
-                "Check TELEGRAM_LEADS_CHAT_ID.",
+                "Check LEAD_AGENT_TELEGRAM_BOT_TOKEN / LEAD_AGENT_TELEGRAM_CHAT_ID.",
                 exc,
             )
 

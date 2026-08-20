@@ -427,7 +427,7 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
             today_local(),
             sent_at,
             message_id,
-            settings.telegram_ceo_chat_id,
+            settings.ceo_brief_telegram_chat_id,
             status,
             data.cash_total_tiyin if data.cash is not None else None,
             data.aging.total_overdue_tiyin if data.aging else None,
@@ -481,7 +481,12 @@ async def run(dry_run: bool = False) -> int:
 
     message_id: int | None = None
     try:
-        async with TelegramBot(agent=AGENT, run_id=run_id) as bot:
+        async with TelegramBot(
+            agent=AGENT,
+            run_id=run_id,
+            bot_token=settings.ceo_brief_telegram_bot_token.get_secret_value(),
+            default_chat_id=settings.ceo_brief_telegram_chat_id,
+        ) as bot:
             if settings.dry_run:
                 print(message)
             else:

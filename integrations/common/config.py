@@ -81,10 +81,30 @@ class Settings(BaseSettings):
     teams_sales_webhook_url: str = ""
 
     # --- Telegram ---
-    telegram_bot_token: SecretStr = SecretStr("")
-    telegram_ceo_chat_id: str = ""
-    telegram_alerts_chat_id: str = ""
-    telegram_leads_chat_id: str = ""  # Lead Agent posts new leads to this group
+    # Each agent gets its OWN bot (own token, own destination chat) rather
+    # than sharing one bot token across agents -- keeps messages visibly
+    # separated by source in Telegram itself, and is what a future per-bot
+    # KPI/usage tracker needs to attribute activity correctly. Create each
+    # bot via @BotFather; they're free, there's no reason to share one.
+    telegram_primary_bot_token: SecretStr = SecretStr("")  # fallback for the
+    # approval-callback webhook handler, which isn't tied to one agent — it
+    # replies on whichever bot's inline button was actually pressed.
+
+    ceo_brief_telegram_bot_token: SecretStr = SecretStr("")
+    ceo_brief_telegram_chat_id: str = ""
+
+    receivables_telegram_bot_token: SecretStr = SecretStr("")
+    receivables_telegram_chat_id: str = ""
+
+    # Reserved for the amoCRM follow-up ("CRM") agent, which currently
+    # notifies via Teams (see integrations/microsoft/teams_notify.py), not
+    # Telegram -- these exist so the naming is ready if/when that changes,
+    # not because the agent sends anything here yet.
+    crm_agent_telegram_bot_token: SecretStr = SecretStr("")
+    crm_agent_telegram_chat_id: str = ""
+
+    lead_agent_telegram_bot_token: SecretStr = SecretStr("")
+    lead_agent_telegram_chat_id: str = ""
 
     # --- Verifix ---
     verifix_mode: str = "csv"
