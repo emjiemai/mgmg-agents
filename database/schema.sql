@@ -356,11 +356,40 @@ CREATE TABLE IF NOT EXISTS tasks (
     target_agent                TEXT,
     assigned_employee_id       UUID         REFERENCES employees(id),
     task_summary                TEXT        NOT NULL,
-    status                      TEXT        NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','done')),
+    has_media                   BOOLEAN     NOT NULL DEFAULT false,  -- delivered via copyMessage, not sendMessage
+    status                      TEXT        NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','started','done')),
     telegram_message_id        BIGINT,
+    started_at                  TIMESTAMPTZ,
+    started_by                  TEXT,
     completed_at                TIMESTAMPTZ,
     completed_by                TEXT,
     CONSTRAINT uq_task_dispatch UNIQUE (director_telegram_user_id, source_message_id, assigned_employee_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_tasks_open ON tasks (created_at DESC) WHERE status = 'sent';
+-- Idempotent fixups for a `tasks` table already created by an earlier version
+-- of this schema (no migration tooling in this project -- CREATE TABLE IF NOT
+-- EXISTS is a no-op against an existing table, so new columns/constraints on
+-- an already-live table need an explicit ALTER here every time).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS has_media BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by TEXT;
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('sent', 'started', 'done'));
+
+DROP INDEX IF EXISTS idx_tasks_open;
+CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started');
+
+-- ---------------------------------------------------------------------------
+-- pending_dispatches — a Director's media/file with no (or an ambiguous)
+-- caption, waiting on a role-picker tap to know who it's actually for.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pending_dispatches (
+    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    director_telegram_user_id  BIGINT       NOT NULL,
+    source_message_id          BIGINT       NOT NULL,
+    caption                    TEXT,
+    resolved_at                TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_dispatches_open ON pending_dispatches (created_at DESC) WHERE resolved_at IS NULL;

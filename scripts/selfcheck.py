@@ -19,7 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from integrations.amocrm.webhook_handler import _extract_lead_events
 from integrations.common.money import format_uzs, format_uzs_short, from_tiyin, to_tiyin, uzs_to_usd
 from integrations.common.timeutil import TASHKENT, days_between, parse_sap_date, to_local, to_utc
-from integrations.org_bot.ops_manager import parse_callback_data, parse_role_and_request, validate_classification
+from integrations.org_bot.ops_manager import (
+    _task_card_text,
+    _task_keyboard,
+    parse_callback_data,
+    parse_role_and_request,
+    validate_classification,
+)
 from integrations.org_bot.roles import AGENT_SLUGS, ROLE_SLUGS
 from integrations.sap.client import aging_bucket
 from integrations.telegram.bot import escape, split_message
@@ -202,6 +208,15 @@ def test_org_bot() -> None:
     )
     check("classify: malformed response is rejected", validate_classification({}), None)
     check_true("agent vocabulary is non-empty", len(AGENT_SLUGS) > 0)
+
+    check_true("task card text carries the summary", "Ombor" in _task_card_text("Ombor tekshiruvi"))
+    fresh_kb = _task_keyboard("task-1")
+    check("fresh task has Start + Done buttons", len(fresh_kb["inline_keyboard"][0]), 2)
+    started_kb = _task_keyboard("task-1", started=True)
+    check("started task has only the Done button", len(started_kb["inline_keyboard"][0]), 1)
+    check_true("Start button carries the right callback_data", "taskstart:task-1" in str(fresh_kb))
+    check_true("Done button carries the right callback_data", "taskdone:task-1" in str(fresh_kb))
+    check_true("started keyboard has no Start button left", "taskstart:" not in str(started_kb))
 
 
 def test_verifix_csv() -> None:

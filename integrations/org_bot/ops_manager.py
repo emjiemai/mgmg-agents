@@ -39,6 +39,7 @@ from integrations.org_bot.roles import (
     AGENT_SLUGS,
     DIRECTOR_ROLE,
     ROLE_LABELS,
+    ROLES,
     ROLE_SLUGS,
     role_picker_keyboard,
 )
@@ -46,6 +47,12 @@ from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
 AGENT = "ops-manager-bot"
 log = setup_logging(AGENT)
+
+# Telegram message fields that mean "this is media/a file, not plain text".
+# Deliberately excludes sticker/location/contact/poll/video_note: those
+# don't support captions in the Bot API, which the Start/Done card edit
+# (editMessageCaption) relies on -- keeping this list to types that do.
+MEDIA_FIELDS = ("photo", "video", "audio", "voice", "document", "animation")
 
 
 # ------------------------------------------------------------------ pure logic
@@ -155,11 +162,54 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
     prefix, rest = parsed
     if prefix == "setrole":
         return await _handle_set_role(rest, callback, run_id)
+    if prefix == "taskstart":
+        return await _handle_task_start(rest, callback, run_id)
     if prefix == "taskdone":
         return await _handle_task_done(rest, callback, run_id)
+    if prefix == "dispatchrole":
+        return await _handle_dispatch_role(rest, callback, run_id)
 
     await _answer(query_id, "Unrecognized action")
     return "unrecognized"
+
+
+def _task_card_text(task_summary: str) -> str:
+    """The base text/caption every task card starts with — recomputed (not
+    stored) so edits can append a status line without needing to fetch or
+    guess the message's current content."""
+    return f"📋 <b>Yangi topshiriq / New task</b>\n\n{escape(task_summary)}"
+
+
+def _task_keyboard(task_id: str, started: bool = False) -> dict[str, Any]:
+    """The Start+Done (or just Done, once started) inline keyboard."""
+    buttons = []
+    if not started:
+        buttons.append({"text": "▶️ Boshladim / Start", "callback_data": f"taskstart:{task_id}"})
+    buttons.append({"text": "✅ Bajardim / Done", "callback_data": f"taskdone:{task_id}"})
+    return {"inline_keyboard": [buttons]}
+
+
+async def _edit_task_card(
+    bot: TelegramBot, chat_id: str, message_id: int, has_media: bool, text: str, keyboard: dict[str, Any]
+) -> None:
+    """Edit a task card in place, using the right Bot API method for its type.
+
+    Telegram requires ``editMessageCaption`` for a media message and
+    ``editMessageText`` for a plain one — calling the wrong one fails
+    outright, which is why every task row tracks ``has_media``.
+    """
+    try:
+        if has_media:
+            await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                "editMessageCaption",
+                {"chat_id": chat_id, "message_id": message_id, "caption": text, "parse_mode": "HTML", "reply_markup": keyboard},
+                mode="notify",
+                target_ref=chat_id,
+            )
+        else:
+            await bot._edit_message(chat_id=chat_id, message_id=message_id, text=text, reply_markup=keyboard)  # noqa: SLF001
+    except TelegramError as err:
+        log.warning("Task card edit failed: {}", err)
 
 
 async def send_role_picker(access_request: dict[str, Any], run_id: uuid.UUID) -> None:
@@ -238,6 +288,41 @@ async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUI
     return "registered"
 
 
+async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Resolve a "Start" button press and notify the Director."""
+    query_id = callback.get("id", "")
+    clicker = callback.get("from", {})
+    started_by = clicker.get("username") or str(clicker.get("id", "unknown"))
+
+    task = await store.mark_task_started(task_id, started_by)
+    if task is None:
+        await _answer(query_id, "Already started or done")
+        return "already_started"
+
+    message = callback.get("message") or {}
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        if message.get("message_id") and message.get("chat", {}).get("id"):
+            text = _task_card_text(task["task_summary"]) + "\n\n▶️ Boshlandi / Started"
+            keyboard = _task_keyboard(str(task["id"]), started=True)
+            await _edit_task_card(
+                bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text, keyboard
+            )
+        await bot._answer_callback(query_id, "Started")  # noqa: SLF001
+
+    try:
+        await _reply(
+            task["director_telegram_user_id"],
+            run_id,
+            f"▶️ Boshlandi / Started: {escape(task['task_summary'])} (@{escape(started_by)})",
+        )
+    except TelegramError as exc:
+        log.warning("Could not notify Director that a task started: {}", exc)
+
+    return "started"
+
+
 async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
     """Resolve a "Mark Done" button press and notify the Director."""
     query_id = callback.get("id", "")
@@ -254,10 +339,10 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         if message.get("message_id") and message.get("chat", {}).get("id"):
-            await bot._edit_message(  # noqa: SLF001
-                chat_id=str(message["chat"]["id"]),
-                message_id=message["message_id"],
-                text=f"✅ Bajarildi — {escape(task['task_summary'])}",
+            text = _task_card_text(task["task_summary"]) + "\n\n✅ Bajarildi / Done"
+            await _edit_task_card(
+                bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text,
+                {"inline_keyboard": []},
             )
         await bot._answer_callback(query_id, "Marked done")  # noqa: SLF001
 
@@ -306,12 +391,19 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         )
         return "not_director"
 
+    has_media = any(message.get(field) for field in MEDIA_FIELDS)
     text = (message.get("text") or "").strip()
-    if not text:
+    caption = (message.get("caption") or "").strip()
+
+    if not has_media and not text:
         return "ignored"
 
     await _reply(telegram_user_id, run_id, "👍 Qabul qildim, yo'naltiryapman... / Got it, routing...")
-    background.add_task(_dispatch_director_task, telegram_user_id, text, message.get("message_id"), run_id)
+
+    if has_media:
+        background.add_task(_dispatch_director_media, telegram_user_id, message.get("message_id"), caption, run_id)
+    else:
+        background.add_task(_dispatch_director_task, telegram_user_id, text, message.get("message_id"), run_id)
     return "queued"
 
 
@@ -343,12 +435,14 @@ async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, A
     return outcome
 
 
-async def _reply(telegram_user_id: int, run_id: uuid.UUID, text: str) -> None:
-    """Send a plain message to one user via OPS Manager Bot's own token."""
+async def _reply(
+    telegram_user_id: int, run_id: uuid.UUID, text: str, reply_markup: dict[str, Any] | None = None
+) -> None:
+    """Send a message to one user via OPS Manager Bot's own token."""
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        await bot.send_message(text, chat_id=str(telegram_user_id))
+        await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup)
 
 
 # ----------------------------------------------------- director task routing
@@ -475,13 +569,180 @@ async def _dispatch_to_role(
             if task is None:
                 continue  # already dispatched -- duplicate webhook delivery
 
-            keyboard = {"inline_keyboard": [[{"text": "✅ Bajarildi / Mark Done", "callback_data": f"taskdone:{task['id']}"}]]}
-            text = f"📋 <b>Yangi topshiriq / New task</b>\n\n{escape(task_summary)}"
             message_ids = await bot.send_message(
-                text, chat_id=str(employee["telegram_user_id"]), reply_markup=keyboard
+                _task_card_text(task_summary),
+                chat_id=str(employee["telegram_user_id"]),
+                reply_markup=_task_keyboard(str(task["id"])),
             )
             if message_ids:
                 await store.set_task_message_id(str(task["id"]), message_ids[0])
+            sent_names.append(employee["display_name"])
+
+    if sent_names:
+        names = ", ".join(escape(n) for n in sent_names)
+        await _reply(director_id, run_id, f"Yuborildi / Sent to: {names} ({ROLE_LABELS[role_slug]}).")
+
+
+# ------------------------------------------------------------------- media/files
+
+
+async def _dispatch_director_media(
+    director_telegram_user_id: int, source_message_id: int | None, caption: str, run_id: uuid.UUID
+) -> None:
+    """Classify a Director's media/file by its caption and dispatch it.
+
+    Runs in the background for the same reason ``_dispatch_director_task``
+    does. Unlike the text path, a classification failure here doesn't dead-
+    end the request — there's an obvious fallback (ask via buttons) that a
+    plain-text task doesn't have, so errors fall through to
+    ``_ask_media_target`` instead of just reporting failure.
+
+    Args:
+        director_telegram_user_id: The Director's Telegram numeric id.
+        source_message_id: Telegram message id of the media itself, needed
+            to ``copyMessage`` it later.
+        caption: The original caption, if any.
+        run_id: UUID grouping this webhook call's audit rows.
+    """
+    if source_message_id is None:
+        log.warning("Media message from {} had no message_id, cannot forward", director_telegram_user_id)
+        await _safe_notify_failure(director_telegram_user_id, run_id)
+        return
+
+    validated = None
+    if caption:
+        try:
+            async with OpenRouterClient(
+                agent=AGENT,
+                run_id=run_id,
+                provider_override=settings.ops_manager_bot_provider,
+                model_override=settings.ops_manager_bot_model,
+                fallback_override=settings.ops_manager_bot_fallback_models,
+            ) as ai:
+                result = await ai.complete_json(CLASSIFY_SYSTEM_PROMPT, build_classify_message(caption))
+            validated = validate_classification(result)
+        except OpenRouterError as exc:
+            log.warning("Media caption classification failed, falling back to a role picker: {}", exc)
+
+    try:
+        if validated is not None and validated[0] == "employee":
+            await _dispatch_media_to_role(
+                director_telegram_user_id, source_message_id, caption or "Media fayl / Media file", validated[1], run_id
+            )
+        else:
+            await _ask_media_target(director_telegram_user_id, source_message_id, caption, run_id)
+    except Exception as exc:  # noqa: BLE001 — a background failure must be recorded, not raised
+        log.error("Media dispatch failed for source_message_id={}: {}", source_message_id, exc)
+        await log_action(
+            agent=AGENT, action="dispatch_media", target_system="telegram",
+            status="failure", run_id=run_id, error_message=str(exc), mode="write",
+        )
+        await _safe_notify_failure(director_telegram_user_id, run_id)
+
+
+async def _ask_media_target(
+    director_telegram_user_id: int, source_message_id: int, caption: str, run_id: uuid.UUID
+) -> None:
+    """Park a media dispatch and ask the Director which role should get it."""
+    row = await store.create_pending_dispatch(
+        director_telegram_user_id=director_telegram_user_id, source_message_id=source_message_id, caption=caption
+    )
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": role.label, "callback_data": f"dispatchrole:{role.slug}:{row['id']}"}] for role in ROLES
+        ]
+    }
+    await _reply(director_telegram_user_id, run_id, "Kimga yuborilsin? / Who should receive this?", keyboard)
+
+
+async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Resolve a pending media dispatch's role-picker button press."""
+    query_id = callback.get("id", "")
+    parsed = parse_role_and_request(rest)
+    if parsed is None:
+        await _answer(query_id, "Unrecognized action")
+        return "unrecognized"
+
+    role_slug, pending_id = parsed
+    if role_slug not in ROLE_SLUGS:
+        await _answer(query_id, "Unrecognized role")
+        return "unrecognized"
+
+    pending = await store.resolve_pending_dispatch(pending_id)
+    if pending is None:
+        await _answer(query_id, "Already handled or not found")
+        return "not_found"
+
+    clicker = callback.get("from", {})
+    if clicker.get("id") != pending["director_telegram_user_id"]:
+        await _answer(query_id, "This isn't your request")
+        return "unauthorized"
+
+    await _answer(query_id, "OK")
+    await _dispatch_media_to_role(
+        pending["director_telegram_user_id"],
+        pending["source_message_id"],
+        pending.get("caption") or "Media fayl / Media file",
+        role_slug,
+        run_id,
+    )
+    return "dispatched"
+
+
+async def _dispatch_media_to_role(
+    director_id: int, source_message_id: int, task_summary: str, role_slug: str, run_id: uuid.UUID
+) -> None:
+    """Create + copy one task card per active employee holding ``role_slug``.
+
+    Mirrors ``_dispatch_to_role`` but delivers via ``copyMessage`` (which
+    duplicates the Director's original media into each recipient's chat)
+    instead of ``sendMessage`` — the same ``tasks`` row/Start/Done tracking
+    applies either way, distinguished only by the ``has_media`` flag.
+    """
+    employees = await store.active_employees_by_role(role_slug)
+    if not employees:
+        await _reply(
+            director_id,
+            run_id,
+            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.\n"
+            f"No one is registered for {ROLE_LABELS[role_slug]} yet.",
+        )
+        return
+
+    sent_names: list[str] = []
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for employee in employees:
+            task = await store.create_task(
+                director_telegram_user_id=director_id,
+                source_message_id=source_message_id,
+                raw_message=task_summary,
+                target_type="employee",
+                target_role=role_slug,
+                target_agent=None,
+                assigned_employee_id=str(employee["id"]),
+                task_summary=task_summary,
+                has_media=True,
+            )
+            if task is None:
+                continue  # already dispatched -- duplicate webhook delivery
+
+            result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                "copyMessage",
+                {
+                    "chat_id": str(employee["telegram_user_id"]),
+                    "from_chat_id": str(director_id),
+                    "message_id": source_message_id,
+                    "caption": _task_card_text(task_summary),
+                    "parse_mode": "HTML",
+                    "reply_markup": _task_keyboard(str(task["id"])),
+                },
+                mode="notify",
+                target_ref=str(employee["telegram_user_id"]),
+            )
+            if result and result.get("message_id"):
+                await store.set_task_message_id(str(task["id"]), result["message_id"])
             sent_names.append(employee["display_name"])
 
     if sent_names:
@@ -585,28 +846,34 @@ async def _fetch_finance_agent_data() -> str:
 
 
 async def _fetch_crm_agent_data() -> str:
-    """The full pipeline snapshot + recent deal events, not just the last 10."""
-    pipeline = await fetch_all(
-        "SELECT pipeline_name, status_name, deals_count, deals_value_uzs, division FROM v_pipeline_latest"
-    )
-    events = await fetch_all(
-        "SELECT event_type, lead_id, price_tiyin, received_at, processing_status FROM amocrm_deal_events "
-        "ORDER BY received_at DESC LIMIT 100"
-    )
-    if not pipeline and not events:
-        return "No CRM pipeline data recorded yet."
+    """The full pipeline snapshot from the in-house CRM.
 
-    lines = ["Pipeline snapshot (every stage):"]
+    `amocrm_pipeline_snapshots` (behind `v_pipeline_latest`) despite its
+    legacy name is what the IN-HOUSE CRM writes to, once a day, via
+    ceo-daily-brief's own `_fetch_crm -> persist_crm_pipeline` — the old
+    amoCRM code path never wrote here and is unrelated. `amocrm_deal_events`
+    (a webhook-driven amoCRM-only event log) has no in-house-CRM equivalent
+    and is deliberately NOT queried here — it would only ever report stale
+    amoCRM data from before the migration, which is worse than reporting
+    nothing.
+    """
+    pipeline = await fetch_all(
+        "SELECT pipeline_name, status_name, deals_count, deals_value_uzs, division, snapshot_date "
+        "FROM v_pipeline_latest"
+    )
+    if not pipeline:
+        return (
+            "No CRM pipeline data recorded yet. This is populated once a day by the "
+            "CEO Daily Brief agent's own CRM read — if that's been failing, the most "
+            "likely cause is CRM_API_KEY still being an unfilled placeholder."
+        )
+
+    lines = [f"Pipeline snapshot as of {pipeline[0]['snapshot_date']}:"]
     for p in pipeline:
         lines.append(
             f"- {p.get('pipeline_name')} / {p.get('status_name')} ({p.get('division')}): "
             f"{p.get('deals_count')} deal(s), {p.get('deals_value_uzs')} UZS"
         )
-    if events:
-        lines.append(f"\nRecent deal events ({len(events)}):")
-        for e in events:
-            price = f", {e['price_tiyin'] / 100:.0f} UZS" if e.get("price_tiyin") else ""
-            lines.append(f"- {e['event_type']} lead {e['lead_id']}{price} ({e['received_at']}, {e['processing_status']})")
     return "\n".join(lines)
 
 

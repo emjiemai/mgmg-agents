@@ -332,17 +332,30 @@ class TelegramBot:
         except TelegramError as err:
             log.warning("answerCallbackQuery failed: {}", err)
 
-    async def _edit_message(self, chat_id: str, message_id: int | None, text: str) -> None:
-        """Replace an approval message with its resolved state."""
+    async def _edit_message(
+        self,
+        chat_id: str,
+        message_id: int | None,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        """Replace a message's text with its resolved state.
+
+        Args:
+            chat_id: Chat containing the message.
+            message_id: The message to edit; no-ops if falsy.
+            text: New HTML body.
+            reply_markup: New inline keyboard, or an explicit ``{"inline_keyboard": []}``
+                to clear an existing one — Telegram keeps the old keyboard
+                attached if this is omitted, it does not clear it automatically.
+        """
         if not message_id:
             return
+        payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         try:
-            await self._call(
-                "editMessageText",
-                {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"},
-                mode="notify",
-                target_ref=chat_id,
-            )
+            await self._call("editMessageText", payload, mode="notify", target_ref=chat_id)
         except TelegramError as err:
             log.warning("editMessageText failed: {}", err)
 

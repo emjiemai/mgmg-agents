@@ -201,6 +201,7 @@ async def create_task(
     target_agent: str | None,
     assigned_employee_id: str | None,
     task_summary: str,
+    has_media: bool = False,
 ) -> dict[str, Any] | None:
     """Create one task-dispatch row (one per recipient employee).
 
@@ -208,7 +209,8 @@ async def create_task(
         director_telegram_user_id: The Director's Telegram numeric id.
         source_message_id: Telegram message id of the Director's original
             request — part of the dedupe key against duplicate webhook delivery.
-        raw_message: The Director's original free-text message.
+        raw_message: The Director's original free-text message (or the
+            caption, for a media dispatch).
         target_type: 'employee' or 'agent'.
         target_role: Role slug, when ``target_type == 'employee'``.
         target_agent: Agent slug, when ``target_type == 'agent'``.
@@ -216,6 +218,10 @@ async def create_task(
             (None only for an 'agent'-type row, which isn't expected to be
             written via this function — agent queries don't create tasks).
         task_summary: Short model-written summary shown to the recipient.
+        has_media: True if this was delivered via ``copyMessage`` (photo/
+            video/audio/voice/document/animation) rather than plain text —
+            determines whether later edits use ``editMessageCaption`` instead
+            of ``editMessageText``.
 
     Returns:
         The new row, or None if this exact (director, message, employee)
@@ -225,8 +231,8 @@ async def create_task(
         """
         INSERT INTO tasks
             (director_telegram_user_id, source_message_id, raw_message,
-             target_type, target_role, target_agent, assigned_employee_id, task_summary)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT ON CONSTRAINT uq_task_dispatch DO NOTHING
         RETURNING *
         """,
@@ -239,6 +245,7 @@ async def create_task(
             target_agent,
             assigned_employee_id,
             task_summary,
+            has_media,
         ),
     )
 
@@ -248,9 +255,32 @@ async def set_task_message_id(task_id: str, message_id: int) -> None:
 
     Args:
         task_id: ``tasks.id``.
-        message_id: The message id returned by ``sendMessage``.
+        message_id: The message id returned by ``sendMessage``/``copyMessage``.
     """
     await execute("UPDATE tasks SET telegram_message_id = %s WHERE id = %s", (message_id, task_id))
+
+
+async def mark_task_started(task_id: str, started_by: str) -> dict[str, Any] | None:
+    """Resolve a task as started, idempotently.
+
+    Args:
+        task_id: ``tasks.id``.
+        started_by: The tapping employee's identifier.
+
+    Returns:
+        The updated row if this call actually changed it (first tap wins,
+        and only from 'sent' — tapping Start after Done is a no-op), else
+        None — callers must treat None as "already started or done", not an error.
+    """
+    return await fetch_one(
+        """
+        UPDATE tasks
+        SET status = 'started', started_at = now(), started_by = %s
+        WHERE id = %s AND status = 'sent'
+        RETURNING *
+        """,
+        (started_by, task_id),
+    )
 
 
 async def mark_task_done(task_id: str, completed_by: str) -> dict[str, Any] | None:
@@ -261,14 +291,16 @@ async def mark_task_done(task_id: str, completed_by: str) -> dict[str, Any] | No
         completed_by: The tapping employee's identifier.
 
     Returns:
-        The updated row if this call actually changed it (first tap wins),
-        else None — callers must treat None as "already done", not an error.
+        The updated row if this call actually changed it (first tap wins;
+        valid from either 'sent' or 'started' — Done doesn't require Start
+        to have been tapped first), else None — callers must treat None as
+        "already done", not an error.
     """
     return await fetch_one(
         """
         UPDATE tasks
         SET status = 'done', completed_at = now(), completed_by = %s
-        WHERE id = %s AND status = 'sent'
+        WHERE id = %s AND status IN ('sent', 'started')
         RETURNING *
         """,
         (completed_by, task_id),
@@ -285,3 +317,52 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
         The row, or None if it doesn't exist.
     """
     return await fetch_one("SELECT * FROM tasks WHERE id = %s", (task_id,))
+
+
+# ------------------------------------------------------------- pending dispatches
+
+
+async def create_pending_dispatch(
+    *, director_telegram_user_id: int, source_message_id: int, caption: str | None
+) -> dict[str, Any]:
+    """Park a media/file dispatch that needs a role picked before it can be sent.
+
+    Args:
+        director_telegram_user_id: The Director's Telegram numeric id.
+        source_message_id: Telegram message id of the media to later ``copyMessage``.
+        caption: The original caption, if any (may be empty/None).
+
+    Returns:
+        The new row.
+    """
+    row = await fetch_one(
+        """
+        INSERT INTO pending_dispatches (director_telegram_user_id, source_message_id, caption)
+        VALUES (%s, %s, %s)
+        RETURNING *
+        """,
+        (director_telegram_user_id, source_message_id, caption),
+    )
+    assert row is not None
+    return row
+
+
+async def resolve_pending_dispatch(pending_id: str) -> dict[str, Any] | None:
+    """Resolve a pending dispatch, idempotently.
+
+    Args:
+        pending_id: ``pending_dispatches.id``.
+
+    Returns:
+        The row if this call actually resolved it (first tap wins), else
+        None — callers must treat None as "already resolved", not an error.
+    """
+    return await fetch_one(
+        """
+        UPDATE pending_dispatches
+        SET resolved_at = now()
+        WHERE id = %s AND resolved_at IS NULL
+        RETURNING *
+        """,
+        (pending_id,),
+    )

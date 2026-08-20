@@ -58,27 +58,60 @@ exists only to receive the admin's own Accept/Reject tap.
    surface). An unrecognized or missing target — including the model's own
    "none" — asks the Director to clarify rather than guessing.
 8. **Target is a human role**: every *active* employee with that role gets
-   their own `tasks` row and their own task card with a "✅ Mark Done" button.
-   Zero active employees for that role → the Director is told so explicitly,
-   not left with silence.
+   their own `tasks` row and their own task card with **"▶️ Start" and
+   "✅ Done" buttons** — Start moves `sent → started` and notifies the
+   Director so they can see progress, not just completion; Done works from
+   either `sent` or `started` (tapping Start first isn't required). Both
+   transitions edit the card in place and are idempotent — a double-tap
+   reports "already handled" rather than double-processing. Zero active
+   employees for that role → the Director is told so explicitly, not left
+   with silence.
 9. **Target is an AI agent**: no live invocation. Each agent's *full*
    already-computed output is read (every lead, every open receivable, the
    full pipeline, 14 days of daily briefs — not a truncated preview) and
    handed to a second AI call along with the Director's question, which
    answers directly. Still no write access — see Known gaps/cut-from-v1.
-10. Any employee tapping "Mark Done" resolves their task idempotently and
-    best-effort notifies the Director. Free text from a non-Director employee
-    gets a canned "only the Director can assign tasks here" reply — no NLP on
-    the employee side, keeps v1 fully deterministic.
+10. Any employee tapping "Start" or "Done" resolves their task idempotently
+    and best-effort notifies the Director. Free text from a non-Director
+    employee gets a canned "only the Director can assign tasks here" reply —
+    no NLP on the employee side, keeps this fully deterministic.
+
+## Flow — media, photos, videos, voice notes, files
+
+The Director isn't limited to text. Sending a photo/video/audio/voice/
+document/animation ("any data") is routed the same way a text task is, just
+delivered with `copyMessage` instead of `sendMessage` (so it duplicates the
+actual file into the recipient's chat, not a link or a description of it) —
+and it gets the exact same `tasks` row + Start/Done card as a text task,
+tracked via a `has_media` flag on the row (Telegram requires a different Bot
+API call to edit a caption vs. plain text, so every card edit checks this
+flag to call the right one).
+
+- **With a caption**: the caption is classified exactly like a text task. If
+  it resolves to an employee role, it's dispatched immediately — no extra
+  step. Media can't be routed to an AI agent (agents don't receive files); if
+  classification lands on "agent" or is ambiguous, it falls through to the
+  role-picker below rather than guessing.
+- **Without a caption, or an ambiguous one**: there's no text to classify, so
+  guessing would be worse than asking. A `pending_dispatches` row is created
+  and the Director gets an 8-button role picker (`dispatchrole:{role}:{id}`)
+  — tapping one dispatches immediately, same as above.
+
+Deliberately excluded from "media": stickers, contacts, locations, polls, and
+video notes (round videos) — none of these support a caption in the Bot API,
+which the Start/Done card edit relies on, so forwarding them would need a
+different (uncaptioned) card design this v1 doesn't build.
 
 ## Agent-name mapping (org-chart name → what actually gets read)
 
 | Org-chart name | Repo agent | Data source |
 |---|---|---|
-| Lead Agent | `agents/lead-agent` | Leads Google Sheet, last 15 rows |
-| Finance Agent | `agents/receivables` | `v_ar_aging_latest` + recent `alerts WHERE agent='receivables'` |
-| CRM agent | `agents/amocrm-followup` | `v_pipeline_latest` + recent `amocrm_deal_events` |
-| Reporter Agent | `agents/ceo-daily-brief` | `daily_briefs`' denormalized headline figures (cash, AR overdue, pipeline, new leads, etc.) |
+| Lead Agent | `agents/lead-agent` | Leads Google Sheet, every row, all 20 columns |
+| Finance Agent | `agents/receivables` | `v_ar_aging_latest` (every open receivable) + recent `alerts WHERE agent='receivables'` |
+| CRM agent | `agents/amocrm-followup`'s table, but really the **in-house CRM** (see below) | `v_pipeline_latest` |
+| Reporter Agent | `agents/ceo-daily-brief` | `daily_briefs`, last 14 days |
+
+**A gotcha worth knowing**: `v_pipeline_latest` sits on top of `amocrm_pipeline_snapshots` — a legacy table name from before this business migrated off amoCRM to its own CRM (`CRM_BASE_URL`/`CRM_API_KEY`). Despite the name, it is NOT populated by `agents/amocrm-followup` (that agent still targets the real, unconfigured amoCRM API and has no code path that writes here at all). It's populated by `agents/ceo-daily-brief`'s own daily `_fetch_crm() → persist_crm_pipeline()`, which reuses this table on purpose rather than adding a parallel one. If the CRM agent ever reports "no data," the fix is almost always `CRM_API_KEY` being an unfilled placeholder, not anything in `org_bot` — `_fetch_crm_agent_data`'s own "no data" message says this directly. `amocrm_deal_events` (a webhook-driven amoCRM event log) has no in-house-CRM equivalent and is intentionally not queried — reporting stale pre-migration amoCRM events would be worse than reporting nothing.
 
 If "Finance Agent" was meant as the cash/financial section of the CEO brief
 rather than receivables specifically, `_fetch_finance_agent_data` in
@@ -127,14 +160,29 @@ own chat first for that message before assuming it's a bug.
 
 ## Explicitly cut from v1
 
-No task edit/cancel. No employee revocation UI (the `status='revoked'` value
-exists in the schema, nothing sets it yet). No group-chat task delivery — every
-task lands in a personal DM. No admin self-service role-list editing. No live
-per-agent "ask" endpoints — v1 answers from each agent's already-computed
-output only; add a real on-demand query path per agent if that proves
-insufficient for a specific question shape. No mandatory Director
-confirm-before-send on routing decisions — routing is auditable via
-`agent_actions`/`tasks` but not gated on a second tap.
+No task edit/cancel (Start and Done exist; there's no "reassign" or "delete a
+task"). No employee revocation UI (the `status='revoked'` value exists in the
+schema, nothing sets it yet). No group-chat task delivery — every task lands
+in a personal DM. No admin self-service role-list editing. No live per-agent
+"ask" endpoints — it answers from each agent's already-computed output only;
+add a real on-demand query path per agent if that proves insufficient for a
+specific question shape. No mandatory Director confirm-before-send on
+routing decisions — routing is auditable via `agent_actions`/`tasks` but not
+gated on a second tap.
+
+**On "write access"**: the bot can now write — task status transitions
+(Start/Done) and media dispatch (`copyMessage`) are real writes, not just
+answers. What it deliberately still can't do is take an *autonomous* action
+on its own judgment against an external system (update a lead's stage in
+Sheets, edit a CRM deal, etc.) — every write it performs today is a direct,
+bounded reflection of something a human explicitly did (the Director sent
+this exact task/file, an employee tapped this exact button), not a decision
+the model made on its own about what to change. If a specific autonomous
+write action is wanted later, gate it behind `TelegramBot.request_approval`
+(the same Approve/Decline pattern payment/contract/HR approvals already use)
+rather than executing it directly — this project's whole security doctrine
+is human-in-the-loop for anything consequential, and a free-text-driven bot
+is the last place to relax that.
 
 ## Known gaps
 
