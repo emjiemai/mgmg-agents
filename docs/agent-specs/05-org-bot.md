@@ -9,8 +9,11 @@
 
 Two bots implementing the org chart the business owner sketched: the
 Operations Director gives a task in plain language to **OPS Manager Bot**,
-which decides whether it's for one of 8 human roles or one of 4 AI agents and
-sends it. **Admin Bot** is a separate, admin-only bot that turns an
+which decides whether it's for one of the human roles or one of the AI/
+reference sources and sends it (`integrations/org_bot/roles.py` is the single
+source of truth for the current counts — this list grows as MGMG adds
+business lines, most recently a Garmin watch retail business). **Admin Bot**
+is a separate, admin-only bot that turns an
 unregistered user's first message into an Accept/Reject decision.
 
 ## Why two bots, and why employees never talk to Admin Bot
@@ -49,8 +52,9 @@ exists only to receive the admin's own Accept/Reject tap.
    (`director_telegram_user_id, source_message_id, assigned_employee_id`) is
    the backstop against that.
 7. Classification (`integrations/org_bot/prompt.py:CLASSIFY_SYSTEM_PROMPT`) is
-   one AI call against a **closed 12-way enum** (8 roles + 4 agents + "none"),
-   not free text. The model's raw output is validated in code
+   one AI call against a **closed, bounded enum** (every role in `ROLES` +
+   every entry in `AGENTS` + "none" + "refused" — see `roles.py` for the
+   current list), not free text. The model's raw output is validated in code
    (`ops_manager.validate_classification`) against `roles.py`'s known slugs
    before anything is trusted — this is the proportionate backstop for a
    bounded enum, versus Lead Agent's full second-pass verification (which
@@ -242,7 +246,8 @@ to see or remove themselves, by design.
 | Finance Agent | `agents/receivables` | `v_ar_aging_latest` (every open receivable) + recent `alerts WHERE agent='receivables'` |
 | CRM agent | `agents/amocrm-followup`'s table, but really the **in-house CRM** (see below) | `v_pipeline_latest` |
 | Reporter Agent | `agents/ceo-daily-brief` | `daily_briefs`, last 14 days |
-| All Systems (`all_systems`) | not a real agent — a `roles.py` pseudo-entry | all four fetchers above, run and concatenated, labeled per section |
+| All Systems (`all_systems`) | not a real agent — a `roles.py` pseudo-entry | all four fetchers above, run and concatenated, labeled per section — deliberately excludes Garmin Catalog (product reference, not operational status) |
+| Garmin Catalog (`garmin_catalog`) | not a real agent — a static reference snapshot | `prompt.py`'s `GARMIN_CATALOG` constant, ~50 products with real prices, captured live via a real browser (the site is a JS SPA — a plain fetch only sees "Loading...") on 2026-08-21. A point-in-time snapshot, not a live feed — the answer prompt tells the seller to confirm current price/stock before finalizing a sale. Refresh by re-capturing the page and updating the constant by hand; nothing re-fetches this automatically. |
 
 **A gotcha worth knowing**: `v_pipeline_latest` sits on top of `amocrm_pipeline_snapshots` — a legacy table name from before this business migrated off amoCRM to its own CRM (`CRM_BASE_URL`/`CRM_API_KEY`). Despite the name, it is NOT populated by `agents/amocrm-followup` (that agent still targets the real, unconfigured amoCRM API and has no code path that writes here at all). It's populated by `agents/ceo-daily-brief`'s own daily `_fetch_crm() → persist_crm_pipeline()`, which reuses this table on purpose rather than adding a parallel one. If the CRM agent ever reports "no data," the fix is almost always `CRM_API_KEY` being an unfilled placeholder, not anything in `org_bot` — `_fetch_crm_agent_data`'s own "no data" message says this directly. `amocrm_deal_events` (a webhook-driven amoCRM event log) has no in-house-CRM equivalent and is intentionally not queried — reporting stale pre-migration amoCRM events would be worse than reporting nothing.
 

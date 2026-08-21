@@ -37,6 +37,7 @@ ROLES: list[Role] = [
     Role("operatsion_direktor", "Operatsion Direktor"),
     Role("mobilograf", "Mobilograf"),
     Role("aloqa_markazi", "Aloqa Markazi (Call Center)"),
+    Role("garmin_sotuv", "Garmin Sotuv"),
 ]
 
 AGENTS: list[Agent] = [
@@ -44,7 +45,8 @@ AGENTS: list[Agent] = [
     Agent("finance_agent", "Finance Agent", "every open receivable + recent alerts"),
     Agent("crm_agent", "CRM Agent", "full CRM pipeline snapshot"),
     Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
-    Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from all four of the above"),
+    Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the four operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
+    Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
 ]
 
 ROLE_SLUGS: set[str] = {r.slug for r in ROLES}

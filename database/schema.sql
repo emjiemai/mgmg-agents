@@ -312,7 +312,8 @@ CREATE TABLE IF NOT EXISTS employees (
     display_name      TEXT         NOT NULL,
     role              TEXT         NOT NULL
                           CHECK (role IN ('b2b_sotuv','it','buxgalteriya','hr','ombor',
-                                           'operatsion_direktor','mobilograf','aloqa_markazi')),
+                                           'operatsion_direktor','mobilograf','aloqa_markazi',
+                                           'garmin_sotuv')),
     status            TEXT         NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
     approved_by       TEXT,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -320,10 +321,16 @@ CREATE TABLE IF NOT EXISTS employees (
 
 CREATE INDEX IF NOT EXISTS idx_employees_role_active ON employees (role) WHERE status = 'active';
 
--- Idempotent fixup for an `employees` table already created by an earlier
--- version of this schema (see the same note on `tasks` below).
+-- Idempotent fixups for an `employees` table already created by an earlier
+-- version of this schema (see the same note on `tasks` below) -- both the new
+-- columns AND the role CHECK, whenever a new role is added to roles.py.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS revoked_by TEXT;
+ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_role_check;
+ALTER TABLE employees ADD CONSTRAINT employees_role_check
+    CHECK (role IN ('b2b_sotuv','it','buxgalteriya','hr','ombor',
+                     'operatsion_direktor','mobilograf','aloqa_markazi',
+                     'garmin_sotuv'));
 
 -- ---------------------------------------------------------------------------
 -- access_requests — pending join requests, decided by the admin via Admin Bot.

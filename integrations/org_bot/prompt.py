@@ -40,16 +40,128 @@ from integrations.org_bot.roles import AGENTS, ROLES
 _ROLE_LINES = "\n".join(f"  - {r.slug}: {r.label}" for r in ROLES)
 _AGENT_LINES = "\n".join(f"  - {a.slug}: {a.label} ({a.data_source})" for a in AGENTS)
 
+# Captured live from garmin.com.uz/catalog on 2026-08-21 (a JS single-page app
+# -- a plain fetch only sees "Loading...", this required a real browser to
+# render). This is a point-in-time snapshot, not a live feed: prices and
+# stock can change on the real site. Fed to the answer prompt only when
+# agent_slug == "garmin_catalog" -- see ops_manager._fetch_agent_data.
+GARMIN_CATALOG = """\
+Snapshot date: 2026-08-21. All prices in UZS (so'm), as listed on garmin.com.uz/catalog.
+This is a point-in-time price/stock snapshot, not live — the garmin_sotuv employee
+should confirm current price/availability with the customer before finalizing a sale.
+
+ПРЕМИУМ ЧАСЫ (Premium — MARQ line):
+- MARQ Athlete Gen 2 — 29 750 000
+- MARQ Athlete Gen 2, Carbon — 43 350 000
+- MARQ Golfer Gen 2 — 35 900 000
+- MARQ Golfer Gen 2, Carbon — 43 800 000
+- MARQ Adventurer Gen 2 — 33 900 000
+- MARQ Adventurer Gen 2, Damascus — 45 900 000
+- MARQ Aviator Gen 2 — 38 900 000
+
+ПРЕМИУМ МУЛЬТИСПОРТ (Premium multisport — fenix 8 line):
+- fenix 8 43mm, AMOLED, Sapphire — 17 800 000 (also listed at 18 600 000, separate SKU)
+- fenix 8 47mm, AMOLED, Sapphire Titanium Band — 20 600 000
+- fenix 8 47mm, AMOLED, Sapphire — 17 800 000 and 18 000 000 (two SKUs)
+- fenix 8 51mm, AMOLED, Sapphire — 19 300 000 / 20 100 000 / 19 300 000 (multiple SKUs)
+- fenix 8 51mm, AMOLED, Glass — 17 700 000
+- fenix 8 51mm, Sapphire Solar — 19 300 000
+- fēnix 8 — 47mm, Solar — 18 000 000
+
+УНИВЕРСАЛЬНЫЕ (Universal — Venu/vívoactive line):
+- Venu X1 Black — 13 360 000
+- Venu X1 French Gray — 13 360 000
+- Venu 4 (41mm) Lunar Gold + Bone — 9 000 000
+- Venu 4 (45mm) Silver + Gray — 9 000 000
+- vívoactive 6 Black Slate — 5 400 000
+
+СТАРТ В БЕГ (Entry running — Forerunner 70/165/170):
+- Forerunner 70 Cool Lavender, Citron, Whitestone, Black — 3 600 000
+- Forerunner 170 Music Whitestone, Black, Teal Green — 5 300 000
+- Forerunner 170 Whitestone/Cloud Blue — 4 800 000
+- Forerunner 170 Black/Amp Yellow — 4 800 000
+- Forerunner 165 Music Black/Slate Grey — 5 300 000
+
+AMOLED ДЛЯ БЕГУНОВ (AMOLED for runners):
+- Forerunner 570 — 8 710 000
+- Forerunner 265 — 8 200 000
+
+ТРИАТЛОН GPS:
+- Forerunner 970 — 12 000 000
+
+ТАКТИЧЕСКИЕ (Tactical — Tactix line):
+- Tactix 8 Standard, AMOLED/Solar 51mm — 23 400 000
+- Tactix 8 Standard, AMOLED 47mm — 21 850 000
+- tactix 7 AMOLED — 21 550 000
+
+ТАКТИЧЕСКИЕ SOLAR:
+- Instinct 3, Tactical, Solar, 45mm, Black — 8 200 000
+- Instinct 3, Tactical, Solar, 50mm, Black — 8 710 000
+- tactix 8 — 51mm, Solar Elite — 26 400 000
+
+ПРОЧНЫЕ С GPS (Rugged with GPS — Instinct line):
+- Instinct Crossover AMOLED, BronzeSunburst/Cocoa — 9 000 000
+- Instinct Crossover AMOLED, Tactical, Black — 11 200 000
+- Instinct Crossover AMOLED, Charcoal Grey — 9 000 000
+- Instinct 3, 45mm, AMOLED, Black with Bolt Blue Band — 7 670 000
+- Instinct 3, 50mm, AMOLED, Neotropic Bezel with Twilight Band — 8 000 000
+- Instinct 3 — 45mm, AMOLED — 7 670 000
+
+AMOLED OUTDOOR:
+- fēnix E — 47mm, AMOLED — 13 900 000
+
+УЛЬТРА-ВЫНОСЛИВОСТЬ (Ultra endurance):
+- Enduro 3 — 14 400 000
+
+AMOLED + ФОНАРИК (AMOLED + flashlight):
+- Epix Pro (Gen 2) Sapphire — 14 500 000
+
+ТУРИСТИЧЕСКИЙ GPS (Hiking GPS):
+- GPSMAP 67 — 7 900 000
+
+СТИЛЬ И GPS (Style + GPS):
+- Lily 2 Active — 5 750 000
+
+ФИТНЕС-БРАСЛЕТ (Fitness band):
+- vívosmart 5 — 2 550 000
+
+ВЕЛОНАВИГАТОР (Cycling navigator):
+- Edge 1050 — 11 600 000
+
+ТРЕНИРОВКИ (Cycling training):
+- Edge 550 — 7 300 000
+
+РАДАР + КАМЕРА (Cycling radar/camera):
+- Varia RCT715 — 7 050 000
+
+ЭХОЛОТ (Fish finder):
+- Striker Vivid 7sv, WW w/GT52 — 9 100 000
+
+ДАЙВ-КОМПЬЮТЕР (Dive computer):
+- Descent Mk3i — 51mm — 22 600 000
+
+ГОЛЬФ GPS:
+- Approach S70 — 47mm — 12 600 000
+
+АКСЕССУАРЫ (Accessories):
+- HRM 600 M-XL (heart rate monitor) — 2 600 000
+"""
+
 # Shared by both prompts.
 COMPANY_CONTEXT = """\
 # WHO YOU WORK FOR
-You work for MGMG, a business group in Uzbekistan. One of its business lines
-is Primus Laundry — industrial laundry equipment (washer-extractors, tumble
-dryers, flatwork ironers, chemicals) and installation/maintenance services —
-which is what the Lead Agent's data is about specifically, not MGMG's other
-business lines. The person you're talking to runs day-to-day MGMG operations
-across every department (sales, IT, accounting, warehouse, HR, content/
-photography, call center) — not just Primus Laundry.
+You work for MGMG, a business group in Uzbekistan with more than one
+business line — do not assume every message is about the same one:
+  - Primus Laundry — industrial laundry equipment (washer-extractors, tumble
+    dryers, flatwork ironers, chemicals) and installation/maintenance
+    services. This is what the Lead Agent's data is about specifically.
+  - A Garmin watch retail business (an authorised Garmin distributor,
+    office-based) — smartwatches, running/outdoor/multisport watches, dive
+    computers, cycling and marine electronics. garmin_sotuv is the role for
+    this; garmin_catalog is the product+price reference for it.
+The person you're talking to runs day-to-day MGMG operations across every
+department and every business line (sales, IT, accounting, warehouse, HR,
+content/photography, call center) — not just one of them.
 
 # WHAT YOU CAN AND CANNOT DO — CHECK THIS BEFORE EVERY DECISION
 You have exactly two abilities:

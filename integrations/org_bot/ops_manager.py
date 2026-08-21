@@ -31,6 +31,7 @@ from integrations.org_bot import admin, store
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
+    GARMIN_CATALOG,
     build_answer_message,
     build_classify_message,
     format_history,
@@ -899,6 +900,13 @@ async def _fetch_agent_data(agent_slug: str) -> str:
     alternative (silently picking one system and ignoring the rest of the
     question) is the actual problem this exists to avoid.
     """
+    # garmin_catalog is a static reference snapshot, not a live operational
+    # system — deliberately excluded from all_systems below (a "how's the
+    # business doing" combined summary shouldn't be padded with a product
+    # price list that has nothing to do with operational status).
+    if agent_slug == "garmin_catalog":
+        return GARMIN_CATALOG
+
     fetchers = {
         "lead_agent": _fetch_lead_agent_data,
         "finance_agent": _fetch_finance_agent_data,
