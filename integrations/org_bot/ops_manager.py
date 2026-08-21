@@ -44,7 +44,7 @@ from integrations.org_bot.roles import (
     ROLE_SLUGS,
     role_picker_keyboard,
 )
-from integrations.telegram.bot import TelegramBot, TelegramError, escape
+from integrations.telegram.bot import TelegramBot, TelegramError, escape, sanitize_model_html
 
 AGENT = "ops-manager-bot"
 log = setup_logging(AGENT)
@@ -176,11 +176,22 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
     return "unrecognized"
 
 
-def _task_card_text(task_summary: str) -> str:
+def _task_card_text(task_summary: str, raw_message: str | None = None) -> str:
     """The base text/caption every task card starts with — recomputed (not
     stored) so edits can append a status line without needing to fetch or
-    guess the message's current content."""
-    return f"📋 <b>Yangi topshiriq / New task</b>\n\n{escape(task_summary)}"
+    guess the message's current content.
+
+    ``task_summary`` is AI-generated (sanitized to allow its own <b>/<i>
+    tags through rather than escaping them into visible literal text — the
+    bug that made "<b>" show up as plain text in a real reply). ``raw_message``
+    is the Director's own words, shown underneath when it adds anything the
+    summary might have compressed away or gotten wrong — a real fallback for
+    "the AI's phrasing is confusing", not just a formatting nicety.
+    """
+    text = f"📋 <b>Yangi topshiriq / New task</b>\n\n{sanitize_model_html(task_summary)}"
+    if raw_message and raw_message.strip() and raw_message.strip() != task_summary.strip():
+        text += f"\n\n<i>Direktordan / From the Director:</i>\n{escape(raw_message.strip())}"
+    return text
 
 
 def _task_keyboard(task_id: str, started: bool = False) -> dict[str, Any]:
@@ -307,7 +318,7 @@ async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uui
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         if message.get("message_id") and message.get("chat", {}).get("id"):
-            text = _task_card_text(task["task_summary"]) + "\n\n▶️ Boshlandi / Started"
+            text = _task_card_text(task["task_summary"], task.get("raw_message")) + "\n\n▶️ Boshlandi / Started"
             keyboard = _task_keyboard(str(task["id"]), started=True)
             await _edit_task_card(
                 bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text, keyboard
@@ -342,7 +353,7 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         if message.get("message_id") and message.get("chat", {}).get("id"):
-            text = _task_card_text(task["task_summary"]) + "\n\n✅ Bajarildi / Done"
+            text = _task_card_text(task["task_summary"], task.get("raw_message")) + "\n\n✅ Bajarildi / Done"
             await _edit_task_card(
                 bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text,
                 {"inline_keyboard": []},
@@ -395,7 +406,7 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     if not has_media and not text:
         return "ignored"
 
-    await _reply(telegram_user_id, run_id, "👍 Qabul qildim, yo'naltiryapman... / Got it, routing...")
+    await _show_typing(telegram_user_id, run_id)
 
     if has_media:
         background.add_task(_dispatch_director_media, telegram_user_id, message.get("message_id"), caption, run_id)
@@ -440,6 +451,16 @@ async def _reply(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup)
+
+
+async def _show_typing(telegram_user_id: int, run_id: uuid.UUID) -> None:
+    """Show Telegram's native typing indicator instead of a canned text ack —
+    a real classification/answer call takes a few seconds; this signals
+    "working on it" without leaving a repetitive message in the chat."""
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot.send_chat_action(chat_id=str(telegram_user_id))
 
 
 async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text: str) -> None:
@@ -563,7 +584,7 @@ async def _dispatch_director_task(
             # The guardrail path — the model's own polite refusal, already in
             # Uzbek/Russian per prompt.py's GUARDRAILS block.
             log.info("Classification refused a message from {}", director_telegram_user_id)
-            await _reply_and_log(director_telegram_user_id, run_id, task_summary)
+            await _reply_and_log(director_telegram_user_id, run_id, sanitize_model_html(task_summary))
         else:  # "none"
             # Use the model's own explanation (e.g. "I can't delete records,
             # that needs to be done manually in the Sheet") rather than a
@@ -573,7 +594,7 @@ async def _dispatch_director_task(
             await _reply_and_log(
                 director_telegram_user_id,
                 run_id,
-                task_summary or "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?",
+                sanitize_model_html(task_summary) or "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?",
             )
 
     except OpenRouterError as exc:
@@ -641,7 +662,7 @@ async def _dispatch_to_role(
                 continue  # already dispatched -- duplicate webhook delivery
 
             message_ids = await bot.send_message(
-                _task_card_text(task_summary),
+                _task_card_text(task_summary, raw_message),
                 chat_id=str(employee["telegram_user_id"]),
                 reply_markup=_task_keyboard(str(task["id"])),
             )
@@ -708,7 +729,10 @@ async def _dispatch_director_media(
             # Do NOT fall through to the role picker: an inappropriate
             # caption shouldn't still get its attached file forwarded.
             log.info("Media caption classification refused a message from {}", director_telegram_user_id)
-            await _reply(director_telegram_user_id, run_id, refusal_text or "Kechirasiz, bunga yordam bera olmayman.")
+            await _reply(
+                director_telegram_user_id, run_id,
+                sanitize_model_html(refusal_text) if refusal_text else "Kechirasiz, bunga yordam bera olmayman.",
+            )
         else:
             await _ask_media_target(director_telegram_user_id, source_message_id, caption, run_id)
     except Exception as exc:  # noqa: BLE001 — a background failure must be recorded, not raised
@@ -858,7 +882,7 @@ async def _answer_from_agent(
         answer = await ai.complete(
             ANSWER_SYSTEM_PROMPT, build_answer_message(AGENT_LABELS[agent_slug], data, question, history)
         )
-    await _reply_and_log(director_id, run_id, escape(answer))
+    await _reply_and_log(director_id, run_id, sanitize_model_html(answer))
 
 
 # ------------------------------------------------------------- agent data reads

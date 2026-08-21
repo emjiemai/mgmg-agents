@@ -171,6 +171,25 @@ class TelegramBot:
         text = f"{emoji} <b>{escape(title)}</b>\n\n{body}"
         return await self.send_message(text, chat_id)
 
+    async def send_chat_action(self, chat_id: str | None = None, action: str = "typing") -> None:
+        """Show Telegram's native "..." typing indicator instead of a text message.
+
+        Lasts about 5 seconds on Telegram's own side before fading — meant as
+        a quick "working on it" signal for a call that's about to take a few
+        seconds, without leaving a permanent, repetitive message in the chat
+        the way a canned "got it, processing..." reply would.
+
+        Args:
+            chat_id: Destination; defaults to this bot's ``default_chat_id``.
+            action: One of Telegram's chat action types; 'typing' fits every
+                use in this project so far.
+        """
+        chat = chat_id or self.default_chat_id
+        try:
+            await self._call("sendChatAction", {"chat_id": chat, "action": action}, mode="notify", target_ref=str(chat))
+        except TelegramError as err:
+            log.warning("sendChatAction failed: {}", err)
+
     async def request_approval(
         self,
         *,
@@ -425,6 +444,34 @@ def escape(text: str | None) -> str:
         The text with ``&``, ``<`` and ``>`` escaped; "" for None.
     """
     return html.escape(str(text), quote=False) if text is not None else ""
+
+
+_MODEL_ALLOWED_TAGS = ("b", "i")
+
+
+def sanitize_model_html(text: str | None) -> str:
+    """Escape AI-generated text for Telegram HTML, except a small allowlist.
+
+    Some prompts deliberately tell a model it may use ``<b>``/``<i>`` for
+    emphasis (e.g. bolding a lead's name in a summary) — plain ``escape()``
+    would turn those into visibly broken literal "<b>" text instead of real
+    bold formatting, which is exactly the wrong tradeoff for output that's
+    *meant* to contain those two tags. This escapes everything first (so a
+    stray, unexpected, or malformed tag can never break the HTML parse or
+    render as unintended markup), then selectively un-escapes only the exact
+    allowed tags back to real ones — the model gets its two formatting tools,
+    nothing else survives.
+
+    Args:
+        text: Model-generated text that may contain ``<b>``/``<i>`` tags.
+
+    Returns:
+        Telegram-HTML-safe text with only ``<b>``/``<i>`` live as real tags.
+    """
+    escaped = escape(text)
+    for tag in _MODEL_ALLOWED_TAGS:
+        escaped = escaped.replace(f"&lt;{tag}&gt;", f"<{tag}>").replace(f"&lt;/{tag}&gt;", f"</{tag}>")
+    return escaped
 
 
 def split_message(text: str, limit: int = SAFE_CHUNK) -> list[str]:

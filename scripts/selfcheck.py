@@ -27,6 +27,7 @@ from integrations.org_bot.ops_manager import (
     validate_classification,
 )
 from integrations.org_bot.roles import AGENT_SLUGS, ROLE_SLUGS
+from integrations.telegram.bot import sanitize_model_html
 from integrations.sap.client import aging_bucket
 from integrations.telegram.bot import escape, split_message
 
@@ -222,6 +223,29 @@ def test_org_bot() -> None:
     check_true("Start button carries the right callback_data", "taskstart:task-1" in str(fresh_kb))
     check_true("Done button carries the right callback_data", "taskdone:task-1" in str(fresh_kb))
     check_true("started keyboard has no Start button left", "taskstart:" not in str(started_kb))
+
+    # The real bug: escape() alone turns a model's deliberate <b> into
+    # literal visible "<b>" text once Telegram's HTML parser unescapes
+    # &lt;b&gt; back to a literal "<" for display. sanitize_model_html must
+    # let the allowed tags through as real tags while still neutralizing
+    # anything else, so a stray "<" from underlying data can't break the
+    # HTML parse or render as unintended markup.
+    check(
+        "sanitize: allowed <b> survives as a real tag",
+        sanitize_model_html("Eng yaxshi lid: <b>JW Marriott</b>"),
+        "Eng yaxshi lid: <b>JW Marriott</b>",
+    )
+    check(
+        "sanitize: allowed <i> survives as a real tag",
+        sanitize_model_html("<i>Eslatma</i>: tekshiring"),
+        "<i>Eslatma</i>: tekshiring",
+    )
+    check(
+        "sanitize: an unrelated tag is neutralized, not rendered",
+        sanitize_model_html("narx < 100 va <script>alert(1)</script>"),
+        "narx &lt; 100 va &lt;script&gt;alert(1)&lt;/script&gt;",
+    )
+    check("sanitize: None becomes empty string", sanitize_model_html(None), "")
 
 
 def test_verifix_csv() -> None:

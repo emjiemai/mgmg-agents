@@ -157,6 +157,39 @@ the model had nothing better to fall back on:
   model's own `task_summary` explains *why* and *what to do instead*. Fixed
   to use the model's `task_summary` (same pattern `"refused"` already used).
 
+## UX fixes from real usage (2026-08-21)
+
+- **The "👍 Got it, routing..." ack was replaced with Telegram's native
+  typing indicator** (`TelegramBot.send_chat_action`) — a real classification/
+  answer call takes a few seconds, and the canned text ack sent on every
+  single message read as repetitive and robotic. The typing bubble signals
+  the same thing without leaving a permanent message in the chat.
+- **A real HTML-escaping bug, not a cosmetic one**: `ANSWER_SYSTEM_PROMPT`
+  tells the model its reply is "sent as Telegram HTML," so the model
+  reasonably uses `<b>...</b>` for emphasis — but the code then ran
+  `escape()` on the model's output before sending, turning `&lt;b&gt;`
+  into literal visible "<b>" text once Telegram's own HTML parser rendered
+  the escaped entity back to a literal character for display. Fixed with
+  `sanitize_model_html()` (`integrations/telegram/bot.py`): escape
+  everything first, then selectively un-escape only `<b>`/`<i>` back to
+  real tags — a stray or malformed tag from underlying data can still never
+  break the HTML parse or render as unintended markup, but the model's own
+  deliberate formatting now actually renders. Applied everywhere AI-
+  generated text reaches a Director or employee (task summaries, answers,
+  refusals) — plain `escape()` stays in use for genuine user-typed text
+  (names, raw messages), which is a different case and shouldn't have tags
+  un-escaped from it. Verified live: the model still emits `<b>` for a
+  "which lead is best" style answer, and the tag now survives as real
+  formatting through `sanitize_model_html`, not literal text.
+- **Task cards now show the Director's original words alongside the AI's
+  summary** (`_task_card_text`, when they differ) — a direct answer to "AI
+  saying something abnormal misunderstandable to employee": even if the
+  AI's phrasing is ever unclear, the employee can see exactly what the
+  Director actually typed, not just a paraphrase of it. Also tightened the
+  classification prompt's guidance on how `task_summary` should read for an
+  employee — a complete, natural instruction as if the Director wrote it
+  directly, not a compressed note-to-self.
+
 ## Guardrails
 
 Both AI prompts (`integrations/org_bot/prompt.py`'s shared `GUARDRAILS`
