@@ -279,9 +279,17 @@ envVarGroups:
       # Runs on its own provider, independent of AI_PROVIDER above (which
       # Lead Agent uses) -- confirmed working live via OpenRouterClient's
       # provider_override for both JSON-mode and plain-text calls.
+      #
+      # sync: false (not a static value:) for the same reason as
+      # AGENT_WRITES_ENABLED above -- a hardcoded blueprint default here would
+      # get silently re-applied and wipe out a manual switch (e.g. to
+      # "deepseek" while OpenRouter credits are out) on every push-triggered
+      # blueprint sync. Defaults shown are what to enter once in the
+      # dashboard; change the dashboard value directly to switch providers,
+      # never this file, or the next sync will revert it.
       - key: OPS_MANAGER_BOT_PROVIDER
-        value: openrouter
+        sync: false  # default: openrouter
       - key: OPS_MANAGER_BOT_MODEL
-        value: anthropic/claude-sonnet-5
+        sync: false  # default: anthropic/claude-sonnet-5
       - key: OPS_MANAGER_BOT_FALLBACK_MODELS
-        value: google/gemini-3.7-flash
+        sync: false  # default: google/gemini-3.7-flash

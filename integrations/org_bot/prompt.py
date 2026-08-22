@@ -35,9 +35,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from integrations.org_bot.roles import AGENTS, ROLES
+from integrations.org_bot.roles import AGENTS, ROUTABLE_ROLES
 
-_ROLE_LINES = "\n".join(f"  - {r.slug}: {r.label}" for r in ROLES)
+_ROLE_LINES = "\n".join(f"  - {r.slug}: {r.label}" for r in ROUTABLE_ROLES)
 _AGENT_LINES = "\n".join(f"  - {a.slug}: {a.label} ({a.data_source})" for a in AGENTS)
 
 # Captured live from garmin.com.uz/catalog on 2026-08-21 (a JS single-page app

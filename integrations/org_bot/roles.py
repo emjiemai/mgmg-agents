@@ -57,6 +57,16 @@ AGENT_LABELS: dict[str, str] = {a.slug: a.label for a in AGENTS}
 
 DIRECTOR_ROLE = "operatsion_direktor"
 
+# The Director's own role is a legitimate onboarding choice (role_picker_keyboard
+# below still offers all of ROLES, including this one, so the real Director can
+# register) but must never be a *routable task target* -- the person composing
+# a task via OPS Manager Bot already holds this role, so routing a task "to"
+# it would send it back to themselves. Classification (prompt.py's _ROLE_LINES)
+# and its code-level validation (ops_manager.validate_classification) both use
+# this narrower list/set instead of ROLES/ROLE_SLUGS.
+ROUTABLE_ROLES: list[Role] = [r for r in ROLES if r.slug != DIRECTOR_ROLE]
+ROUTABLE_ROLE_SLUGS: set[str] = {r.slug for r in ROUTABLE_ROLES}
+
 
 def role_picker_keyboard(request_id: str) -> dict:
     """Build the inline keyboard shown to a newly-approved employee.

@@ -41,8 +41,9 @@ from integrations.org_bot.roles import (
     AGENT_SLUGS,
     DIRECTOR_ROLE,
     ROLE_LABELS,
-    ROLES,
     ROLE_SLUGS,
+    ROLES,
+    ROUTABLE_ROLE_SLUGS,
     role_picker_keyboard,
 )
 from integrations.telegram.bot import TelegramBot, TelegramError, escape, sanitize_model_html
@@ -118,7 +119,7 @@ def validate_classification(result: dict[str, Any]) -> tuple[str, str | None, st
 
     if target_type in ("none", "refused"):
         return target_type, None, None
-    if target_type == "employee" and target_role in ROLE_SLUGS:
+    if target_type == "employee" and target_role in ROUTABLE_ROLE_SLUGS:
         return "employee", target_role, None
     if target_type == "agent" and target_agent in AGENT_SLUGS:
         return "agent", None, target_agent
