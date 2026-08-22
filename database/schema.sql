@@ -407,19 +407,41 @@ CREATE TABLE IF NOT EXISTS pending_dispatches (
 CREATE INDEX IF NOT EXISTS idx_pending_dispatches_open ON pending_dispatches (created_at DESC) WHERE resolved_at IS NULL;
 
 -- ---------------------------------------------------------------------------
--- task_updates — free-text progress notes an employee sends about a task,
--- at any stage (before/while/after) -- relayed to the Director live and kept
--- for a paper trail ("something always might happen").
+-- task_updates — a two-way employee<->Director message thread, relayed live
+-- through OPS Manager Bot and kept for a paper trail ("something always
+-- might happen"). ``task_id`` is set when the message is about a specific
+-- task (progress notes at any stage) and NULL for a general message not
+-- tied to any task -- being able to talk to the Director through this bot
+-- doesn't require an open task to exist. ``direction`` distinguishes an
+-- employee's message from the Director's reply to it; ``director_message_id``
+-- (only set on the employee_to_director side) is the relay's message id in
+-- the Director's chat, so a reply-to-that-message routes back to the right
+-- employee without going through task classification.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS task_updates (
-    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_id                    UUID         NOT NULL REFERENCES tasks(id),
-    employee_telegram_user_id  BIGINT       NOT NULL,
-    message_text               TEXT         NOT NULL,
-    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
+    id                          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id                     UUID         REFERENCES tasks(id),
+    employee_telegram_user_id   BIGINT       NOT NULL,
+    message_text                TEXT         NOT NULL,
+    director_telegram_user_id   BIGINT,
+    director_message_id         BIGINT,
+    direction                   TEXT         NOT NULL DEFAULT 'employee_to_director'
+                                     CHECK (direction IN ('employee_to_director', 'director_to_employee')),
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
+-- Schema evolution: task_id was NOT NULL originally (task-scoped updates
+-- only) -- relaxed so a general, not-tied-to-a-task message can be logged
+-- in the same thread. The other three columns are new entirely.
+ALTER TABLE task_updates ALTER COLUMN task_id DROP NOT NULL;
+ALTER TABLE task_updates ADD COLUMN IF NOT EXISTS director_telegram_user_id BIGINT;
+ALTER TABLE task_updates ADD COLUMN IF NOT EXISTS director_message_id BIGINT;
+ALTER TABLE task_updates ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'employee_to_director'
+    CHECK (direction IN ('employee_to_director', 'director_to_employee'));
+
 CREATE INDEX IF NOT EXISTS idx_task_updates_task ON task_updates (task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_updates_relay ON task_updates (director_telegram_user_id, director_message_id)
+    WHERE direction = 'employee_to_director';
 
 -- ---------------------------------------------------------------------------
 -- conversation_turns — OPS Manager Bot's short-term memory per Director, so

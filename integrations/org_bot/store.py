@@ -402,27 +402,87 @@ async def resolve_pending_dispatch(pending_id: str) -> dict[str, Any] | None:
 # --------------------------------------------------------------- task updates
 
 
-async def create_task_update(*, task_id: str, employee_telegram_user_id: int, message_text: str) -> dict[str, Any]:
-    """Record a free-text progress note an employee sent about a task.
+async def create_task_update(
+    *,
+    task_id: str | None,
+    employee_telegram_user_id: int,
+    message_text: str,
+    director_telegram_user_id: int | None = None,
+    director_message_id: int | None = None,
+    direction: Literal["employee_to_director", "director_to_employee"] = "employee_to_director",
+) -> dict[str, Any]:
+    """Record one message in an employee<->Director thread.
+
+    A task progress note when ``task_id`` is set, a general message when
+    it's None -- both share this table so a Director sees one continuous
+    thread with each employee regardless of whether a task happens to be
+    open.
 
     Args:
-        task_id: ``tasks.id`` this note is about.
-        employee_telegram_user_id: The sender's Telegram numeric id.
-        message_text: The note itself.
+        task_id: ``tasks.id`` this relates to, or None for a message not
+            tied to any specific task.
+        employee_telegram_user_id: The employee's Telegram numeric id (the
+            other party in the thread, regardless of ``direction``).
+        message_text: The message itself.
+        director_telegram_user_id: Which Director this thread is with.
+        director_message_id: The Telegram message id of the relay sent to
+            the Director's chat, when ``direction == "employee_to_director"``
+            -- lets a Director's reply-to-that-message route back to the
+            right employee without going through task classification.
+        direction: Which way this message went.
 
     Returns:
         The new row.
     """
     row = await fetch_one(
         """
-        INSERT INTO task_updates (task_id, employee_telegram_user_id, message_text)
-        VALUES (%s, %s, %s)
+        INSERT INTO task_updates
+            (task_id, employee_telegram_user_id, message_text,
+             director_telegram_user_id, director_message_id, direction)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
-        (task_id, employee_telegram_user_id, message_text),
+        (
+            task_id,
+            employee_telegram_user_id,
+            message_text,
+            director_telegram_user_id,
+            director_message_id,
+            direction,
+        ),
     )
     assert row is not None
     return row
+
+
+async def find_relay_by_director_message(
+    director_telegram_user_id: int, telegram_message_id: int
+) -> dict[str, Any] | None:
+    """Resolve a Director's reply-to-message into which employee it's about.
+
+    Scoped by both the Director's id and the message id -- Telegram message
+    ids are only unique within one chat, so matching on the message id alone
+    could, in principle, cross-match a different Director's chat.
+
+    Args:
+        director_telegram_user_id: The replying Director's Telegram numeric id.
+        telegram_message_id: ``message.reply_to_message.message_id`` from
+            their update.
+
+    Returns:
+        The most recent matching relay row, or None if this message id
+        isn't a known relay in that Director's chat.
+    """
+    return await fetch_one(
+        """
+        SELECT * FROM task_updates
+        WHERE direction = 'employee_to_director'
+          AND director_telegram_user_id = %s
+          AND director_message_id = %s
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (director_telegram_user_id, telegram_message_id),
+    )
 
 
 async def find_task_by_message_id(telegram_message_id: int, employee_telegram_user_id: int) -> dict[str, Any] | None:

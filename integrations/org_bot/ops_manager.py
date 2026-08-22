@@ -427,6 +427,11 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     if not has_media and not text:
         return "ignored"
 
+    reply_to = message.get("reply_to_message") or {}
+    if not has_media and reply_to.get("message_id"):
+        if await _try_forward_director_reply(telegram_user_id, reply_to["message_id"], text, run_id):
+            return "relayed"
+
     await _show_typing(telegram_user_id, run_id)
 
     if has_media:
@@ -434,6 +439,46 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     else:
         background.add_task(_dispatch_director_task, telegram_user_id, text, message.get("message_id"), run_id)
     return "queued"
+
+
+async def _try_forward_director_reply(
+    director_id: int, reply_to_message_id: int, text: str, run_id: uuid.UUID
+) -> bool:
+    """If the Director is replying to a relayed employee message, forward
+    the reply straight to that employee instead of running it through task
+    classification -- a targeted reply to a specific person is the other
+    half of a conversation already in progress, not a new task to route.
+
+    Args:
+        director_id: The replying Director's Telegram numeric id.
+        reply_to_message_id: ``message.reply_to_message.message_id``.
+        text: The Director's reply text.
+        run_id: UUID grouping this webhook call's audit rows.
+
+    Returns:
+        True if this was a matching reply and has been handled (the caller
+        must not also run classification on it); False if it doesn't match
+        a known relay, so the caller should fall through to normal dispatch.
+    """
+    relay = await store.find_relay_by_director_message(director_id, reply_to_message_id)
+    if relay is None:
+        return False
+
+    employee_telegram_user_id = relay["employee_telegram_user_id"]
+    try:
+        await _reply(employee_telegram_user_id, run_id, f"💬 Direktordan / From the Director:\n{escape(text)}")
+    except TelegramError as exc:
+        log.warning("Could not forward the Director's reply to employee {}: {}", employee_telegram_user_id, exc)
+        return True  # matched a known relay -- don't fall through to classification even on delivery failure
+
+    await store.create_task_update(
+        task_id=relay.get("task_id"),
+        employee_telegram_user_id=employee_telegram_user_id,
+        message_text=text,
+        director_telegram_user_id=director_id,
+        direction="director_to_employee",
+    )
+    return True
 
 
 async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -466,12 +511,18 @@ async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, A
 
 async def _reply(
     telegram_user_id: int, run_id: uuid.UUID, text: str, reply_markup: dict[str, Any] | None = None
-) -> None:
-    """Send a message to one user via OPS Manager Bot's own token."""
+) -> list[int]:
+    """Send a message to one user via OPS Manager Bot's own token.
+
+    Returns:
+        The Telegram message id(s) of what was sent -- callers that need to
+        track a message for later reply-routing use this; callers that don't
+        care can ignore the return value.
+    """
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup)
+        return await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup)
 
 
 async def _show_typing(telegram_user_id: int, run_id: uuid.UUID) -> None:
@@ -496,14 +547,15 @@ async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text
 
 
 async def _handle_employee_message(employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Relay a non-Director employee's free-text note about their task.
+    """Relay a non-Director employee's free-text message to the Director.
 
-    Employees can write at any stage — before starting, mid-task, after
-    finishing — this isn't gated on task status. If the message is a reply
-    to a specific task card, that's unambiguous; otherwise it's attached to
-    their one open task if they have exactly one, and if that's also
-    ambiguous, they're asked to reply to the right card directly rather than
-    the note being silently dropped or misattached.
+    Employees can write at any time about anything — before starting a
+    task, mid-task, after finishing, or something with no task behind it at
+    all. A message that resolves to a specific task (via reply-to-card, or
+    their one open task) is attributed to it with a stage label; anything
+    else is relayed as a general message instead of refused — being able to
+    talk to the Director through this bot shouldn't require an open task to
+    exist.
     """
     telegram_user_id = employee["telegram_user_id"]
     text = (message.get("text") or message.get("caption") or "").strip()
@@ -517,34 +569,44 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
     if task is None:
         task = await store.find_open_task_for_employee(telegram_user_id)
 
-    if task is None:
+    if task is not None:
+        stage_label = {"sent": "boshlanmagan", "started": "davom etmoqda", "done": "bajarilgan"}.get(
+            task["status"], task["status"]
+        )
+        relay_text = (
+            f"💬 {escape(employee['display_name'])} ({stage_label}):\n{escape(text)}\n\n"
+            f"<i>Topshiriq / Task: {escape(task['task_summary'])}</i>"
+        )
+    else:
+        relay_text = f"💬 {escape(employee['display_name'])}:\n{escape(text)}"
+
+    directors = await store.active_employees_by_role(DIRECTOR_ROLE)
+    if not directors:
         await _reply(
             telegram_user_id,
             run_id,
-            "Qaysi topshiriq haqida ekanini bilmadim — iltimos, o'sha topshiriq kartasiga javob tarzida yozing.\n"
-            "I couldn't tell which task this is about — please reply directly to that task's card.",
+            "Hozircha Direktor ro'yxatdan o'tmagan — xabaringiz yetkazilmadi.\n"
+            "No Director is registered yet — your message wasn't delivered.",
         )
-        return "no_task_context"
+        return "no_director"
 
-    await store.create_task_update(
-        task_id=str(task["id"]), employee_telegram_user_id=telegram_user_id, message_text=text
-    )
+    for director in directors:
+        director_id = director["telegram_user_id"]
+        try:
+            message_ids = await _reply(director_id, run_id, relay_text)
+        except TelegramError as exc:
+            log.warning("Could not relay employee message to Director {}: {}", director_id, exc)
+            continue
+        await store.create_task_update(
+            task_id=str(task["id"]) if task else None,
+            employee_telegram_user_id=telegram_user_id,
+            message_text=text,
+            director_telegram_user_id=director_id,
+            director_message_id=message_ids[0] if message_ids else None,
+        )
+
     await _reply(telegram_user_id, run_id, "👍 Qabul qildim, direktorga yubordim. / Got it, sent to the Director.")
-
-    stage_label = {"sent": "boshlanmagan", "started": "davom etmoqda", "done": "bajarilgan"}.get(
-        task["status"], task["status"]
-    )
-    try:
-        await _reply(
-            task["director_telegram_user_id"],
-            run_id,
-            f"💬 {escape(employee['display_name'])} ({stage_label}):\n{escape(text)}\n\n"
-            f"<i>Topshiriq / Task: {escape(task['task_summary'])}</i>",
-        )
-    except TelegramError as exc:
-        log.warning("Could not relay employee update to Director: {}", exc)
-
-    return "task_update"
+    return "relayed"
 
 
 # ----------------------------------------------------- director task routing
