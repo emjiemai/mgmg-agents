@@ -303,6 +303,24 @@ async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUI
     return "registered"
 
 
+async def _actor_display_name(clicker: dict[str, Any]) -> str:
+    """A human-readable name for whoever tapped a button, for Director-facing
+    notifications — never the raw numeric Telegram id: it's meaningless to
+    the Director and, wrapped in "(@...)", reads as a broken mention rather
+    than the harmless fallback it was meant to be.
+    """
+    telegram_user_id = clicker.get("id")
+    if telegram_user_id is not None:
+        employee = await store.get_employee_by_telegram_id(telegram_user_id)
+        if employee and employee.get("display_name"):
+            return employee["display_name"]
+    username = clicker.get("username")
+    if username:
+        return f"@{username}"
+    name = " ".join(filter(None, [clicker.get("first_name"), clicker.get("last_name")]))
+    return name or "Noma'lum xodim / Unknown employee"
+
+
 async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
     """Resolve a "Start" button press and notify the Director."""
     query_id = callback.get("id", "")
@@ -327,10 +345,11 @@ async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uui
         await bot._answer_callback(query_id, "Started")  # noqa: SLF001
 
     try:
+        actor = await _actor_display_name(clicker)
         await _reply(
             task["director_telegram_user_id"],
             run_id,
-            f"▶️ Boshlandi / Started: {escape(task['task_summary'])} (@{escape(started_by)})",
+            f"▶️ Boshlandi / Started: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
         )
     except TelegramError as exc:
         log.warning("Could not notify Director that a task started: {}", exc)
@@ -362,10 +381,11 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         await bot._answer_callback(query_id, "Marked done")  # noqa: SLF001
 
     try:
+        actor = await _actor_display_name(clicker)
         await _reply(
             task["director_telegram_user_id"],
             run_id,
-            f"✅ Bajarildi / Done: {escape(task['task_summary'])} (@{escape(completed_by)})",
+            f"✅ Bajarildi / Done: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
         )
     except TelegramError as exc:
         log.warning("Could not notify Director of task completion: {}", exc)
