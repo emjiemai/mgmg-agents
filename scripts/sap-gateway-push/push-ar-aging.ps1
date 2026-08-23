@@ -92,6 +92,49 @@ function Push-GatewayTool {
     }
 }
 
+function Test-RawRequest {
+    # Diagnostic for the get_products gateway tool -- Invoke-RestMethod
+    # swallows the response body on a non-2xx status in Windows PowerShell
+    # 5.1 (a known quirk, not a sign the gateway sends nothing), so this
+    # uses raw HttpWebRequest instead, which reads the real body/status no
+    # matter what. Remove this function + its call below once get_products
+    # is confirmed working and the real cause is fixed above.
+    param([string]$Body)
+
+    $req = [System.Net.HttpWebRequest]::Create("$GatewayUrl/tools/get_products")
+    $req.Method = "POST"
+    $req.ContentType = "application/json"
+    $req.Headers.Add("Authorization", "Bearer $GatewayToken")
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Body)
+    $req.ContentLength = $bytes.Length
+    $reqStream = $req.GetRequestStream()
+    $reqStream.Write($bytes, 0, $bytes.Length)
+    $reqStream.Close()
+
+    try {
+        $resp = $req.GetResponse()
+    } catch [System.Net.WebException] {
+        $resp = $_.Exception.Response
+    }
+
+    $respStream = $resp.GetResponseStream()
+    $reader = New-Object System.IO.StreamReader($respStream)
+    $responseBody = $reader.ReadToEnd()
+    Write-Host "Body sent: $Body"
+    Write-Host "Status: $([int]$resp.StatusCode) $($resp.StatusCode)"
+    Write-Host "Response: $responseBody"
+    Write-Host "---"
+    $resp.Close()
+}
+
+function Test-GetProducts {
+    Write-Host ""
+    Write-Host "=== get_products diagnostic ==="
+    Test-RawRequest -Body '{"limit":20}'
+    Test-RawRequest -Body '{"search":"a","limit":20}'
+    Test-RawRequest -Body '{}'
+}
+
 try {
     Push-Invoices
 
@@ -111,6 +154,10 @@ try {
     Push-GatewayTool -GatewayTool "get_warehouses" -PushTool "warehouses" -Body '{"limit":100}'
     Push-GatewayTool -GatewayTool "get_inventory"  -PushTool "inventory"  -Body '{"limit":100}'
     Push-GatewayTool -GatewayTool "get_payments"   -PushTool "payments"   -Body '{"limit":100}'
+
+    # Diagnostic for the get_products cap -- remove this line once the
+    # real limits are confirmed.
+    Test-GetProducts
 
     Write-Host "All done."
 } catch {
