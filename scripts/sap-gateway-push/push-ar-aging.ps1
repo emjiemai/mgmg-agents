@@ -101,7 +101,12 @@ try {
     # targeted request would be the right call per the gateway's own
     # data-minimization guidance).
     Push-GatewayTool -GatewayTool "get_orders"     -PushTool "orders"     -Body '{"limit":100}'
-    Push-GatewayTool -GatewayTool "get_products"   -PushTool "products"   -Body '{"limit":100}'
+    # get_products returned HTTP 400 at limit:100 in testing -- the teaching
+    # doc's own example for this specific tool uses limit:20, unlike the
+    # others which worked fine at 100, so it likely has a smaller enforced
+    # cap. Lower here rather than guessing further; raise it back if a real
+    # gateway response confirms a higher cap actually works.
+    Push-GatewayTool -GatewayTool "get_products"   -PushTool "products"   -Body '{"limit":20}'
     Push-GatewayTool -GatewayTool "get_customers"  -PushTool "customers"  -Body '{"limit":100}'
     Push-GatewayTool -GatewayTool "get_warehouses" -PushTool "warehouses" -Body '{"limit":100}'
     Push-GatewayTool -GatewayTool "get_inventory"  -PushTool "inventory"  -Body '{"limit":100}'
