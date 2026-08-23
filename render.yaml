@@ -177,6 +177,11 @@ envVarGroups:
         sync: false
       - key: SAP_PASSWORD
         sync: false
+      # The SAP gateway (on its own machine, deliberately loopback-only)
+      # pushes AR-aging data here instead of us reaching in -- see
+      # scripts/sap-gateway-push/ and integrations/sap/push_handler.py.
+      - key: SAP_PUSH_WEBHOOK_SECRET
+        sync: false
       - key: CRM_BASE_URL
         value: https://sales-crm-roan-six.vercel.app
       - key: CRM_API_KEY

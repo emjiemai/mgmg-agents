@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     sap_verify_ssl: bool = False
     sap_timeout_seconds: int = 60
 
+    # --- SAP gateway push (the gateway's own machine pushes here; see
+    # scripts/sap-gateway-push/ and integrations/sap/push_handler.py) ---
+    sap_push_webhook_secret: SecretStr = SecretStr("")
+
     # --- MGMG's own sales CRM (replaces amoCRM) ---
     crm_base_url: str = "https://sales-crm-roan-six.vercel.app"
     crm_api_key: SecretStr = SecretStr("")

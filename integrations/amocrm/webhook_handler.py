@@ -8,6 +8,7 @@ Endpoints:
     POST /webhooks/telegram/{secret}          Telegram updates (approval buttons)
     POST /webhooks/telegram/admin/{secret}    Admin Bot (employee access decisions)
     POST /webhooks/telegram/ops/{secret}      OPS Manager Bot (task routing)
+    POST /webhooks/sap-push/{secret}          AR-aging snapshot pushed from the SAP gateway's machine
 
 Security:
     * Every webhook path carries a shared secret compared in constant time.
@@ -46,6 +47,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import to_tiyin
 from integrations.org_bot import admin as org_admin
 from integrations.org_bot import ops_manager as org_ops_manager
+from integrations.sap import push_handler as sap_push_handler
 from integrations.telegram.bot import TelegramBot
 
 AGENT = "amocrm-webhook"
@@ -296,6 +298,40 @@ async def ops_manager_bot_webhook(secret: str, request: Request, background: Bac
     update = await request.json()
     outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
     return {"status": outcome}
+
+
+# ----------------------------------------------------------------------- SAP
+
+
+@app.post("/webhooks/sap-push/{secret}")
+async def sap_push_webhook(secret: str, request: Request) -> dict[str, Any]:
+    """Receive an AR-aging snapshot pushed from the SAP gateway's own machine.
+
+    The gateway is deliberately loopback-only and stays that way — this is
+    the other half of that design: instead of us reaching in, a plain
+    PowerShell script on that machine pushes here on a schedule (see
+    ``scripts/sap-gateway-push/``). Unlike the amoCRM/Telegram webhooks,
+    there's no external retry behavior to accommodate (nothing re-sends this
+    on a non-2xx reply), so this runs the write inline rather than via
+    ``BackgroundTasks``.
+
+    Register the pushing script with this URL:
+        https://<host>/webhooks/sap-push/<SAP_PUSH_WEBHOOK_SECRET>
+
+    Args:
+        secret: Shared secret from the URL path, checked against
+            ``SAP_PUSH_WEBHOOK_SECRET`` (not any other route's secret).
+        request: The incoming request — body is ``{"invoices": [...]}``.
+
+    Returns:
+        ``{"ok": bool, "written": int, "skipped": int}`` on success, or
+        ``{"ok": False, "error": "unauthorized"}`` if the secret is wrong.
+    """
+    if not _secret_ok(secret, settings.sap_push_webhook_secret.get_secret_value(), "SAP_PUSH_WEBHOOK_SECRET"):
+        return {"ok": False, "error": "unauthorized"}
+
+    payload = await request.json()
+    return await sap_push_handler.handle_ar_aging_push(payload, uuid.uuid4())
 
 
 # -------------------------------------------------------------------- helpers
