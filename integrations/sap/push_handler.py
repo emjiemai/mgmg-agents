@@ -1,19 +1,31 @@
-"""Receives an AR-aging push from the SAP gateway's own machine.
+"""Receives pushes from the SAP gateway's own machine.
 
 The gateway (``SAP_B1_AI_AGENT_TEACHING.md``) is deliberately loopback-only
 and stays that way — instead of this service reaching in, the gateway's own
-machine reaches out to this endpoint on a schedule, with a plain PowerShell
-script (no runtime install needed beyond what's already on any Windows
-machine — see ``scripts/sap-gateway-push/``).
+machine reaches out to these endpoints on a schedule, with a plain
+PowerShell script (no runtime install needed beyond what's already on any
+Windows machine — see ``scripts/sap-gateway-push/``).
 
-Deliberately reuses the exact same bucketing/currency-conversion logic
-``integrations/sap/client.py`` uses for the real Service Layer, rather than
-re-implementing it a second time on the pushing machine — one source of
-truth for "what counts as overdue," not two that could drift apart.
+Two paths:
+  handle_ar_aging_push — get_invoices specifically, into the richer,
+      bucketed ``ar_aging_snapshots`` table. Reuses the exact same
+      bucketing/currency-conversion logic ``integrations/sap/client.py``
+      uses for the real Service Layer, rather than re-implementing it a
+      second time on the pushing machine.
+  handle_gateway_push — every other tool (orders/products/customers/
+      warehouses/inventory/payments), into the generic
+      ``sap_gateway_snapshots`` table. Generic because the gateway's exact
+      response shape for these six isn't confirmed the way get_sales/
+      get_invoices' was (verified against a real documented example) --
+      raw rows are kept in full (``raw`` JSONB column) so nothing is lost
+      even if the best-effort key extraction below guesses a field name
+      that turns out to be wrong on the real gateway.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -126,3 +138,101 @@ async def handle_ar_aging_push(payload: dict[str, Any], run_id: uuid.UUID) -> di
         ctx["payload"]["skipped"] = skipped
 
     return {"ok": True, "written": written, "skipped": skipped}
+
+
+# ------------------------------------------------------- the other 6 tools
+
+VALID_TOOLS = {"orders", "products", "customers", "warehouses", "inventory", "payments"}
+
+# Candidate field names to try, in order, per tool -- SAP Business One's
+# well-established standard names, NOT confirmed against a live response
+# for these six (see the module docstring). First match wins; if none of a
+# tool's candidates are present in a row, natural_key falls back to a hash
+# of the whole row so the push never fails outright on an unrecognized shape.
+_KEY_CANDIDATES: dict[str, list[str] | list[list[str]]] = {
+    "orders": ["DocEntry", "DocNum"],
+    "products": ["ItemCode", "Code"],
+    "customers": ["CardCode", "Code"],
+    "warehouses": ["WhsCode", "WarehouseCode", "Code"],
+    "payments": ["DocEntry", "DocNum"],
+    # inventory rows are one (item, warehouse) pair -- needs both parts, not
+    # just the first match, or two different items in the same warehouse
+    # would collide onto the same key.
+    "inventory": [["ItemCode", "WhsCode"], ["item_code", "warehouse"]],
+}
+
+
+def _extract_natural_key(tool: str, row: dict[str, Any]) -> str:
+    """Best-effort stable key for a pushed row, for upsert deduplication.
+
+    Args:
+        tool: One of ``VALID_TOOLS``.
+        row: One raw row as the gateway returned it.
+
+    Returns:
+        A field value (or "field1:field2" for inventory's compound key) if
+        any candidate field is present, else a stable hash of the whole row
+        — never fails, so an unrecognized response shape still gets stored
+        (as its raw JSON) rather than dropped.
+    """
+    candidates = _KEY_CANDIDATES.get(tool, [])
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            values = [row.get(field) for field in candidate]
+            if all(v is not None for v in values):
+                return ":".join(str(v) for v in values)
+        elif row.get(candidate) is not None:
+            return str(row[candidate])
+
+    # No known field matched -- hash the row so this tool's response shape
+    # can be inspected (via the raw column) and _KEY_CANDIDATES corrected,
+    # instead of the push failing or silently skipping the row.
+    digest = hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
+    return f"unrecognized:{digest[:16]}"
+
+
+async def handle_gateway_push(tool: str, payload: dict[str, Any], run_id: uuid.UUID) -> dict[str, Any]:
+    """Upsert a batch of raw rows from one gateway tool into ``sap_gateway_snapshots``.
+
+    Args:
+        tool: One of ``VALID_TOOLS`` — which gateway tool these rows came from.
+        payload: ``{"rows": [...]}`` — raw rows exactly as that tool returned them.
+        run_id: UUID grouping this call's audit rows.
+
+    Returns:
+        ``{"ok": True, "written": int}`` on success, or
+        ``{"ok": False, "error": "..."}`` if ``tool`` isn't recognized.
+    """
+    if tool not in VALID_TOOLS:
+        return {"ok": False, "error": f"unknown tool '{tool}', expected one of {sorted(VALID_TOOLS)}"}
+
+    rows = payload.get("rows") or []
+    snapshot_date = today_local()
+    written = 0
+
+    async with audited(
+        agent="sap-gateway-push",
+        action=f"gateway_push_{tool}",
+        target_system="postgres",
+        run_id=run_id,
+        target_ref="sap_gateway_snapshots",
+        mode="write",
+        payload={"tool": tool, "rows_received": len(rows)},
+    ) as ctx:
+        for row in rows:
+            natural_key = _extract_natural_key(tool, row)
+            await execute(
+                """
+                INSERT INTO sap_gateway_snapshots (tool, snapshot_date, natural_key, raw)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (tool, snapshot_date, natural_key) DO UPDATE SET
+                    raw = EXCLUDED.raw,
+                    captured_at = now()
+                """,
+                (tool, snapshot_date, natural_key, json.dumps(row, ensure_ascii=False, default=str)),
+            )
+            written += 1
+
+        ctx["payload"]["written"] = written
+
+    return {"ok": True, "written": written}

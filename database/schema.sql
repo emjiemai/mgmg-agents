@@ -457,3 +457,36 @@ CREATE TABLE IF NOT EXISTS conversation_turns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversation_turns_recent ON conversation_turns (telegram_user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- sap_gateway_snapshots — raw pushes from the SAP gateway's own machine for
+-- every tool EXCEPT get_invoices (which has its own richer, bucketed table:
+-- ar_aging_snapshots). One generic table for get_orders/get_products/
+-- get_customers/get_warehouses/get_inventory/get_payments rather than six
+-- separate rigid schemas, because the gateway's exact response shape for
+-- these six is not confirmed the way get_sales/get_invoices' was (that one
+-- was verified against a real documented example response; these six are
+-- built from SAP Business One's standard field names, not a confirmed
+-- example) -- ``raw`` keeps the full row exactly as returned no matter what
+-- its real field names turn out to be, so nothing is lost even if
+-- ``natural_key`` extraction guesses wrong on the first real push.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sap_gateway_snapshots (
+    id            BIGSERIAL    PRIMARY KEY,
+    tool          TEXT         NOT NULL
+                      CHECK (tool IN ('orders', 'products', 'customers', 'warehouses', 'inventory', 'payments')),
+    snapshot_date DATE         NOT NULL,
+    captured_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    natural_key   TEXT         NOT NULL,  -- best-effort: DocEntry/ItemCode/CardCode/WhsCode, or a row hash if none found
+    raw           JSONB        NOT NULL,  -- the full row exactly as the gateway returned it
+    CONSTRAINT uq_sap_gateway_snapshot UNIQUE (tool, snapshot_date, natural_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sap_gateway_snapshots_tool ON sap_gateway_snapshots (tool, snapshot_date DESC);
+
+CREATE OR REPLACE VIEW v_sap_gateway_latest AS
+SELECT s.*
+FROM sap_gateway_snapshots s
+WHERE s.snapshot_date = (
+    SELECT max(snapshot_date) FROM sap_gateway_snapshots s2 WHERE s2.tool = s.tool
+);

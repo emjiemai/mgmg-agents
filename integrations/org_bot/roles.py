@@ -47,6 +47,18 @@ AGENTS: list[Agent] = [
     Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the four operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
+    # SAP Business One gateway data, pushed periodically from the gateway's
+    # own machine (integrations/sap/push_handler.handle_gateway_push) —
+    # deliberately NOT folded into all_systems: these are reference lookups
+    # and periodic status snapshots, not "how's the business doing" figures
+    # the way the four systems above are (same reasoning garmin_catalog is
+    # excluded for).
+    Agent("sap_orders", "SAP Sotuv Buyurtmalari / SAP Sales Orders", "recent sales orders (SAP ORDR) pushed from the gateway"),
+    Agent("sap_products", "SAP Mahsulotlar / SAP Products", "item master data (SAP OITM) pushed from the gateway"),
+    Agent("sap_customers", "SAP Mijozlar / SAP Customers", "business partner records (SAP OCRD) pushed from the gateway"),
+    Agent("sap_warehouses", "SAP Omborlar / SAP Warehouses", "warehouse list (SAP OWHS) pushed from the gateway"),
+    Agent("sap_inventory", "SAP Ombordagi Qoldiq / SAP Inventory", "stock levels by item/warehouse (SAP OITW) pushed from the gateway"),
+    Agent("sap_payments", "SAP To'lovlar / SAP Payments", "recent incoming payments (SAP ORCT) pushed from the gateway"),
 ]
 
 ROLE_SLUGS: set[str] = {r.slug for r in ROLES}

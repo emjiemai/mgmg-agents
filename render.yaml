@@ -178,7 +178,10 @@ envVarGroups:
       - key: SAP_PASSWORD
         sync: false
       # The SAP gateway (on its own machine, deliberately loopback-only)
-      # pushes AR-aging data here instead of us reaching in -- see
+      # pushes here instead of us reaching in -- one secret shared by both
+      # /webhooks/sap-push/{secret} (AR aging) and
+      # /webhooks/sap-gateway-push/{tool}/{secret} (orders/products/
+      # customers/warehouses/inventory/payments). See
       # scripts/sap-gateway-push/ and integrations/sap/push_handler.py.
       - key: SAP_PUSH_WEBHOOK_SECRET
         sync: false

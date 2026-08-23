@@ -8,7 +8,8 @@ Endpoints:
     POST /webhooks/telegram/{secret}          Telegram updates (approval buttons)
     POST /webhooks/telegram/admin/{secret}    Admin Bot (employee access decisions)
     POST /webhooks/telegram/ops/{secret}      OPS Manager Bot (task routing)
-    POST /webhooks/sap-push/{secret}          AR-aging snapshot pushed from the SAP gateway's machine
+    POST /webhooks/sap-push/{secret}                  AR-aging snapshot pushed from the SAP gateway's machine
+    POST /webhooks/sap-gateway-push/{tool}/{secret}   every other SAP gateway tool's raw snapshot
 
 Security:
     * Every webhook path carries a shared secret compared in constant time.
@@ -332,6 +333,38 @@ async def sap_push_webhook(secret: str, request: Request) -> dict[str, Any]:
 
     payload = await request.json()
     return await sap_push_handler.handle_ar_aging_push(payload, uuid.uuid4())
+
+
+@app.post("/webhooks/sap-gateway-push/{tool}/{secret}")
+async def sap_gateway_push_webhook(tool: str, secret: str, request: Request) -> dict[str, Any]:
+    """Receive a raw snapshot from one of the SAP gateway's other tools.
+
+    Covers everything except get_invoices, which has its own dedicated
+    route/table above (``sap_push_webhook``) with real aging-bucket logic.
+    These six (orders/products/customers/warehouses/inventory/payments) are
+    stored as raw JSON — see ``push_handler.handle_gateway_push`` for why.
+
+    Register the pushing script with URLs shaped like:
+        https://<host>/webhooks/sap-gateway-push/inventory/<SAP_PUSH_WEBHOOK_SECRET>
+        https://<host>/webhooks/sap-gateway-push/customers/<SAP_PUSH_WEBHOOK_SECRET>
+        (etc. — one URL per tool, same secret for all of them)
+
+    Args:
+        tool: One of ``push_handler.VALID_TOOLS`` — which gateway tool this
+            batch came from.
+        secret: Shared secret from the URL path, checked against the same
+            ``SAP_PUSH_WEBHOOK_SECRET`` as the AR-aging route.
+        request: The incoming request — body is ``{"rows": [...]}``.
+
+    Returns:
+        ``{"ok": bool, "written": int}`` on success, or
+        ``{"ok": False, "error": "..."}`` on a wrong secret or unknown tool.
+    """
+    if not _secret_ok(secret, settings.sap_push_webhook_secret.get_secret_value(), "SAP_PUSH_WEBHOOK_SECRET"):
+        return {"ok": False, "error": "unauthorized"}
+
+    payload = await request.json()
+    return await sap_push_handler.handle_gateway_push(tool, payload, uuid.uuid4())
 
 
 # -------------------------------------------------------------------- helpers

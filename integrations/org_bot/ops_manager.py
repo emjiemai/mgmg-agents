@@ -990,6 +990,19 @@ async def _fetch_agent_data(agent_slug: str) -> str:
     if agent_slug == "garmin_catalog":
         return GARMIN_CATALOG
 
+    # Same reasoning as garmin_catalog above -- these are SAP gateway
+    # reference lookups/periodic snapshots, not all_systems material.
+    sap_gateway_tools = {
+        "sap_orders": "orders",
+        "sap_products": "products",
+        "sap_customers": "customers",
+        "sap_warehouses": "warehouses",
+        "sap_inventory": "inventory",
+        "sap_payments": "payments",
+    }
+    if agent_slug in sap_gateway_tools:
+        return await _fetch_sap_gateway_data(sap_gateway_tools[agent_slug])
+
     fetchers = {
         "lead_agent": _fetch_lead_agent_data,
         "finance_agent": _fetch_finance_agent_data,
@@ -1070,6 +1083,42 @@ async def _fetch_finance_agent_data() -> str:
         lines.append("\nRecent receivables alerts:")
         for a in alerts:
             lines.append(f"- {a['title']}: {a.get('body') or ''} ({a['created_at']})")
+    return "\n".join(lines)
+
+
+async def _fetch_sap_gateway_data(tool: str) -> str:
+    """The latest pushed snapshot for one SAP gateway tool (see push_handler.py).
+
+    Formats each row's raw JSON as readable ``key: value`` pairs rather than
+    a fixed set of columns — the exact field names these six tools return
+    aren't confirmed the way get_invoices' were (see push_handler.py's
+    module docstring), so this stays defensive: whatever fields a row
+    actually has get shown, nothing assumed.
+
+    Args:
+        tool: One of push_handler.VALID_TOOLS.
+
+    Returns:
+        Plain-text listing, or a message saying nothing's been pushed yet
+        for this tool.
+    """
+    rows = await fetch_all(
+        "SELECT natural_key, raw, captured_at FROM v_sap_gateway_latest WHERE tool = %s "
+        "ORDER BY captured_at DESC LIMIT 100",
+        (tool,),
+    )
+    if not rows:
+        return (
+            f"No {tool} data pushed yet from the SAP gateway. The push script "
+            f"(scripts/sap-gateway-push/) needs to call get_{tool} and push it "
+            f"to /webhooks/sap-gateway-push/{tool}/<secret> at least once."
+        )
+
+    lines = [f"{len(rows)} {tool} record(s), most recently captured {rows[0]['captured_at']}:"]
+    for r in rows:
+        raw = r["raw"] if isinstance(r["raw"], dict) else {}
+        fields = ", ".join(f"{k}={v}" for k, v in raw.items() if v is not None)
+        lines.append(f"- {fields}")
     return "\n".join(lines)
 
 
