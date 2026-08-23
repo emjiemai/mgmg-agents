@@ -42,7 +42,7 @@ ROLES: list[Role] = [
 
 AGENTS: list[Agent] = [
     Agent("lead_agent", "Lead Agent", "Leads Google Sheet, every row"),
-    Agent("finance_agent", "Finance Agent", "every open receivable + recent alerts"),
+    Agent("finance_agent", "Finance Agent", "every open receivable + recent alerts — open invoices are sourced from SAP Business One"),
     Agent("crm_agent", "CRM Agent", "full CRM pipeline snapshot"),
     Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the four operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
