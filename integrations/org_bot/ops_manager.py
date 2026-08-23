@@ -1048,7 +1048,7 @@ async def _fetch_lead_agent_data() -> str:
 async def _fetch_finance_agent_data() -> str:
     """All open receivables + recent alerts, not just the top 15/5."""
     aging = await fetch_all(
-        "SELECT card_name, days_overdue, aging_bucket, balance_due_uzs, due_date, sales_person_name "
+        "SELECT card_name, days_overdue, aging_bucket, balance_due_uzs, currency, due_date, sales_person_name "
         "FROM v_ar_aging_latest ORDER BY balance_due_uzs DESC LIMIT 200"
     )
     alerts = await fetch_all(
@@ -1059,8 +1059,11 @@ async def _fetch_finance_agent_data() -> str:
 
     lines = [f"{len(aging)} open receivable(s):"]
     for r in aging:
+        # currency is whatever SAP actually recorded on the invoice -- never
+        # hardcode "UZS" here, some invoices are genuinely in USD/EUR and
+        # mislabeling them is worse than an ugly currency code.
         lines.append(
-            f"- {r['card_name']}: {r['balance_due_uzs']} UZS, {r['days_overdue']}d overdue "
+            f"- {r['card_name']}: {r['balance_due_uzs']} {r['currency'] or 'UZS'}, {r['days_overdue']}d overdue "
             f"({r['aging_bucket']}), due {r['due_date']}, owner={r['sales_person_name']}"
         )
     if alerts:
