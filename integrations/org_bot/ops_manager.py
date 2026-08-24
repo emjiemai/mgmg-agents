@@ -1079,12 +1079,14 @@ async def _fetch_finance_agent_data() -> str:
     if not aging and not alerts:
         return "No receivables data recorded yet."
 
-    # Say "invoice" explicitly, not just "receivable" -- a receivable *is*
-    # an open SAP invoice, but a Director asking specifically for "invoices"
-    # got refused once because the data was only ever labeled "receivable,"
-    # with no invoice number shown, so the model didn't recognize its own
-    # data as the answer to that exact question.
-    lines = [f"{len(aging)} open invoice(s) / receivable(s):"]
+    # Say "SAP invoice" explicitly, not just "receivable" -- a receivable
+    # *is* an open SAP invoice, but a Director asking specifically for
+    # "invoices" or "SAP" data got refused twice: once because the data was
+    # only ever labeled "receivable" with no invoice number shown, and once
+    # because neither the label nor this text said "SAP" anywhere, so the
+    # answer model had no textual basis to confirm this data was SAP data
+    # (confirmed live: it said outright "these are receivables, not SAP").
+    lines = [f"{len(aging)} open SAP invoice(s) / receivable(s) (source: SAP Business One OINV):"]
     for r in aging:
         # currency is whatever SAP actually recorded on the invoice -- never
         # hardcode "UZS" here, some invoices are genuinely in USD/EUR and

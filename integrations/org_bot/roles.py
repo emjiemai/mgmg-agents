@@ -42,7 +42,15 @@ ROLES: list[Role] = [
 
 AGENTS: list[Agent] = [
     Agent("lead_agent", "Lead Agent", "Leads Google Sheet, every row"),
-    Agent("finance_agent", "Finance Agent", "every open receivable + recent alerts — open invoices are sourced from SAP Business One"),
+    # The label (not just data_source) says SAP explicitly -- data_source
+    # only feeds the CLASSIFICATION prompt's vocabulary, but the label is
+    # what the ANSWER prompt actually sees as "System: {label}". Without SAP
+    # in the label, classification correctly routed here but the answer
+    # model, given only "System: Finance Agent" with no SAP mention in
+    # either the label or the data payload itself, had no textual basis to
+    # confirm this data WAS SAP data when asked specifically about SAP --
+    # confirmed live: it said outright "these are receivables, not SAP."
+    Agent("finance_agent", "Finance Agent (SAP Invoices/Receivables)", "every open invoice/receivable + recent alerts — sourced from SAP Business One (OINV)"),
     Agent("crm_agent", "CRM Agent", "full CRM pipeline snapshot"),
     Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the four operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
