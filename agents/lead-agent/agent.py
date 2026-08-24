@@ -690,18 +690,18 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
         run_id: UUID grouping this run's audit rows.
     """
     if not new_leads:
-        text = "🔍 <b>Lead Agent</b>\n\nNo new qualified leads today."
+        text = "🔍 <b>Lid Agenti</b>\n\nBugun yangi mos lid topilmadi."
     else:
         by_track: dict[str, list[dict]] = {}
         for lead in new_leads:
             by_track.setdefault(lead.get("track", "?"), []).append(lead)
 
-        lines = [f"🔍 <b>Lead Agent — {len(new_leads)} new lead(s)</b>\n"]
+        lines = [f"🔍 <b>Lid Agenti — {len(new_leads)} ta yangi lid</b>\n"]
         for track, leads in by_track.items():
-            label = "🏗 Equipment sales" if track == "equipment_sales" else "🔧 Service & maintenance"
+            label = "🏗 Uskunalar sotuvi" if track == "equipment_sales" else "🔧 Xizmat va texnik xizmat"
             lines.append(f"<b>{escape(label)} ({len(leads)})</b>")
             for lead in leads[:10]:
-                name = lead.get("company_name") or "Unnamed"
+                name = lead.get("company_name") or "Nomsiz"
                 stage = lead.get("project_stage", "")
                 priority = lead.get("priority", "")
                 lines.append(f"  • {escape(name)} — {escape(stage)} ({escape(priority)})")
