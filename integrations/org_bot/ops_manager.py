@@ -658,6 +658,10 @@ async def _dispatch_director_task(
             return
 
         target_type, target_role, target_agent = validated
+        log.info(
+            "Classified '{}' -> type={} role={} agent={}",
+            raw_message[:120], target_type, target_role, target_agent,
+        )
         if target_type == "employee":
             await _dispatch_to_role(
                 director_telegram_user_id, source_message_id, raw_message, target_role, task_summary, run_id
@@ -956,6 +960,10 @@ async def _answer_from_agent(
     if not history:
         history = format_history(await store.recent_conversation(director_id))
     data = await _fetch_agent_data(agent_slug)
+    log.info(
+        "Answering '{}' from agent={} -- {} char(s) of data, preview: {}",
+        question[:120], agent_slug, len(data), data[:200].replace("\n", " | "),
+    )
     async with OpenRouterClient(
         agent=AGENT,
         run_id=run_id,
@@ -966,6 +974,7 @@ async def _answer_from_agent(
         answer = await ai.complete(
             ANSWER_SYSTEM_PROMPT, build_answer_message(AGENT_LABELS[agent_slug], data, question, history)
         )
+    log.info("Answer for agent={}: {}", agent_slug, answer[:300].replace("\n", " | "))
     await _reply_and_log(director_id, run_id, sanitize_model_html(answer))
 
 
