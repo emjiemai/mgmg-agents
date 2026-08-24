@@ -58,10 +58,10 @@ log = setup_logging(AGENT)
 
 BUCKET_ORDER = ["90_plus", "61_90", "31_60", "1_30"]
 BUCKET_LABELS = {
-    "1_30": "1–30 days",
-    "31_60": "31–60 days",
-    "61_90": "61–90 days",
-    "90_plus": "90+ days",
+    "1_30": "1–30 kun",
+    "31_60": "31–60 kun",
+    "61_90": "61–90 kun",
+    "90_plus": "90+ kun",
 }
 BUCKET_SEVERITY = {"1_30": "info", "31_60": "warning", "61_90": "warning", "90_plus": "critical"}
 BUCKET_EMOJI = {"1_30": "🟢", "31_60": "🟡", "61_90": "🟡", "90_plus": "🔴"}
@@ -151,9 +151,9 @@ def render(aging: ARAging, min_days: int) -> str:
 
     if not overdue:
         return (
-            f"🟢 <b>Receivables — {fmt_date(aging.snapshot_date)}</b>\n\n"
-            f"Nothing overdue by {min_days}+ day(s). "
-            f"Total open: {escape(format_uzs_short(aging.total_open_tiyin))}."
+            f"🟢 <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>\n\n"
+            f"{min_days}+ kundan ortiq muddati o'tgan qarz yo'q. "
+            f"Jami ochiq: {escape(format_uzs_short(aging.total_open_tiyin))}."
         )
 
     total_overdue = sum(i.balance_due_tiyin for i in overdue)
@@ -161,10 +161,10 @@ def render(aging: ARAging, min_days: int) -> str:
     headline = "🔴" if critical > 0 else "🟡"
 
     lines = [
-        f"{headline} <b>Receivables — {fmt_date(aging.snapshot_date)}</b>",
+        f"{headline} <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>",
         "",
-        f"<b>Overdue: {escape(format_uzs(total_overdue))}</b> across {len(overdue)} invoice(s)",
-        f"Total open AR: {escape(format_uzs_short(aging.total_open_tiyin))}",
+        f"<b>Muddati o'tgan: {escape(format_uzs(total_overdue))}</b> ({len(overdue)} ta hisob-faktura)",
+        f"Jami ochiq debitorlik: {escape(format_uzs_short(aging.total_open_tiyin))}",
         "",
     ]
 
@@ -189,14 +189,14 @@ def render(aging: ARAging, min_days: int) -> str:
         if len(invoices) > MAX_PER_BUCKET:
             rest = sum(i.balance_due_tiyin for i in invoices[MAX_PER_BUCKET:])
             lines.append(
-                f"   <i>+{len(invoices) - MAX_PER_BUCKET} more, "
+                f"   <i>+yana {len(invoices) - MAX_PER_BUCKET} ta, "
                 f"{escape(format_uzs_short(rest))}</i>"
             )
         lines.append("")
 
     owners = _by_owner(overdue)
     if owners:
-        lines.append("<b>By owner:</b>")
+        lines.append("<b>Mas'ul xodim bo'yicha:</b>")
         for owner, amount in sorted(owners.items(), key=lambda kv: kv[1], reverse=True)[:8]:
             lines.append(f"   {escape(owner)} — {escape(format_uzs_short(amount))}")
 
@@ -214,10 +214,10 @@ def _invoice_line(invoice: ARInvoice) -> str:
     """
     owner = invoice.sales_person_name or division_label(invoice.division)
     customer = invoice.card_name or invoice.card_code
-    doc = f"#{invoice.doc_num}" if invoice.doc_num else f"DocEntry {invoice.doc_entry}"
+    doc = f"#{invoice.doc_num}" if invoice.doc_num else f"Hujjat {invoice.doc_entry}"
     return (
         f"{escape(customer)} — <b>{escape(format_uzs_short(invoice.balance_due_tiyin))}</b>, "
-        f"{invoice.days_overdue} d, {escape(doc)} ({escape(owner)})"
+        f"{invoice.days_overdue} kun, {escape(doc)} ({escape(owner)})"
     )
 
 
@@ -275,8 +275,8 @@ async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, messag
                 str(run_id),
                 f"ar_overdue:{bucket}:{aging.snapshot_date.isoformat()}",
                 BUCKET_SEVERITY.get(bucket, "info"),
-                f"AR overdue {BUCKET_LABELS.get(bucket, bucket)}: {format_uzs(total)}",
-                f"{len(invoices)} invoice(s); largest: {top.card_name or top.card_code}",
+                f"Muddati o'tgan debitorlik {BUCKET_LABELS.get(bucket, bucket)}: {format_uzs(total)}",
+                f"{len(invoices)} ta hisob-faktura; eng kattasi: {top.card_name or top.card_code}",
                 total,
                 top.sales_person_name or division_label(top.division),
                 "telegram",
@@ -326,7 +326,7 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
                 agent=AGENT,
                 run_id=run_id,
                 severity="critical",
-                title="Receivables agent: no AR aging snapshot available",
+                title="Debitorlik agenti: hisobot ma'lumotlari mavjud emas",
             )
         except Exception as send_exc:  # noqa: BLE001
             log.error("Could not send the failure alert either: {}", send_exc)

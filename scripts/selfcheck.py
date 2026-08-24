@@ -297,8 +297,8 @@ def test_brief_rendering() -> None:
     empty = brief.BriefData()
     empty.note_failure("sap", RuntimeError("connection refused"))
     text = brief.render(empty)
-    check_true("failure shows as unavailable", "SAP unavailable" in text)
-    check_true("failed sources named", "No data from: sap" in text)
+    check_true("failure shows as not-connected", "Hali ulanmagan" in text)
+    check_true("failed sources named", "Ma'lumot yo'q: sap" in text)
 
     aging = ARAging(snapshot_date=date(2026, 8, 18))
     aging.invoices = [
@@ -363,13 +363,13 @@ def test_receivables_rendering() -> None:
 
     text = receivables.render(aging, min_days=1)
     check_true("headline critical", text.startswith("🔴"))
-    check_true("90+ bucket shown", "90+ days" in text)
-    check_true("1-30 bucket shown", "1–30 days" in text)
-    check_true("owner breakdown present", "By owner:" in text)
-    check_true("unmapped owner falls back to Other", "Other" in text)
+    check_true("90+ bucket shown", "90+ kun" in text)
+    check_true("1-30 bucket shown", "1–30 kun" in text)
+    check_true("owner breakdown present", "Mas'ul xodim bo'yicha:" in text)
+    check_true("unmapped owner falls back to Boshqa", "Boshqa" in text)
 
     text_30 = receivables.render(aging, min_days=30)
-    check_true("min_days filters the 5-day invoice", "1–30 days" not in text_30)
+    check_true("min_days filters the 5-day invoice", "1–30 kun" not in text_30)
 
 
 def main() -> int:

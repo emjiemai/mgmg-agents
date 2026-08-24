@@ -313,8 +313,8 @@ def render(data: BriefData) -> str:
     """
     day = today_local()
     parts: list[str] = [
-        f"<b>☀️ CEO Daily Brief — {fmt_date(day)}</b>",
-        f"<i>{now_local().strftime('%H:%M')} Tashkent</i>",
+        f"<b>☀️ CEO Kunlik Hisoboti — {fmt_date(day)}</b>",
+        f"<i>{now_local().strftime('%H:%M')} Toshkent</i>",
         "",
         _render_cash(data),
         _render_receivables(data),
@@ -325,7 +325,7 @@ def render(data: BriefData) -> str:
 
     if data.errors:
         failed = ", ".join(escape(e["source"]) for e in data.errors)
-        parts.append(f"⚠️ <i>No data from: {failed} — figures above are incomplete.</i>")
+        parts.append(f"⚠️ <i>Ma'lumot yo'q: {failed} — yuqoridagi ko'rsatkichlar to'liq emas.</i>")
 
     return "\n".join(p for p in parts if p is not None)
 
@@ -342,24 +342,24 @@ def _render_cash(data: BriefData) -> str:
     brief's own "No data from: sap_cash..." footer line either way.
     """
     if data.cash is None:
-        return "💰 <b>Cash</b>\n   Not connected yet — no data source configured\n"
+        return "💰 <b>Kassa</b>\n   Hali ulanmagan — ma'lumot manbai sozlanmagan\n"
     if not data.cash:
-        return "💰 <b>Cash</b>\n   No cash accounts configured\n"
+        return "💰 <b>Kassa</b>\n   Kassa hisoblari sozlanmagan\n"
 
-    lines = [f"💰 <b>Cash: {escape(format_uzs(data.cash_total_tiyin))}</b>"]
+    lines = [f"💰 <b>Kassa: {escape(format_uzs(data.cash_total_tiyin))}</b>"]
     for account in sorted(data.cash, key=lambda a: a.balance_tiyin, reverse=True)[:MAX_LINES]:
         name = account.bank_name or account.account_name or account.account_code
         marker = "🔴" if account.balance_tiyin < 0 else "  "
         lines.append(f"   {marker} {escape(name)}: {escape(format_uzs_short(account.balance_tiyin))}")
     if len(data.cash) > MAX_LINES:
-        lines.append(f"   <i>+{len(data.cash) - MAX_LINES} more account(s)</i>")
+        lines.append(f"   <i>+yana {len(data.cash) - MAX_LINES} ta hisob</i>")
     return "\n".join(lines) + "\n"
 
 
 def _render_receivables(data: BriefData) -> str:
     """Render the receivables section with aging buckets."""
     if data.aging is None:
-        return "📉 <b>Receivables</b>\n   ⚠️ SAP unavailable\n"
+        return "📉 <b>Debitorlik qarzlari</b>\n   ⚠️ Ma'lumot mavjud emas\n"
 
     aging = data.aging
     marker = "🟢"
@@ -369,12 +369,12 @@ def _render_receivables(data: BriefData) -> str:
         marker = "🟡"
 
     lines = [
-        f"{marker} <b>Overdue AR: {escape(format_uzs(aging.total_overdue_tiyin))}</b> "
-        f"({aging.overdue_count} invoice(s))",
-        f"   Total open: {escape(format_uzs_short(aging.total_open_tiyin))}",
+        f"{marker} <b>Muddati o'tgan qarz: {escape(format_uzs(aging.total_overdue_tiyin))}</b> "
+        f"({aging.overdue_count} ta hisob-faktura)",
+        f"   Jami ochiq: {escape(format_uzs_short(aging.total_open_tiyin))}",
     ]
 
-    bucket_labels = [("1_30", "1–30 d"), ("31_60", "31–60 d"), ("61_90", "61–90 d"), ("90_plus", "90+ d")]
+    bucket_labels = [("1_30", "1–30 kun"), ("31_60", "31–60 kun"), ("61_90", "61–90 kun"), ("90_plus", "90+ kun")]
     for key, caption in bucket_labels:
         amount = aging.bucket_totals_tiyin.get(key, 0)
         if amount <= 0:
@@ -389,13 +389,13 @@ def _render_receivables(data: BriefData) -> str:
         reverse=True,
     )[:3]
     if worst:
-        lines.append("   <i>Largest:</i>")
+        lines.append("   <i>Eng kattalari:</i>")
         for inv in worst:
             owner = inv.sales_person_name or division_label(inv.division)
             lines.append(
                 f"   • {escape(inv.card_name or inv.card_code)} — "
                 f"{escape(format_uzs_short(inv.balance_due_tiyin))}, "
-                f"{inv.days_overdue} d ({escape(owner)})"
+                f"{inv.days_overdue} kun ({escape(owner)})"
             )
 
     return "\n".join(lines) + "\n"
@@ -404,7 +404,7 @@ def _render_receivables(data: BriefData) -> str:
 def _render_pipeline(data: BriefData) -> str:
     """Render the CRM pipeline section."""
     if data.pipeline is None:
-        return "📊 <b>Pipeline</b>\n   ⚠️ CRM unavailable\n"
+        return "📊 <b>Pipeline</b>\n   ⚠️ CRM mavjud emas\n"
 
     pipeline = data.pipeline
     stalled = len(pipeline.deals_without_task)
@@ -412,21 +412,21 @@ def _render_pipeline(data: BriefData) -> str:
 
     lines = [
         f"📊 <b>Pipeline: {escape(format_uzs_short(pipeline.total_value_tiyin))}</b> "
-        f"({pipeline.total_deals} deal(s))",
-        f"   🆕 New leads (24h): {pipeline.new_leads_24h}",
-        f"   {marker} Deals with no next task: {stalled}",
+        f"({pipeline.total_deals} ta bitim)",
+        f"   🆕 Yangi leadlar (24 soat): {pipeline.new_leads_24h}",
+        f"   {marker} Vazifasiz bitimlar: {stalled}",
     ]
 
     for deal in pipeline.deals_without_task[:MAX_LINES]:
         # The CRM's API exposes assigned_to only as a numeric manager id —
         # no endpoint resolves it to a name, unlike amoCRM's user list.
-        owner = f"Manager #{deal.assigned_to}" if deal.assigned_to else "unassigned"
+        owner = f"Menejer #{deal.assigned_to}" if deal.assigned_to else "biriktirilmagan"
         lines.append(
-            f"   • {escape(deal.title or f'Deal {deal.id}')} — "
+            f"   • {escape(deal.title or f'Bitim {deal.id}')} — "
             f"{escape(format_uzs_short(deal.amount_tiyin))} ({escape(owner)})"
         )
     if stalled > MAX_LINES:
-        lines.append(f"   <i>+{stalled - MAX_LINES} more</i>")
+        lines.append(f"   <i>+yana {stalled - MAX_LINES} ta</i>")
 
     return "\n".join(lines) + "\n"
 
@@ -434,23 +434,23 @@ def _render_pipeline(data: BriefData) -> str:
 def _render_attendance(data: BriefData) -> str:
     """Render the HR attendance section."""
     if data.attendance is None:
-        return "👥 <b>Attendance</b>\n   ⚠️ Verifix unavailable\n"
+        return "👥 <b>Davomat</b>\n   ⚠️ Verifix mavjud emas\n"
 
     att = data.attendance
     if att.total_records == 0:
-        return "👥 <b>Attendance</b>\n   ⚠️ No export received for today\n"
+        return "👥 <b>Davomat</b>\n   ⚠️ Bugun uchun eksport qabul qilinmadi\n"
 
     marker = "🔴" if att.absent else "🟡" if att.late else "🟢"
     lines = [
-        f"{marker} <b>Attendance:</b> {len(att.late)} late, {len(att.absent)} absent "
-        f"(of {att.total_records})"
+        f"{marker} <b>Davomat:</b> {len(att.late)} kechikkan, {len(att.absent)} kelmagan "
+        f"(jami {att.total_records})"
     ]
     for record in att.absent[:MAX_LINES]:
-        lines.append(f"   🔴 {escape(record.employee_name or record.employee_id)} — absent")
+        lines.append(f"   🔴 {escape(record.employee_name or record.employee_id)} — kelmagan")
     for record in att.late[: max(MAX_LINES - len(att.absent[:MAX_LINES]), 0)]:
         lines.append(
             f"   🟡 {escape(record.employee_name or record.employee_id)} — "
-            f"{record.late_minutes} min late"
+            f"{record.late_minutes} daqiqa kechikkan"
         )
 
     return "\n".join(lines) + "\n"
@@ -459,20 +459,20 @@ def _render_attendance(data: BriefData) -> str:
 def _render_tasks(data: BriefData) -> str:
     """Render the overdue Planner tasks section."""
     if data.overdue_tasks is None:
-        return "📋 <b>Tasks</b>\n   ⚠️ Microsoft Planner unavailable\n"
+        return "📋 <b>Vazifalar</b>\n   ⚠️ Microsoft Planner mavjud emas\n"
 
     tasks = data.overdue_tasks
     marker = "🔴" if len(tasks) > 10 else "🟡" if tasks else "🟢"
-    lines = [f"{marker} <b>Overdue Planner tasks: {len(tasks)}</b>"]
+    lines = [f"{marker} <b>Muddati o'tgan Planner vazifalari: {len(tasks)}</b>"]
 
     for task in tasks[:MAX_LINES]:
-        who = ", ".join(task.get("assignedToNames", [])) or "unassigned"
+        who = ", ".join(task.get("assignedToNames", [])) or "biriktirilmagan"
         lines.append(
-            f"   • {escape(task.get('title', 'Untitled'))} — "
-            f"{task.get('daysOverdue', 0)} d ({escape(who)})"
+            f"   • {escape(task.get('title', 'Nomsiz'))} — "
+            f"{task.get('daysOverdue', 0)} kun ({escape(who)})"
         )
     if len(tasks) > MAX_LINES:
-        lines.append(f"   <i>+{len(tasks) - MAX_LINES} more</i>")
+        lines.append(f"   <i>+yana {len(tasks) - MAX_LINES} ta</i>")
 
     return "\n".join(lines) + "\n"
 
@@ -573,9 +573,9 @@ async def run(dry_run: bool = False) -> int:
     if len(data.errors) == SOURCE_COUNT:
         log.error("Every source failed — sending a failure notice instead of a brief")
         message = (
-            f"🔴 <b>CEO Daily Brief — {fmt_date(today_local())}</b>\n\n"
-            "No data could be retrieved from any system. "
-            "Check the VPS and the integration logs."
+            f"🔴 <b>CEO Kunlik Hisoboti — {fmt_date(today_local())}</b>\n\n"
+            "Hech qanday tizimdan ma'lumot olib bo'lmadi. "
+            "Server va integratsiya loglarini tekshiring."
         )
 
     message_id: int | None = None

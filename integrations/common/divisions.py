@@ -22,8 +22,8 @@ DIVISION_LABELS: dict[str, str] = {
     ARMIN: "Armin",
     IMUS: "IMUS-Alliance",
     ONDRY: "ONDRY",
-    SERVICE: "Service center",
-    PROPERTIES: "Properties",
+    SERVICE: "Xizmat markazi",
+    PROPERTIES: "Ko'chmas mulk",
 }
 
 # SAP: sales employee code (OSLP.SlpCode) -> division
@@ -93,6 +93,6 @@ def label(division: str | None) -> str:
         division: A division key, or ``None``.
 
     Returns:
-        The display label, or "Other" for unmapped values.
+        The display label, or "Boshqa" ("Other") for unmapped values.
     """
-    return DIVISION_LABELS.get(division or "", "Other")
+    return DIVISION_LABELS.get(division or "", "Boshqa")
