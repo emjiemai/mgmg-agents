@@ -331,9 +331,18 @@ def render(data: BriefData) -> str:
 
 
 def _render_cash(data: BriefData) -> str:
-    """Render the cash section."""
+    """Render the cash section.
+
+    "Not connected yet" rather than a "⚠️ unavailable" warning: nothing
+    currently provides cash/bank balances at all (no gateway tool, no
+    reachable SAP Service Layer) -- this is a permanent, known state, not a
+    daily transient failure, and a recurring "unavailable" alert reads like
+    something broken that needs fixing right now when it doesn't. The
+    honest disclosure that this section is incomplete still shows in the
+    brief's own "No data from: sap_cash..." footer line either way.
+    """
     if data.cash is None:
-        return "💰 <b>Cash</b>\n   ⚠️ SAP unavailable\n"
+        return "💰 <b>Cash</b>\n   Not connected yet — no data source configured\n"
     if not data.cash:
         return "💰 <b>Cash</b>\n   No cash accounts configured\n"
 
