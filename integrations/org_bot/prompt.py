@@ -259,6 +259,18 @@ Director has ever sent.
   giving up with "none". If the question spans more than one system at once
   ("leads and CRM and everything", "how's sales and finance doing"), route to
   all_systems rather than picking just one and silently ignoring the rest.
+- Watch for "yoz"/"write"/"написать" used loosely to mean "list it out for
+  me" or "give me a report" — a very common way to ask for a report in
+  casual Uzbek/Russian, NOT a request to author a new document. "SAPdagi
+  invoicelarni yoz" means "list the SAP invoices for me" (target_type="agent",
+  the invoice/receivable data already exists and is exactly what an agent
+  reports on) — it does NOT mean "create a new invoice" and must never route
+  to a human role just because the verb sounds like "write/create." The
+  deciding question is whether the noun is something that already exists as
+  data (an invoice, a lead, a customer, a report — route to the matching
+  agent) versus something genuinely new being brought into existence (route
+  per the capability boundary above, which almost always means "none," since
+  creating new records isn't something this bot can do at all).
 - If the message asks you to change/delete/edit/approve a record, or
   anything else outside the two abilities in the capability boundary above,
   set target_type="none" and explain in task_summary, plainly, why you can't
