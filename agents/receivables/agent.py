@@ -1,17 +1,26 @@
 """Agent 3 — Receivables Agent.
 
-Pulls the AR aging from SAP once a day, sorts what is overdue into buckets, and
-sends the CEO a Telegram alert naming the amount, the customer and the person
-responsible for collecting it.
+Reads the latest AR aging snapshot (pushed periodically by the SAP gateway's
+own machine — see ``scripts/sap-gateway-push/`` — into ``ar_aging_snapshots``),
+sorts what is overdue into buckets, and sends the CEO a Telegram alert naming
+the amount, the customer and the person responsible for collecting it.
+
+This agent does NOT call SAP directly: SAP B1's Service Layer was never
+reachable from this service (confirmed unreachable both directly and via the
+gateway's own machine, which is deliberately loopback-only by design — see
+``docs/agent-specs`` for the reachability investigation). Instead the
+gateway's machine pushes a fresh snapshot on its own schedule, and this agent
+just reads the most recent one — the same data OPS Manager Bot's Finance
+Agent answers Director questions from.
 
 The alert is deliberately owner-first: an aging report nobody owns does not get
-collected. Where SAP has no sales employee on the invoice, the division owner
-is named instead, and unmapped invoices are shown as "Other" rather than being
-dropped.
+collected. Where the data has no sales employee on the invoice, the division
+owner is named instead, and unmapped invoices are shown as "Other" rather than
+being dropped.
 
-Read-only: this agent never touches SAP, sends no email, and creates no
-documents. Its only side effects are the Telegram message and its own rows in
-``alerts`` and ``agent_actions``.
+Read-only: this agent never writes to SAP or the gateway, sends no email, and
+creates no documents. Its only side effects are the Telegram message and its
+own rows in ``alerts`` and ``agent_actions``.
 
 Run:
     python agents/receivables/agent.py             # send
@@ -34,14 +43,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from integrations.common import snapshots
 from integrations.common.config import settings
-from integrations.common.db import close_pool, execute
+from integrations.common.db import close_pool, execute, fetch_all
 from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_uzs, format_uzs_short
 from integrations.common.timeutil import fmt_date
-from integrations.sap.client import SAPClient
 from integrations.sap.models import ARAging, ARInvoice
 from integrations.telegram.bot import TelegramBot, escape
 
@@ -63,21 +70,69 @@ MAX_PER_BUCKET = 5
 
 
 async def collect(run_id: uuid.UUID) -> ARAging:
-    """Pull the AR aging from SAP and snapshot it.
+    """Read the latest AR aging snapshot, pushed by the SAP gateway's own
+    machine (see ``scripts/sap-gateway-push/`` and
+    ``integrations/sap/push_handler.py``).
+
+    Not a live SAP call: the SAP B1 Service Layer was never reachable from
+    this service (confirmed unreachable both directly and via the gateway's
+    own machine, which is deliberately loopback-only) — the gateway's
+    machine pushes a fresh snapshot into ``ar_aging_snapshots`` on its own
+    schedule instead, and this just reads whatever's most recently landed
+    there. ``run_id`` is accepted for signature compatibility with the
+    previous SAP-direct version; nothing here needs to audit a local read
+    the way an external API call would.
 
     Args:
-        run_id: UUID grouping this run's audit rows.
+        run_id: Unused — kept for call-site compatibility.
 
     Returns:
-        The full aging result.
+        The full aging result, built from ``v_ar_aging_latest``.
 
     Raises:
-        SAPError: if SAP is unreachable or rejects the query.
+        RuntimeError: if no snapshot has ever been pushed yet.
     """
-    async with SAPClient(agent=AGENT, run_id=run_id) as sap:
-        aging = await sap.get_ar_aging()
+    rows = await fetch_all(
+        "SELECT snapshot_date, doc_entry, doc_num, card_code, card_name, doc_date, due_date, "
+        "days_overdue, aging_bucket, currency, doc_total_tiyin, paid_to_date_tiyin, "
+        "balance_due_tiyin, sales_person_code, sales_person_name, division "
+        "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC"
+    )
+    if not rows:
+        raise RuntimeError(
+            "No AR aging snapshot has been pushed yet — the SAP gateway push script "
+            "(scripts/sap-gateway-push/) needs to run at least once."
+        )
 
-    await snapshots.persist_ar_aging(aging)
+    invoices = [
+        ARInvoice(
+            doc_entry=r["doc_entry"],
+            doc_num=r["doc_num"],
+            card_code=r["card_code"],
+            card_name=r["card_name"],
+            doc_date=r["doc_date"],
+            due_date=r["due_date"],
+            days_overdue=r["days_overdue"],
+            aging_bucket=r["aging_bucket"],
+            currency=r["currency"],
+            doc_total_tiyin=r["doc_total_tiyin"],
+            paid_to_date_tiyin=r["paid_to_date_tiyin"],
+            balance_due_tiyin=r["balance_due_tiyin"],
+            sales_person_code=r["sales_person_code"],
+            sales_person_name=r["sales_person_name"],
+            division=r["division"],
+        )
+        for r in rows
+    ]
+
+    aging = ARAging(snapshot_date=rows[0]["snapshot_date"], invoices=invoices)
+    aging.total_open_tiyin = sum(i.balance_due_tiyin for i in invoices)
+    aging.total_overdue_tiyin = sum(i.balance_due_tiyin for i in invoices if i.days_overdue > 0)
+    for bucket in ("current", "1_30", "31_60", "61_90", "90_plus"):
+        in_bucket = [i for i in invoices if i.aging_bucket == bucket]
+        aging.bucket_totals_tiyin[bucket] = sum(i.balance_due_tiyin for i in in_bucket)
+        aging.bucket_counts[bucket] = len(in_bucket)
+
     return aging
 
 
@@ -247,7 +302,7 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
 
     Returns:
         Process exit code — 0 on success, 1 if the alert could not be sent,
-        2 if SAP could not be read or the config is incomplete.
+        2 if no snapshot is available yet or the config is incomplete.
     """
     if dry_run:
         settings.dry_run = True
@@ -262,8 +317,8 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
 
     try:
         aging = await collect(run_id)
-    except Exception as exc:  # noqa: BLE001 — surface SAP failure as an alert, not a stack trace
-        log.error("Could not read AR aging from SAP: {}", exc)
+    except Exception as exc:  # noqa: BLE001 — surface the failure as an alert, not a stack trace
+        log.error("Could not read the AR aging snapshot: {}", exc)
         try:
             async with TelegramBot(
                 agent=AGENT,
@@ -272,12 +327,12 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
                 default_chat_id=settings.receivables_telegram_chat_id,
             ) as bot:
                 await bot.send_alert(
-                    "Receivables agent could not reach SAP",
+                    "Receivables agent: no AR aging snapshot available",
                     f"<code>{escape(str(exc)[:300])}</code>",
                     severity="critical",
                 )
         except Exception as send_exc:  # noqa: BLE001
-            log.error("Could not send the SAP failure alert either: {}", send_exc)
+            log.error("Could not send the failure alert either: {}", send_exc)
         return 2
 
     message = render(aging, min_days)

@@ -9,6 +9,15 @@ that section to a "data unavailable" line rather than killing the run. Which
 sources failed is stated in the message and stored in ``daily_briefs.source_errors``,
 so a quiet failure can never masquerade as good news.
 
+Cash and Receivables are fetched independently of each other, not as one
+combined SAP call: Receivables reads the AR aging snapshot the SAP gateway's
+own machine pushes (see ``scripts/sap-gateway-push/`` and
+``agents/receivables/agent.py``, which reads the exact same table), while
+Cash still needs a live SAP B1 Service Layer call that has never been
+reachable from this service. A combined fetch would fail both together the
+moment Cash's SAPClient call errors, hiding Receivables data that's actually
+available — splitting them means Receivables can succeed on its own.
+
 Run:
     python agents/ceo-daily-brief/agent.py            # send
     python agents/ceo-daily-brief/agent.py --dry-run  # print, send nothing
@@ -36,7 +45,7 @@ from typing import Any
 
 from integrations.common import snapshots
 from integrations.common.config import settings
-from integrations.common.db import close_pool, execute, log_action
+from integrations.common.db import close_pool, execute, fetch_all, log_action
 from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_uzs, format_uzs_short
@@ -45,12 +54,12 @@ from integrations.crm.client import CRMClient
 from integrations.crm.models import PipelineSummary
 from integrations.microsoft.client import GraphClient
 from integrations.sap.client import SAPClient
-from integrations.sap.models import ARAging, CashAccount
+from integrations.sap.models import ARAging, ARInvoice, CashAccount
 from integrations.telegram.bot import TelegramBot, escape
 from integrations.verifix.client import AttendanceSummary, VerifixClient, persist_attendance
 
 AGENT = "ceo-daily-brief"
-SOURCE_COUNT = 4  # SAP, CRM, Verifix, Microsoft Graph
+SOURCE_COUNT = 5  # SAP cash, SAP aging (gateway-pushed), CRM, Verifix, Microsoft Graph
 log = setup_logging(AGENT)
 
 # How many line items to show per section before collapsing into "+N more".
@@ -102,18 +111,29 @@ async def collect(run_id: uuid.UUID) -> BriefData:
     data = BriefData()
 
     results = await asyncio.gather(
-        _fetch_sap(run_id),
+        _fetch_cash(run_id),
+        _fetch_aging(run_id),
         _fetch_crm(run_id),
         _fetch_verifix(run_id),
         _fetch_planner(run_id),
         return_exceptions=True,
     )
-    sap_result, crm_result, verifix_result, planner_result = results
+    cash_result, aging_result, crm_result, verifix_result, planner_result = results
 
-    if isinstance(sap_result, BaseException):
-        data.note_failure("sap", sap_result)
+    # Split from one combined SAP fetch into two independent ones: the AR
+    # aging snapshot now comes from the gateway push (see _fetch_aging) and
+    # succeeds even though live SAP cash access still doesn't exist -- a
+    # combined fetch would fail both together the moment cash's SAPClient
+    # call errors, hiding aging data that's actually available.
+    if isinstance(cash_result, BaseException):
+        data.note_failure("sap_cash", cash_result)
     else:
-        data.cash, data.aging = sap_result
+        data.cash = cash_result
+
+    if isinstance(aging_result, BaseException):
+        data.note_failure("sap_aging", aging_result)
+    else:
+        data.aging = aging_result
 
     if isinstance(crm_result, BaseException):
         data.note_failure("crm", crm_result)
@@ -133,25 +153,91 @@ async def collect(run_id: uuid.UUID) -> BriefData:
     return data
 
 
-async def _fetch_sap(run_id: uuid.UUID) -> tuple[list[CashAccount], ARAging]:
-    """Pull cash balances and AR aging from SAP, and snapshot both.
+async def _fetch_cash(run_id: uuid.UUID) -> list[CashAccount]:
+    """Pull cash balances from SAP directly, and snapshot them.
+
+    Still a live SAP call, unlike ``_fetch_aging`` below — nothing currently
+    provides cash/bank account balances via the gateway push, only AR aging.
+    This keeps failing until either the SAP B1 Service Layer becomes
+    reachable, or the gateway grows a cash-balance tool.
 
     Args:
         run_id: UUID grouping this run's audit rows.
 
     Returns:
-        Tuple of (cash accounts, AR aging).
+        The cash accounts.
 
     Raises:
-        SAPError: if SAP is unreachable or rejects the queries.
+        SAPError: if SAP is unreachable or rejects the query.
     """
     async with SAPClient(agent=AGENT, run_id=run_id) as sap:
         cash = await sap.get_cash_balance()
-        aging = await sap.get_ar_aging()
 
     await snapshots.persist_cash_balances(cash)
-    await snapshots.persist_ar_aging(aging)
-    return cash, aging
+    return cash
+
+
+async def _fetch_aging(run_id: uuid.UUID) -> ARAging:
+    """Read the latest AR aging snapshot, pushed by the SAP gateway's own
+    machine (see ``scripts/sap-gateway-push/`` and
+    ``integrations/sap/push_handler.py``) — not a live SAP call.
+
+    Mirrors ``agents/receivables/agent.py``'s ``collect()`` exactly (same
+    source table, same model construction) — the two agents deliberately
+    read the same snapshot rather than each defining their own version of
+    "what counts as AR aging."
+
+    Args:
+        run_id: Unused — kept for call-site symmetry with ``_fetch_cash``.
+
+    Returns:
+        The full aging result, built from ``v_ar_aging_latest``.
+
+    Raises:
+        RuntimeError: if no snapshot has ever been pushed yet.
+    """
+    rows = await fetch_all(
+        "SELECT snapshot_date, doc_entry, doc_num, card_code, card_name, doc_date, due_date, "
+        "days_overdue, aging_bucket, currency, doc_total_tiyin, paid_to_date_tiyin, "
+        "balance_due_tiyin, sales_person_code, sales_person_name, division "
+        "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC"
+    )
+    if not rows:
+        raise RuntimeError(
+            "No AR aging snapshot has been pushed yet — the SAP gateway push script "
+            "(scripts/sap-gateway-push/) needs to run at least once."
+        )
+
+    invoices = [
+        ARInvoice(
+            doc_entry=r["doc_entry"],
+            doc_num=r["doc_num"],
+            card_code=r["card_code"],
+            card_name=r["card_name"],
+            doc_date=r["doc_date"],
+            due_date=r["due_date"],
+            days_overdue=r["days_overdue"],
+            aging_bucket=r["aging_bucket"],
+            currency=r["currency"],
+            doc_total_tiyin=r["doc_total_tiyin"],
+            paid_to_date_tiyin=r["paid_to_date_tiyin"],
+            balance_due_tiyin=r["balance_due_tiyin"],
+            sales_person_code=r["sales_person_code"],
+            sales_person_name=r["sales_person_name"],
+            division=r["division"],
+        )
+        for r in rows
+    ]
+
+    aging = ARAging(snapshot_date=rows[0]["snapshot_date"], invoices=invoices)
+    aging.total_open_tiyin = sum(i.balance_due_tiyin for i in invoices)
+    aging.total_overdue_tiyin = sum(i.balance_due_tiyin for i in invoices if i.days_overdue > 0)
+    for bucket in ("current", "1_30", "31_60", "61_90", "90_plus"):
+        in_bucket = [i for i in invoices if i.aging_bucket == bucket]
+        aging.bucket_totals_tiyin[bucket] = sum(i.balance_due_tiyin for i in in_bucket)
+        aging.bucket_counts[bucket] = len(in_bucket)
+
+    return aging
 
 
 async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
