@@ -94,21 +94,13 @@ class Settings(BaseSettings):
     # approval-callback webhook handler, which isn't tied to one agent — it
     # replies on whichever bot's inline button was actually pressed.
 
-    ceo_brief_telegram_bot_token: SecretStr = SecretStr("")
-    ceo_brief_telegram_chat_id: str = ""
-
-    receivables_telegram_bot_token: SecretStr = SecretStr("")
-    receivables_telegram_chat_id: str = ""
-
-    # Reserved for the amoCRM follow-up ("CRM") agent, which currently
-    # notifies via Teams (see integrations/microsoft/teams_notify.py), not
-    # Telegram -- these exist so the naming is ready if/when that changes,
-    # not because the agent sends anything here yet.
-    crm_agent_telegram_bot_token: SecretStr = SecretStr("")
-    crm_agent_telegram_chat_id: str = ""
-
-    lead_agent_telegram_bot_token: SecretStr = SecretStr("")
-    lead_agent_telegram_chat_id: str = ""
+    # CEO Daily Brief, Receivables, and Lead Agent used to each have their
+    # own dedicated bot here. Consolidated into integrations/org_bot/notify.py,
+    # which sends via OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN (below) to whoever
+    # currently holds the Director role -- the Director now only ever talks
+    # to two bots total (OPS Manager Bot, Admin Bot), not five. The old
+    # per-agent bots can be deleted via @BotFather; nothing in code
+    # references these settings anymore.
 
     # --- Admin Bot (employee access approval) ---
     admin_bot_telegram_bot_token: SecretStr = SecretStr("")

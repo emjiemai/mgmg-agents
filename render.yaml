@@ -211,22 +211,14 @@ envVarGroups:
         sync: false
       - key: TEAMS_SALES_WEBHOOK_URL
         sync: false
-      # One bot per agent -- see integrations/telegram/bot.py. Create each
-      # via @BotFather (free); do not reuse one bot token across agents.
+      # CEO Daily Brief, Receivables, and Lead Agent used to each have their
+      # own dedicated bot here -- consolidated into
+      # integrations/org_bot/notify.py, which sends via
+      # OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN (below) to whoever currently
+      # holds the Director role. Delete the old per-agent bots via
+      # @BotFather; nothing reads their settings anymore.
       - key: TELEGRAM_PRIMARY_BOT_TOKEN
         sync: false  # used only by the approval-callback webhook handler
-      - key: CEO_BRIEF_TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: CEO_BRIEF_TELEGRAM_CHAT_ID
-        sync: false
-      - key: RECEIVABLES_TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: RECEIVABLES_TELEGRAM_CHAT_ID
-        sync: false
-      - key: CRM_AGENT_TELEGRAM_BOT_TOKEN
-        sync: false  # not sent to yet -- amoCRM follow-up currently notifies via Teams
-      - key: CRM_AGENT_TELEGRAM_CHAT_ID
-        sync: false
       - key: VERIFIX_MODE
         value: csv
       - key: VERIFIX_BASE_URL
@@ -264,10 +256,6 @@ envVarGroups:
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID
-        sync: false
-      - key: LEAD_AGENT_TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: LEAD_AGENT_TELEGRAM_CHAT_ID
         sync: false
       # Admin Bot (employee access approval) + OPS Manager Bot (AI task
       # routing) -- see docs/agent-specs/05-org-bot.md. Both are handled by

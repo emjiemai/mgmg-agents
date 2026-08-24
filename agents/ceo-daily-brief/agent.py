@@ -53,9 +53,10 @@ from integrations.common.timeutil import fmt_date, now_local, now_utc, today_loc
 from integrations.crm.client import CRMClient
 from integrations.crm.models import PipelineSummary
 from integrations.microsoft.client import GraphClient
+from integrations.org_bot.notify import notify_directors
 from integrations.sap.client import SAPClient
 from integrations.sap.models import ARAging, ARInvoice, CashAccount
-from integrations.telegram.bot import TelegramBot, escape
+from integrations.telegram.bot import escape
 from integrations.verifix.client import AttendanceSummary, VerifixClient, persist_attendance
 
 AGENT = "ceo-daily-brief"
@@ -513,7 +514,10 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
             today_local(),
             sent_at,
             message_id,
-            settings.ceo_brief_telegram_chat_id,
+            # No single fixed chat anymore -- sent via OPS Manager Bot to
+            # whoever currently holds the Director role (see notify.py);
+            # this column is informational, not used for delivery.
+            "via ops_manager_bot",
             status,
             data.cash_total_tiyin if data.cash is not None else None,
             data.aging.total_overdue_tiyin if data.aging else None,
@@ -567,17 +571,11 @@ async def run(dry_run: bool = False) -> int:
 
     message_id: int | None = None
     try:
-        async with TelegramBot(
-            agent=AGENT,
-            run_id=run_id,
-            bot_token=settings.ceo_brief_telegram_bot_token.get_secret_value(),
-            default_chat_id=settings.ceo_brief_telegram_chat_id,
-        ) as bot:
-            if settings.dry_run:
-                print(message)
-            else:
-                ids = await bot.send_message(message)
-                message_id = ids[0] if ids else None
+        if settings.dry_run:
+            print(message)
+        else:
+            ids = await notify_directors(message, agent=AGENT, run_id=run_id)
+            message_id = ids[0] if ids else None
     except Exception as exc:  # noqa: BLE001 — must still record the attempt
         log.error("Failed to send the brief: {}", exc)
         await log_action(

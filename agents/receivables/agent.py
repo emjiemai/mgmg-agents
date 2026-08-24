@@ -49,8 +49,9 @@ from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_uzs, format_uzs_short
 from integrations.common.timeutil import fmt_date
+from integrations.org_bot.notify import notify_directors
 from integrations.sap.models import ARAging, ARInvoice
-from integrations.telegram.bot import TelegramBot, escape
+from integrations.telegram.bot import escape
 
 AGENT = "receivables"
 log = setup_logging(AGENT)
@@ -320,17 +321,13 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
     except Exception as exc:  # noqa: BLE001 — surface the failure as an alert, not a stack trace
         log.error("Could not read the AR aging snapshot: {}", exc)
         try:
-            async with TelegramBot(
+            await notify_directors(
+                f"<code>{escape(str(exc)[:300])}</code>",
                 agent=AGENT,
                 run_id=run_id,
-                bot_token=settings.receivables_telegram_bot_token.get_secret_value(),
-                default_chat_id=settings.receivables_telegram_chat_id,
-            ) as bot:
-                await bot.send_alert(
-                    "Receivables agent: no AR aging snapshot available",
-                    f"<code>{escape(str(exc)[:300])}</code>",
-                    severity="critical",
-                )
+                severity="critical",
+                title="Receivables agent: no AR aging snapshot available",
+            )
         except Exception as send_exc:  # noqa: BLE001
             log.error("Could not send the failure alert either: {}", send_exc)
         return 2
@@ -338,17 +335,11 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
     message = render(aging, min_days)
 
     message_id: int | None = None
-    async with TelegramBot(
-        agent=AGENT,
-        run_id=run_id,
-        bot_token=settings.receivables_telegram_bot_token.get_secret_value(),
-        default_chat_id=settings.receivables_telegram_chat_id,
-    ) as bot:
-        if settings.dry_run:
-            print(message)
-        else:
-            ids = await bot.send_message(message)
-            message_id = ids[0] if ids else None
+    if settings.dry_run:
+        print(message)
+    else:
+        ids = await notify_directors(message, agent=AGENT, run_id=run_id)
+        message_id = ids[0] if ids else None
 
     await record_alerts(run_id, aging, min_days, message_id)
 

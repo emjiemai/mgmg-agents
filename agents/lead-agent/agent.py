@@ -38,7 +38,8 @@ from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
 from integrations.search.tavily_client import TavilyClient, TavilyError
-from integrations.telegram.bot import TelegramBot, TelegramError, escape
+from integrations.org_bot.notify import notify_directors
+from integrations.telegram.bot import escape
 from integrations.tenders.uzex_client import UzExClient
 from integrations.tenders.worldbank_client import WorldBankClient, WorldBankError
 
@@ -682,16 +683,12 @@ async def store_new_leads(new_leads: list[dict], run_id: uuid.UUID) -> int:
 
 
 async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
-    """Post a summary of today's new leads to the leads Telegram group.
+    """Post a summary of today's new leads to the Director, via OPS Manager Bot.
 
     Args:
         new_leads: Leads that were (or would be) added this run.
         run_id: UUID grouping this run's audit rows.
     """
-    if not settings.lead_agent_telegram_chat_id:
-        log.warning("LEAD_AGENT_TELEGRAM_CHAT_ID is not set — skipping the Telegram summary")
-        return
-
     if not new_leads:
         text = "🔍 <b>Lead Agent</b>\n\nNo new qualified leads today."
     else:
@@ -711,13 +708,7 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
             lines.append("")
         text = "\n".join(lines)
 
-    async with TelegramBot(
-        agent=AGENT,
-        run_id=run_id,
-        bot_token=settings.lead_agent_telegram_bot_token.get_secret_value(),
-        default_chat_id=settings.lead_agent_telegram_chat_id,
-    ) as bot:
-        await bot.send_message(text)
+    await notify_directors(text, agent=AGENT, run_id=run_id)
 
 
 async def run(dry_run: bool = False) -> int:
@@ -745,7 +736,9 @@ async def run(dry_run: bool = False) -> int:
     required = {
         "serpapi_api_key", "tavily_api_key", ai_key_field,
         "google_service_account_json", "google_leads_sheet_id",
-        "lead_agent_telegram_bot_token", "lead_agent_telegram_chat_id",
+        # Telegram delivery now goes through OPS Manager Bot's own token
+        # (see integrations/org_bot/notify.py), not a dedicated Lead Agent
+        # bot -- no lead_agent_telegram_* config required anymore.
     }
     unfilled = required & set(settings.missing_placeholders())
     if unfilled and not settings.dry_run:
@@ -786,17 +779,11 @@ async def run(dry_run: bool = False) -> int:
     else:
         await store_new_leads(new_leads, run_id)
         # The sheet write is the part that matters and has already happened
-        # by this point — a broken Telegram destination (wrong chat id, bot
-        # not in the group, etc.) must not make a run that successfully
-        # wrote leads report as a failure. Log it loudly and move on.
-        try:
-            await notify_telegram(new_leads, run_id)
-        except TelegramError as exc:
-            log.error(
-                "Leads were written to the sheet, but the Telegram summary failed: {}. "
-                "Check LEAD_AGENT_TELEGRAM_BOT_TOKEN / LEAD_AGENT_TELEGRAM_CHAT_ID.",
-                exc,
-            )
+        # by this point -- notify_directors() logs and swallows delivery
+        # failures internally rather than raising, so a broken Telegram
+        # destination never makes a run that successfully wrote leads
+        # report as a failure.
+        await notify_telegram(new_leads, run_id)
 
     return 0
 
