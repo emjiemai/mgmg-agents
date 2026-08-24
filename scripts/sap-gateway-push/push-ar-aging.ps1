@@ -31,6 +31,19 @@ $PushSecret = "PASTE_SAP_PUSH_WEBHOOK_SECRET_HERE"
 $ErrorActionPreference = "Stop"
 $gatewayHeaders = @{ Authorization = "Bearer $GatewayToken" }
 
+function Invoke-PushRequest {
+    # Windows PowerShell 5.1's Invoke-RestMethod encodes a string -Body
+    # using the console's default encoding, NOT UTF-8, on this locale --
+    # confirmed live: Cyrillic customer names came through as "???????" on
+    # the receiving end even though the gateway itself returned them
+    # correctly. Converting to a UTF-8 byte array explicitly bypasses that
+    # guesswork and sends the exact bytes intended, every time.
+    param([string]$Uri, [string]$JsonBody)
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($JsonBody)
+    return Invoke-RestMethod -Method Post -Uri $Uri -ContentType "application/json; charset=utf-8" -Body $bytes
+}
+
 function Push-Invoices {
     Write-Host "Fetching open invoices from $GatewayUrl ..."
     $result = Invoke-RestMethod -Method Post -Uri "$GatewayUrl/tools/get_invoices" `
@@ -44,7 +57,7 @@ function Push-Invoices {
     Write-Host "Got $($result.data.Count) invoice(s), pushing to Command Center ..."
     $pushUrl = "https://$MgmgApiHost/webhooks/sap-push/$PushSecret"
     $pushBody = @{ invoices = $result.data } | ConvertTo-Json -Depth 10
-    $pushResult = Invoke-RestMethod -Method Post -Uri $pushUrl -ContentType "application/json" -Body $pushBody
+    $pushResult = Invoke-PushRequest -Uri $pushUrl -JsonBody $pushBody
 
     if ($pushResult.ok) {
         Write-Host "  invoices: $($pushResult.written) written, $($pushResult.skipped) skipped."
@@ -79,7 +92,7 @@ function Push-GatewayTool {
     $pushUrl = "https://$MgmgApiHost/webhooks/sap-gateway-push/$PushTool/$PushSecret"
     $pushBody = @{ rows = $result.data } | ConvertTo-Json -Depth 10
     try {
-        $pushResult = Invoke-RestMethod -Method Post -Uri $pushUrl -ContentType "application/json" -Body $pushBody
+        $pushResult = Invoke-PushRequest -Uri $pushUrl -JsonBody $pushBody
     } catch {
         Write-Warning "  $PushTool push failed: $($_.Exception.Message)"
         return

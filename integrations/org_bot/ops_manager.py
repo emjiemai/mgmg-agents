@@ -1059,9 +1059,9 @@ async def _fetch_lead_agent_data() -> str:
 
 
 async def _fetch_finance_agent_data() -> str:
-    """All open receivables + recent alerts, not just the top 15/5."""
+    """All open receivables (= open SAP invoices) + recent alerts, not just the top 15/5."""
     aging = await fetch_all(
-        "SELECT card_name, days_overdue, aging_bucket, balance_due_uzs, currency, due_date, sales_person_name "
+        "SELECT doc_num, card_name, days_overdue, aging_bucket, balance_due_uzs, currency, due_date, sales_person_name "
         "FROM v_ar_aging_latest ORDER BY balance_due_uzs DESC LIMIT 200"
     )
     alerts = await fetch_all(
@@ -1070,13 +1070,19 @@ async def _fetch_finance_agent_data() -> str:
     if not aging and not alerts:
         return "No receivables data recorded yet."
 
-    lines = [f"{len(aging)} open receivable(s):"]
+    # Say "invoice" explicitly, not just "receivable" -- a receivable *is*
+    # an open SAP invoice, but a Director asking specifically for "invoices"
+    # got refused once because the data was only ever labeled "receivable,"
+    # with no invoice number shown, so the model didn't recognize its own
+    # data as the answer to that exact question.
+    lines = [f"{len(aging)} open invoice(s) / receivable(s):"]
     for r in aging:
         # currency is whatever SAP actually recorded on the invoice -- never
         # hardcode "UZS" here, some invoices are genuinely in USD/EUR and
         # mislabeling them is worse than an ugly currency code.
         lines.append(
-            f"- {r['card_name']}: {r['balance_due_uzs']} {r['currency'] or 'UZS'}, {r['days_overdue']}d overdue "
+            f"- Invoice #{r['doc_num']}, {r['card_name']}: {r['balance_due_uzs']} {r['currency'] or 'UZS'}, "
+            f"{r['days_overdue']}d overdue "
             f"({r['aging_bucket']}), due {r['due_date']}, owner={r['sales_person_name']}"
         )
     if alerts:
