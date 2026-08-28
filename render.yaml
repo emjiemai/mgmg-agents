@@ -169,6 +169,14 @@ envVarGroups:
         # blueprint sync never touches again. Defaults to Python's own
         # `False` (see Settings.agent_writes_enabled) until you set it.
         sync: false
+      - key: BOTS_FROZEN
+        # Same reasoning as AGENT_WRITES_ENABLED above. In this same
+        # mgmg-shared group, so flipping it once in the dashboard freezes
+        # mgmg-api (both bots' webhooks) AND all three cron agents' sends
+        # (CEO Daily Brief, Receivables, Lead Agent) together -- they read
+        # this same value on their next restart/run. Defaults to `False`
+        # (see Settings.bots_frozen) until you set it.
+        sync: false
       - key: SAP_BASE_URL
         sync: false
       - key: SAP_COMPANY_DB

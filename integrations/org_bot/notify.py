@@ -52,6 +52,10 @@ async def notify_directors(
         as "nothing to notify," not an error — matches how
         ``ops_manager._handle_employee_message`` already handles this case.
     """
+    if settings.bots_frozen:
+        log.info("Bots frozen (BOTS_FROZEN=true) — {} had nothing sent", agent)
+        return []
+
     directors = await store.active_employees_by_role(DIRECTOR_ROLE)
     if not directors:
         log.warning("No active Director registered — {} had nothing to notify", agent)

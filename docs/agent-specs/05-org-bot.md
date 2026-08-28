@@ -283,7 +283,18 @@ one bot per purpose, never share a token.
 
 ## Runbook
 
-**Nothing happens when someone messages OPS Manager Bot?** Check the webhook
+**Need to stop both bots (and the scheduled agents' Telegram sends) without
+deleting or reconfiguring anything?** Set `BOTS_FROZEN=true` in the
+`mgmg-shared` Render env group (or `.env` locally) and restart/redeploy.
+Both webhook routes short-circuit to `{"status": "frozen"}` without
+processing the update, and `notify_directors()` — used by CEO Daily Brief,
+Receivables, and Lead Agent, since they all send through OPS Manager Bot's
+token — no-ops instead of sending. Set it back to `false` and restart to
+resume; nothing about state (tasks, employees, pending dispatches) is
+touched either way.
+
+**Nothing happens when someone messages OPS Manager Bot?** Check
+`BOTS_FROZEN` isn't accidentally left `true`, then check the webhook
 is actually registered (`GET https://api.telegram.org/bot<TOKEN>/getWebhookInfo`)
 and that `OPS_MANAGER_BOT_WEBHOOK_SECRET` matches what's in the URL.
 

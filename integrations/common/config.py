@@ -171,6 +171,15 @@ class Settings(BaseSettings):
     # --- Agent write gate (security rule #1) ---
     agent_writes_enabled: bool = False
 
+    # --- Bot kill switch ---
+    # One flag, checked at every entry point that can send or receive on
+    # Admin Bot / OPS Manager Bot's tokens: both webhook routes (incoming
+    # Telegram updates) and notify_directors() (the scheduled agents' outgoing
+    # sends -- CEO Daily Brief, Receivables, Lead Agent all route through
+    # OPS Manager Bot's token, so this also silences those). Flip back to
+    # false and restart to resume -- nothing is deleted or reconfigured.
+    bots_frozen: bool = False
+
     # --- Business rules ---
     default_currency: str = "UZS"
     usd_uzs_reference_rate: int = 12800

@@ -252,6 +252,9 @@ async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
     if not _secret_ok(secret, settings.admin_bot_webhook_secret.get_secret_value(), "ADMIN_BOT_WEBHOOK_SECRET"):
         return {"status": "unauthorized"}
 
+    if settings.bots_frozen:
+        return {"status": "frozen"}
+
     update = await request.json()
     run_id = uuid.uuid4()
 
@@ -295,6 +298,9 @@ async def ops_manager_bot_webhook(secret: str, request: Request, background: Bac
         secret, settings.ops_manager_bot_webhook_secret.get_secret_value(), "OPS_MANAGER_BOT_WEBHOOK_SECRET"
     ):
         return {"status": "unauthorized"}
+
+    if settings.bots_frozen:
+        return {"status": "frozen"}
 
     update = await request.json()
     outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
