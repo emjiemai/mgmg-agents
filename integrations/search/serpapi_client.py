@@ -65,7 +65,7 @@ class SerpAPIClient:
             self._client = None
 
     async def search(
-        self, query: str, engine: Engine, num: int = 10, *, past_day_only: bool = True
+        self, query: str, engine: Engine, num: int = 10, *, freshness: str | None = "d"
     ) -> list[RawLead]:
         """Run one search and return normalized leads.
 
@@ -73,11 +73,15 @@ class SerpAPIClient:
             query: Search query text.
             engine: 'google' | 'bing' | 'yandex'.
             num: Requested result count (SerpAPI may return fewer).
-            past_day_only: Restrict to results from the last 24 hours via
-                ``tbs=qdr:d`` — Google's standard freshness parameter,
-                confirmed live 2026-08-19 to be accepted (no error) on all
-                three engines through SerpAPI. Without this, results are not
-                time-bounded at all and old articles rank alongside new ones.
+            freshness: Google's standard freshness window via ``tbs=qdr:X`` —
+                'd' (past day), 'w' (past week), 'm' (past month), 'y' (past
+                year), or ``None`` for unrestricted. Confirmed live
+                2026-08-19 that ``qdr:d`` is accepted (no error) on all three
+                engines through SerpAPI; the other windows use the same
+                Google parameter family. Without this, results are not
+                time-bounded at all and old articles rank alongside new ones
+                — a real risk for anything but the tender-portal searches,
+                where the tender's own deadline matters more than crawl date.
 
         Returns:
             Normalized ``RawLead`` objects, ranked order preserved.
@@ -96,8 +100,8 @@ class SerpAPIClient:
             "api_key": settings.serpapi_api_key.get_secret_value(),
             "num": num,
         }
-        if past_day_only:
-            params["tbs"] = "qdr:d"
+        if freshness:
+            params["tbs"] = f"qdr:{freshness}"
 
         async with audited(
             agent=self.agent,
@@ -132,7 +136,7 @@ class SerpAPIClient:
         return leads
 
     async def search_all_engines(
-        self, query: str, num: int = 10, *, past_day_only: bool = True
+        self, query: str, num: int = 10, *, freshness: str | None = "d"
     ) -> list[RawLead]:
         """Run the same query across Google, Bing and Yandex.
 
@@ -142,7 +146,7 @@ class SerpAPIClient:
         Args:
             query: Search query text.
             num: Requested result count per engine.
-            past_day_only: See ``search`` — pass False for queries where the
+            freshness: See ``search`` — pass ``None`` for queries where the
                 page's index date doesn't matter (e.g. a tender-portal search,
                 where the tender's own deadline is what matters, not when
                 Google crawled the listing).
@@ -153,7 +157,7 @@ class SerpAPIClient:
         leads: list[RawLead] = []
         for engine in ("google", "bing", "yandex"):
             try:
-                leads.extend(await self.search(query, engine, num, past_day_only=past_day_only))
+                leads.extend(await self.search(query, engine, num, freshness=freshness))
             except SerpAPIError as err:
                 log.error("SerpAPI {} failed, continuing with other engines: {}", engine, err)
         return leads

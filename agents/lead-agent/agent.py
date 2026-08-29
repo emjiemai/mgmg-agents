@@ -54,6 +54,13 @@ from prompt import (  # noqa: E402
 AGENT = "lead-agent"
 log = setup_logging(AGENT)
 
+VALID_TRACKS = ("equipment_sales", "service_maintenance", "sponsorship_partnership")
+TRACK_LABELS = {
+    "equipment_sales": "🏗 Uskunalar sotuvi",
+    "service_maintenance": "🔧 Xizmat va texnik xizmat",
+    "sponsorship_partnership": "🤝 Homiylik / hamkorlik",
+}
+
 SHEET_TAB = "Sheet1"
 SHEET_RANGE = f"{SHEET_TAB}!A:T"  # 20 columns, company_name..track
 SHEET_COLUMNS = [
@@ -135,6 +142,23 @@ QUALIFYING_FACILITY_KEYWORDS = [
     "dry-clean", "химчист", "kimyoviy tozalash", "laundry", "прачечн", "kir yuvish",
 ]
 
+# Garmin/Tanita/Tacx sports-tech terms — the second business line (added
+# 2026-08-29 per the EMJIEM A-Z Watch List). Kept as its own list rather than
+# folded into LAUNDRY_KEYWORDS since a lead only needs ONE of the two
+# connections, not both — see passes_hard_filters.
+SPORTS_TECH_KEYWORDS = [
+    "garmin", "tacx", "tanita",
+    "gps watch", "gps navigator", "gps tracker", "handheld gps", "satellite communicator",
+    "tactical watch", "rugged gps", "fitness watch", "sports watch", "smart watch",
+    "running watch", "cycling computer", "heart rate monitor", "wearable device",
+    "bike trainer", "smart trainer", "indoor cycling trainer",
+    "body composition", "bioimpedance", "body analyzer", "body fat analyzer",
+    "athlete monitoring", "sports monitoring",
+    "часы gps", "спортивные часы", "фитнес-трекер", "велотренажер",
+    "анализатор состава тела", "биоимпеданс", "тактические часы", "навигатор gps",
+    "GPS soat", "sport soati", "fitnes trekeri", "tana tarkibi tahlilchisi",
+]
+
 UZ_LOCATION_KEYWORDS = [
     "uzbekistan", "o'zbekiston", "ozbekiston", "ўзбекистон", "узбекистон",
     "tashkent", "toshkent", "ташкент", "samarkand", "samarqand", "самарканд",
@@ -194,14 +218,93 @@ TENDER_SITE_QUERIES = [
     ("site:etender.uzex.uz кир ювиш ускунаси", "equipment_sales"),
     ("site:xarid.uzex.uz прачечное оборудование гостиница больница", "equipment_sales"),
 ]
-# Freshness matters differently by query type: a hiring post or investment
-# announcement is only a "new signal" if it's actually new, but a tender
-# portal page can rank in Google days after posting while the tender itself
-# is still open — restricting that to "indexed in the last 24h" would drop
-# real open tenders for no reason. So only the news-style queries are time-
-# boxed to the past day; tender-portal searches run unrestricted.
-FRESH_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES
-ALL_QUERIES = FRESH_QUERIES + TENDER_SITE_QUERIES
+
+# ---------------------------------------------------------------------------
+# EMJIEM expansion (added 2026-08-29) — the Garmin/Tanita/Tacx sports-tech
+# business (IMUS-Alliance division) plus a few new segments for the existing
+# laundry business (ONDRY), drawn from the CEO's A-Z Watch List and verified
+# via a live 18-agent research pass before being written here (see the
+# published field report). That pass tested 12 seed queries built the way
+# TRACK1/TRACK2 above are built (generic template phrasing, e.g. "[sport]
+# Uzbekistan official sponsor") and found 8 of 12 dead — real sponsorship/
+# partnership news in this market is published as retrospective announcement
+# ("X signed with Y"), not as a solicitation ("Y is seeking a sponsor"), and
+# every real finding came from naming a specific federation/organizer/event
+# rather than a generic category term. The queries below are written that
+# way from the start rather than porting the failed pattern.
+#
+# Deliberately NOT included: Defense (D) / Police (P) segment queries.
+# Uzbek defense/security procurement is a non-public, non-indexed channel —
+# confirmed structurally dead in the same research pass, not a phrasing
+# problem a better query fixes. See prompt.py's handling of this track
+# (same "requires direct institutional contact, not web-sourced" rule the
+# existing prompt already applies to military laundry-service leads).
+SPORTS_TECH_QUERIES = [
+    # Cycling — the one sub-segment already confirmed productive.
+    ("O'zbekiston velosport federatsiyasi hamkorlik", "sponsorship_partnership"),
+    ("велоспорт федерация Узбекистана соглашение о сотрудничестве", "sponsorship_partnership"),
+    ("Uzbekistan cycling team sponsor 2026 partnership signed", "sponsorship_partnership"),
+    ("велокоманда Узбекистан спонсор подписал контракт", "sponsorship_partnership"),
+    ("Grand Prix Fergana OR Jizzakh UCI Asia Tour Uzbekistan", "sponsorship_partnership"),
+    ("Tashkent velodrome 2028 Asian Track Cycling Championships", "equipment_sales"),
+    # Running / marathons — also confirmed productive via ProRun/DeepenWell.
+    ("Tashkent marathon 2027 official partner", "sponsorship_partnership"),
+    ("Toshkent marafoni rasmiy hamkori", "sponsorship_partnership"),
+    ("забег Узбекистан партнер экипировка объявлен", "sponsorship_partnership"),
+    ("Silk Road Uzbekistan race series sponsor", "sponsorship_partnership"),
+    ("running club Tashkent GPS watch partnership announced", "sponsorship_partnership"),
+    ("фитнес приложение Узбекистан челлендж Garmin призы", "sponsorship_partnership"),
+    # National teams / federations — structurally similar to cycling, untested but same pattern.
+    ("сборная Узбекистана оборудование мониторинга спортсменов поставщик", "equipment_sales"),
+    ("O'zbekiston terma jamoasi jihoz yetkazib beruvchi", "equipment_sales"),
+    ("Uzbekistan Olympic Committee equipment partner announced", "sponsorship_partnership"),
+    # Tourism/outdoor — named-entity style, avoiding the failed generic pattern.
+    ("трекинг фестиваль Узбекистан снаряжение партнер", "sponsorship_partnership"),
+    ("mountaineering expedition Pamir Uzbekistan gear sponsor", "sponsorship_partnership"),
+    # Corporate wellness / Tanita — untested in the verification pass; apply
+    # the same lesson (named companies/events, not generic solicitation).
+    ("корпоративный wellness день Узбекистан партнер оборудование", "sponsorship_partnership"),
+    ("employee fitness challenge Tashkent company sponsor body composition", "sponsorship_partnership"),
+    ("фитнес клуб Ташкент открытие анализатор состава тела", "equipment_sales"),
+    ("wellness clinic Tashkent opening body composition analyzer", "equipment_sales"),
+    # Institutional / VIP / retail — B2B bulk-purchase signals, not consumer retail.
+    ("корпоративные подарки часы Garmin Ташкент оптом компания", "equipment_sales"),
+    ("government sports program Uzbekistan equipment tender GPS", "equipment_sales"),
+    ("mall activation Tashkent wearable technology brand", "sponsorship_partnership"),
+]
+SPORTS_TECH_TENDER_SITE_QUERIES = [
+    ("site:bicotender.ru фитнес OR спорт оборудование тендер Узбекистан", "equipment_sales"),
+    ("site:etender.uzex.uz GPS навигатор тендер", "equipment_sales"),
+    ("site:etender.uzex.uz анализатор состава тела", "equipment_sales"),
+    ("site:xarid.uzex.uz спортивные часы GPS", "equipment_sales"),
+]
+
+# New laundry-business (ONDRY) segments from the A-Z list not covered above.
+LAUNDRY_NEW_SEGMENT_QUERIES = [
+    ("новая прачечная самообслуживания Ташкент открытие", "equipment_sales"),
+    ("laundromat self-service opening Tashkent Uzbekistan", "equipment_sales"),
+    ("аэропорт Узбекистан прачечная форма персонала тендер", "equipment_sales"),
+    ("свободная экономическая зона Узбекистан новый завод прачечная", "equipment_sales"),
+    ("factory workwear laundry contract Uzbekistan industrial", "service_maintenance"),
+    ("тендер стирка спецодежды Узбекистан завод", "service_maintenance"),
+]
+
+# Freshness fix (2026-08-29): FRESH_QUERIES below used to run with a 24-hour
+# window (Google `tbs=qdr:d` / Tavily `days=1`) — appropriate for "did this
+# get announced today" but wrong for sponsorship/opening signals, which don't
+# get announced daily and mostly rank on Google days-to-months after
+# publication. Widened to a rolling past-year window; TENDER_SITE_QUERIES
+# stay unrestricted (a tender's own deadline matters, not its crawl date).
+SEARCH_FRESHNESS = "y"  # SerpAPI tbs=qdr:y
+SEARCH_FRESHNESS_DAYS = 365  # Tavily time_range
+
+# News-style queries get the past-year freshness window above; tender-portal
+# pages stay unrestricted regardless of query set — a tender can rank in
+# Google days after posting while the tender itself is still open, so a
+# freshness filter there would drop real open tenders for no reason.
+FRESH_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES + SPORTS_TECH_QUERIES + LAUNDRY_NEW_SEGMENT_QUERIES
+ALL_TENDER_SITE_QUERIES = TENDER_SITE_QUERIES + SPORTS_TECH_TENDER_SITE_QUERIES
+ALL_QUERIES = FRESH_QUERIES + ALL_TENDER_SITE_QUERIES
 
 
 async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
@@ -221,18 +324,18 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
     # any undocumented rate limit.
     concurrency = asyncio.Semaphore(4)
 
-    async def _serpapi_one(client: SerpAPIClient, query: str, past_day_only: bool) -> list[RawLead]:
+    async def _serpapi_one(client: SerpAPIClient, query: str, freshness: str | None) -> list[RawLead]:
         async with concurrency:
             try:
-                return await client.search_all_engines(query, num=10, past_day_only=past_day_only)
+                return await client.search_all_engines(query, num=10, freshness=freshness)
             except SerpAPIError as err:
                 log.error("SerpAPI failed for '{}': {}", query, err)
                 return []
 
     async def _serpapi_all() -> list[RawLead]:
         async with SerpAPIClient(agent=AGENT, run_id=run_id) as client:
-            tasks = [_serpapi_one(client, q, True) for q, _t in FRESH_QUERIES]
-            tasks += [_serpapi_one(client, q, False) for q, _t in TENDER_SITE_QUERIES]
+            tasks = [_serpapi_one(client, q, SEARCH_FRESHNESS) for q, _t in FRESH_QUERIES]
+            tasks += [_serpapi_one(client, q, None) for q, _t in ALL_TENDER_SITE_QUERIES]
             batches = await asyncio.gather(*tasks)
         return [lead for batch in batches for lead in batch]
 
@@ -246,11 +349,12 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
 
     async def _tavily_all() -> list[RawLead]:
         async with TavilyClient(agent=AGENT, run_id=run_id) as client:
-            # 1 day for news-style queries (matches SerpAPI's past_day_only);
-            # tender-portal pages are left at Tavily's "week" bucket for the
-            # same reason SerpAPI skips the freshness filter on them.
-            tasks = [_tavily_one(client, q, 1) for q, _t in FRESH_QUERIES]
-            tasks += [_tavily_one(client, q, 3) for q, _t in TENDER_SITE_QUERIES]
+            # Past-year window for news-style queries (matches SerpAPI's
+            # SEARCH_FRESHNESS above); tender-portal pages are left at
+            # Tavily's "week" bucket for the same reason SerpAPI skips the
+            # freshness filter on them.
+            tasks = [_tavily_one(client, q, SEARCH_FRESHNESS_DAYS) for q, _t in FRESH_QUERIES]
+            tasks += [_tavily_one(client, q, 3) for q, _t in ALL_TENDER_SITE_QUERIES]
             batches = await asyncio.gather(*tasks)
         return [lead for batch in batches for lead in batch]
 
@@ -360,12 +464,16 @@ def passes_hard_filters(lead: dict, source: RawLead | None) -> tuple[bool, str]:
             return False, "relevance_quote does not appear in the original source text"
 
     has_laundry_kw = any(kw in combined or kw in quote.lower() for kw in LAUNDRY_KEYWORDS)
+    has_sports_tech_kw = any(kw in combined or kw in quote.lower() for kw in SPORTS_TECH_KEYWORDS)
     is_construction_stage = lead.get("project_stage") in {
         "under construction", "permitted", "pre-opening hiring", "tender open",
     }
     qualifying_facility = any(kw in combined for kw in QUALIFYING_FACILITY_KEYWORDS)
-    if not has_laundry_kw and not (is_construction_stage and qualifying_facility):
-        return False, "no explicit laundry/textile-care connection and not a qualifying facility under construction"
+    if not has_laundry_kw and not has_sports_tech_kw and not (is_construction_stage and qualifying_facility):
+        return False, (
+            "no explicit laundry/textile-care or Garmin/Tanita/Tacx connection, "
+            "and not a qualifying facility under construction"
+        )
 
     location_text = _normalize(
         f"{lead.get('location', '')} {lead.get('signal', '')} {lead.get('notes', '')}"
@@ -456,7 +564,7 @@ async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dic
                 url,
             )
             continue
-        if lead.get("track") not in ("equipment_sales", "service_maintenance"):
+        if lead.get("track") not in VALID_TRACKS:
             log.warning(
                 "Dropping lead with invalid track '{}': {}",
                 lead.get("track"),
@@ -698,7 +806,7 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
 
         lines = [f"🔍 <b>Lid Agenti — {len(new_leads)} ta yangi lid</b>\n"]
         for track, leads in by_track.items():
-            label = "🏗 Uskunalar sotuvi" if track == "equipment_sales" else "🔧 Xizmat va texnik xizmat"
+            label = TRACK_LABELS.get(track, "❔ Boshqa")
             lines.append(f"<b>{escape(label)} ({len(leads)})</b>")
             for lead in leads[:10]:
                 name = lead.get("company_name") or "Nomsiz"

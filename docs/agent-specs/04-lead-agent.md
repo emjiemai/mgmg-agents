@@ -1,4 +1,4 @@
-# Agent 4 — Lead Agent (Primus Laundry)
+# Agent 4 — Lead Agent (Primus Laundry + EMJIEM sports-tech)
 
 **Code:** `agents/lead-agent/agent.py` + `agents/lead-agent/prompt.py`
 **Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily
@@ -9,18 +9,36 @@
 
 Find businesses in Uzbekistan that will need industrial laundry equipment
 (Track 1) or equipment servicing (Track 2) — **before** the buying decision is
-made. A hotel that has already opened has already bought its machines.
+made. A hotel that has already opened has already bought its machines. As of
+2026-08-29 also finds Garmin/Tanita/Tacx sponsorship, partnership, and bulk
+equipment-sale opportunities (Track 3 — different buying motion, no
+construction timeline, see `prompt.py`'s Track 3 section).
 
 Replaces the n8n "Lead Agent" workflow, which needed a paid n8n host plus a
 persistent disk on Render; as a native cron job it costs ~$1/month instead.
 
-**Product scope** (`prompt.py`'s grounding, confirmed live against
-`primuslaundry.uz/products` and `/services` 2026-08-20): hardware is
-Washer-Extractors, Tumble Dryers, and Flatwork Ironers; services are Design,
-Installation, Maintenance, and Spare Parts. Laundry chemicals/detergents are
-also in scope per the business owner directly — that line isn't shown on the
-public site, so it can't be independently re-confirmed the way the rest of the
-catalog was.
+**Product scope** (`prompt.py`'s grounding):
+- ONDRY/laundry (confirmed live against `primuslaundry.uz/products` and
+  `/services` 2026-08-20): hardware is Washer-Extractors, Tumble Dryers, and
+  Flatwork Ironers; services are Design, Installation, Maintenance, and Spare
+  Parts. Chemicals/detergents are in scope per the business owner directly —
+  not shown on the public site, so unconfirmable the way the rest was.
+- IMUS-Alliance/sports-tech (confirmed directly by the business owner
+  2026-08-29, no public product page checked yet): the full Garmin range —
+  consumer sport watches through tactical/government-grade GPS — plus Tanita
+  professional body-composition analyzers and Tacx indoor cycling trainers.
+  Geographic scope confirmed Uzbekistan-only, matching Track 1/2.
+
+Track 3's search queries and qualification rules were drafted from the CEO's
+"EMJIEM A-Z Watch List" and verified via an 18-agent live-web-search pass
+before being written into `prompt.py`/`agent.py` — see the published field
+report for the 15 real leads that pass surfaced and, more importantly, which
+query patterns turned out to be structural dead ends (generic "seeking a
+sponsor" phrasing, retail/wholesale-intent queries, and direct web search
+for defense/police procurement, which runs through non-public channels).
+Defense/Police leads are handled the same way Track 2 already handles
+military laundry-service leads: "requires direct institutional contact, not
+web-sourced" rather than fabricated.
 
 ## Sources, ranked by signal quality
 
@@ -215,3 +233,7 @@ provider congestion, then add a paid model to the chain.
   the qualification-quality fix made that day. Worth checking the SerpAPI
   dashboard's plan/quota before assuming every low-volume day is the new
   filters being too strict; Tavily and UzEx were unaffected in the same run.
+  Reconfirmed 2026-08-29: still 429ing on a single test call, so this is an
+  ongoing plan/quota ceiling, not a one-off — the Track 3 query volume added
+  that day makes this worse, not better, until the plan is upgraded or the
+  per-run query count is trimmed. Tavily was unaffected again in the same test.
