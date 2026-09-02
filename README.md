@@ -14,7 +14,7 @@ IMUS-Alliance · Service center · Properties.
 
 | # | Deliverable | State |
 | - | ----------- | ----- |
-| 1 | Infrastructure (Render Blueprint: API + Postgres + 5 cron jobs) | deployed — see `render.yaml` |
+| 1 | Infrastructure (Render Blueprint: API + Postgres + 2 cron jobs) | deployed — see `render.yaml` |
 | 2 | Agent 1 — CEO Daily Brief | built, runs on schedule |
 | 3 | Agent 2 — CRM Follow-up | built, write gate closed |
 | 4 | Agent 3 — Receivables | built, runs on schedule |
@@ -44,8 +44,10 @@ Google Sheets ──────┘         │        └─→ Admin Bot + OPS
 
 mgmg-api      — always-on FastAPI web service: webhooks for CRM events,
                 Telegram approvals, and both org_bot bots
-5 cron jobs   — CEO brief, receivables, CRM follow-up sweep/drain, lead agent
-                (see render.yaml; each runs once daily/hourly, then exits)
+2 cron jobs   — mgmg-morning-agents (CEO brief + Lead Agent + receivables +
+                CRM follow-up sweep, run back to back daily via
+                scripts/run_morning_agents.py) and mgmg-followup-drain
+                (CRM webhook replay, hourly, kept separate on purpose)
 ```
 
 n8n is referenced in some older docs/history but is **not** part of the

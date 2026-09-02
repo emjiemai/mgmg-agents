@@ -1,24 +1,31 @@
 # ============================================================================
-# Render Blueprint — LOW-COST TEST DEPLOYMENT (~$5/month).
+# Render Blueprint — LOW-COST TEST DEPLOYMENT (~$2/month).
 #
 # This deploys just enough to test the agents end-to-end against sandbox
 # accounts. What it creates:
-#   mgmg-db          PostgreSQL, free plan — EXPIRES 30 DAYS after creation
-#                     unless upgraded (Render deletes it, not just suspends it)
-#   mgmg-api         FastAPI webhook receiver, free plan — sleeps after 15 min
-#                     idle, ~30-50s cold start on the next webhook
-#   mgmg-brief       cron: CEO daily brief             (starter, ~$1/mo)
-#   mgmg-receivables cron: receivables alert            (starter, ~$1/mo)
-#   mgmg-followup-sweep  cron: nightly stalled-deal sweep (starter, ~$1/mo)
-#   mgmg-followup-drain  cron: replay missed webhook events (starter, ~$1/mo)
-#   mgmg-lead-agent  cron: daily B2B lead sourcing (starter, ~$1/mo) — replaces
-#                    the n8n Lead Agent workflow to avoid paying for n8n hosting
+#   mgmg-db            PostgreSQL, free plan — EXPIRES 30 DAYS after creation
+#                       unless upgraded (Render deletes it, not just suspends it)
+#   mgmg-api            FastAPI webhook receiver, free plan — sleeps after 15 min
+#                       idle, ~30-50s cold start on the next webhook
+#   mgmg-morning-agents  cron: CEO daily brief + Lead Agent + receivables alert +
+#                       CRM follow-up sweep, run back to back (starter, ~$1/mo)
+#                       — see scripts/run_morning_agents.py. These four used to
+#                       be four separate cron services, all scheduled at the
+#                       same moment purely because Render bills a ~$1/mo minimum
+#                       PER SERVICE regardless of runtime — four services for a
+#                       few minutes of combined work made no sense once noticed.
+#   mgmg-followup-drain  cron: replay missed webhook events, hourly (starter,
+#                       ~$1/mo) — kept separate on purpose: collapsing this into
+#                       the once-daily job above would mean a CRM webhook event
+#                       missed by the live handler waits up to 24h to get caught
+#                       instead of up to 1h. That's a real behavior change, not
+#                       just a cost one, so it stays on its own schedule.
 #
 # Cost: Render has no free tier for cron jobs at all (confirmed against
 # docs.render.com/blueprint-spec) — minimum is the "starter" plan, billed
-# per-minute with a ~$1/month minimum per cron service. Five separate cron
-# services therefore run about $5/month total; the database and web service
-# stay on Render's genuine free plan. Total: ~$5/month, not $0.
+# per-minute with a ~$1/month minimum per cron service. Two cron services
+# therefore run about $2/month total (was ~$5/month across five services);
+# the database and web service stay on Render's genuine free plan.
 #
 # n8n is NOT deployed here: it needs a persistent disk, and disks require a
 # paid instance on Render. None of the three agents depend on n8n — they talk
@@ -71,44 +78,21 @@ services:
   # comment. Bring it back once you're on paid plans and want the SAP/bank/
   # CCTV workflows that live in n8n rather than in these Python agents.
 
-  # --------------------------------------------------------- Agent 1: brief
+  # ------------------------------- CEO brief + Lead Agent + receivables + sweep
+  # Four agents that all used to be their own cron service, consolidated into
+  # one because Render has no free tier for cron at all — each separate
+  # service cost a ~$1/mo minimum regardless of actual runtime. They're
+  # independent scripts run as separate subprocesses by
+  # scripts/run_morning_agents.py, not merged code: one agent crashing can't
+  # take the others down, and the wrapper's own exit code is non-zero if any
+  # of them failed, so a real failure still shows up in Render's run history.
   - type: cron
-    name: mgmg-brief
+    name: mgmg-morning-agents
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
+    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum
     schedule: "0 3 * * *"  # 08:00 Asia/Tashkent
-    dockerCommand: python agents/ceo-daily-brief/agent.py
-    envVars:
-      - fromGroup: mgmg-shared
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mgmg-db
-          property: connectionString
-
-  # ---------------------------------------------------- Agent 3: receivables
-  - type: cron
-    name: mgmg-receivables
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
-    schedule: "0 4 * * *"  # 09:00 Asia/Tashkent
-    dockerCommand: python agents/receivables/agent.py
-    envVars:
-      - fromGroup: mgmg-shared
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mgmg-db
-          property: connectionString
-
-  # --------------------------------------------- Agent 2: nightly safety net
-  - type: cron
-    name: mgmg-followup-sweep
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
-    schedule: "0 16 * * *"  # 21:00 Asia/Tashkent
-    dockerCommand: python agents/amocrm-followup/agent.py --sweep
+    dockerCommand: python scripts/run_morning_agents.py
     envVars:
       - fromGroup: mgmg-shared
       - key: DATABASE_URL
@@ -117,6 +101,10 @@ services:
           property: connectionString
 
   # ------------------------------------------- Agent 2: replay missed events
+  # Kept on its own hourly schedule, NOT folded into mgmg-morning-agents above
+  # — collapsing this to once-daily would mean a CRM webhook event the live
+  # handler missed waits up to 24h to get caught instead of up to 1h. That's
+  # a real behavior change, not just a cost one.
   - type: cron
     name: mgmg-followup-drain
     runtime: docker
@@ -124,22 +112,6 @@ services:
     plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
     schedule: "0 * * * *"  # hourly — the live webhook handles the common case
     dockerCommand: python agents/amocrm-followup/agent.py --drain
-    envVars:
-      - fromGroup: mgmg-shared
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mgmg-db
-          property: connectionString
-
-  # ---------------------------------------------- Lead Agent (Primus Laundry)
-  - type: cron
-    name: mgmg-lead-agent
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    plan: starter  # cron has no free tier; billed per-minute, ~$1/mo minimum each
-    schedule: "0 3 * * *"  # 08:00 Asia/Tashkent — same slot as the CEO brief,
-                            # independent processes, no shared resource conflict
-    dockerCommand: python agents/lead-agent/agent.py
     envVars:
       - fromGroup: mgmg-shared
       - key: DATABASE_URL
