@@ -315,12 +315,18 @@ Signal strength tiers (prioritize accordingly):
 Track 3 tiers use event/relationship status instead of a construction
 timeline: TIER 1 = a signed sponsorship/partnership, a stated open sponsor
 category on a confirmed upcoming edition, or a recurring relationship already
-sourcing this equipment. TIER 2 = an early-stage cooperation agreement with no
-equipment/procurement detail yet, or a confirmed venue/event with no named
-tech partner and no stated open slot. A recurring ANNUAL event that already
-ran this cycle is still valid — target next year's edition explicitly in
-``notes`` and set ``recheck_date`` accordingly, the same way an 18+ month-out
-Track 1 opportunity is kept rather than discarded.
+sourcing this equipment. TIER 2 = a confirmed venue/event with NO named tech
+partner and no stated open slot — the source must explicitly show that gap
+(e.g. other sponsor categories are named but a tech/watch partner isn't), not
+just be silent on the topic. A bare cooperation agreement or MOU with no
+equipment/procurement/sponsorship detail at all does NOT qualify at any
+tier — it fails rule 3 above (a real, specific sponsorship/partnership fact)
+the same way an unrelated tender fails rule 1/2; two federations agreeing to
+"cooperate" is not evidence either one needs Garmin/Tanita/Tacx gear. A
+recurring ANNUAL event that already ran this cycle is still valid — target
+next year's edition explicitly in ``notes`` and set ``recheck_date``
+accordingly, the same way an 18+ month-out Track 1 opportunity is kept rather
+than discarded.
 
 Industry match required: for Track 1/2 — hospitality, healthcare with
 in-house laundry, laundry/dry-cleaning services, fitness/wellness with high
@@ -355,17 +361,18 @@ GOOD — include:
   - "Existing 4-star hotel seeking maintenance contract for its laundry room
     equipment after repeated breakdowns"
     → Track 2. Explicit laundry equipment + explicit service need.
-  - "Uzbek brand 7SABER signs multi-year named-sponsorship deal with UCI
-    ProTeam Bardiani-CSF for the 2026 season; two Uzbek riders join the roster"
-    → Track 3, TIER 1. A real, signed sponsorship — even though it's a
-    competitor's/another brand's deal, it's confirmation the market supports
-    this kind of deal and names the real decision-makers (team, federation) to
-    approach.
   - "Tashkent International Marathon 2026 (15,000+ runners, World Athletics
     Label) — confirmed chip-timing partner named, no GPS-watch or wearable
     brand sponsor identified in coverage"
-    → Track 3, TIER 1. A real, dated flagship event with an explicitly open
-    category (no tech/wearable sponsor named) — target next year's edition.
+    → Track 3, TIER 2. A real, dated flagship event that explicitly shows the
+    gap (other partners named, tech/watch slot isn't) — target next year's
+    edition. Not TIER 1: no deal is signed yet, just an open slot.
+  - "Tashkent fitness app ran a 3-week cross-border challenge with Garmin
+    smartwatches and a Garmin HR monitor among 150+ prizes; kept a branded
+    booth at a marathon expo months later"
+    → Track 3, TIER 1. Garmin hardware explicitly named as the actual prize/
+    product being sourced, and it's a recurring relationship (the expo booth),
+    not a one-off — exactly rule 3's bar.
 
 BAD — exclude, with the reason that made it wrong:
   - "Pediatric medical center: tender for outsourced meal preparation service"
@@ -373,6 +380,23 @@ BAD — exclude, with the reason that made it wrong:
     not make its catering tender relevant. (Banned-category: catering.)
   - "Regional bank: tender for payment terminal leasing"
     → WRONG. Wrong industry; a bank does not run an industrial laundry.
+  - "Uzbek brand 7SABER signs multi-year named-sponsorship deal with UCI
+    ProTeam Bardiani-CSF for the 2026 season; two Uzbek riders join the roster"
+    → WRONG as a Track 3 lead, even though every fact in it is real and
+    verifiable. It's a sportswear brand sponsoring a cycling team — no
+    Garmin/Tanita/Tacx product or open category anywhere in it. A real
+    sponsorship deal is only a lead if it's about OUR product categories, not
+    just evidence that "sponsorship deals happen in this market." Useful
+    market context for notes, never a lead row on its own.
+  - "Uzbekistan Cycling Federation signs cooperation agreement with the Asian
+    Cycling Confederation, including a plan to build a regional training
+    center"
+    → WRONG. A cooperation MOU is not a sponsorship/partnership fact — it
+    names no equipment need, no sponsor category, no supplier search. "Two
+    federations are cooperating" no more implies a Garmin/Tacx need than
+    "a hospital is being built" implies a stated laundry tender does — this is
+    exactly the same inferred-connection mistake rule 3 exists to block, just
+    dressed up as an institutional-sounding source.
   - "National children's medical center: oxygen generator maintenance contract"
     → WRONG. Medical gas equipment, a different category entirely.
   - "Schools tender for classroom furniture" with reasoning "large schools may
