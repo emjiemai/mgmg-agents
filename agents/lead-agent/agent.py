@@ -188,6 +188,17 @@ FOREIGN_RED_FLAGS = [
 # slice of the day's leads, not all of them.
 QUALIFY_BATCH_SIZE = 60
 
+# Verify (second pass) batches separately and smaller than qualify above —
+# confirmed necessary live 2026-09-04, when a single verify call covering all
+# 21 of that day's qualified leads came back with truncated/invalid JSON and
+# the whole batch was dropped rather than shipped unverified, losing the
+# entire day's output to one call's hiccup. verify's per-lead payload is
+# already heavier than qualify's (it carries the original source title/
+# snippet alongside the lead, not just the raw search result), so it needs a
+# smaller cap to keep the same "one bad call costs a slice, not everything"
+# property QUALIFY_BATCH_SIZE's comment already promises.
+VERIFY_BATCH_SIZE = 15
+
 # Starting query set — tune freely, this is not meant to be exhaustive.
 # (query text, track hint for logging only; the AI decides the real track).
 TRACK1_QUERIES = [
@@ -616,7 +627,7 @@ async def verify_leads(leads: list[dict], raw_leads: list[RawLead], run_id: uuid
         return []
 
     source_by_url = {r.url: r for r in raw_leads}
-    batches = [leads[i : i + QUALIFY_BATCH_SIZE] for i in range(0, len(leads), QUALIFY_BATCH_SIZE)]
+    batches = [leads[i : i + VERIFY_BATCH_SIZE] for i in range(0, len(leads), VERIFY_BATCH_SIZE)]
     log.info("Second pass: verifying {} lead(s) in {} batch(es)", len(leads), len(batches))
 
     approved: list[dict] = []
