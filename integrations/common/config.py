@@ -124,9 +124,16 @@ class Settings(BaseSettings):
     # Agent's classification-only task needs. Fallback stays on the SAME
     # provider (OpenRouterClient opens one httpx client per provider; a
     # cross-provider fallback would need a second client entirely).
-    ops_manager_bot_provider: str = "openrouter"  # "openrouter" | "deepseek"
-    ops_manager_bot_model: str = "anthropic/claude-sonnet-5"
-    ops_manager_bot_fallback_models: str = "google/gemini-3.7-flash"
+    # Defaulted to DeepSeek 2026-09-05 per explicit direction: OpenRouter costs
+    # real credits and this project isn't far enough along to justify
+    # spending them yet, even though DeepSeek's Russian language-matching is
+    # only ~50% reliable on deepseek-v4-pro (confirmed live testing) --
+    # deepseek-v4-flash was the more reliable of the two, so that's primary
+    # here, not deepseek-v4-pro. Switch back to "openrouter" /
+    # "anthropic/claude-sonnet-5" once the project justifies the spend.
+    ops_manager_bot_provider: str = "deepseek"  # "openrouter" | "deepseek"
+    ops_manager_bot_model: str = "deepseek-v4-flash"
+    ops_manager_bot_fallback_models: str = "deepseek-v4-pro"
 
     # --- Verifix ---
     verifix_mode: str = "csv"

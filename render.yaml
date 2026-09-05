@@ -258,14 +258,18 @@ envVarGroups:
       #
       # sync: false (not a static value:) for the same reason as
       # AGENT_WRITES_ENABLED above -- a hardcoded blueprint default here would
-      # get silently re-applied and wipe out a manual switch (e.g. to
-      # "deepseek" while OpenRouter credits are out) on every push-triggered
-      # blueprint sync. Defaults shown are what to enter once in the
-      # dashboard; change the dashboard value directly to switch providers,
-      # never this file, or the next sync will revert it.
+      # get silently re-applied and wipe out a manual switch on every
+      # push-triggered blueprint sync. Defaults shown are what to enter once
+      # in the dashboard; change the dashboard value directly to switch
+      # providers, never this file, or the next sync will revert it.
+      #
+      # NOTE 2026-09-05: whatever is CURRENTLY set in the dashboard keeps
+      # running regardless of the code defaults below -- sync: false means
+      # this push does not change the live value. Set these three in the
+      # dashboard directly to actually switch to deepseek.
       - key: OPS_MANAGER_BOT_PROVIDER
-        sync: false  # default: openrouter
+        sync: false  # code default: deepseek (was openrouter until 2026-09-05 -- switched to save OpenRouter credits while the project is early-stage)
       - key: OPS_MANAGER_BOT_MODEL
-        sync: false  # default: anthropic/claude-sonnet-5
+        sync: false  # code default: deepseek-v4-flash (was anthropic/claude-sonnet-5) -- deepseek-v4-flash over -pro: Russian language-matching is only ~50% reliable on -pro, confirmed live testing
       - key: OPS_MANAGER_BOT_FALLBACK_MODELS
-        sync: false  # default: google/gemini-3.7-flash
+        sync: false  # code default: deepseek-v4-pro (was google/gemini-3.7-flash)
