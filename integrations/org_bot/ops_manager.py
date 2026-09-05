@@ -1185,7 +1185,13 @@ async def _fetch_crm_agent_data() -> str:
             f"{s['conversion_rate']}% conversion rate."
         )
     else:
-        lines.append("\nNo whole-CRM stats (contacts/conversion) recorded yet.")
+        lines.append(
+            "\nNo whole-CRM stats (contacts/conversion) recorded yet — this is a newer "
+            "part of the daily CRM sync (added 2026-09-05), populated once a day by the "
+            "same CEO Daily Brief run as the pipeline above. If the pipeline snapshot date "
+            "above is recent but this still says no data, the sync ran before this feature "
+            "existed — it will appear after the next run, not automatically."
+        )
 
     reports = await fetch_all(
         "SELECT manager_name, report_type, report_date, content, submitted_at "
@@ -1196,7 +1202,11 @@ async def _fetch_crm_agent_data() -> str:
         for r in reports:
             lines.append(f"- [{r['report_date']}] {r.get('manager_name')} ({r.get('report_type')}): {r.get('content')}")
     else:
-        lines.append("\nNo employee reports synced yet.")
+        lines.append(
+            "\nNo employee reports synced yet — same as the stats above, this is a newer "
+            "part of the daily CRM sync (added 2026-09-05) and needs one more run to "
+            "populate for the first time."
+        )
 
     return "\n".join(lines)
 
