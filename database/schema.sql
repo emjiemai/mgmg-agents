@@ -301,6 +301,47 @@ FROM amocrm_pipeline_snapshots p
 WHERE p.snapshot_date = (SELECT max(snapshot_date) FROM amocrm_pipeline_snapshots);
 
 -- ---------------------------------------------------------------------------
+-- crm_stats_snapshots — whole-CRM aggregate (contacts, conversion), one row
+-- per day. Split from amocrm_pipeline_snapshots (one row per stage) because
+-- total_contacts/conversion_rate are whole-CRM numbers, not per-stage ones —
+-- repeating them on every stage row would be redundant and easy to get out
+-- of sync if only some rows were updated.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS crm_stats_snapshots (
+    snapshot_date     DATE         PRIMARY KEY,
+    captured_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    total_deals       INTEGER      NOT NULL DEFAULT 0,
+    total_value_tiyin BIGINT       NOT NULL DEFAULT 0,
+    total_contacts    INTEGER      NOT NULL DEFAULT 0,
+    won_deals         INTEGER      NOT NULL DEFAULT 0,
+    won_value_tiyin   BIGINT       NOT NULL DEFAULT 0,
+    conversion_rate   NUMERIC(6,2) NOT NULL DEFAULT 0
+);
+
+CREATE OR REPLACE VIEW v_crm_stats_latest AS
+SELECT * FROM crm_stats_snapshots
+WHERE snapshot_date = (SELECT max(snapshot_date) FROM crm_stats_snapshots);
+
+-- ---------------------------------------------------------------------------
+-- crm_employee_reports — synced from the in-house CRM's /reports endpoint
+-- (employee daily-standup-style submissions). Keyed by the CRM's own report
+-- id, not a daily snapshot -- each report already has its own stable id and
+-- submitted_at, so this is a plain upsert-by-id sync, not a per-day table.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS crm_employee_reports (
+    id            BIGINT       PRIMARY KEY,
+    manager_id    BIGINT,
+    manager_name  TEXT,
+    report_type   TEXT,
+    report_date   DATE,
+    content       TEXT,
+    submitted_at  TIMESTAMPTZ,
+    synced_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_employee_reports_date ON crm_employee_reports (report_date DESC);
+
+-- ---------------------------------------------------------------------------
 -- employees — registered via Admin Bot + OPS Manager Bot's role picker.
 -- Role list is a hardcoded CHECK, mirrored in integrations/org_bot/roles.py —
 -- Postgres can't import that file, keep the two in sync by hand.

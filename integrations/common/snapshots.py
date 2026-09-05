@@ -15,6 +15,7 @@ from integrations.common.db import execute_many
 from integrations.common.divisions import division_from_amocrm
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
+from integrations.crm.models import CRMStats, EmployeeReport
 from integrations.crm.models import PipelineSummary as CRMPipelineSummary
 from integrations.sap.models import ARAging, CashAccount, SalesSummary
 
@@ -210,6 +211,94 @@ async def persist_crm_pipeline(summary: CRMPipelineSummary, snapshot_date: date 
             captured_at        = now()
         """,
         rows,
+    )
+
+
+async def persist_crm_stats(stats: CRMStats, snapshot_date: date | None = None) -> int:
+    """Write the whole-CRM aggregate (contacts, conversion) to ``crm_stats_snapshots``.
+
+    Args:
+        stats: The summary from ``CRMClient.get_stats``.
+        snapshot_date: Business day; defaults to today in Tashkent.
+
+    Returns:
+        1 (one row written).
+
+    Raises:
+        psycopg.Error: on a database failure.
+    """
+    day = snapshot_date or today_local()
+    return await execute_many(
+        """
+        INSERT INTO crm_stats_snapshots
+            (snapshot_date, total_deals, total_value_tiyin, total_contacts,
+             won_deals, won_value_tiyin, conversion_rate)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (snapshot_date) DO UPDATE SET
+            total_deals       = EXCLUDED.total_deals,
+            total_value_tiyin = EXCLUDED.total_value_tiyin,
+            total_contacts    = EXCLUDED.total_contacts,
+            won_deals         = EXCLUDED.won_deals,
+            won_value_tiyin   = EXCLUDED.won_value_tiyin,
+            conversion_rate   = EXCLUDED.conversion_rate,
+            captured_at       = now()
+        """,
+        [(
+            day,
+            stats.total_deals,
+            stats.total_value_tiyin,
+            stats.total_contacts,
+            stats.won_deals,
+            stats.won_value_tiyin,
+            stats.conversion_rate,
+        )],
+    )
+
+
+async def sync_crm_reports(reports: list[EmployeeReport]) -> int:
+    """Upsert employee reports into ``crm_employee_reports`` by the CRM's own id.
+
+    Not a daily snapshot like the functions above — each report already has a
+    stable id and submitted_at from the CRM, so this is a plain sync rather
+    than something tied to "today".
+
+    Args:
+        reports: Reports from ``CRMClient.get_reports``.
+
+    Returns:
+        Number of rows written (0 if ``reports`` is empty).
+
+    Raises:
+        psycopg.Error: on a database failure.
+    """
+    if not reports:
+        return 0
+    return await execute_many(
+        """
+        INSERT INTO crm_employee_reports
+            (id, manager_id, manager_name, report_type, report_date, content, submitted_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            manager_id    = EXCLUDED.manager_id,
+            manager_name  = EXCLUDED.manager_name,
+            report_type   = EXCLUDED.report_type,
+            report_date   = EXCLUDED.report_date,
+            content       = EXCLUDED.content,
+            submitted_at  = EXCLUDED.submitted_at,
+            synced_at     = now()
+        """,
+        [
+            (
+                r.id,
+                r.manager_id,
+                r.manager_name,
+                r.report_type,
+                r.report_date.date() if r.report_date else None,
+                r.content,
+                r.submitted_at,
+            )
+            for r in reports
+        ],
     )
 
 

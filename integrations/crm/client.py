@@ -33,6 +33,7 @@ from integrations.crm.models import (
     CRMStats,
     Contact,
     Deal,
+    EmployeeReport,
     ManagerTask,
     MonthlyBreakdown,
     PipelineSummary,
@@ -255,18 +256,58 @@ class CRMClient:
         log.info("CRM: {} manager task(s) fetched", len(tasks))
         return tasks
 
+    async def get_reports(self) -> list[EmployeeReport]:
+        """Fetch every employee-submitted report (daily standup style).
+
+        Returns:
+            All reports, most recently submitted first (as the API returns
+            them).
+
+        Raises:
+            CRMError: on an API error.
+        """
+        rows = await self._get("/reports")
+        reports = [
+            EmployeeReport(
+                id=row["id"],
+                manager_id=row.get("managerId"),
+                manager_name=row.get("managerName"),
+                report_type=row.get("type"),
+                report_date=_ts(row.get("reportDate")),
+                content=row.get("content"),
+                submitted_at=_ts(row.get("submittedAt")),
+            )
+            for row in rows
+        ]
+        log.info("CRM: {} report(s) fetched", len(reports))
+        return reports
+
     async def get_pipeline_summary(self) -> PipelineSummary:
         """Build a CEO-brief-ready pipeline summary from deals + tasks + stats.
+
+        ``/manager-tasks`` has been returning HTTP 404 since sometime after
+        2026-08-26 (confirmed live 2026-09-05 — the route appears to no
+        longer exist on the CRM side) — every deal's ``has_next_task`` and
+        the ``deals_without_task`` list degrade to "unknown" rather than
+        failing the whole summary. Before this fix, one broken endpoint
+        silently blocked deals/stats from ever being persisted too, since
+        this method raised before ``persist_crm_pipeline`` was ever reached
+        — that's why the pipeline snapshot was stuck 10 days stale.
 
         Returns:
             A ``PipelineSummary`` shaped like the old amoCRM one, so the CEO
             brief's rendering code needs no changes.
 
         Raises:
-            CRMError: on an API error.
+            CRMError: only if deals or stats themselves fail — those are the
+                two sources this summary cannot do without.
         """
         deals = await self.get_deals()
-        tasks = await self.get_manager_tasks()
+        try:
+            tasks = await self.get_manager_tasks()
+        except CRMError as exc:
+            log.warning("manager-tasks unavailable, has_next_task will be unknown for every deal: {}", exc)
+            tasks = []
         stats = await self.get_stats()
         window_start, _ = last_24h_utc()
 

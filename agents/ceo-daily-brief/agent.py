@@ -50,7 +50,7 @@ from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_uzs, format_uzs_short
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
-from integrations.crm.client import CRMClient
+from integrations.crm.client import CRMClient, CRMError
 from integrations.crm.models import PipelineSummary
 from integrations.microsoft.client import GraphClient
 from integrations.org_bot.notify import notify_directors
@@ -244,6 +244,14 @@ async def _fetch_aging(run_id: uuid.UUID) -> ARAging:
 async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
     """Pull the pipeline summary from MGMG's own CRM and snapshot it.
 
+    Also snapshots whole-CRM stats (contacts, conversion rate) and syncs
+    employee reports, best-effort — a failure in either degrades to a logged
+    warning rather than failing the pipeline fetch, same "one source's
+    failure doesn't kill the others" rule this whole agent already follows
+    (see module docstring). Both are new as of 2026-09-05, added so OPS
+    Manager Bot's CRM agent can answer contacts/reports questions instead of
+    only pipeline stage counts.
+
     Args:
         run_id: UUID grouping this run's audit rows.
 
@@ -251,10 +259,24 @@ async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
         The pipeline summary.
 
     Raises:
-        CRMError: if the CRM is unreachable or rejects the queries.
+        CRMError: if the CRM is unreachable or rejects the pipeline queries
+            (deals/stats) — the two sources the pipeline summary itself
+            cannot do without.
     """
     async with CRMClient(agent=AGENT, run_id=run_id) as crm:
         summary = await crm.get_pipeline_summary()
+
+        try:
+            stats = await crm.get_stats()
+            await snapshots.persist_crm_stats(stats)
+        except CRMError as exc:
+            log.warning("CRM stats snapshot failed, continuing: {}", exc)
+
+        try:
+            reports = await crm.get_reports()
+            await snapshots.sync_crm_reports(reports)
+        except CRMError as exc:
+            log.warning("CRM reports sync failed, continuing: {}", exc)
 
     await snapshots.persist_crm_pipeline(summary)
     return summary

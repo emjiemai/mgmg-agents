@@ -1140,7 +1140,8 @@ async def _fetch_sap_gateway_data(tool: str) -> str:
 
 
 async def _fetch_crm_agent_data() -> str:
-    """The full pipeline snapshot from the in-house CRM.
+    """The pipeline snapshot, whole-CRM stats, and recent employee reports
+    from the in-house CRM.
 
     `amocrm_pipeline_snapshots` (behind `v_pipeline_latest`) despite its
     legacy name is what the IN-HOUSE CRM writes to, once a day, via
@@ -1149,7 +1150,10 @@ async def _fetch_crm_agent_data() -> str:
     (a webhook-driven amoCRM-only event log) has no in-house-CRM equivalent
     and is deliberately NOT queried here — it would only ever report stale
     amoCRM data from before the migration, which is worse than reporting
-    nothing.
+    nothing. `crm_stats_snapshots` and `crm_employee_reports` are the same
+    daily fetch's newer siblings (added 2026-09-05) — contacts/conversion and
+    employee-submitted reports, previously fetched live by the brief but
+    never saved anywhere this bot could read back.
     """
     pipeline = await fetch_all(
         "SELECT pipeline_name, status_name, deals_count, deals_value_uzs, division, snapshot_date "
@@ -1168,6 +1172,32 @@ async def _fetch_crm_agent_data() -> str:
             f"- {p.get('pipeline_name')} / {p.get('status_name')} ({p.get('division')}): "
             f"{p.get('deals_count')} deal(s), {p.get('deals_value_uzs')} UZS"
         )
+
+    stats = await fetch_all(
+        "SELECT total_contacts, total_deals, won_deals, conversion_rate, snapshot_date "
+        "FROM v_crm_stats_latest"
+    )
+    if stats:
+        s = stats[0]
+        lines.append(
+            f"\nWhole-CRM stats as of {s['snapshot_date']}: {s['total_contacts']} contact(s), "
+            f"{s['total_deals']} total deal(s), {s['won_deals']} won, "
+            f"{s['conversion_rate']}% conversion rate."
+        )
+    else:
+        lines.append("\nNo whole-CRM stats (contacts/conversion) recorded yet.")
+
+    reports = await fetch_all(
+        "SELECT manager_name, report_type, report_date, content, submitted_at "
+        "FROM crm_employee_reports ORDER BY submitted_at DESC LIMIT 20"
+    )
+    if reports:
+        lines.append(f"\nMost recent employee reports ({len(reports)} shown, newest first):")
+        for r in reports:
+            lines.append(f"- [{r['report_date']}] {r.get('manager_name')} ({r.get('report_type')}): {r.get('content')}")
+    else:
+        lines.append("\nNo employee reports synced yet.")
+
     return "\n".join(lines)
 
 

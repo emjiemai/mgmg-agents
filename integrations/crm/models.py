@@ -75,6 +75,18 @@ class ManagerTask(BaseModel):
     is_completed: bool = False
 
 
+class EmployeeReport(BaseModel):
+    """One employee-submitted report (daily standup style), from /reports."""
+
+    id: int
+    manager_id: int | None = None
+    manager_name: str | None = None
+    report_type: str | None = None  # e.g. "daily"
+    report_date: datetime | None = None
+    content: str | None = None
+    submitted_at: datetime | None = None
+
+
 class StageBreakdown(BaseModel):
     """One pipeline stage's aggregate, as returned by /stats."""
 

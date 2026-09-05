@@ -51,7 +51,13 @@ AGENTS: list[Agent] = [
     # confirm this data WAS SAP data when asked specifically about SAP --
     # confirmed live: it said outright "these are receivables, not SAP."
     Agent("finance_agent", "Finance Agent (SAP Invoices/Receivables)", "every open invoice/receivable + recent alerts — sourced from SAP Business One (OINV)"),
-    Agent("crm_agent", "CRM Agent", "full CRM pipeline snapshot"),
+    Agent(
+        "crm_agent",
+        "CRM Agent",
+        "in-house CRM: pipeline snapshot (deals by stage), whole-CRM stats "
+        "(contact count, conversion rate), and the 20 most recent employee-"
+        "submitted reports (daily standup style)",
+    ),
     Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the four operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
