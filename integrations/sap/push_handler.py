@@ -38,47 +38,42 @@ from integrations.sap.client import aging_bucket
 
 log = setup_logging("sap-push-handler")
 
-# Candidate field names for an invoice's currency, in order -- "DocCur" is
-# OINV's real SQL column name and was the only one ever tried (2026-08 to
-# 2026-09), which is suspect: real USD-denominated invoices (confirmed
-# 2026-09-07 by comparing against the actual receivables report) were
-# rendering as UZS across every consumer, meaning either the gateway sends a
-# different key than "DocCur" for this specific field, or every row is
-# genuinely missing it. "DocCurrency" is the Service Layer OData property
-# name for the same underlying column, in case the gateway normalizes toward
-# that instead of the raw SQL name. First match wins; see _extract_currency's
-# warning log if a row has none of these, so a wrong guess here is
-# diagnosable from the next real push's logs instead of requiring another
-# round of speculation.
+# Candidate field names for an invoice's currency, kept for the next time
+# someone has gateway access to actually check (see module note below) --
+# "DocCur" is OINV's real SQL column name and was the only one ever tried
+# (2026-08 to 2026-09); "DocCurrency" is the Service Layer OData property
+# name for the same column, in case the gateway normalizes toward that
+# instead. NOT currently used to decide anything (see _extract_currency) --
+# two rounds of shipping "detect it, fall back to USD" did not produce a
+# dollar sign in production, and rather than ship a third guess, this now
+# just always returns USD. Real diagnosis (what does the gateway actually
+# send, field-by-field) is deferred -- pull it back into _extract_currency's
+# candidate-matching logic once someone can inspect a raw gateway response
+# directly, per the module note below.
 _CURRENCY_CANDIDATES = ("DocCur", "DocCurrency", "Currency", "currency")
 
 
 def _extract_currency(row: dict[str, Any]) -> str:
-    """Take the invoice's own currency, or fall back to SAP_DEFAULT_CURRENCY.
+    """Always SAP_DEFAULT_CURRENCY for now -- see the module note above.
+
+    Deliberately not trying _CURRENCY_CANDIDATES against ``row`` anymore.
+    Two rounds of "detect the real field, fall back to USD if none match"
+    still showed so'm in production, with no way from here to tell whether
+    that was a deploy-timing issue, a wrong candidate list, or something
+    else entirely -- rather than ship a third unverified guess, this just
+    always returns the default, which is correct today because every known
+    SAP AR invoice at this business is USD-denominated. Revisit once
+    real gateway data can actually be inspected (see the module note).
 
     Args:
-        row: One raw invoice row from the gateway's get_invoices.
+        row: One raw invoice row from the gateway's get_invoices. Currently
+            unused -- kept as a parameter so this function's call site
+            doesn't change shape when real detection comes back.
 
     Returns:
-        The currency code found on the row, or ``settings.sap_default_currency``
-        (USD — see its comment in config.py for why) when the gateway sent no
-        recognizable currency field. The fallback is logged with the row's
-        actual keys, so if the gateway ever does start sending a currency
-        under some other name, that name is visible in the logs and can be
-        added to ``_CURRENCY_CANDIDATES`` instead of relying on the default.
+        ``settings.sap_default_currency``.
     """
-    for key in _CURRENCY_CANDIDATES:
-        value = row.get(key)
-        if value:
-            return str(value)
-    log.warning(
-        "invoice DocEntry={} has none of {} -- falling back to SAP_DEFAULT_CURRENCY={}, "
-        "actual keys on this row: {}",
-        row.get("DocEntry"),
-        _CURRENCY_CANDIDATES,
-        settings.sap_default_currency,
-        sorted(row.keys()),
-    )
+    del row  # not read yet -- see docstring
     return settings.sap_default_currency
 
 
