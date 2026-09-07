@@ -48,7 +48,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all, log_action
 from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_uzs, format_uzs_short
+from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
 from integrations.crm.client import CRMClient, CRMError
 from integrations.crm.models import PipelineSummary
@@ -368,18 +368,29 @@ def _render_cash(data: BriefData) -> str:
     if not data.cash:
         return "💰 <b>Kassa</b>\n   Kassa hisoblari sozlanmagan\n"
 
-    lines = [f"💰 <b>Kassa: {escape(format_uzs(data.cash_total_tiyin))}</b>"]
+    cash_total = format_money_by_currency([(a.balance_tiyin, a.currency) for a in data.cash])
+    lines = [f"💰 <b>Kassa: {escape(cash_total)}</b>"]
     for account in sorted(data.cash, key=lambda a: a.balance_tiyin, reverse=True)[:MAX_LINES]:
         name = account.bank_name or account.account_name or account.account_code
         marker = "🔴" if account.balance_tiyin < 0 else "  "
-        lines.append(f"   {marker} {escape(name)}: {escape(format_uzs_short(account.balance_tiyin))}")
+        balance = format_money(account.balance_tiyin, account.currency, short=True)
+        lines.append(f"   {marker} {escape(name)}: {escape(balance)}")
     if len(data.cash) > MAX_LINES:
         lines.append(f"   <i>+yana {len(data.cash) - MAX_LINES} ta hisob</i>")
     return "\n".join(lines) + "\n"
 
 
 def _render_receivables(data: BriefData) -> str:
-    """Render the receivables section with aging buckets."""
+    """Render the receivables section as one headline line.
+
+    Deliberately just the total + count, not the bucket/per-invoice detail
+    the section used to carry — the standalone Receivables Agent alert
+    (agents/receivables/agent.py) already sends that same detail moments
+    later in the same Telegram chat, in full: buckets, worst invoices,
+    owner breakdown. Repeating it here made this section the longest part
+    of a message meant to be a quick morning skim, for information that was
+    always going to arrive again in the very next message anyway.
+    """
     if data.aging is None:
         return "📉 <b>Debitorlik qarzlari</b>\n   ⚠️ Ma'lumot mavjud emas\n"
 
@@ -390,37 +401,13 @@ def _render_receivables(data: BriefData) -> str:
     elif aging.total_overdue_tiyin > 0:
         marker = "🟡"
 
-    lines = [
-        f"{marker} <b>Muddati o'tgan qarz: {escape(format_uzs(aging.total_overdue_tiyin))}</b> "
-        f"({aging.overdue_count} ta hisob-faktura)",
-        f"   Jami ochiq: {escape(format_uzs_short(aging.total_open_tiyin))}",
-    ]
+    overdue_invoices = [i for i in aging.invoices if i.days_overdue > 0]
+    overdue_total = format_money_by_currency([(i.balance_due_tiyin, i.currency) for i in overdue_invoices])
 
-    bucket_labels = [("1_30", "1–30 kun"), ("31_60", "31–60 kun"), ("61_90", "61–90 kun"), ("90_plus", "90+ kun")]
-    for key, caption in bucket_labels:
-        amount = aging.bucket_totals_tiyin.get(key, 0)
-        if amount <= 0:
-            continue
-        emoji = "🔴" if key == "90_plus" else "🟡"
-        count = aging.bucket_counts.get(key, 0)
-        lines.append(f"   {emoji} {caption}: {escape(format_uzs_short(amount))} ({count})")
-
-    worst = sorted(
-        (i for i in aging.invoices if i.days_overdue > 0),
-        key=lambda i: i.balance_due_tiyin,
-        reverse=True,
-    )[:3]
-    if worst:
-        lines.append("   <i>Eng kattalari:</i>")
-        for inv in worst:
-            owner = inv.sales_person_name or division_label(inv.division)
-            lines.append(
-                f"   • {escape(inv.card_name or inv.card_code)} — "
-                f"{escape(format_uzs_short(inv.balance_due_tiyin))}, "
-                f"{inv.days_overdue} kun ({escape(owner)})"
-            )
-
-    return "\n".join(lines) + "\n"
+    return (
+        f"{marker} <b>Muddati o'tgan qarz: {escape(overdue_total)}</b> "
+        f"({aging.overdue_count} ta hisob-faktura) — batafsili keyingi xabarda\n"
+    )
 
 
 def _render_pipeline(data: BriefData) -> str:
@@ -432,25 +419,21 @@ def _render_pipeline(data: BriefData) -> str:
     stalled = len(pipeline.deals_without_task)
     marker = "🔴" if stalled > 10 else "🟡" if stalled else "🟢"
 
-    lines = [
-        f"📊 <b>Pipeline: {escape(format_uzs_short(pipeline.total_value_tiyin))}</b> "
-        f"({pipeline.total_deals} ta bitim)",
-        f"   🆕 Yangi leadlar (24 soat): {pipeline.new_leads_24h}",
-        f"   {marker} Vazifasiz bitimlar: {stalled}",
-    ]
-
-    for deal in pipeline.deals_without_task[:MAX_LINES]:
-        # The CRM's API exposes assigned_to only as a numeric manager id —
-        # no endpoint resolves it to a name, unlike amoCRM's user list.
-        owner = f"Menejer #{deal.assigned_to}" if deal.assigned_to else "biriktirilmagan"
-        lines.append(
-            f"   • {escape(deal.title or f'Bitim {deal.id}')} — "
-            f"{escape(format_uzs_short(deal.amount_tiyin))} ({escape(owner)})"
-        )
-    if stalled > MAX_LINES:
-        lines.append(f"   <i>+yana {stalled - MAX_LINES} ta</i>")
-
-    return "\n".join(lines) + "\n"
+    # The in-house CRM's own /stats response always names deals in UZS
+    # (confirmed live) — no per-deal currency field the way SAP invoices
+    # have, so format_money(..., "UZS", ...) here, not format_money_by_currency.
+    #
+    # Headline only, no per-deal list — OPS Manager Bot's crm_agent already
+    # answers "which deals are stalled" conversationally with full detail
+    # (see docs/agent-specs/05-org-bot.md); repeating the list here just
+    # made a quick morning skim longer for something one Telegram message
+    # away on request.
+    return (
+        f"📊 <b>Pipeline: {escape(format_money(pipeline.total_value_tiyin, 'UZS', short=True))}</b> "
+        f"({pipeline.total_deals} ta bitim)\n"
+        f"   🆕 Yangi leadlar (24 soat): {pipeline.new_leads_24h}\n"
+        f"   {marker} Vazifasiz bitimlar: {stalled}\n"
+    )
 
 
 def _render_attendance(data: BriefData) -> str:

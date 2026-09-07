@@ -17,7 +17,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from integrations.amocrm.webhook_handler import _extract_lead_events
-from integrations.common.money import format_uzs, format_uzs_short, from_tiyin, to_tiyin, uzs_to_usd
+from integrations.common.money import (
+    format_money,
+    format_money_by_currency,
+    format_uzs,
+    format_uzs_short,
+    from_tiyin,
+    to_tiyin,
+    uzs_to_usd,
+)
 from integrations.common.timeutil import TASHKENT, days_between, parse_sap_date, to_local, to_utc
 from integrations.org_bot.ops_manager import (
     _task_card_text,
@@ -77,6 +85,26 @@ def test_money() -> None:
     check("short small", format_uzs_short(85_000 * 100), f"85{nbsp}000{nbsp}so'm")
     check("short negative", format_uzs_short(-int(2e9 * 100)), f"-2{nbsp}mlrd{nbsp}so'm")
     check("usd reference", str(uzs_to_usd(12_800 * 100)), "1.00")
+
+    # 2026-09-07: SAP AR invoices turned out to include real USD-denominated
+    # ones that format_uzs/format_uzs_short were silently mislabeling as
+    # so'm (right number, wrong currency). format_money/format_money_by_currency
+    # replace every such call site in receivables + ceo-daily-brief.
+    check("format_money UZS unchanged", format_money(125000000, "UZS"), format_uzs(125000000))
+    check("format_money USD", format_money(976400, "USD"), "$9,764.00")
+    check("format_money None currency defaults UZS", format_money(125000000, None), format_uzs(125000000))
+    check("format_money unknown currency code", format_money(150000, "EUR"), "1,500.00 EUR")
+    check(
+        "format_money_by_currency single currency == format_money",
+        format_money_by_currency([(125000000, "UZS")]),
+        format_uzs(125000000),
+    )
+    check(
+        "format_money_by_currency sums within a currency, not across",
+        format_money_by_currency([(1_000_000, "UZS"), (500_000, "UZS"), (976_400, "USD")]),
+        f"15{nbsp}000{nbsp}so'm + $9,764.00",
+    )
+    check("format_money_by_currency empty", format_money_by_currency([]), format_uzs(0))
 
 
 def test_time() -> None:
@@ -326,8 +354,13 @@ def test_brief_rendering() -> None:
     text = brief.render(full)
     check_true("cash rendered", "Kapital Bank" in text)
     check_true("critical marker on 90+", "🔴" in text)
-    check_true("owner named on largest invoice", "Aliyev A." in text)
-    check_true("customer name escaped and present", "Buyuk Savdo MChJ" in text)
+    # 2026-09-07: the brief's receivables section was deliberately trimmed to
+    # a headline total, not per-invoice detail (owner/customer names) --
+    # that detail now lives only in the standalone Receivables Agent alert,
+    # which already sends it moments later. Assert the new headline +
+    # signpost instead of names that no longer belong in this section.
+    check_true("overdue total shown", format_money(500_000_000, "UZS") in text)
+    check_true("points to the detailed alert instead of repeating it", "batafsili keyingi xabarda" in text)
 
 
 def test_receivables_rendering() -> None:

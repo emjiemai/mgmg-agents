@@ -47,7 +47,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all
 from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_uzs, format_uzs_short
+from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date
 from integrations.org_bot.notify import notify_directors
 from integrations.sap.models import ARAging, ARInvoice
@@ -153,18 +153,17 @@ def render(aging: ARAging, min_days: int) -> str:
         return (
             f"🟢 <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>\n\n"
             f"{min_days}+ kundan ortiq muddati o'tgan qarz yo'q. "
-            f"Jami ochiq: {escape(format_uzs_short(aging.total_open_tiyin))}."
+            f"Jami ochiq: {escape(_total_of(aging.invoices, short=True))}."
         )
 
-    total_overdue = sum(i.balance_due_tiyin for i in overdue)
     critical = aging.bucket_totals_tiyin.get("90_plus", 0)
     headline = "🔴" if critical > 0 else "🟡"
 
     lines = [
         f"{headline} <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>",
         "",
-        f"<b>Muddati o'tgan: {escape(format_uzs(total_overdue))}</b> ({len(overdue)} ta hisob-faktura)",
-        f"Jami ochiq debitorlik: {escape(format_uzs_short(aging.total_open_tiyin))}",
+        f"<b>Muddati o'tgan: {escape(_total_of(overdue))}</b> ({len(overdue)} ta hisob-faktura)",
+        f"Jami ochiq debitorlik: {escape(_total_of(aging.invoices, short=True))}",
         "",
     ]
 
@@ -177,30 +176,44 @@ def render(aging: ARAging, min_days: int) -> str:
         if not invoices:
             continue
 
-        bucket_total = sum(i.balance_due_tiyin for i in invoices)
         lines.append(
             f"{BUCKET_EMOJI[bucket]} <b>{BUCKET_LABELS[bucket]}: "
-            f"{escape(format_uzs_short(bucket_total))}</b> ({len(invoices)})"
+            f"{escape(_total_of(invoices, short=True))}</b> ({len(invoices)})"
         )
 
         for invoice in invoices[:MAX_PER_BUCKET]:
             lines.append(f"   • {_invoice_line(invoice)}")
 
         if len(invoices) > MAX_PER_BUCKET:
-            rest = sum(i.balance_due_tiyin for i in invoices[MAX_PER_BUCKET:])
+            rest = invoices[MAX_PER_BUCKET:]
             lines.append(
-                f"   <i>+yana {len(invoices) - MAX_PER_BUCKET} ta, "
-                f"{escape(format_uzs_short(rest))}</i>"
+                f"   <i>+yana {len(rest)} ta, "
+                f"{escape(_total_of(rest, short=True))}</i>"
             )
         lines.append("")
 
     owners = _by_owner(overdue)
     if owners:
         lines.append("<b>Mas'ul xodim bo'yicha:</b>")
-        for owner, amount in sorted(owners.items(), key=lambda kv: kv[1], reverse=True)[:8]:
-            lines.append(f"   {escape(owner)} — {escape(format_uzs_short(amount))}")
+        ranked = sorted(owners.items(), key=lambda kv: sum(i.balance_due_tiyin for i in kv[1]), reverse=True)
+        for owner, owner_invoices in ranked[:8]:
+            lines.append(f"   {escape(owner)} — {escape(_total_of(owner_invoices, short=True))}")
 
     return "\n".join(lines)
+
+
+def _total_of(invoices: list[ARInvoice], *, short: bool = False) -> str:
+    """Sum a set of invoices' balances, currency-safe.
+
+    Args:
+        invoices: Invoices to total.
+        short: Use the compact mln/mlrd style for a UZS-only total.
+
+    Returns:
+        e.g. "1 250 000 so'm", or "1 250 000 so'm + $9,764.00" if the
+        invoices actually span more than one currency.
+    """
+    return format_money_by_currency([(i.balance_due_tiyin, i.currency) for i in invoices], short=short)
 
 
 def _invoice_line(invoice: ARInvoice) -> str:
@@ -215,26 +228,31 @@ def _invoice_line(invoice: ARInvoice) -> str:
     owner = invoice.sales_person_name or division_label(invoice.division)
     customer = invoice.card_name or invoice.card_code
     doc = f"#{invoice.doc_num}" if invoice.doc_num else f"Hujjat {invoice.doc_entry}"
+    amount = format_money(invoice.balance_due_tiyin, invoice.currency, short=True)
     return (
-        f"{escape(customer)} — <b>{escape(format_uzs_short(invoice.balance_due_tiyin))}</b>, "
+        f"{escape(customer)} — <b>{escape(amount)}</b>, "
         f"{invoice.days_overdue} kun, {escape(doc)} ({escape(owner)})"
     )
 
 
-def _by_owner(invoices: list[ARInvoice]) -> dict[str, int]:
-    """Total overdue balance per responsible person.
+def _by_owner(invoices: list[ARInvoice]) -> dict[str, list[ARInvoice]]:
+    """Group overdue invoices by responsible person.
+
+    Kept as invoice lists rather than pre-summed totals so the caller can
+    total them currency-safely (``_total_of``) instead of blending, say,
+    UZS tiyin and USD cents into one meaningless number.
 
     Args:
         invoices: Overdue invoices.
 
     Returns:
-        Mapping of owner name to total overdue tiyin.
+        Mapping of owner name to their invoices.
     """
-    totals: dict[str, int] = defaultdict(int)
+    grouped: dict[str, list[ARInvoice]] = defaultdict(list)
     for invoice in invoices:
         owner = invoice.sales_person_name or division_label(invoice.division)
-        totals[owner] += invoice.balance_due_tiyin
-    return dict(totals)
+        grouped[owner].append(invoice)
+    return dict(grouped)
 
 
 async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, message_id: int | None) -> None:
@@ -261,6 +279,11 @@ async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, messag
         by_bucket[invoice.aging_bucket].append(invoice)
 
     for bucket, invoices in by_bucket.items():
+        # amount_tiyin has no currency column of its own -- fine for now
+        # since every bucket observed so far has been single-currency, but a
+        # genuinely mixed bucket would blend UZS tiyin and USD cents into
+        # this one number the same way the Telegram message used to. The
+        # title text is currency-safe (_total_of); this column isn't yet.
         total = sum(i.balance_due_tiyin for i in invoices)
         top = max(invoices, key=lambda i: i.balance_due_tiyin)
         await execute(
@@ -275,7 +298,7 @@ async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, messag
                 str(run_id),
                 f"ar_overdue:{bucket}:{aging.snapshot_date.isoformat()}",
                 BUCKET_SEVERITY.get(bucket, "info"),
-                f"Muddati o'tgan debitorlik {BUCKET_LABELS.get(bucket, bucket)}: {format_uzs(total)}",
+                f"Muddati o'tgan debitorlik {BUCKET_LABELS.get(bucket, bucket)}: {_total_of(invoices)}",
                 f"{len(invoices)} ta hisob-faktura; eng kattasi: {top.card_name or top.card_code}",
                 total,
                 top.sales_person_name or division_label(top.division),

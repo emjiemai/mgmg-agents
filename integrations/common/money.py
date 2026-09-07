@@ -87,6 +87,78 @@ def format_uzs_short(tiyin: int) -> str:
     return format_uzs(tiyin)
 
 
+def format_money(minor_units: int, currency: str | None, *, short: bool = False) -> str:
+    """Format an amount in whatever currency it's actually denominated in.
+
+    UZS (the default/assumed currency almost everywhere in this project)
+    uses the existing so'm formatting. Anything else -- confirmed necessary
+    2026-09-07, after SAP AR invoices turned out to include real
+    USD-denominated ones that were previously always run through
+    ``format_uzs``/``format_uzs_short`` regardless of their actual
+    ``currency`` field -- gets its own symbol/code instead of being forced
+    through UZS formatting, which shows the right NUMBER with the wrong
+    CURRENCY (a $9,764 invoice is not 9,764 so'm; so'm has no cents, so it
+    also silently drops precision USD needs).
+
+    Args:
+        minor_units: Amount in the currency's smallest unit (tiyin for UZS,
+            cents for USD) -- same "integer, x100" convention regardless of
+            which currency it actually is; see ``to_tiyin``.
+        currency: Currency code as SAP provides it (e.g. "UZS", "USD").
+            ``None``/empty is treated as UZS, matching every existing call
+            site's prior assumption.
+        short: Use the compact mln/mlrd style for large UZS amounts. No
+            established short form for other currencies yet, so this is
+            ignored for them -- full precision always shown instead.
+
+    Returns:
+        e.g. ``"1 250 000 so'm"``, ``"$9,764.00"``, ``"1234.56 EUR"``.
+    """
+    code = (currency or "UZS").strip().upper()
+    if code in ("", "UZS", "SUM", "SO'M"):
+        return format_uzs_short(minor_units) if short else format_uzs(minor_units)
+
+    value = Decimal(minor_units) / TIYIN_PER_UZS
+    sign = "-" if value < 0 else ""
+    body = f"{abs(value):,.2f}"
+    return f"{sign}${body}" if code == "USD" else f"{sign}{body} {code}"
+
+
+def format_money_by_currency(amounts: list[tuple[int, str | None]], *, short: bool = False) -> str:
+    """Format a set of amounts that may span more than one currency.
+
+    Groups by currency and sums within each group -- summing raw minor-unit
+    values across different currencies (UZS tiyin + USD cents) would produce
+    a meaningless number, exactly the bug ``format_money`` above fixes for a
+    single amount. The common case (everything actually is one currency,
+    which is true almost everywhere in this project) returns exactly what
+    ``format_money`` would for the total; a genuinely mixed set is shown as
+    each currency's own subtotal, joined, rather than silently blended.
+
+    Args:
+        amounts: (minor_units, currency) pairs, e.g. one per invoice.
+        short: Passed through to ``format_money`` for any UZS subtotal.
+
+    Returns:
+        e.g. ``"1 250 000 so'm"``, or ``"1 250 000 so'm + $9,764.00"`` if
+        the input actually mixed currencies. ``"0 so'm"`` if ``amounts`` is
+        empty.
+    """
+    if not amounts:
+        return format_money(0, "UZS", short=short)
+
+    totals: dict[str, int] = {}
+    order: list[str] = []
+    for minor_units, currency in amounts:
+        code = (currency or "UZS").strip().upper() or "UZS"
+        if code not in totals:
+            totals[code] = 0
+            order.append(code)
+        totals[code] += minor_units
+
+    return " + ".join(format_money(totals[code], code, short=short) for code in order)
+
+
 def uzs_to_usd(tiyin: int) -> Decimal:
     """Convert tiyin to approximate USD at the configured reference rate.
 
