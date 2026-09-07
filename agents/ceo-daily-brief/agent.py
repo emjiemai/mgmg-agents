@@ -33,6 +33,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import timedelta
 import uuid
 from pathlib import Path
 
@@ -283,7 +284,14 @@ async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
 
 
 async def _fetch_verifix(run_id: uuid.UUID) -> AttendanceSummary:
-    """Pull today's attendance exceptions and snapshot them.
+    """Pull YESTERDAY's attendance exceptions and snapshot them.
+
+    Yesterday, not today: this brief goes out at 08:00 Tashkent, before the
+    day's own attendance exists yet — asking "who was late/absent today" at
+    08:00 can only ever answer "nobody, no data yet," which reads as a clean
+    bill of health instead of the true "too early to know." The most recent
+    complete day (yesterday) is the freshest attendance data actually worth
+    reporting on at that hour.
 
     Args:
         run_id: UUID grouping this run's audit rows.
@@ -295,7 +303,7 @@ async def _fetch_verifix(run_id: uuid.UUID) -> AttendanceSummary:
         VerifixError: only on misconfiguration; missing data returns empty.
     """
     client = VerifixClient(agent=AGENT, run_id=run_id)
-    summary = await client.get_attendance()
+    summary = await client.get_attendance(today_local() - timedelta(days=1))
     await persist_attendance(summary, [*summary.late, *summary.absent])
     return summary
 
@@ -437,17 +445,23 @@ def _render_pipeline(data: BriefData) -> str:
 
 
 def _render_attendance(data: BriefData) -> str:
-    """Render the HR attendance section."""
+    """Render the HR attendance section.
+
+    Labeled with its own date (yesterday, per _fetch_verifix) rather than
+    left implicit — without it, "Davomat" read as if it meant today, when
+    today's attendance can't possibly exist yet at 08:00.
+    """
     if data.attendance is None:
         return "👥 <b>Davomat</b>\n   ⚠️ Verifix mavjud emas\n"
 
     att = data.attendance
+    day_label = fmt_date(att.snapshot_date)
     if att.total_records == 0:
-        return "👥 <b>Davomat</b>\n   ⚠️ Bugun uchun eksport qabul qilinmadi\n"
+        return f"👥 <b>Davomat ({day_label})</b>\n   ⚠️ O'sha kun uchun eksport qabul qilinmadi\n"
 
     marker = "🔴" if att.absent else "🟡" if att.late else "🟢"
     lines = [
-        f"{marker} <b>Davomat:</b> {len(att.late)} kechikkan, {len(att.absent)} kelmagan "
+        f"{marker} <b>Davomat ({day_label}):</b> {len(att.late)} kechikkan, {len(att.absent)} kelmagan "
         f"(jami {att.total_records})"
     ]
     for record in att.absent[:MAX_LINES]:

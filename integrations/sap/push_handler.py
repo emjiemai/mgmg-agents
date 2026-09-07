@@ -30,9 +30,51 @@ import uuid
 from typing import Any
 
 from integrations.common.db import audited, execute
+from integrations.common.logging_setup import setup_logging
 from integrations.common.money import to_tiyin
 from integrations.common.timeutil import days_between, parse_sap_date, today_local
 from integrations.sap.client import aging_bucket
+
+log = setup_logging("sap-push-handler")
+
+# Candidate field names for an invoice's currency, in order -- "DocCur" is
+# OINV's real SQL column name and was the only one ever tried (2026-08 to
+# 2026-09), which is suspect: real USD-denominated invoices (confirmed
+# 2026-09-07 by comparing against the actual receivables report) were
+# rendering as UZS across every consumer, meaning either the gateway sends a
+# different key than "DocCur" for this specific field, or every row is
+# genuinely missing it. "DocCurrency" is the Service Layer OData property
+# name for the same underlying column, in case the gateway normalizes toward
+# that instead of the raw SQL name. First match wins; see _extract_currency's
+# warning log if a row has none of these, so a wrong guess here is
+# diagnosable from the next real push's logs instead of requiring another
+# round of speculation.
+_CURRENCY_CANDIDATES = ("DocCur", "DocCurrency", "Currency", "currency")
+
+
+def _extract_currency(row: dict[str, Any]) -> str:
+    """Try each candidate key for an invoice's currency.
+
+    Args:
+        row: One raw invoice row from the gateway's get_invoices.
+
+    Returns:
+        The currency code found, or "UZS" if none of the candidate keys are
+        present on this row (logged once per occurrence, naming the actual
+        keys seen, so a wrong guess is diagnosable rather than silently
+        defaulting forever).
+    """
+    for key in _CURRENCY_CANDIDATES:
+        value = row.get(key)
+        if value:
+            return str(value)
+    log.warning(
+        "invoice DocEntry={} has none of {} -- defaulting to UZS, actual keys on this row: {}",
+        row.get("DocEntry"),
+        _CURRENCY_CANDIDATES,
+        sorted(row.keys()),
+    )
+    return "UZS"
 
 
 async def handle_ar_aging_push(payload: dict[str, Any], run_id: uuid.UUID) -> dict[str, Any]:
@@ -125,7 +167,7 @@ async def handle_ar_aging_push(payload: dict[str, Any], run_id: uuid.UUID) -> di
                     due_date,
                     overdue,
                     aging_bucket(overdue),
-                    row.get("DocCur") or "UZS",
+                    _extract_currency(row),
                     doc_total_tiyin,
                     paid_to_date_tiyin,
                     balance_due_tiyin,
