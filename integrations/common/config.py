@@ -57,6 +57,20 @@ class Settings(BaseSettings):
     sap_password: SecretStr = SecretStr("")
     sap_verify_ssl: bool = False
     sap_timeout_seconds: int = 60
+    # Currency to assume for a SAP AR invoice when the gateway's get_invoices
+    # response carries no recognizable currency field of its own.
+    #
+    # USD, not UZS: MGMG's SAP AR invoices are issued in dollars (confirmed by
+    # the business owner directly, and corroborated by the data itself --
+    # balances come through as 9764.31 / 6329.11 / 1841.43, i.e. fractional
+    # amounts in the thousands. Uzbek sum invoices are neither fractional nor
+    # that small; read as UZS those same figures would mean a hotel owes
+    # roughly 75 cents). The gateway does not reliably send a currency field,
+    # so defaulting this to UZS silently relabeled every real dollar invoice
+    # as so'm across the daily brief, the receivables alert and OPS Manager
+    # Bot alike. An explicit currency from SAP always wins over this -- see
+    # push_handler._extract_currency.
+    sap_default_currency: str = "USD"
 
     # --- SAP gateway push (the gateway's own machine pushes here; see
     # scripts/sap-gateway-push/ and integrations/sap/push_handler.py) ---

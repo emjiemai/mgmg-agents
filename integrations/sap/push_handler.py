@@ -29,6 +29,7 @@ import json
 import uuid
 from typing import Any
 
+from integrations.common.config import settings
 from integrations.common.db import audited, execute
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import to_tiyin
@@ -53,28 +54,32 @@ _CURRENCY_CANDIDATES = ("DocCur", "DocCurrency", "Currency", "currency")
 
 
 def _extract_currency(row: dict[str, Any]) -> str:
-    """Try each candidate key for an invoice's currency.
+    """Take the invoice's own currency, or fall back to SAP_DEFAULT_CURRENCY.
 
     Args:
         row: One raw invoice row from the gateway's get_invoices.
 
     Returns:
-        The currency code found, or "UZS" if none of the candidate keys are
-        present on this row (logged once per occurrence, naming the actual
-        keys seen, so a wrong guess is diagnosable rather than silently
-        defaulting forever).
+        The currency code found on the row, or ``settings.sap_default_currency``
+        (USD — see its comment in config.py for why) when the gateway sent no
+        recognizable currency field. The fallback is logged with the row's
+        actual keys, so if the gateway ever does start sending a currency
+        under some other name, that name is visible in the logs and can be
+        added to ``_CURRENCY_CANDIDATES`` instead of relying on the default.
     """
     for key in _CURRENCY_CANDIDATES:
         value = row.get(key)
         if value:
             return str(value)
     log.warning(
-        "invoice DocEntry={} has none of {} -- defaulting to UZS, actual keys on this row: {}",
+        "invoice DocEntry={} has none of {} -- falling back to SAP_DEFAULT_CURRENCY={}, "
+        "actual keys on this row: {}",
         row.get("DocEntry"),
         _CURRENCY_CANDIDATES,
+        settings.sap_default_currency,
         sorted(row.keys()),
     )
-    return "UZS"
+    return settings.sap_default_currency
 
 
 async def handle_ar_aging_push(payload: dict[str, Any], run_id: uuid.UUID) -> dict[str, Any]:

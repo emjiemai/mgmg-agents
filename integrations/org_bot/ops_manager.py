@@ -25,7 +25,7 @@ from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
 from integrations.common.db import fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_uzs
+from integrations.common.money import format_money, format_uzs
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import admin, store
 from integrations.org_bot.prompt import (
@@ -1070,8 +1070,8 @@ async def _fetch_lead_agent_data() -> str:
 async def _fetch_finance_agent_data() -> str:
     """All open receivables (= open SAP invoices) + recent alerts, not just the top 15/5."""
     aging = await fetch_all(
-        "SELECT doc_num, card_name, days_overdue, aging_bucket, balance_due_uzs, currency, due_date, sales_person_name "
-        "FROM v_ar_aging_latest ORDER BY balance_due_uzs DESC LIMIT 200"
+        "SELECT doc_num, card_name, days_overdue, aging_bucket, balance_due_tiyin, currency, due_date, sales_person_name "
+        "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC LIMIT 200"
     )
     alerts = await fetch_all(
         "SELECT title, body, created_at FROM alerts WHERE agent = 'receivables' ORDER BY created_at DESC LIMIT 30"
@@ -1088,11 +1088,15 @@ async def _fetch_finance_agent_data() -> str:
     # (confirmed live: it said outright "these are receivables, not SAP").
     lines = [f"{len(aging)} open SAP invoice(s) / receivable(s) (source: SAP Business One OINV):"]
     for r in aging:
-        # currency is whatever SAP actually recorded on the invoice -- never
-        # hardcode "UZS" here, some invoices are genuinely in USD/EUR and
-        # mislabeling them is worse than an ugly currency code.
+        # Pre-formatted with format_money rather than handed to the model as
+        # "<number> <code>": given the raw pair, the model reasonably renders
+        # "UZS" as "so'm" in an Uzbek reply, so a wrong code upstream turned
+        # into confidently wrong output. Passing "$9,764.31" already formatted
+        # leaves nothing to reinterpret, and makes a wrong currency obvious on
+        # sight instead of laundered through translation.
+        amount = format_money(r["balance_due_tiyin"], r["currency"])
         lines.append(
-            f"- Invoice #{r['doc_num']}, {r['card_name']}: {r['balance_due_uzs']} {r['currency'] or 'UZS'}, "
+            f"- Invoice #{r['doc_num']}, {r['card_name']}: {amount}, "
             f"{r['days_overdue']}d overdue "
             f"({r['aging_bucket']}), due {r['due_date']}, owner={r['sales_person_name']}"
         )
