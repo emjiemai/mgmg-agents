@@ -318,6 +318,7 @@ def test_brief_rendering() -> None:
     """The CEO brief renders with partial and total source failure."""
     print("brief rendering")
     from integrations.common.agent_loader import load_agent
+    from integrations.crm.models import EmployeeReport
     from integrations.sap.models import ARAging, ARInvoice, CashAccount
 
     brief = load_agent("ceo-daily-brief")
@@ -347,9 +348,19 @@ def test_brief_rendering() -> None:
     aging.bucket_totals_tiyin = {"90_plus": 500_000_000}
     aging.bucket_counts = {"90_plus": 1}
 
+    yesterday = date.today() - timedelta(days=1)
     full = brief.BriefData(
         cash=[CashAccount(account_code="5110", bank_name="Kapital Bank", balance_tiyin=1_200_000_000)],
         aging=aging,
+        reports=[
+            EmployeeReport(
+                id=1,
+                manager_name="Ulug'bek AI",
+                report_type="daily",
+                report_date=datetime(yesterday.year, yesterday.month, yesterday.day),
+                content="OPS Manager botdagi bug fixlar, formatlash to'g'irlash",
+            )
+        ],
     )
     text = brief.render(full)
     check_true("cash rendered", "Kapital Bank" in text)
@@ -361,6 +372,15 @@ def test_brief_rendering() -> None:
     # signpost instead of names that no longer belong in this section.
     check_true("overdue total shown", format_money(500_000_000, "UZS") in text)
     check_true("points to the detailed alert instead of repeating it", "batafsili keyingi xabarda" in text)
+    # 2026-09-08: previous day's employee-submitted CRM reports, added after
+    # a Director's actual submitted report never showed up anywhere the bot
+    # would surface it proactively -- only on direct question.
+    check_true("yesterday's report shown", "OPS Manager botdagi bug fixlar" in text)
+    check_true("reporting employee named", "Ulug'bek AI" in text)
+
+    no_reports = brief.BriefData(reports=[])
+    text = brief.render(no_reports)
+    check_true("no reports yesterday is stated plainly", "Hech kim report yozmagan" in text)
 
 
 def test_receivables_rendering() -> None:

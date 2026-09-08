@@ -52,7 +52,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
 from integrations.crm.client import CRMClient, CRMError
-from integrations.crm.models import PipelineSummary
+from integrations.crm.models import EmployeeReport, PipelineSummary
 from integrations.microsoft.client import GraphClient
 from integrations.org_bot.notify import notify_directors
 from integrations.sap.client import SAPClient
@@ -75,6 +75,7 @@ class BriefData:
     cash: list[CashAccount] | None = None
     aging: ARAging | None = None
     pipeline: PipelineSummary | None = None
+    reports: list[EmployeeReport] | None = None
     attendance: AttendanceSummary | None = None
     overdue_tasks: list[dict[str, Any]] | None = None
     errors: list[dict[str, str]] = field(default_factory=list)
@@ -140,7 +141,7 @@ async def collect(run_id: uuid.UUID) -> BriefData:
     if isinstance(crm_result, BaseException):
         data.note_failure("crm", crm_result)
     else:
-        data.pipeline = crm_result
+        data.pipeline, data.reports = crm_result
 
     if isinstance(verifix_result, BaseException):
         data.note_failure("verifix", verifix_result)
@@ -242,7 +243,7 @@ async def _fetch_aging(run_id: uuid.UUID) -> ARAging:
     return aging
 
 
-async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
+async def _fetch_crm(run_id: uuid.UUID) -> tuple[PipelineSummary, list[EmployeeReport]]:
     """Pull the pipeline summary from MGMG's own CRM and snapshot it.
 
     Also snapshots whole-CRM stats (contacts, conversion rate) and syncs
@@ -257,7 +258,12 @@ async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
         run_id: UUID grouping this run's audit rows.
 
     Returns:
-        The pipeline summary.
+        The pipeline summary, and YESTERDAY's employee reports for the
+        brief's own reports section (same "yesterday" framing as attendance
+        — see _fetch_verifix — since this runs at 08:00, before today's own
+        reports could exist). Empty list, not a failure, if the reports
+        fetch/sync itself failed — that degrades independently of the
+        pipeline, same as stats above.
 
     Raises:
         CRMError: if the CRM is unreachable or rejects the pipeline queries
@@ -273,6 +279,7 @@ async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
         except CRMError as exc:
             log.warning("CRM stats snapshot failed, continuing: {}", exc)
 
+        reports: list[EmployeeReport] = []
         try:
             reports = await crm.get_reports()
             await snapshots.sync_crm_reports(reports)
@@ -280,7 +287,10 @@ async def _fetch_crm(run_id: uuid.UUID) -> PipelineSummary:
             log.warning("CRM reports sync failed, continuing: {}", exc)
 
     await snapshots.persist_crm_pipeline(summary)
-    return summary
+
+    yesterday = today_local() - timedelta(days=1)
+    yesterday_reports = [r for r in reports if r.report_date and r.report_date.date() == yesterday]
+    return summary, yesterday_reports
 
 
 async def _fetch_verifix(run_id: uuid.UUID) -> AttendanceSummary:
@@ -350,6 +360,7 @@ def render(data: BriefData) -> str:
         _render_receivables(data),
         _render_pipeline(data),
         _render_attendance(data),
+        _render_reports(data),
         _render_tasks(data),
     ]
 
@@ -475,6 +486,33 @@ def _render_attendance(data: BriefData) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_reports(data: BriefData) -> str:
+    """Render yesterday's employee-submitted reports (from the in-house CRM).
+
+    Same "yesterday" framing and reasoning as _render_attendance — this runs
+    at 08:00, before today's own reports could exist yet, so "yesterday" is
+    the freshest complete day worth showing. One line per employee, content
+    truncated hard: this is a quick morning skim, and the full text is
+    already sitting in the CRM for anyone who wants to open it up.
+    """
+    if data.reports is None:
+        return "📝 <b>Reportlar</b>\n   ⚠️ CRM mavjud emas\n"
+
+    day_label = fmt_date(today_local() - timedelta(days=1))
+    if not data.reports:
+        return f"📝 <b>Reportlar ({day_label})</b>\n   ⚠️ Hech kim report yozmagan\n"
+
+    lines = [f"📝 <b>Reportlar ({day_label}): {len(data.reports)} ta xodimdan</b>"]
+    for r in data.reports[:MAX_LINES]:
+        content = (r.content or "").strip().replace("\n", " ")
+        if len(content) > 80:
+            content = content[:77] + "..."
+        lines.append(f"   • {escape(r.manager_name or 'Nomaʻlum')}: {escape(content)}")
+    if len(data.reports) > MAX_LINES:
+        lines.append(f"   <i>+yana {len(data.reports) - MAX_LINES} ta</i>")
+    return "\n".join(lines) + "\n"
+
+
 def _render_tasks(data: BriefData) -> str:
     """Render the overdue Planner tasks section."""
     if data.overdue_tasks is None:
@@ -515,6 +553,7 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
         "cash": [a.model_dump(mode="json") for a in (data.cash or [])],
         "ar_buckets": (data.aging.bucket_totals_tiyin if data.aging else {}),
         "pipeline_by_name": (data.pipeline.by_pipeline if data.pipeline else {}),
+        "reports": [r.model_dump(mode="json") for r in (data.reports or [])],
         "attendance": {
             "late": [r.model_dump(mode="json") for r in (data.attendance.late if data.attendance else [])],
             "absent": [r.model_dump(mode="json") for r in (data.attendance.absent if data.attendance else [])],
