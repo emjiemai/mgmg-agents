@@ -245,7 +245,7 @@ to see or remove themselves, by design.
 | Lead Agent | `agents/lead-agent` | Leads Google Sheet, every row, all 20 columns |
 | Finance Agent | `agents/receivables` | `v_ar_aging_latest` (every open receivable) + recent `alerts WHERE agent='receivables'` |
 | CRM agent | `agents/amocrm-followup`'s table, but really the **in-house CRM** (see below) | `v_pipeline_latest` |
-| Reporter Agent | `agents/ceo-daily-brief` | `daily_briefs`, last 14 days |
+| Kunlik Brif Tarixi / Daily Brief History (`reporter_agent`) | `agents/ceo-daily-brief` | `daily_briefs`, last 14 days — KPI trend only (cash/AR/pipeline), NOT employee reports. Label deliberately avoids the word "report"/"reporter" — the old label caused live misrouting of "kechagi reportlar" (an employee's submitted report) here instead of to CRM agent, since the classifier matched the word "report" in the question to "Reporter" in the label. |
 | All Systems (`all_systems`) | not a real agent — a `roles.py` pseudo-entry | all four fetchers above, run and concatenated, labeled per section — deliberately excludes Garmin Catalog (product reference, not operational status) |
 | Garmin Catalog (`garmin_catalog`) | not a real agent — a static reference snapshot | `prompt.py`'s `GARMIN_CATALOG` constant, ~50 products with real prices, captured live via a real browser (the site is a JS SPA — a plain fetch only sees "Loading...") on 2026-08-21. A point-in-time snapshot, not a live feed — the answer prompt tells the seller to confirm current price/stock before finalizing a sale. Refresh by re-capturing the page and updating the constant by hand; nothing re-fetches this automatically. |
 

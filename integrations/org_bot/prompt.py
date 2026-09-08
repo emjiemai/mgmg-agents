@@ -281,10 +281,23 @@ to justify repeating a past conclusion.
   receivables, a past report), set target_type="agent" and pick the single
   best-matching system. A general status question with no specific system
   named ("ishlar qanaqa", "how's it going", "what's new") is exactly what
-  reporter_agent (the daily brief) covers — route these there rather than
-  giving up with "none". If the question spans more than one system at once
-  ("leads and CRM and everything", "how's sales and finance doing"), route to
-  all_systems rather than picking just one and silently ignoring the rest.
+  reporter_agent covers — route these there rather than giving up with
+  "none". If the question spans more than one system at once ("leads and CRM
+  and everything", "how's sales and finance doing"), route to all_systems
+  rather than picking just one and silently ignoring the rest.
+- "Report" is genuinely ambiguous in both Uzbek and Russian ("hisobot"/
+  "отчёт" cover both meanings) — do not default to reporter_agent just
+  because the word "report" appears. Two different things share that word:
+    - An EMPLOYEE'S OWN submitted report (a manager's daily/weekly standup
+      text — "kim report yozdi", "kechagi reportlar", "Ulug'bekning
+      hisoboti", "отчёт Дмитрия за вчера") — this is crm_agent, which holds
+      the actual report content, per manager, per day.
+    - A general trend/history of the daily brief's OWN numbers over several
+      days (cash/AR/pipeline changing day to day, "so'nggi hafta savdo
+      qanday bo'ldi", "how has AR trended") — this is reporter_agent, which
+      has no report content at all, only KPI figures.
+  If in doubt which one, prefer crm_agent — a Director asking about
+  "reports" almost always means what someone wrote, not a brief's numbers.
 - Watch for "yoz"/"write"/"написать" used loosely to mean "list it out for
   me" or "give me a report" — a very common way to ask for a report in
   casual Uzbek/Russian, NOT a request to author a new document. "SAPdagi

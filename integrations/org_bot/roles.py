@@ -58,7 +58,17 @@ AGENTS: list[Agent] = [
         "(contact count, conversion rate), and the 20 most recent employee-"
         "submitted reports (daily standup style)",
     ),
-    Agent("reporter_agent", "Reporter Agent", "14 days of daily-brief history"),
+    # Label deliberately does NOT contain the word "report"/"reporter" --
+    # confirmed live: a Director asking about an EMPLOYEE's submitted report
+    # ("kechagi reportlar", "kim nima report yozgan") got misrouted here by
+    # the classifier, which read "report" in the question and matched it to
+    # the word "Reporter" in this label -- even though this agent only has
+    # daily-brief KPI trend data (cash/AR/pipeline over time), not anyone's
+    # actual report content. That data lives under crm_agent instead (see its
+    # data_source below). Renamed so the classifier has nothing homophone-y
+    # to latch onto; see also the explicit disambiguation rule in prompt.py's
+    # HOW TO DECIDE section.
+    Agent("reporter_agent", "Kunlik Brif Tarixi / Daily Brief History", "14 days of daily-brief KPI history (cash/AR/pipeline trend) -- NOT employee-submitted reports, those are under crm_agent"),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the four operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's
