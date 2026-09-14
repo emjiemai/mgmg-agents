@@ -60,14 +60,15 @@ stored in **UTC** and displayed in **Asia/Tashkent**. Both rules are enforced in
 
 ### AI providers
 
-Two independent LLM providers, switchable per-caller via
-`integrations/ai/openrouter_client.py`:
-- **DeepSeek** (`AI_PROVIDER=deepseek`) — the global default, used by Lead
-  Agent and other scheduled agents (`deepseek-v4-flash`, own API key/billing).
-- **OpenRouter** — used by OPS Manager Bot specifically
-  (`OPS_MANAGER_BOT_PROVIDER=openrouter`, currently `anthropic/claude-sonnet-5`
-  with `google/gemini-3.7-flash` as fallback), independent of the global
-  `AI_PROVIDER` switch via `provider_override`/`model_override` on the client.
+Every AI call goes through `integrations/ai/openrouter_client.py`, which
+supports two OpenAI-compatible providers (OpenRouter and DeepSeek):
+- **Lead Agent** uses the global `AI_PROVIDER`, currently `openrouter` with
+  `google/gemini-3.8-flash` (fallback `google/gemini-3.7-flash`).
+- **OPS Manager Bot** has its own switch (`OPS_MANAGER_BOT_PROVIDER`,
+  `OPS_MANAGER_BOT_MODEL`, `OPS_MANAGER_BOT_FALLBACK_MODELS`), currently the
+  same OpenRouter + Gemini 3.8 Flash setup, independent of `AI_PROVIDER` via
+  `provider_override`/`model_override` on the client.
+- DeepSeek stays supported as a one-line switch back (`deepseek` provider).
 
 ## Security model
 
@@ -185,7 +186,8 @@ These need real-world values that cannot be guessed from here:
       listed in `integrations/microsoft/client.py`
 - [ ] `CRM_API_KEY` — still a placeholder as of this writing; the CRM
       pipeline snapshot silently stays empty until it's filled in
-- [ ] OpenRouter account balance — OPS Manager Bot's primary model
-      (`anthropic/claude-sonnet-5`) fails with HTTP 402 if the account runs
-      low on credits; DeepSeek (`OPS_MANAGER_BOT_PROVIDER=deepseek`) is a
-      separately-billed fallback path that doesn't share this risk
+- [ ] OpenRouter account balance — both Lead Agent and OPS Manager Bot
+      (`google/gemini-3.8-flash`) fail with HTTP 402 if the account runs out
+      of credits; DeepSeek (`AI_PROVIDER=deepseek` /
+      `OPS_MANAGER_BOT_PROVIDER=deepseek`) is a separately-billed path to
+      switch back to if that happens

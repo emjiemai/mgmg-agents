@@ -346,12 +346,15 @@ is the last place to relax that.
   the primary token. Neither issue is inherited here (every org_bot guarded
   update checks rows-affected; every org_bot route uses its own bot's token
   explicitly) — but the original route itself is unfixed.
-- Runs on `anthropic/claude-sonnet-5` via OpenRouter (`OPS_MANAGER_BOT_PROVIDER=
-  openrouter`), independent of `AI_PROVIDER` which Lead Agent uses (DeepSeek)
-  — `OpenRouterClient` takes a `provider_override`/`model_override` per call
-  precisely so two agents can run different providers without a second
-  settings switch. Confirmed live (both the JSON-mode classification call and
-  the plain-text answer call) before this was wired in. No write access comes
+- Runs on `google/gemini-3.8-flash` via OpenRouter (`OPS_MANAGER_BOT_PROVIDER=
+  openrouter`, fallback `google/gemini-3.7-flash`), switched from DeepSeek on
+  2026-09-14. It has its own switch, independent of `AI_PROVIDER` which Lead
+  Agent uses — `OpenRouterClient` takes a `provider_override`/`model_override`
+  per call precisely so two agents can run different providers without a
+  second settings switch. Confirmed live before switching, against the real
+  prompts: JSON-mode classification (a Russian task routed to buxgalteriya,
+  "kechagi reportlarni yozib ber" routed to crm_agent) and the plain-text
+  answer call (dollar amounts kept as `$`, no so'm). No write access comes
   with the model upgrade — it can now see everything across all four agents
   in full, not a truncated preview, but every write still goes through the
   same human-approval pattern as the rest of this project (see "cut from v1").

@@ -220,13 +220,13 @@ envVarGroups:
       - key: EGOV_OPENDATA_URL
         value: https://data.egov.uz/apiPartner/Partner
       - key: AI_PROVIDER
-        value: deepseek  # "openrouter" or "deepseek" -- switching is a one-line change here
+        value: openrouter  # "openrouter" or "deepseek" -- switching is a one-line change here
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        sync: false  # set per-environment; a ':free' model will 429 unreliably
+        sync: false  # code default: google/gemini-3.8-flash; a ':free' model will 429 unreliably
       - key: OPENROUTER_FALLBACK_MODELS
-        sync: false  # comma-separated; end the chain on cheap PAID capacity
+        sync: false  # code default: google/gemini-3.7-flash; comma-separated, end the chain on cheap PAID capacity
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: DEEPSEEK_MODEL
@@ -263,13 +263,14 @@ envVarGroups:
       # in the dashboard; change the dashboard value directly to switch
       # providers, never this file, or the next sync will revert it.
       #
-      # NOTE 2026-09-05: whatever is CURRENTLY set in the dashboard keeps
+      # NOTE 2026-09-14: whatever is CURRENTLY set in the dashboard keeps
       # running regardless of the code defaults below -- sync: false means
       # this push does not change the live value. Set these three in the
-      # dashboard directly to actually switch to deepseek.
+      # dashboard directly (or delete them there so the code defaults apply)
+      # to actually switch to OpenRouter + Gemini 3.8 Flash.
       - key: OPS_MANAGER_BOT_PROVIDER
-        sync: false  # code default: deepseek (was openrouter until 2026-09-05 -- switched to save OpenRouter credits while the project is early-stage)
+        sync: false  # code default: openrouter (was deepseek 2026-09-05 to 2026-09-14)
       - key: OPS_MANAGER_BOT_MODEL
-        sync: false  # code default: deepseek-v4-flash (was anthropic/claude-sonnet-5) -- deepseek-v4-flash over -pro: Russian language-matching is only ~50% reliable on -pro, confirmed live testing
+        sync: false  # code default: google/gemini-3.8-flash
       - key: OPS_MANAGER_BOT_FALLBACK_MODELS
-        sync: false  # code default: deepseek-v4-pro (was google/gemini-3.7-flash)
+        sync: false  # code default: google/gemini-3.7-flash

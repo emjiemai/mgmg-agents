@@ -132,22 +132,19 @@ class Settings(BaseSettings):
     # it, resolved per-sender via the employees table, not a fixed destination.
     ops_manager_bot_telegram_bot_token: SecretStr = SecretStr("")
     ops_manager_bot_webhook_secret: SecretStr = SecretStr("")
-    # Runs on its OWN provider, independent of the global ai_provider switch
-    # Lead Agent uses -- this bot answers business-wide questions across all
-    # four agents' full data, which warrants a stronger model than Lead
-    # Agent's classification-only task needs. Fallback stays on the SAME
-    # provider (OpenRouterClient opens one httpx client per provider; a
-    # cross-provider fallback would need a second client entirely).
-    # Defaulted to DeepSeek 2026-09-05 per explicit direction: OpenRouter costs
-    # real credits and this project isn't far enough along to justify
-    # spending them yet, even though DeepSeek's Russian language-matching is
-    # only ~50% reliable on deepseek-v4-pro (confirmed live testing) --
-    # deepseek-v4-flash was the more reliable of the two, so that's primary
-    # here, not deepseek-v4-pro. Switch back to "openrouter" /
-    # "anthropic/claude-sonnet-5" once the project justifies the spend.
-    ops_manager_bot_provider: str = "deepseek"  # "openrouter" | "deepseek"
-    ops_manager_bot_model: str = "deepseek-v4-flash"
-    ops_manager_bot_fallback_models: str = "deepseek-v4-pro"
+    # Runs on its OWN provider switch, independent of the global ai_provider
+    # Lead Agent uses, so the two can be moved separately. Fallback stays on
+    # the SAME provider (OpenRouterClient opens one httpx client per provider;
+    # a cross-provider fallback would need a second client entirely).
+    # Switched from DeepSeek to OpenRouter + Gemini 3.8 Flash on 2026-09-14,
+    # verified live against this bot's real prompts first: correct routing
+    # (including "kechagi reportlarni yozib ber" -> crm_agent, which DeepSeek
+    # got wrong), Russian in -> Russian out, and "$" amounts kept as dollars.
+    # Fallback is Gemini 3.7 Flash: same price and provider, so a 3.8 outage
+    # degrades to a known-good model instead of failing the reply.
+    ops_manager_bot_provider: str = "openrouter"  # "openrouter" | "deepseek"
+    ops_manager_bot_model: str = "google/gemini-3.8-flash"
+    ops_manager_bot_fallback_models: str = "google/gemini-3.7-flash"
 
     # --- Verifix ---
     verifix_mode: str = "csv"
@@ -174,7 +171,7 @@ class Settings(BaseSettings):
     ai_provider: str = "openrouter"  # "openrouter" | "deepseek"
 
     openrouter_api_key: SecretStr = SecretStr("")
-    openrouter_model: str = "google/gemini-3.7-flash"
+    openrouter_model: str = "google/gemini-3.8-flash"
     # Comma-separated models tried in order when the primary fails. Free
     # (":free") models share a congested pool and returned 429 on 3 of 4 local
     # test runs, so a chain ending on cheap paid capacity is what makes this

@@ -688,7 +688,7 @@ async def _dispatch_director_task(
     except OpenRouterError as exc:
         log.error("Classification failed for source_message_id={}: {}", source_message_id, exc)
         await log_action(
-            agent=AGENT, action="dispatch_task", target_system="deepseek",
+            agent=AGENT, action="dispatch_task", target_system=settings.ops_manager_bot_provider,
             status="failure", run_id=run_id, error_message=str(exc), mode="write",
         )
         await _safe_notify_failure(director_telegram_user_id, run_id)
@@ -988,7 +988,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
 
     ``all_systems`` runs every fetcher and concatenates them, labeled, for
     questions that span more than one system ("leads and CRM and everything")
-    — Sonnet 5's context window makes this a non-issue size-wise; the
+    — Gemini 3.8 Flash's 1M-token context makes this a non-issue size-wise; the
     alternative (silently picking one system and ignoring the rest of the
     question) is the actual problem this exists to avoid.
     """
@@ -1040,9 +1040,8 @@ LEAD_SHEET_COLUMNS = [
 
 
 async def _fetch_lead_agent_data() -> str:
-    """Every lead, every column — Claude Sonnet 5's 200k context makes the
-    old 15-row/4-column preview an unnecessary limitation (it was sized for
-    DeepSeek's much smaller effective window and cost per token)."""
+    """Every lead, every column — Gemini 3.8 Flash's 1M-token context makes
+    the old 15-row/4-column preview an unnecessary limitation."""
     try:
         async with SheetsClient(agent=AGENT) as sheets:
             rows = await sheets.get_values("Sheet1!A:T")
