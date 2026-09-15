@@ -76,55 +76,24 @@ class Settings(BaseSettings):
     # scripts/sap-gateway-push/ and integrations/sap/push_handler.py) ---
     sap_push_webhook_secret: SecretStr = SecretStr("")
 
-    # --- MGMG's own sales CRM (replaces amoCRM) ---
+    # --- MGMG's own sales CRM ---
     crm_base_url: str = "https://sales-crm-roan-six.vercel.app"
     crm_api_key: SecretStr = SecretStr("")
 
-    # --- amoCRM / Kommo (superseded by the in-house CRM above; kept only
-    # for the parts of the codebase not yet migrated off it) ---
-    amocrm_subdomain: str = ""
-    amocrm_domain: str = "amocrm.ru"
-    amocrm_long_lived_token: SecretStr = SecretStr("")
-    amocrm_webhook_secret: SecretStr = SecretStr("")
-    amocrm_max_rps: float = 7.0
-
-    # --- Microsoft Graph (app-only) ---
-    ms_tenant_id: str = ""
-    ms_client_id: str = ""
-    ms_client_secret: SecretStr = SecretStr("")
-    ms_graph_scope: str = "https://graph.microsoft.com/.default"
-    ms_team_owner_upn: str = ""
-    ms_planner_group_id: str = ""
-    ms_planner_default_plan_id: str = ""
-    teams_sales_webhook_url: str = ""
-
     # --- Telegram ---
-    # Each agent gets its OWN bot (own token, own destination chat) rather
-    # than sharing one bot token across agents -- keeps messages visibly
-    # separated by source in Telegram itself, and is what a future per-bot
-    # KPI/usage tracker needs to attribute activity correctly. Create each
-    # bot via @BotFather; they're free, there's no reason to share one.
-    telegram_primary_bot_token: SecretStr = SecretStr("")  # fallback for the
-    # approval-callback webhook handler, which isn't tied to one agent — it
-    # replies on whichever bot's inline button was actually pressed.
-
-    # CEO Daily Brief, Receivables, and Lead Agent used to each have their
-    # own dedicated bot here. Consolidated into integrations/org_bot/notify.py,
-    # which sends via OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN (below) to whoever
-    # currently holds the Director role -- the Director now only ever talks
-    # to two bots total (OPS Manager Bot, Admin Bot), not five. The old
-    # per-agent bots can be deleted via @BotFather; nothing in code
-    # references these settings anymore.
+    # Every scheduled agent (CEO Daily Brief, Receivables, Lead Agent) sends
+    # through integrations/org_bot/notify.py via OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN
+    # (below) to whoever currently holds the Director role, so the Director
+    # only ever talks to two bots: OPS Manager Bot and Admin Bot.
 
     # --- Admin Bot (employee access approval) ---
     admin_bot_telegram_bot_token: SecretStr = SecretStr("")
     admin_bot_telegram_chat_id: str = ""  # the admin's own chat -- join-request cards land here
     admin_bot_webhook_secret: SecretStr = SecretStr("")
     # Optional hardening: if set, only this Telegram user id's Accept/Reject
-    # taps are honored -- granting system access is a bigger blast radius
-    # than approving one payment, so this checks the clicker, not just the
-    # button. 0 = disabled (whoever can see the button is trusted), matching
-    # the existing approvals flow's own implicit trust model.
+    # taps are honored -- granting system access has a big blast radius, so
+    # this checks the clicker, not just the button. 0 = disabled (whoever can
+    # see the button is trusted).
     admin_bot_admin_user_id: int = 0
 
     # --- OPS Manager Bot (AI task routing) ---
@@ -145,12 +114,6 @@ class Settings(BaseSettings):
     ops_manager_bot_provider: str = "openrouter"  # "openrouter" | "deepseek"
     ops_manager_bot_model: str = "google/gemini-3.8-flash"
     ops_manager_bot_fallback_models: str = "google/gemini-3.7-flash"
-
-    # --- Verifix ---
-    verifix_mode: str = "csv"
-    verifix_base_url: str = ""
-    verifix_api_token: SecretStr = SecretStr("")
-    verifix_csv_dir: str = str(PROJECT_ROOT / "data" / "verifix")
 
     # --- Lead Agent sources ---
     serpapi_api_key: SecretStr = SecretStr("")
@@ -221,11 +184,6 @@ class Settings(BaseSettings):
             f"dbname={self.postgres_db} user={self.postgres_user} "
             f"password={self.postgres_password.get_secret_value()}"
         )
-
-    @property
-    def amocrm_base_url(self) -> str:
-        """Root URL of the amoCRM/Kommo account, e.g. https://acme.amocrm.ru."""
-        return f"https://{self.amocrm_subdomain}.{self.amocrm_domain}"
 
     def missing_placeholders(self) -> list[str]:
         """Return names of settings still holding a ``[PLACEHOLDER]`` value.

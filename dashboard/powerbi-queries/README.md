@@ -1,6 +1,6 @@
 # Power BI Dashboard v1 — build instructions
 
-The dashboard reads **only** from PostgreSQL. It never touches SAP or amoCRM
+The dashboard reads **only** from PostgreSQL. It never touches SAP or the CRM
 directly: the agents write daily snapshots, Power BI reads them. That keeps the
 report fast, keeps SAP credentials out of Power BI, and means a report refresh
 can never put load on the ERP.
@@ -43,8 +43,6 @@ expects:
 | `AR Aging`     | `01_cash_and_ar.sql`         | QUERY: AR Aging   |
 | `Sales`        | `01_cash_and_ar.sql`         | QUERY: Sales      |
 | `Pipeline`     | `02_pipeline_and_ops.sql`    | QUERY: Pipeline   |
-| `Attendance`   | `02_pipeline_and_ops.sql`    | QUERY: Attendance |
-| `Overdue Tasks`| `02_pipeline_and_ops.sql`    | QUERY: Overdue Tasks |
 | `Daily Briefs` | `02_pipeline_and_ops.sql`    | QUERY: Daily Briefs |
 | `Agent Health` | `02_pipeline_and_ops.sql`    | QUERY: Agent Health |
 | `Alerts`       | `02_pipeline_and_ops.sql`    | QUERY: Alerts     |
@@ -57,8 +55,7 @@ expects:
    breaks cross-source filtering.
 2. Mark `Date` as a date table on `Date[Date]`.
 3. Relate `Date[Date]` **1 → \*** to `[Date]` on: `Cash`, `AR Aging`, `Sales`,
-   `Pipeline`, `Attendance`, `Overdue Tasks`, `Daily Briefs`, `Agent Health`,
-   `Alerts`. All single-direction.
+   `Pipeline`, `Daily Briefs`, `Agent Health`, `Alerts`. All single-direction.
 4. Sort `AR Aging[Bucket]` by `AR Aging[Bucket Sort]`.
 5. Create a blank table called `Measures` and paste in `measures.dax`.
 
@@ -73,8 +70,7 @@ measure, follow that pattern — do not sum a snapshot column directly.
 
 **Page 1 — CEO Overview**
 
-- Row of cards: `Cash Balance`, `Overdue AR`, `Pipeline Value`, `Stalled Deals`,
-  `Overdue Tasks`
+- Row of cards: `Cash Balance`, `Overdue AR`, `Pipeline Value`, `Stalled Deals`
 - `Data Freshness` card, top right — small, always visible
 - Line chart: `Cash Balance` and `Overdue AR` by date, last 90 days
 - Stacked column: `Overdue AR` by `Bucket`, coloured by `Overdue AR Color`
@@ -100,6 +96,6 @@ measure, follow that pattern — do not sum a snapshot column directly.
 
 ## 5. Refresh
 
-Snapshots are written by the morning agents (08:00 and 09:00 Tashkent). Schedule
-the dataset refresh for **10:00 Tashkent (05:00 UTC)** so it always reads a
+Snapshots are written by the morning agents (08:00 Tashkent). Schedule the
+dataset refresh for **10:00 Tashkent (05:00 UTC)** so it always reads a
 complete day. A gateway is required for the Power BI Service to reach the VPS.

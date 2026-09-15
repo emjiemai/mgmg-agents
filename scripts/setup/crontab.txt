@@ -10,9 +10,3 @@ MGMG_HOME=/opt/mgmg-command-center
 
 # 09:00 Tashkent — receivables alert
 0 4 * * * cd $MGMG_HOME && docker compose run --rm api python agents/receivables/agent.py >> logs/cron-receivables.log 2>&1
-
-# 21:00 Tashkent — follow-up sweep, catches deals whose webhook was missed
-0 16 * * * cd $MGMG_HOME && docker compose run --rm api python agents/amocrm-followup/agent.py --sweep >> logs/cron-followup.log 2>&1
-
-# Every 15 min — replay webhook events that were stored but not processed
-*/15 * * * * cd $MGMG_HOME && docker compose run --rm api python agents/amocrm-followup/agent.py --drain >> logs/cron-drain.log 2>&1

@@ -4,7 +4,7 @@ Read-only by construction, not just by convention: the API key Abdulbosit
 issued has no write scope at all — there is no POST/PUT/DELETE route under
 ``/api/external/*``, confirmed by the CRM's own team ("all read-only, GET
 only, no way to write or delete through this key"). That means this client
-has no ``create_*`` methods, unlike the SAP/amoCRM/Graph clients — there is
+has no ``create_*`` methods — there is
 nothing to gate behind ``AGENT_WRITES_ENABLED`` here because there is nothing
 to write.
 

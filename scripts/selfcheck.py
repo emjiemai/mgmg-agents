@@ -1,8 +1,8 @@
 """Offline self-check for the pure logic — no network, no database.
 
 Verifies the parts that would otherwise only be exercised against live SAP,
-amoCRM and Telegram: money formatting, aging buckets, Telegram message
-splitting, webhook payload parsing, and Verifix CSV parsing.
+the CRM and Telegram: money formatting, aging buckets, Telegram message
+splitting, org_bot parsing, and brief/receivables rendering.
 
 Run:
     python scripts/selfcheck.py
@@ -16,7 +16,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from integrations.amocrm.webhook_handler import _extract_lead_events
 from integrations.common.money import (
     format_money,
     format_money_by_currency,
@@ -157,39 +156,6 @@ def test_telegram() -> None:
     check("escape None", escape(None), "")
 
 
-def test_webhook_parsing() -> None:
-    """amoCRM webhook payloads in both shapes."""
-    print("webhook parsing")
-
-    form = {
-        "leads[status][0][id]": "12345",
-        "leads[status][0][status_id]": "142",
-        "leads[status][0][pipeline_id]": "77",
-        "leads[status][0][price]": "1500000",
-        "leads[status][0][responsible_user_id]": "9",
-        "account[subdomain]": "mgmg",
-    }
-    events = _extract_lead_events(form)
-    check("form: one event", len(events), 1)
-    check("form: lead id", events[0]["lead_id"], 12345)
-    check("form: status", events[0]["status_id"], 142)
-    check("form: price to tiyin", events[0]["price_tiyin"], 150_000_000)
-
-    nested = {
-        "leads": {
-            "add": [{"id": 1, "pipeline_id": 7, "status_id": 3, "price": "500"}],
-            "update": [{"id": 2, "pipeline_id": 7, "status_id": 4}],
-        }
-    }
-    events = _extract_lead_events(nested)
-    check("json: two events", len(events), 2)
-    check("json: ids", sorted(e["lead_id"] for e in events), [1, 2])
-    check("json: missing price is None", next(e for e in events if e["lead_id"] == 2)["price_tiyin"], None)
-
-    check("empty payload", _extract_lead_events({}), [])
-    check("unrelated payload", _extract_lead_events({"contacts[add][0][id]": "5"}), [])
-
-
 def test_org_bot() -> None:
     """OPS Manager Bot's callback parsers and classification validator."""
     print("org_bot")
@@ -276,44 +242,6 @@ def test_org_bot() -> None:
     check("sanitize: None becomes empty string", sanitize_model_html(None), "")
 
 
-def test_verifix_csv() -> None:
-    """Verifix CSV parsing, column aliases and status inference."""
-    print("verifix csv")
-    import tempfile
-
-    from integrations.common.config import settings
-    from integrations.verifix.client import VerifixClient
-
-    day = date(2026, 8, 18)
-    with tempfile.TemporaryDirectory() as tmp:
-        csv_path = Path(tmp) / f"attendance_{day.isoformat()}.csv"
-        csv_path.write_text(
-            "employee_id;fio;otdel;shift_start;check_in;status;late\n"
-            "101;Aliyev A.;Armin;09:00;09:00;present;0\n"
-            "102;Karimov B.;IMUS;09:00;09:25;;25\n"
-            "103;Yusupova C.;ONDRY;09:00;;absent;0\n"
-            "104;Tashkentov D.;Service;09:00;09:40;present;0\n",
-            encoding="utf-8",
-        )
-        original = settings.verifix_csv_dir
-        settings.verifix_csv_dir = tmp
-        try:
-            records = VerifixClient(agent="selfcheck")._read_csv(day)
-        finally:
-            settings.verifix_csv_dir = original
-
-    check("rows parsed", len(records), 4)
-    by_id = {r.employee_id: r for r in records}
-    check("present stays present", by_id["101"].status, "present")
-    check("blank status + late minutes -> late", by_id["102"].status, "late")
-    check("late minutes read", by_id["102"].late_minutes, 25)
-    check("absent detected", by_id["103"].status, "absent")
-    check("present but late is corrected", by_id["104"].status, "late")
-    check("late minutes derived from times", by_id["104"].late_minutes, 40)
-    check("name mapped via alias", by_id["101"].employee_name, "Aliyev A.")
-    check("department mapped via alias", by_id["101"].department, "Armin")
-
-
 def test_brief_rendering() -> None:
     """The CEO brief renders with partial and total source failure."""
     print("brief rendering")
@@ -377,6 +305,10 @@ def test_brief_rendering() -> None:
     # would surface it proactively -- only on direct question.
     check_true("yesterday's report shown", "OPS Manager botdagi bug fixlar" in text)
     check_true("reporting employee named", "Ulug'bek AI" in text)
+    # 2026-09-15: Verifix attendance and Microsoft Planner were removed from
+    # the project, so their sections must not come back.
+    check_true("no attendance section", "Davomat" not in text)
+    check_true("no Planner tasks section", "Vazifalar" not in text)
 
     no_reports = brief.BriefData(reports=[])
     text = brief.render(no_reports)
@@ -436,9 +368,7 @@ def main() -> int:
         test_time,
         test_aging,
         test_telegram,
-        test_webhook_parsing,
         test_org_bot,
-        test_verifix_csv,
         test_brief_rendering,
         test_receivables_rendering,
     ):

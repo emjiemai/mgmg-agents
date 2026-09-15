@@ -8,15 +8,12 @@ them, so a retry after a failure is safe.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Iterable
+from typing import Iterable
 
-from integrations.amocrm.models import PipelineSummary
 from integrations.common.db import execute_many
-from integrations.common.divisions import division_from_amocrm
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
-from integrations.crm.models import CRMStats, EmployeeReport
-from integrations.crm.models import PipelineSummary as CRMPipelineSummary
+from integrations.crm.models import CRMStats, EmployeeReport, PipelineSummary
 from integrations.sap.models import ARAging, CashAccount, SalesSummary
 
 log = setup_logging("snapshots")
@@ -108,64 +105,18 @@ async def persist_cash_balances(accounts: Iterable[CashAccount], snapshot_date: 
     )
 
 
-async def persist_pipeline(summary: PipelineSummary, snapshot_date: date | None = None) -> int:
-    """Write an amoCRM pipeline snapshot to ``amocrm_pipeline_snapshots``.
-
-    Args:
-        summary: The summary from ``AmoCRMClient.get_pipeline_summary``.
-        snapshot_date: Business day; defaults to today in Tashkent.
-
-    Returns:
-        Number of stage rows written.
-
-    Raises:
-        psycopg.Error: on a database failure.
-    """
-    day = snapshot_date or today_local()
-    rows = [
-        (
-            day,
-            stage.pipeline_id,
-            stage.pipeline_name,
-            stage.status_id,
-            stage.status_name,
-            stage.division or division_from_amocrm(stage.pipeline_id),
-            stage.deals_count,
-            stage.deals_value_tiyin,
-            stage.deals_without_task,
-            summary.new_leads_24h,
-        )
-        for stage in summary.stages
-    ]
-    return await execute_many(
-        """
-        INSERT INTO amocrm_pipeline_snapshots
-            (snapshot_date, pipeline_id, pipeline_name, status_id, status_name,
-             division, deals_count, deals_value_tiyin, deals_without_task, new_leads_24h)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (snapshot_date, pipeline_id, status_id) DO UPDATE SET
-            deals_count        = EXCLUDED.deals_count,
-            deals_value_tiyin  = EXCLUDED.deals_value_tiyin,
-            deals_without_task = EXCLUDED.deals_without_task,
-            new_leads_24h      = EXCLUDED.new_leads_24h,
-            captured_at        = now()
-        """,
-        rows,
-    )
-
-
 # The CRM's own pipeline id — everything lands under one constant "pipeline"
-# since (unlike amoCRM) there is only ever one sales pipeline in this CRM.
+# since there is only ever one sales pipeline in this CRM.
 CRM_PIPELINE_ID = 1
 CRM_PIPELINE_NAME = "MGMG CRM"
 
 
-async def persist_crm_pipeline(summary: CRMPipelineSummary, snapshot_date: date | None = None) -> int:
+async def persist_crm_pipeline(summary: PipelineSummary, snapshot_date: date | None = None) -> int:
     """Write MGMG's own-CRM pipeline snapshot to ``amocrm_pipeline_snapshots``.
 
-    Reuses the same table as the old amoCRM snapshots (same reporting shape:
-    one row per stage per day) rather than adding a parallel table, since the
-    CRM this replaces and the one before it both describe "deals by stage."
+    The table name predates the move off amoCRM (one row per stage per day);
+    it is kept rather than renamed so existing history and the
+    ``v_pipeline_latest`` view keep working.
 
     Args:
         summary: The summary from ``CRMClient.get_pipeline_summary``.
@@ -299,50 +250,6 @@ async def sync_crm_reports(reports: list[EmployeeReport]) -> int:
             )
             for r in reports
         ],
-    )
-
-
-async def persist_planner_tasks(tasks: list[dict[str, Any]], snapshot_date: date | None = None) -> int:
-    """Write overdue Planner tasks to ``planner_task_snapshots``.
-
-    Args:
-        tasks: Task dicts from ``GraphClient.get_overdue_planner_tasks``.
-        snapshot_date: Business day; defaults to today in Tashkent.
-
-    Returns:
-        Number of rows written.
-
-    Raises:
-        psycopg.Error: on a database failure.
-    """
-    day = snapshot_date or today_local()
-    rows = [
-        (
-            day,
-            task.get("id"),
-            task.get("planId"),
-            task.get("bucketId"),
-            task.get("title"),
-            ", ".join(task.get("assignedToNames", [])) or None,
-            task.get("dueAt"),
-            task.get("percentComplete"),
-            True,
-            task.get("daysOverdue"),
-        )
-        for task in tasks
-    ]
-    return await execute_many(
-        """
-        INSERT INTO planner_task_snapshots
-            (snapshot_date, task_id, plan_id, bucket_id, title, assigned_to,
-             due_at, percent_complete, is_overdue, days_overdue)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (snapshot_date, task_id) DO UPDATE SET
-            days_overdue     = EXCLUDED.days_overdue,
-            percent_complete = EXCLUDED.percent_complete,
-            captured_at      = now()
-        """,
-        rows,
     )
 
 

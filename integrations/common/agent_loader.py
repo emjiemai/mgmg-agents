@@ -1,6 +1,6 @@
 """Import agent modules that live in hyphenated folders.
 
-The project layout uses ``agents/ceo-daily-brief/`` and ``agents/amocrm-followup/``.
+The project layout uses ``agents/ceo-daily-brief/`` and ``agents/lead-agent/``.
 Hyphens are not valid in Python identifiers, so these cannot be imported with a
 normal ``import`` statement. This loader imports them by file path instead,
 caching the result so repeated calls are cheap.
@@ -21,7 +21,7 @@ def load_agent(folder: str, module: str = "agent") -> ModuleType:
     """Import ``agents/<folder>/<module>.py`` as a module object.
 
     Args:
-        folder: Agent folder name, e.g. ``'amocrm-followup'``.
+        folder: Agent folder name, e.g. ``'ceo-daily-brief'``.
         module: File stem inside that folder, without ``.py``.
 
     Returns:

@@ -7,10 +7,8 @@ owning module) — justified here because ``employees`` is read/written by both
 same lookups in two files.
 
 Every guarded UPDATE here checks the affected row count and treats zero as
-"already handled" rather than trusting a prior SELECT — tightened versus
-``TelegramBot.handle_callback_query``'s pattern, which doesn't check rowcount
-(a low-probability gap for a single payment approver, not for an employee
-double-tapping a button on a slow connection).
+"already handled" rather than trusting a prior SELECT, so an employee
+double-tapping a button on a slow connection can't apply the same change twice.
 """
 
 from __future__ import annotations

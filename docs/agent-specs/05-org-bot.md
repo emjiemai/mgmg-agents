@@ -1,8 +1,8 @@
 # Admin Bot + OPS Manager Bot (org_bot)
 
 **Code:** `integrations/org_bot/` (`roles.py`, `store.py`, `prompt.py`, `admin.py`, `ops_manager.py`)
-**Runs inside:** `integrations/amocrm/webhook_handler.py` (the `mgmg-api` web service) — neither bot is a cron job or a standalone process
-**Mode:** writes to Postgres + Telegram directly (no write gate — these tables aren't touched by any other agent, so `AGENT_WRITES_ENABLED` doesn't apply here the way it does to SAP/amoCRM/Sheets writes)
+**Runs inside:** `integrations/api/app.py` (the `mgmg-api` web service) — neither bot is a cron job or a standalone process
+**Mode:** writes to Postgres + Telegram directly (no write gate — these tables aren't touched by any other agent, so `AGENT_WRITES_ENABLED` doesn't apply here the way it does to Sheets writes)
 **Owner:** Operations Director
 
 ## Purpose
@@ -244,12 +244,12 @@ to see or remove themselves, by design.
 |---|---|---|
 | Lead Agent | `agents/lead-agent` | Leads Google Sheet, every row, all 20 columns |
 | Finance Agent | `agents/receivables` | `v_ar_aging_latest` (every open receivable) + recent `alerts WHERE agent='receivables'` |
-| CRM agent | `agents/amocrm-followup`'s table, but really the **in-house CRM** (see below) | `v_pipeline_latest` |
+| CRM agent | the **in-house CRM**, synced daily by `agents/ceo-daily-brief` (see below) | `v_pipeline_latest`, `v_crm_stats_latest`, `crm_employee_reports` |
 | Kunlik Brif Tarixi / Daily Brief History (`reporter_agent`) | `agents/ceo-daily-brief` | `daily_briefs`, last 14 days — KPI trend only (cash/AR/pipeline), NOT employee reports. Label deliberately avoids the word "report"/"reporter" — the old label caused live misrouting of "kechagi reportlar" (an employee's submitted report) here instead of to CRM agent, since the classifier matched the word "report" in the question to "Reporter" in the label. |
 | All Systems (`all_systems`) | not a real agent — a `roles.py` pseudo-entry | all four fetchers above, run and concatenated, labeled per section — deliberately excludes Garmin Catalog (product reference, not operational status) |
 | Garmin Catalog (`garmin_catalog`) | not a real agent — a static reference snapshot | `prompt.py`'s `GARMIN_CATALOG` constant, ~50 products with real prices, captured live via a real browser (the site is a JS SPA — a plain fetch only sees "Loading...") on 2026-08-21. A point-in-time snapshot, not a live feed — the answer prompt tells the seller to confirm current price/stock before finalizing a sale. Refresh by re-capturing the page and updating the constant by hand; nothing re-fetches this automatically. |
 
-**A gotcha worth knowing**: `v_pipeline_latest` sits on top of `amocrm_pipeline_snapshots` — a legacy table name from before this business migrated off amoCRM to its own CRM (`CRM_BASE_URL`/`CRM_API_KEY`). Despite the name, it is NOT populated by `agents/amocrm-followup` (that agent still targets the real, unconfigured amoCRM API and has no code path that writes here at all). It's populated by `agents/ceo-daily-brief`'s own daily `_fetch_crm() → persist_crm_pipeline()`, which reuses this table on purpose rather than adding a parallel one. If the CRM agent ever reports "no data," check two things, not just one: `CRM_API_KEY` being an unfilled placeholder (the common case — `_fetch_crm_agent_data`'s own "no data" message says this directly), or `/api/external/manager-tasks` 404ing on the CRM side — until 2026-09-05, `get_pipeline_summary()` let that one endpoint's failure kill the *entire* pipeline fetch before persistence ever ran, which is why the snapshot sat stuck 10 days stale (2026-08-26 to 2026-09-05) even with a valid key the whole time. `get_pipeline_summary()` now degrades manager-tasks failures to a warning instead of raising. `amocrm_deal_events` (a webhook-driven amoCRM event log) has no in-house-CRM equivalent and is intentionally not queried — reporting stale pre-migration amoCRM events would be worse than reporting nothing.
+**A gotcha worth knowing**: `v_pipeline_latest` sits on top of `amocrm_pipeline_snapshots` — a legacy table name from before this business migrated off amoCRM to its own CRM (`CRM_BASE_URL`/`CRM_API_KEY`). It's populated by `agents/ceo-daily-brief`'s own daily `_fetch_crm() → persist_crm_pipeline()`, which reuses this table on purpose rather than adding a parallel one (amoCRM itself was removed from the project on 2026-09-15). If the CRM agent ever reports "no data," check two things, not just one: `CRM_API_KEY` being an unfilled placeholder (the common case — `_fetch_crm_agent_data`'s own "no data" message says this directly), or `/api/external/manager-tasks` 404ing on the CRM side — until 2026-09-05, `get_pipeline_summary()` let that one endpoint's failure kill the *entire* pipeline fetch before persistence ever ran, which is why the snapshot sat stuck 10 days stale (2026-08-26 to 2026-09-05) even with a valid key the whole time. `get_pipeline_summary()` now degrades manager-tasks failures to a warning instead of raising.
 
 As of 2026-09-05, the CRM agent also has whole-CRM stats (`crm_stats_snapshots` / `v_crm_stats_latest` — contact count, conversion rate) and the 20 most recent employee-submitted reports (`crm_employee_reports`, synced by id from `/api/external/reports`, not a daily snapshot since each report already has its own stable id). Both are fetched by the same daily `_fetch_crm()` call, best-effort — a failure in either logs a warning and skips that piece rather than failing the whole run, same as every other source in this codebase.
 
@@ -275,10 +275,9 @@ https://api.telegram.org/bot<OPS_MANAGER_BOT_TOKEN>/setWebhook?url=https://<host
 ```
 
 Each Telegram route checks its own secret and always constructs `TelegramBot`
-with that specific bot's own token — never the shared
-`telegram_primary_bot_token` fallback the original `/webhooks/telegram/{secret}`
-route uses (see Known gaps — that fallback has a real, separate, pre-existing
-issue this design deliberately does not repeat).
+with that specific bot's own token — Telegram can only edit a message with the
+same token that sent it, so sharing a token across bots would silently break
+the Start/Done card edits.
 
 Create both bots via @BotFather like every other bot in this project — free,
 one bot per purpose, never share a token.
@@ -329,23 +328,14 @@ Sheets, edit a CRM deal, etc.) — every write it performs today is a direct,
 bounded reflection of something a human explicitly did (the Director sent
 this exact task/file, an employee tapped this exact button), not a decision
 the model made on its own about what to change. If a specific autonomous
-write action is wanted later, gate it behind `TelegramBot.request_approval`
-(the same Approve/Decline pattern payment/contract/HR approvals already use)
-rather than executing it directly — this project's whole security doctrine
-is human-in-the-loop for anything consequential, and a free-text-driven bot
-is the last place to relax that.
+write action is wanted later, put an explicit Approve/Decline step in front
+of it (an inline-button confirmation from the Director, handled on this
+bot's own token) rather than executing it directly — this project's whole
+security doctrine is human-in-the-loop for anything consequential, and a
+free-text-driven bot is the last place to relax that.
 
 ## Known gaps
 
-- `handle_callback_query` in `integrations/telegram/bot.py` (used by the
-  original `/webhooks/telegram/{secret}` route, for payment/contract/HR
-  approvals) doesn't check whether its guarded UPDATE actually changed a row,
-  and that route always answers via `telegram_primary_bot_token` regardless of
-  which agent's bot actually sent the approval — so message edits on that
-  route are silently wrong for every bot except whichever one happens to share
-  the primary token. Neither issue is inherited here (every org_bot guarded
-  update checks rows-affected; every org_bot route uses its own bot's token
-  explicitly) — but the original route itself is unfixed.
 - Runs on `google/gemini-3.8-flash` via OpenRouter (`OPS_MANAGER_BOT_PROVIDER=
   openrouter`, fallback `google/gemini-3.7-flash`), switched from DeepSeek on
   2026-09-14. It has its own switch, independent of `AI_PROVIDER` which Lead

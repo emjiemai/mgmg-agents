@@ -1,10 +1,11 @@
 -- ============================================================================
--- Power BI source queries: amoCRM pipeline, operations and agent health
+-- Power BI source queries: CRM pipeline, operations and agent health
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
 -- QUERY: Pipeline
--- One row per pipeline stage per day.
+-- One row per pipeline stage per day. The table name predates the move off
+-- amoCRM; MGMG's own CRM writes here now.
 -- ---------------------------------------------------------------------------
 SELECT
     snapshot_date                                AS "Date",
@@ -22,40 +23,6 @@ WHERE snapshot_date >= current_date - INTERVAL '18 months'
 ORDER BY snapshot_date DESC, deals_value_tiyin DESC;
 
 -- ---------------------------------------------------------------------------
--- QUERY: Attendance
--- Daily HR exceptions (only late/absent rows are stored).
--- ---------------------------------------------------------------------------
-SELECT
-    snapshot_date                    AS "Date",
-    employee_id                      AS "Employee Id",
-    COALESCE(employee_name, employee_id) AS "Employee",
-    COALESCE(division, 'unmapped')   AS "Division",
-    department                       AS "Department",
-    status                           AS "Status",
-    late_minutes                     AS "Late Minutes"
-FROM attendance_snapshots
-WHERE snapshot_date >= current_date - INTERVAL '12 months'
-ORDER BY snapshot_date DESC, late_minutes DESC;
-
--- ---------------------------------------------------------------------------
--- QUERY: Overdue Tasks
--- Overdue Planner tasks captured each morning.
--- ---------------------------------------------------------------------------
-SELECT
-    snapshot_date                    AS "Date",
-    task_id                          AS "Task Id",
-    title                            AS "Task",
-    COALESCE(assigned_to, 'Unassigned') AS "Assigned To",
-    COALESCE(division, 'unmapped')   AS "Division",
-    due_at AT TIME ZONE 'Asia/Tashkent' AS "Due (Tashkent)",
-    days_overdue                     AS "Days Overdue",
-    percent_complete                 AS "Percent Complete"
-FROM planner_task_snapshots
-WHERE is_overdue
-  AND snapshot_date >= current_date - INTERVAL '12 months'
-ORDER BY snapshot_date DESC, days_overdue DESC;
-
--- ---------------------------------------------------------------------------
 -- QUERY: Daily Briefs
 -- The headline numbers of every brief sent — the CEO's own trend line.
 -- ---------------------------------------------------------------------------
@@ -69,9 +36,6 @@ SELECT
     (pipeline_total_tiyin / 100.0)::numeric(18,2)    AS "Pipeline UZS",
     new_leads_24h                                    AS "New Leads",
     deals_without_task                               AS "Stalled Deals",
-    employees_late                                   AS "Late",
-    employees_absent                                 AS "Absent",
-    planner_tasks_overdue                            AS "Overdue Tasks",
     jsonb_array_length(source_errors)                AS "Failed Sources"
 FROM daily_briefs
 ORDER BY brief_date DESC;

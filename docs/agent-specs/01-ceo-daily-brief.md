@@ -1,52 +1,50 @@
-# Agent 1 — CEO Daily Brief
+# CEO Daily Brief
 
 **Code:** `agents/ceo-daily-brief/agent.py`
-**Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily
+**Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily, inside `mgmg-morning-agents`
 **Mode:** read-only from every source; the only write is one Telegram message
 **Owner:** automation team
 
 ## Purpose
 
-Replace the CEO's morning round of five logins with one Telegram message. The
-brief answers five questions in a fixed order, so it can be read in fifteen
+Replace the CEO's morning round of logins with one Telegram message. The
+brief answers four questions in a fixed order, so it can be read in fifteen
 seconds and the order itself carries meaning:
 
 1. How much cash do we have? (SAP)
 2. Who owes us money and how late are they? (SAP)
 3. What is in the pipeline and what is stalling? (MGMG's own CRM)
-4. Who is not at work? (Verifix)
-5. What tasks are overdue? (Microsoft Planner)
+4. What did employees report yesterday? (MGMG's own CRM)
 
 ## Inputs
 
 | Source | Data | Method |
 | ------ | ---- | ------ |
 | SAP B1 | Cash/bank G/L balances | `GET /ChartOfAccounts` |
-| SAP B1 | Open A/R invoices, aged | `GET /Invoices` filtered to `bost_Open` |
+| SAP B1 | Open A/R invoices, aged | pushed from the SAP gateway's machine (`/webhooks/sap-push`), read from `v_ar_aging_latest` |
 | MGMG CRM | Open deals, stages, next-task status | `GET /api/external/{deals,manager-tasks,stats}` — see `integrations/crm/client.py` |
-| Verifix | Attendance exceptions | Daily CSV export (API when the token exists) |
-| Graph  | Overdue Planner tasks | `GET /groups/{id}/planner/plans` → `/tasks` |
+| MGMG CRM | Employee-submitted reports | `GET /api/external/reports`, filtered to yesterday |
 
 Migrated off amoCRM on 2026-08-18 — MGMG built its own sales CRM
 (`sales-crm-roan-six.vercel.app`), a read-only-by-design API (the issued key
-has no write scope at all, unlike amoCRM's). Agent 2 (amoCRM Follow-up) has
-*not* been migrated yet and still talks to amoCRM directly — see that agent's
-spec for why the write-endpoint gap changes its design.
+has no write scope at all). amoCRM, Verifix attendance and Microsoft Planner
+were removed from the project entirely on 2026-09-15.
 
 ## Outputs
 
-- One Telegram message to `TELEGRAM_CEO_CHAT_ID`
+- One Telegram message via OPS Manager Bot to whoever holds the Director role
 - One row in `daily_briefs` (headline figures, full JSON payload, exact message text)
-- Snapshot rows in `cash_balance_snapshots`, `ar_aging_snapshots`,
-  `amocrm_pipeline_snapshots`, `attendance_snapshots`, `planner_task_snapshots`
+- Snapshot rows in `cash_balance_snapshots`, `amocrm_pipeline_snapshots` (legacy
+  table name — the in-house CRM writes here), `crm_stats_snapshots`, and
+  `crm_employee_reports`
 - Audit rows in `agent_actions` for every API call
 
 ## Severity markers
 
 | Marker | Meaning | Triggered by |
 | ------ | ------- | ------------ |
-| 🔴 | Act today | any 90+ day receivable, any absent employee, negative cash account, >10 stalled deals, >10 overdue tasks |
-| 🟡 | Watch | any overdue receivable under 90 days, any late employee, 1–10 stalled deals |
+| 🔴 | Act today | any 90+ day receivable, negative cash account, >10 stalled deals |
+| 🟡 | Watch | any overdue receivable under 90 days, 1–10 stalled deals |
 | 🟢 | Fine | nothing outstanding in that section |
 
 ## Failure behaviour
@@ -55,8 +53,8 @@ spec for why the write-endpoint gap changes its design.
 
 - One source fails → that section reads `⚠️ <system> unavailable`, the footer
   names the failed systems, and the error is stored in `daily_briefs.source_errors`.
-- All four fail → a short failure notice is sent instead of a brief, so silence
-  is never mistaken for good news.
+- All three fail (SAP cash, SAP aging, CRM) → a short failure notice is sent
+  instead of a brief, so silence is never mistaken for good news.
 - Telegram itself fails → the brief is still written to `daily_briefs` with
   status `failed`, and the exit code is 1 so cron surfaces it.
 
@@ -65,8 +63,7 @@ spec for why the write-endpoint gap changes its design.
 | Setting | Effect |
 | ------- | ------ |
 | `DAILY_BRIEF_HOUR_LOCAL` | Documentation only — the actual time comes from cron |
-| `MS_PLANNER_GROUP_ID` | Required for the Planner section |
-| `VERIFIX_MODE` | `csv` (default) or `api` |
+| `CRM_API_KEY` | Required for the pipeline and reports sections |
 | `DRY_RUN=true` | Print the message instead of sending |
 
 ## Runbook

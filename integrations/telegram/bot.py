@@ -1,8 +1,7 @@
-"""Telegram notification and approval client.
+"""Telegram Bot API client.
 
-This is the primary delivery channel for briefs and alerts, and the approval
-surface for security rule #4: anything touching payments, contracts or HR must
-be confirmed by a human on an inline button before an agent may act.
+This is the delivery channel for briefs, alerts, and both org_bot bots
+(Admin Bot and OPS Manager Bot).
 
 Messages are HTML-formatted and split at 4096 characters on line boundaries so
 a long brief never gets truncated or breaks a tag mid-way.
@@ -17,10 +16,9 @@ from typing import Any, Literal
 import httpx
 
 from integrations.common.config import settings
-from integrations.common.db import audited, execute, fetch_one, log_action
+from integrations.common.db import audited, log_action
 from integrations.common.http import request_with_retry
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_uzs
 
 log = setup_logging("telegram")
 
@@ -43,15 +41,12 @@ class TelegramError(RuntimeError):
 class TelegramBot:
     """Async Telegram Bot API client.
 
-    Each agent has its own bot (own token, own destination chat) rather than
-    one bot shared across agents — keeps messages visibly separated by
-    source, and is what makes a future per-bot KPI/usage tracker possible.
+    Each bot uses its own token rather than one token shared across bots —
+    Telegram can only edit a message with the same token that sent it, so
+    sharing tokens silently breaks message edits.
 
     Args:
-        bot_token: This agent's bot token. If omitted, falls back to
-            ``settings.telegram_primary_bot_token`` — used by the webhook
-            handler's approval-callback responder, which isn't tied to one
-            specific agent (it replies on whichever bot's button was pressed).
+        bot_token: This bot's token (e.g. ``OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN``).
         default_chat_id: Chat used when a call site doesn't pass one
             explicitly (e.g. ``send_alert`` with no ``chat_id``).
         agent: Calling agent name, recorded on every audit row.
@@ -79,17 +74,14 @@ class TelegramBot:
             The ready bot client.
 
         Raises:
-            TelegramError: if no bot token was given and no primary fallback
-                is configured either.
+            TelegramError: if no bot token was given (the bot's token setting
+                is not configured).
         """
-        token = self._bot_token or settings.telegram_primary_bot_token.get_secret_value()
-        if not token:
-            raise TelegramError(
-                "No bot token given and TELEGRAM_PRIMARY_BOT_TOKEN is not configured"
-            )
+        if not self._bot_token:
+            raise TelegramError("No bot token given — this bot's *_TELEGRAM_BOT_TOKEN is not configured")
 
         self._client = httpx.AsyncClient(
-            base_url=f"https://api.telegram.org/bot{token}",
+            base_url=f"https://api.telegram.org/bot{self._bot_token}",
             timeout=httpx.Timeout(30.0),
         )
         return self
@@ -190,153 +182,7 @@ class TelegramBot:
         except TelegramError as err:
             log.warning("sendChatAction failed: {}", err)
 
-    async def request_approval(
-        self,
-        *,
-        title: str,
-        description: str,
-        category: Literal["payment", "contract", "hr", "communication", "other"],
-        proposed_action: dict[str, Any],
-        amount_tiyin: int | None = None,
-        chat_id: str | None = None,
-    ) -> str:
-        """Create a pending approval and post it with Approve/Decline buttons.
-
-        The approval row is written **before** the message is sent, so a send
-        failure leaves an auditable pending request rather than a silent gap.
-
-        Args:
-            title: One-line summary of what needs approval.
-            description: Detail shown under the title.
-            category: Approval category driving who may decide.
-            proposed_action: Machine-readable description of what runs on
-                approval — the agent reads this back, it is not free text.
-            amount_tiyin: Amount at stake, for payment approvals.
-            chat_id: Destination; defaults to this bot's ``default_chat_id``.
-
-        Returns:
-            The approval id (UUID string).
-
-        Raises:
-            TelegramError: if Telegram rejects the message.
-            psycopg.Error: if the approval row cannot be written.
-        """
-        import json
-
-        chat = chat_id or self.default_chat_id
-        row = await fetch_one(
-            """
-            INSERT INTO approvals
-                (requested_by_agent, category, title, description,
-                 amount_tiyin, proposed_action, chat_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                self.agent,
-                category,
-                title,
-                description,
-                amount_tiyin,
-                json.dumps(proposed_action, ensure_ascii=False, default=str),
-                chat,
-            ),
-        )
-        approval_id = str(row["id"])  # type: ignore[index]
-
-        lines = ["🔐 <b>Approval required</b>\n", f"<b>{escape(title)}</b>", escape(description)]
-        if amount_tiyin is not None:
-            lines.append(f"\n💰 <b>{escape(format_uzs(amount_tiyin))}</b>")
-        lines.append(f"\n<i>Request {approval_id[:8]} · expires in 24h</i>")
-
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "✅ Approve", "callback_data": f"approve:{approval_id}"},
-                    {"text": "❌ Decline", "callback_data": f"decline:{approval_id}"},
-                ]
-            ]
-        }
-
-        message_ids = await self.send_message("\n".join(lines), chat, reply_markup=keyboard)
-        if message_ids:
-            await execute(
-                "UPDATE approvals SET telegram_message_id = %s WHERE id = %s",
-                (message_ids[0], approval_id),
-            )
-
-        log.info("Approval {} requested: {}", approval_id[:8], title)
-        return approval_id
-
     # -------------------------------------------------------------- callbacks
-
-    async def handle_callback_query(self, callback: dict[str, Any]) -> str:
-        """Resolve an Approve/Decline button press.
-
-        Idempotent: pressing a button on an already-decided or expired request
-        answers with the existing outcome instead of changing it.
-
-        Args:
-            callback: The ``callback_query`` object from a Telegram update.
-
-        Returns:
-            A short human-readable outcome, also shown as the button toast.
-        """
-        data = callback.get("data", "")
-        query_id = callback.get("id", "")
-        user = callback.get("from", {})
-        decider = user.get("username") or str(user.get("id", "unknown"))
-
-        if ":" not in data:
-            await self._answer_callback(query_id, "Unrecognized action")
-            return "unrecognized"
-
-        decision, approval_id = data.split(":", 1)
-        if decision not in ("approve", "decline"):
-            await self._answer_callback(query_id, "Unrecognized action")
-            return "unrecognized"
-
-        approval = await fetch_one("SELECT * FROM approvals WHERE id = %s", (approval_id,))
-        if approval is None:
-            await self._answer_callback(query_id, "Request not found")
-            return "not_found"
-
-        if approval["status"] != "pending":
-            outcome = f"Already {approval['status']}"
-            await self._answer_callback(query_id, outcome)
-            return approval["status"]
-
-        new_status = "approved" if decision == "approve" else "declined"
-        await execute(
-            """
-            UPDATE approvals
-            SET status = %s, decided_at = now(), decided_by = %s
-            WHERE id = %s AND status = 'pending'
-            """,
-            (new_status, decider, approval_id),
-        )
-
-        await log_action(
-            agent=self.agent,
-            action="approval_decision",
-            target_system="telegram",
-            status="success",
-            run_id=self.run_id,
-            target_ref=approval_id,
-            mode="write",
-            payload={"decision": new_status, "decided_by": decider, "title": approval["title"]},
-        )
-
-        marker = "✅ Approved" if new_status == "approved" else "❌ Declined"
-        await self._edit_message(
-            chat_id=str(approval["chat_id"]),
-            message_id=approval["telegram_message_id"],
-            text=f"{marker} by @{escape(decider)}\n\n<b>{escape(approval['title'])}</b>",
-        )
-        await self._answer_callback(query_id, marker)
-
-        log.info("Approval {} {} by {}", approval_id[:8], new_status, decider)
-        return new_status
 
     async def _answer_callback(self, callback_query_id: str, text: str) -> None:
         """Acknowledge a button press so the client stops its spinner."""

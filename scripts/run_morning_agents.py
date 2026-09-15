@@ -1,22 +1,18 @@
-"""Runs the four 08:00 Asia/Tashkent agents back to back in one cron service.
+"""Runs the three 08:00 Asia/Tashkent agents back to back in one cron service.
 
-CEO Daily Brief, Lead Agent, Receivables, and the CRM follow-up sweep all
-used to be separate Render cron services scheduled at the same moment
-("0 3 * * *" UTC) purely because Render has no free tier for cron at all —
-each service is billed a ~$1/month minimum regardless of how little it
-actually runs, so five services cost ~$5/month for a few minutes of total
-work. Folding these four into one service (keeping the fifth, the hourly
-CRM webhook drain, on its own schedule — collapsing that one to daily would
-mean a missed webhook event waits up to 24h instead of 1h to get caught)
-cuts that to two services.
+CEO Daily Brief, Lead Agent and Receivables all used to be separate Render
+cron services scheduled at the same moment ("0 3 * * *" UTC) purely because
+Render has no free tier for cron at all — each service is billed a ~$1/month
+minimum regardless of how little it actually runs. Folding them into one
+service keeps that to a single ~$1/month minimum.
 
 Each agent runs as its own subprocess, not an in-process import, so one
 agent crashing (an unhandled exception, even a segfault) can't take the
-others down with it — the same isolation four separate cron services gave
-for free. Every agent runs regardless of whether an earlier one failed;
-the wrapper's own exit code is non-zero if any agent failed, so Render's
-cron run history still shows a real failure rather than a false "success"
-if one of the four had a problem.
+others down with it — the same isolation separate cron services gave for
+free. Every agent runs regardless of whether an earlier one failed; the
+wrapper's own exit code is non-zero if any agent failed, so Render's cron run
+history still shows a real failure rather than a false "success" if one of
+the three had a problem.
 
 Run:
     python scripts/run_morning_agents.py
@@ -36,7 +32,6 @@ AGENTS = [
     "agents/ceo-daily-brief/agent.py",
     "agents/lead-agent/agent.py",
     "agents/receivables/agent.py",
-    "agents/amocrm-followup/agent.py --sweep",
 ]
 
 
@@ -45,7 +40,7 @@ def run_agent(relative_command: str) -> int:
 
     Args:
         relative_command: Script path, optionally followed by CLI args, e.g.
-            "agents/amocrm-followup/agent.py --sweep".
+            "agents/receivables/agent.py --dry-run".
 
     Returns:
         The subprocess's exit code (0 = success).

@@ -845,8 +845,8 @@ async def run(dry_run: bool = False) -> int:
     run_id = uuid.uuid4()
     log.info("Lead Agent run {} starting (dry_run={})", run_id, settings.dry_run)
 
-    # settings.missing_placeholders() scans the ENTIRE config (SAP, CRM,
-    # amoCRM, MS Graph, Verifix included) -- checking only the fields this
+    # settings.missing_placeholders() scans the ENTIRE config (SAP, CRM and
+    # bot settings included) -- checking only the fields this
     # agent actually touches, so a machine set up for one agent isn't blocked
     # by another agent's unrelated placeholders. Only the active AI
     # provider's key is required -- the other provider's is allowed to stay

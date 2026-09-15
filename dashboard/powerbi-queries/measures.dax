@@ -148,20 +148,6 @@ RETURN
     CALCULATE( MAX( 'Pipeline'[New Leads 24h] ), 'Pipeline'[Date] = LatestDate )
 
 
-// --- Operations -------------------------------------------------------------
-
-Employees Late =
-CALCULATE( COUNTROWS( 'Attendance' ), 'Attendance'[Status] = "late" )
-
-Employees Absent =
-CALCULATE( COUNTROWS( 'Attendance' ), 'Attendance'[Status] = "absent" )
-
-Overdue Tasks =
-VAR LatestDate =
-    CALCULATE( MAX( 'Overdue Tasks'[Date] ), REMOVEFILTERS( 'Date' ), 'Date'[Date] <= MAX( 'Date'[Date] ) )
-RETURN CALCULATE( DISTINCTCOUNT( 'Overdue Tasks'[Task Id] ), 'Overdue Tasks'[Date] = LatestDate )
-
-
 // --- Data trust -------------------------------------------------------------
 // A dashboard that silently shows yesterday's numbers is worse than one that
 // says it is stale. Put "Data Freshness" on the CEO page.

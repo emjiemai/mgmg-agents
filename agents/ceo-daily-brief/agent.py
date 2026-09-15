@@ -1,10 +1,10 @@
 """Agent 1 — CEO Daily Brief.
 
 Runs every morning at 08:00 Tashkent time and sends the CEO one Telegram
-message covering cash, receivables, pipeline, attendance and overdue tasks.
+message covering cash, receivables, pipeline and yesterday's employee reports.
 
 Design rule: **the brief always goes out.** Each source is fetched
-independently and a failure in one (SAP down, no Verifix export yet) degrades
+independently and a failure in one (SAP down, CRM unreachable) degrades
 that section to a "data unavailable" line rather than killing the run. Which
 sources failed is stated in the message and stored in ``daily_briefs.source_errors``,
 so a quiet failure can never masquerade as good news.
@@ -42,26 +42,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from integrations.common import snapshots
 from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all, log_action
-from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
 from integrations.crm.client import CRMClient, CRMError
 from integrations.crm.models import EmployeeReport, PipelineSummary
-from integrations.microsoft.client import GraphClient
 from integrations.org_bot.notify import notify_directors
 from integrations.sap.client import SAPClient
 from integrations.sap.models import ARAging, ARInvoice, CashAccount
 from integrations.telegram.bot import escape
-from integrations.verifix.client import AttendanceSummary, VerifixClient, persist_attendance
 
 AGENT = "ceo-daily-brief"
-SOURCE_COUNT = 5  # SAP cash, SAP aging (gateway-pushed), CRM, Verifix, Microsoft Graph
+SOURCE_COUNT = 3  # SAP cash, SAP aging (gateway-pushed), CRM
 log = setup_logging(AGENT)
 
 # How many line items to show per section before collapsing into "+N more".
@@ -76,8 +72,6 @@ class BriefData:
     aging: ARAging | None = None
     pipeline: PipelineSummary | None = None
     reports: list[EmployeeReport] | None = None
-    attendance: AttendanceSummary | None = None
-    overdue_tasks: list[dict[str, Any]] | None = None
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def note_failure(self, source: str, error: BaseException) -> None:
@@ -117,11 +111,9 @@ async def collect(run_id: uuid.UUID) -> BriefData:
         _fetch_cash(run_id),
         _fetch_aging(run_id),
         _fetch_crm(run_id),
-        _fetch_verifix(run_id),
-        _fetch_planner(run_id),
         return_exceptions=True,
     )
-    cash_result, aging_result, crm_result, verifix_result, planner_result = results
+    cash_result, aging_result, crm_result = results
 
     # Split from one combined SAP fetch into two independent ones: the AR
     # aging snapshot now comes from the gateway push (see _fetch_aging) and
@@ -142,16 +134,6 @@ async def collect(run_id: uuid.UUID) -> BriefData:
         data.note_failure("crm", crm_result)
     else:
         data.pipeline, data.reports = crm_result
-
-    if isinstance(verifix_result, BaseException):
-        data.note_failure("verifix", verifix_result)
-    else:
-        data.attendance = verifix_result
-
-    if isinstance(planner_result, BaseException):
-        data.note_failure("msgraph", planner_result)
-    else:
-        data.overdue_tasks = planner_result
 
     return data
 
@@ -259,11 +241,10 @@ async def _fetch_crm(run_id: uuid.UUID) -> tuple[PipelineSummary, list[EmployeeR
 
     Returns:
         The pipeline summary, and YESTERDAY's employee reports for the
-        brief's own reports section (same "yesterday" framing as attendance
-        — see _fetch_verifix — since this runs at 08:00, before today's own
-        reports could exist). Empty list, not a failure, if the reports
-        fetch/sync itself failed — that degrades independently of the
-        pipeline, same as stats above.
+        brief's own reports section (yesterday, since this runs at 08:00,
+        before today's own reports could exist). Empty list, not a failure,
+        if the reports fetch/sync itself failed — that degrades independently
+        of the pipeline, same as stats above.
 
     Raises:
         CRMError: if the CRM is unreachable or rejects the pipeline queries
@@ -293,50 +274,6 @@ async def _fetch_crm(run_id: uuid.UUID) -> tuple[PipelineSummary, list[EmployeeR
     return summary, yesterday_reports
 
 
-async def _fetch_verifix(run_id: uuid.UUID) -> AttendanceSummary:
-    """Pull YESTERDAY's attendance exceptions and snapshot them.
-
-    Yesterday, not today: this brief goes out at 08:00 Tashkent, before the
-    day's own attendance exists yet — asking "who was late/absent today" at
-    08:00 can only ever answer "nobody, no data yet," which reads as a clean
-    bill of health instead of the true "too early to know." The most recent
-    complete day (yesterday) is the freshest attendance data actually worth
-    reporting on at that hour.
-
-    Args:
-        run_id: UUID grouping this run's audit rows.
-
-    Returns:
-        The attendance summary.
-
-    Raises:
-        VerifixError: only on misconfiguration; missing data returns empty.
-    """
-    client = VerifixClient(agent=AGENT, run_id=run_id)
-    summary = await client.get_attendance(today_local() - timedelta(days=1))
-    await persist_attendance(summary, [*summary.late, *summary.absent])
-    return summary
-
-
-async def _fetch_planner(run_id: uuid.UUID) -> list[dict[str, Any]]:
-    """Pull overdue Planner tasks from Microsoft Graph and snapshot them.
-
-    Args:
-        run_id: UUID grouping this run's audit rows.
-
-    Returns:
-        Overdue task dicts.
-
-    Raises:
-        GraphError: if Graph is unreachable or the group id is unset.
-    """
-    async with GraphClient(agent=AGENT, run_id=run_id) as graph:
-        tasks = await graph.get_overdue_planner_tasks()
-
-    await snapshots.persist_planner_tasks(tasks)
-    return tasks
-
-
 # ---------------------------------------------------------------------- render
 
 
@@ -359,9 +296,7 @@ def render(data: BriefData) -> str:
         _render_cash(data),
         _render_receivables(data),
         _render_pipeline(data),
-        _render_attendance(data),
         _render_reports(data),
-        _render_tasks(data),
     ]
 
     if data.errors:
@@ -455,45 +390,14 @@ def _render_pipeline(data: BriefData) -> str:
     )
 
 
-def _render_attendance(data: BriefData) -> str:
-    """Render the HR attendance section.
-
-    Labeled with its own date (yesterday, per _fetch_verifix) rather than
-    left implicit — without it, "Davomat" read as if it meant today, when
-    today's attendance can't possibly exist yet at 08:00.
-    """
-    if data.attendance is None:
-        return "👥 <b>Davomat</b>\n   ⚠️ Verifix mavjud emas\n"
-
-    att = data.attendance
-    day_label = fmt_date(att.snapshot_date)
-    if att.total_records == 0:
-        return f"👥 <b>Davomat ({day_label})</b>\n   ⚠️ O'sha kun uchun eksport qabul qilinmadi\n"
-
-    marker = "🔴" if att.absent else "🟡" if att.late else "🟢"
-    lines = [
-        f"{marker} <b>Davomat ({day_label}):</b> {len(att.late)} kechikkan, {len(att.absent)} kelmagan "
-        f"(jami {att.total_records})"
-    ]
-    for record in att.absent[:MAX_LINES]:
-        lines.append(f"   🔴 {escape(record.employee_name or record.employee_id)} — kelmagan")
-    for record in att.late[: max(MAX_LINES - len(att.absent[:MAX_LINES]), 0)]:
-        lines.append(
-            f"   🟡 {escape(record.employee_name or record.employee_id)} — "
-            f"{record.late_minutes} daqiqa kechikkan"
-        )
-
-    return "\n".join(lines) + "\n"
-
-
 def _render_reports(data: BriefData) -> str:
     """Render yesterday's employee-submitted reports (from the in-house CRM).
 
-    Same "yesterday" framing and reasoning as _render_attendance — this runs
-    at 08:00, before today's own reports could exist yet, so "yesterday" is
-    the freshest complete day worth showing. One line per employee, content
-    truncated hard: this is a quick morning skim, and the full text is
-    already sitting in the CRM for anyone who wants to open it up.
+    Yesterday, not today: this runs at 08:00, before today's own reports
+    could exist yet, so yesterday is the freshest complete day worth showing.
+    One line per employee, content truncated hard: this is a quick morning
+    skim, and the full text is already sitting in the CRM for anyone who
+    wants to open it up.
     """
     if data.reports is None:
         return "📝 <b>Reportlar</b>\n   ⚠️ CRM mavjud emas\n"
@@ -510,27 +414,6 @@ def _render_reports(data: BriefData) -> str:
         lines.append(f"   • {escape(r.manager_name or 'Nomaʻlum')}: {escape(content)}")
     if len(data.reports) > MAX_LINES:
         lines.append(f"   <i>+yana {len(data.reports) - MAX_LINES} ta</i>")
-    return "\n".join(lines) + "\n"
-
-
-def _render_tasks(data: BriefData) -> str:
-    """Render the overdue Planner tasks section."""
-    if data.overdue_tasks is None:
-        return "📋 <b>Vazifalar</b>\n   ⚠️ Microsoft Planner mavjud emas\n"
-
-    tasks = data.overdue_tasks
-    marker = "🔴" if len(tasks) > 10 else "🟡" if tasks else "🟢"
-    lines = [f"{marker} <b>Muddati o'tgan Planner vazifalari: {len(tasks)}</b>"]
-
-    for task in tasks[:MAX_LINES]:
-        who = ", ".join(task.get("assignedToNames", [])) or "biriktirilmagan"
-        lines.append(
-            f"   • {escape(task.get('title', 'Nomsiz'))} — "
-            f"{task.get('daysOverdue', 0)} kun ({escape(who)})"
-        )
-    if len(tasks) > MAX_LINES:
-        lines.append(f"   <i>+yana {len(tasks) - MAX_LINES} ta</i>")
-
     return "\n".join(lines) + "\n"
 
 
@@ -554,14 +437,6 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
         "ar_buckets": (data.aging.bucket_totals_tiyin if data.aging else {}),
         "pipeline_by_name": (data.pipeline.by_pipeline if data.pipeline else {}),
         "reports": [r.model_dump(mode="json") for r in (data.reports or [])],
-        "attendance": {
-            "late": [r.model_dump(mode="json") for r in (data.attendance.late if data.attendance else [])],
-            "absent": [r.model_dump(mode="json") for r in (data.attendance.absent if data.attendance else [])],
-        },
-        "overdue_tasks": [
-            {"title": t.get("title"), "days_overdue": t.get("daysOverdue")}
-            for t in (data.overdue_tasks or [])
-        ],
     }
 
     status = "dry_run" if settings.dry_run else ("sent" if message_id else "failed")
@@ -572,9 +447,8 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
         INSERT INTO daily_briefs
             (run_id, brief_date, sent_at, telegram_message_id, chat_id, status,
              cash_total_tiyin, ar_overdue_total_tiyin, pipeline_total_tiyin,
-             new_leads_24h, deals_without_task, employees_late, employees_absent,
-             planner_tasks_overdue, sections, message_text, source_errors)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             new_leads_24h, deals_without_task, sections, message_text, source_errors)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             str(run_id),
@@ -591,9 +465,6 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
             data.pipeline.total_value_tiyin if data.pipeline else None,
             data.pipeline.new_leads_24h if data.pipeline else None,
             len(data.pipeline.deals_without_task) if data.pipeline else None,
-            len(data.attendance.late) if data.attendance else None,
-            len(data.attendance.absent) if data.attendance else None,
-            len(data.overdue_tasks) if data.overdue_tasks is not None else None,
             json.dumps(sections, ensure_ascii=False, default=str),
             message,
             json.dumps(data.errors, ensure_ascii=False),

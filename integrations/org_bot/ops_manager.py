@@ -60,8 +60,7 @@ MEDIA_FIELDS = ("photo", "video", "audio", "voice", "document", "animation")
 
 # ------------------------------------------------------------------ pure logic
 # No DB/network here — kept separate and side-effect-free so scripts/selfcheck.py
-# can exercise it directly, the same way it already imports _extract_lead_events
-# from webhook_handler.py.
+# can exercise it directly.
 
 
 def parse_callback_data(data: str) -> tuple[str, str] | None:
@@ -1148,12 +1147,9 @@ async def _fetch_crm_agent_data() -> str:
 
     `amocrm_pipeline_snapshots` (behind `v_pipeline_latest`) despite its
     legacy name is what the IN-HOUSE CRM writes to, once a day, via
-    ceo-daily-brief's own `_fetch_crm -> persist_crm_pipeline` — the old
-    amoCRM code path never wrote here and is unrelated. `amocrm_deal_events`
-    (a webhook-driven amoCRM-only event log) has no in-house-CRM equivalent
-    and is deliberately NOT queried here — it would only ever report stale
-    amoCRM data from before the migration, which is worse than reporting
-    nothing. `crm_stats_snapshots` and `crm_employee_reports` are the same
+    ceo-daily-brief's own `_fetch_crm -> persist_crm_pipeline` (the name
+    predates the move off amoCRM, which has since been removed from this
+    project entirely). `crm_stats_snapshots` and `crm_employee_reports` are the same
     daily fetch's newer siblings (added 2026-09-05) — contacts/conversion and
     employee-submitted reports, previously fetched live by the brief but
     never saved anywhere this bot could read back.
@@ -1219,7 +1215,7 @@ async def _fetch_reporter_agent_data() -> str:
     to a single snapshot the way a one-day-only fetch would be."""
     briefs = await fetch_all(
         "SELECT brief_date, cash_total_tiyin, ar_overdue_total_tiyin, pipeline_total_tiyin, "
-        "new_leads_24h, deals_without_task, employees_late, employees_absent, planner_tasks_overdue "
+        "new_leads_24h, deals_without_task "
         "FROM daily_briefs ORDER BY generated_at DESC LIMIT 14"
     )
     if not briefs:
@@ -1231,8 +1227,6 @@ async def _fetch_reporter_agent_data() -> str:
             f"- {brief['brief_date']}: cash={format_uzs(brief['cash_total_tiyin'] or 0)}, "
             f"AR overdue={format_uzs(brief['ar_overdue_total_tiyin'] or 0)}, "
             f"pipeline={format_uzs(brief['pipeline_total_tiyin'] or 0)}, "
-            f"new leads={brief['new_leads_24h']}, deals w/o task={brief['deals_without_task']}, "
-            f"late/absent={brief['employees_late']}/{brief['employees_absent']}, "
-            f"overdue Planner tasks={brief['planner_tasks_overdue']}"
+            f"new leads={brief['new_leads_24h']}, deals w/o task={brief['deals_without_task']}"
         )
     return "\n".join(lines)

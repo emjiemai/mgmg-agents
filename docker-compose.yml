@@ -65,7 +65,7 @@ services:
     networks: [mgmg]
 
   api:
-    # FastAPI service: amoCRM webhooks + Telegram approval callbacks
+    # FastAPI service: Admin Bot, OPS Manager Bot and SAP gateway push webhooks
     build:
       context: .
       dockerfile: Dockerfile
@@ -78,7 +78,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       TZ: ${TZ:-Asia/Tashkent}
-    command: uvicorn integrations.amocrm.webhook_handler:app --host 0.0.0.0 --port 8000
+    command: uvicorn integrations.api.app:app --host 0.0.0.0 --port 8000
     ports:
       - "127.0.0.1:8000:8000"
     networks: [mgmg]

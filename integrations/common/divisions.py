@@ -5,9 +5,8 @@ inferred from whatever key that system does carry. The mappings live here, in
 one file, instead of being scattered across agents.
 
 ACTION REQUIRED before go-live: replace the placeholder ids below with the real
-sales-person codes, amoCRM pipeline ids and Verifix department names. Anything
-unmapped resolves to ``None``, which shows up in the brief as "Other" rather
-than being silently dropped.
+SAP sales-person codes. Anything unmapped resolves to ``None``, which shows up
+in the brief as "Other" rather than being silently dropped.
 """
 
 from __future__ import annotations
@@ -36,12 +35,6 @@ DIVISION_BY_SAP_SALESPERSON: dict[int, str] = {
 # invoice has no sales employee assigned.
 DIVISION_BY_SAP_BP_GROUP: dict[int, str] = {}
 
-# amoCRM: pipeline id -> division
-DIVISION_BY_AMOCRM_PIPELINE: dict[int, str] = {}
-
-# Verifix: department name (as exported) -> division
-DIVISION_BY_VERIFIX_DEPARTMENT: dict[str, str] = {}
-
 
 def division_from_sap(sales_person_code: int | None, bp_group: int | None = None) -> str | None:
     """Resolve a division for a SAP document.
@@ -58,32 +51,6 @@ def division_from_sap(sales_person_code: int | None, bp_group: int | None = None
     if bp_group is not None:
         return DIVISION_BY_SAP_BP_GROUP.get(bp_group)
     return None
-
-
-def division_from_amocrm(pipeline_id: int | None) -> str | None:
-    """Resolve a division from an amoCRM pipeline id.
-
-    Args:
-        pipeline_id: The lead's pipeline id.
-
-    Returns:
-        A division key, or ``None`` when the pipeline is unmapped.
-    """
-    return DIVISION_BY_AMOCRM_PIPELINE.get(pipeline_id) if pipeline_id is not None else None
-
-
-def division_from_verifix(department: str | None) -> str | None:
-    """Resolve a division from a Verifix department name.
-
-    Args:
-        department: Department string as exported by Verifix.
-
-    Returns:
-        A division key, or ``None`` when the department is unmapped.
-    """
-    if not department:
-        return None
-    return DIVISION_BY_VERIFIX_DEPARTMENT.get(department.strip())
 
 
 def label(division: str | None) -> str:

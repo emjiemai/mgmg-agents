@@ -21,4 +21,4 @@ USER mgmg
 
 # Shell form (not exec-array) so $PORT expands — Render assigns it dynamically
 # per service; docker-compose falls back to 8000 via the default below.
-CMD uvicorn integrations.amocrm.webhook_handler:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD uvicorn integrations.api.app:app --host 0.0.0.0 --port ${PORT:-8000}
