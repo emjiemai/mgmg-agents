@@ -34,6 +34,7 @@ Run locally:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import uuid
@@ -41,6 +42,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response, status
 
+from integrations.ai.openrouter_client import describe_openrouter_key
 from integrations.common.agent_loader import load_agent
 from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_one, log_action
@@ -67,6 +69,28 @@ app = FastAPI(
 async def _shutdown() -> None:
     """Close the PostgreSQL pool when the service stops."""
     await close_pool()
+
+
+async def _log_ai_config() -> None:
+    """Log the AI provider/model and OpenRouter key/balance this process actually loaded."""
+    try:
+        log.info(
+            "AI config loaded: OPS Manager Bot provider={} model={} fallback={} | AI_PROVIDER={} OPENROUTER_MODEL={}",
+            settings.ops_manager_bot_provider,
+            settings.ops_manager_bot_model,
+            settings.ops_manager_bot_fallback_models,
+            settings.ai_provider,
+            settings.openrouter_model,
+        )
+        log.info("{}", await describe_openrouter_key())
+    except Exception as exc:  # noqa: BLE001 — a diagnostic must never take the service down
+        log.error("AI config check failed: {}", exc)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    """Run the AI config check in the background so startup isn't delayed."""
+    app.state.ai_config_check = asyncio.create_task(_log_ai_config())
 
 
 @app.get("/health")

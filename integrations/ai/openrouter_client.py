@@ -69,6 +69,38 @@ PROVIDERS: dict[str, dict[str, object]] = {
 }
 
 
+async def describe_openrouter_key() -> str:
+    """One log-safe line saying which OpenRouter key is loaded and what it can spend.
+
+    Shows only the key's last 4 characters. Exists so a credits/auth failure
+    can be diagnosed from the service's own logs, instead of inferring which
+    key a deployed service actually holds.
+    """
+    key = settings.openrouter_api_key.get_secret_value().strip()
+    if not key:
+        return "OpenRouter key: OPENROUTER_API_KEY is empty"
+    suffix = f"...{key[-4:]}"
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0), headers={"Authorization": f"Bearer {key}"}
+        ) as client:
+            credits = await client.get("https://openrouter.ai/api/v1/credits")
+            key_info = await client.get("https://openrouter.ai/api/v1/key")
+    except httpx.RequestError as exc:
+        return f"OpenRouter key {suffix}: balance check errored: {exc}"
+
+    if credits.status_code != 200:
+        return f"OpenRouter key {suffix}: balance check failed HTTP {credits.status_code} {credits.text[:200]}"
+    data = credits.json().get("data", {})
+    loaded = float(data.get("total_credits") or 0)
+    available = loaded - float(data.get("total_usage") or 0)
+    key_data = key_info.json().get("data", {}) if key_info.status_code == 200 else {}
+    return (
+        f"OpenRouter key {suffix}: ${available:.2f} available of ${loaded:.2f} loaded, "
+        f"per-key limit remaining={key_data.get('limit_remaining')}"
+    )
+
+
 class OpenRouterError(RuntimeError):
     """Raised when the configured AI provider returns an unrecoverable error."""
 
@@ -122,11 +154,13 @@ class OpenRouterClient:
                 f"Unknown AI_PROVIDER '{self.provider}' — use 'openrouter' or 'deepseek'"
             )
 
+        # strip(): a key pasted into a dashboard with a trailing newline/space
+        # would otherwise become an invalid or rejected Authorization header.
         key = (
             settings.deepseek_api_key.get_secret_value()
             if self.provider == "deepseek"
             else settings.openrouter_api_key.get_secret_value()
-        )
+        ).strip()
         if not key:
             raise OpenRouterError(
                 f"{self.provider} is not configured — fill "
@@ -290,8 +324,10 @@ class OpenRouterClient:
 
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
+                key_hint = self._client.headers.get("Authorization", "")[-4:]
                 raise OpenRouterError(
-                    f"{self.provider} completion failed: HTTP {response.status_code} {response.text[:300]}"
+                    f"{self.provider} completion failed (key ...{key_hint}): "
+                    f"HTTP {response.status_code} {response.text[:300]}"
                 )
             body = response.json()
             choices = body.get("choices", [])
