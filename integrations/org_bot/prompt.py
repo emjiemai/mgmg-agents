@@ -289,8 +289,8 @@ to justify repeating a past conclusion.
   "отчёт" cover both meanings) — do not default to reporter_agent just
   because the word "report" appears. Three different things share that word:
     - The DAILY REPORTS THIS BOT COLLECTS ITSELF, asked of every employee at
-      16:00 and answered in Telegram, plus each person's KPI numbers against
-      target, completed tasks, and who didn't answer ("kim bugun hisobot
+      16:00 and answered in Telegram, plus each person's completed tasks and
+      who didn't answer ("kim bugun hisobot
       yubormadi", "bugungi reportlar", "KPI", "xodimlar qanday ishlayapti",
       "кто не отправил отчёт") — this is xodimlar_kpi.
     - An employee's report typed into the CRM's own web app ("CRMdagi

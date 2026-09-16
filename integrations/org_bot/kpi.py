@@ -38,10 +38,10 @@ class Metric:
     aliases: tuple[str, ...]
 
 
-# Daily targets are the business's own weekly targets (from the CRM's weekly
-# manager report: 20 meetings, 75 calls, 30 proposals, 10 qualified leads)
-# divided across a 5-day week. Change a number here and every scorecard
-# follows; nothing else hardcodes a target.
+# Not assigned to any role (see ROLE_METRICS below). Daily targets are the
+# business's own weekly targets (from the CRM's weekly manager report: 20
+# meetings, 75 calls, 30 proposals, 10 qualified leads) divided across a 5-day
+# week, ready if numbers are ever turned back on.
 SALES_METRICS: tuple[Metric, ...] = (
     Metric("meetings", "Uchrashuvlar", 4, ("uchrashuv", "vstrech", "встреч", "meeting")),
     Metric("calls", "Qo'ng'iroqlar", 15, ("qo'ng'iroq", "qongiroq", "qo'ngiroq", "zvon", "звон", "call")),
@@ -49,15 +49,13 @@ SALES_METRICS: tuple[Metric, ...] = (
     Metric("new_leads", "Yangi lidlar", 2, ("lid", "лид", "lead")),
 )
 
-# Roles with no entry here report in writing only (plus their completed tasks,
-# which are counted from the tasks table rather than self-reported). Give a
-# role numbers by adding its tuple — IT, accounting and the warehouse have no
-# agreed daily figures yet, so inventing targets for them would produce a
-# scorecard nobody trusts.
-ROLE_METRICS: dict[str, tuple[Metric, ...]] = {
-    "b2b_sotuv": SALES_METRICS,
-    "garmin_sotuv": SALES_METRICS,
-}
+# Empty on purpose: the business decided (2026-09-16) that everyone, sales
+# included, is only asked what they did today — no numbers. KPI is measured on
+# reports submitted and tasks completed (counted from the tasks table, not
+# self-reported). To ask a role for numbers again, map it here, e.g.
+# {"b2b_sotuv": SALES_METRICS}; the ask, the parser, the Director's card and
+# the KPI answers all follow with no other change.
+ROLE_METRICS: dict[str, tuple[Metric, ...]] = {}
 
 _NUMBER = r"(\d{1,4})"
 # Apostrophes: Uzbek Latin uses several characters interchangeably for the

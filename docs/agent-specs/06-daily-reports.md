@@ -8,56 +8,48 @@ reply half in `integrations/org_bot/ops_manager.py`
 
 ## Purpose
 
-Give the Director a daily, per-employee record of what everyone did and how
-their numbers compare to target — without anyone having to chase people for
-it. The office empties at 18:00, so the ask goes out at 16:00 while there is
-still time to answer, and one reminder follows at 17:00.
+Give the Director a daily, per-employee record of what everyone did — without
+anyone having to chase people for it. The office empties at 18:00, so the ask
+goes out at 16:00 while there is still time to answer, and one reminder
+follows at 17:00.
 
 ## Flow
 
 1. **16:00** — every active employee except the Director gets one message
-   asking what they did today. Sales roles are also shown their numbers
-   format. A `daily_reports` row opens for each person with status `asked`,
-   which is what makes "who never answered" answerable at all.
+   asking what they did today. A `daily_reports` row opens for each person
+   with status `asked`, which is what makes "who never answered" answerable
+   at all.
 2. **The employee replies** in Telegram. OPS Manager Bot saves the text,
-   parses any numbers, counts the tasks they completed today from `tasks`
-   (not self-reported), marks the row `submitted`, and forwards a card to the
-   Director immediately.
+   counts the tasks they completed today from `tasks` (not self-reported),
+   marks the row `submitted`, and forwards a card to the Director immediately.
 3. **17:00** — anyone still at status `asked` gets exactly one nudge
    (`reminded_at` guards against repeats).
 4. **Any time** — the Director asks the bot "kim bugun hisobot yubormadi?",
-   "Dmitriy KPI", "bugungi reportlar", and the `xodimlar_kpi` agent answers
+   "bugungi reportlar", "xodimlar KPI", and the `xodimlar_kpi` agent answers
    from the last 14 days of rows.
 
-## What each role reports
+## What is asked, and how KPI is measured
 
-`integrations/org_bot/kpi.py` is the single place this is defined. Today:
+Everyone — sales included — is asked only what they did today, in their own
+words. No numbers are requested (the business's decision, 2026-09-16).
 
-| Role | Numbers asked | Daily target |
-| ---- | ------------- | ------------ |
-| B2B Sotuv, Garmin Sotuv | Uchrashuvlar / Qo'ng'iroqlar / Yuborilgan KP / Yangi lidlar | 4 / 15 / 6 / 2 |
-| Every other role | none — written report only | — |
+KPI is measured on:
+- **Reports submitted** out of days asked (a row per person per day, so a
+  missed report is a recorded fact, not an absence of data)
+- **Tasks completed**, counted from the `tasks` table
 
-The sales targets are the business's own weekly targets from the CRM's
-manager report (20 / 75 / 30 / 10) divided across a five-day week. To give
-another role numbers, add its tuple to `ROLE_METRICS` — the ask, the parser,
-the Director's card and the KPI answers all follow with no other change.
-Non-sales roles are still measured on reports submitted and tasks completed.
+### Turning numbers back on
 
-## Parsing replies
+`integrations/org_bot/kpi.py` still defines the sales numbers
+(`SALES_METRICS`: meetings / calls / proposals / new leads, daily targets
+4 / 15 / 6 / 2 — the business's weekly CRM targets 20 / 75 / 30 / 10 over five
+days), but no role is mapped to them. To ask a role for numbers again, map it
+in `ROLE_METRICS` (e.g. `{"b2b_sotuv": SALES_METRICS}`): the ask and reminder
+show the format, replies are parsed, the Director's card shows each number
+against target, and the KPI answers include them — no other change needed.
 
-Deterministic regex, not an AI call (one reply per person per day, in narrow
-formats, and it stays testable offline in `scripts/selfcheck.py`). Recognized:
-
-- Labelled, in any of the three languages the team writes in:
-  `Uchrashuvlar 3, qo'ng'iroqlar 22, KP 5, yangi lidlar 2`, `3 ta uchrashuv`,
-  `встречи: 4, звонки: 30`
-- Bare positional, only when no label matched: `3/20/5/2`
-
-A number that isn't recognized is never invented — the metric stays unset and
-shows as `—`, so nobody's scorecard gains figures they didn't report. If the
-numbers are missing, the bot says which ones, and a follow-up message with
-them merges into the same report (`merge_report_metrics`).
+When numbers are on, parsing is deterministic regex, not an AI call, and an
+unrecognized number is never invented — it shows as `—`.
 
 ## Which message counts as the report
 
@@ -91,9 +83,14 @@ FROM daily_reports r JOIN employees e ON e.id = r.employee_id
 WHERE r.report_date = current_date ORDER BY r.status, e.display_name;
 ```
 
+**Re-run a test on the same day** (each person is asked once per day):
+
+```sql
+DELETE FROM daily_reports WHERE report_date = CURRENT_DATE;
+```
+
 ## Future
 
 - Weekly Monday scorecard per employee (reports submitted out of working
-  days, tasks completed, KPI actual vs target) — the data is already there.
-- Targets per employee rather than per role, once the business sets them.
+  days, tasks completed) — the data is already there.
 - Saturday schedule, if the working week changes (currently Mon-Fri).

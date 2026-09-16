@@ -376,9 +376,23 @@ def test_daily_report_kpi() -> None:
     print("daily report KPI")
     from integrations.org_bot import kpi
 
-    sales = kpi.metrics_for_role("b2b_sotuv")
-    check("sales role has four metrics", len(sales), 4)
-    check("non-sales role reports text only", kpi.metrics_for_role("it"), ())
+    # 2026-09-16: nobody is asked for numbers — every role, sales included,
+    # just reports what they did today.
+    check("B2B Sotuv is not asked for numbers", kpi.metrics_for_role("b2b_sotuv"), ())
+    check("Garmin Sotuv is not asked for numbers", kpi.metrics_for_role("garmin_sotuv"), ())
+    check_true(
+        "B2B Sotuv's ask has no numbers block",
+        "Qo'ng'iroqlar" not in kpi.build_request_text("Dmitriy", kpi.metrics_for_role("b2b_sotuv")),
+    )
+    check_true(
+        "reminder has no numbers block",
+        "Qo'ng'iroqlar" not in kpi.build_reminder_text(kpi.metrics_for_role("garmin_sotuv")),
+    )
+
+    # The parser and formatter stay tested against the (currently unassigned)
+    # sales set, so switching numbers back on for a role is safe.
+    sales = kpi.SALES_METRICS
+    check("sales metric set still defined", len(sales), 4)
 
     check(
         "labelled Uzbek reply",

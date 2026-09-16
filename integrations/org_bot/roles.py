@@ -73,8 +73,8 @@ AGENTS: list[Agent] = [
         "xodimlar_kpi",
         "Xodimlar KPI / Employee KPI",
         "the bot's OWN daily reports (asked at 16:00, answered in Telegram): who reported and who "
-        "stayed silent, each employee's written report, their KPI numbers against target, and how "
-        "many tasks they completed — per employee, last 14 days",
+        "stayed silent, each employee's written report, and how many tasks they completed — "
+        "per employee, last 14 days",
     ),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
