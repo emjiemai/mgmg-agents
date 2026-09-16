@@ -531,3 +531,34 @@ FROM sap_gateway_snapshots s
 WHERE s.snapshot_date = (
     SELECT max(snapshot_date) FROM sap_gateway_snapshots s2 WHERE s2.tool = s.tool
 );
+
+-- ---------------------------------------------------------------------------
+-- daily_reports — one row per employee per working day. Created by
+-- agents/daily-reports at 16:00 Tashkent (status 'asked') and filled in when
+-- the employee answers OPS Manager Bot (status 'submitted').
+--
+-- Separate from crm_employee_reports on purpose: that table mirrors what
+-- employees type into the CRM's own web app (synced read-only from the CRM
+-- API, so it can't record who was asked or who stayed silent). This one is
+-- the bot's own collection — the KPI numbers, the ask/answer timestamps, and
+-- the rows that never came back, which is what any discipline measure needs.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_reports (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_date        DATE         NOT NULL,
+    employee_id        UUID         NOT NULL REFERENCES employees(id),
+    telegram_user_id   BIGINT       NOT NULL,
+    role               TEXT         NOT NULL,
+    status             TEXT         NOT NULL DEFAULT 'asked' CHECK (status IN ('asked', 'submitted')),
+    content            TEXT,
+    metrics            JSONB        NOT NULL DEFAULT '{}'::jsonb,  -- {"calls": 20, ...}, keys from org_bot/kpi.py
+    tasks_done         INTEGER      NOT NULL DEFAULT 0,            -- counted from tasks, not self-reported
+    prompt_message_id  BIGINT,                                     -- the 16:00 ask, so a reply to it is unambiguous
+    asked_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    reminded_at        TIMESTAMPTZ,
+    submitted_at       TIMESTAMPTZ,
+    CONSTRAINT uq_daily_report UNIQUE (report_date, employee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_reports_open ON daily_reports (report_date) WHERE status = 'asked';
+CREATE INDEX IF NOT EXISTS idx_daily_reports_employee ON daily_reports (employee_id, report_date DESC);

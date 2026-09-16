@@ -13,6 +13,8 @@ double-tapping a button on a slow connection can't apply the same change twice.
 
 from __future__ import annotations
 
+import json
+from datetime import date
 from typing import Any, Literal
 
 from integrations.common.db import execute, fetch_all, fetch_one
@@ -567,3 +569,216 @@ async def recent_conversation(telegram_user_id: int, limit: int = 20) -> list[di
         (telegram_user_id, limit),
     )
     return list(reversed(rows))
+
+
+# ------------------------------------------------------------- daily reports
+
+
+async def open_report_request(
+    *, employee: dict[str, Any], report_date: date
+) -> dict[str, Any] | None:
+    """Record that this employee was asked for today's report.
+
+    Idempotent: a second run on the same day returns None rather than asking
+    the same person twice, so a retried cron run can't spam anyone.
+
+    Args:
+        employee: The employee row being asked.
+        report_date: The working day being reported on.
+
+    Returns:
+        The new row, or None if this employee was already asked today.
+    """
+    return await fetch_one(
+        """
+        INSERT INTO daily_reports (report_date, employee_id, telegram_user_id, role)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (report_date, employee_id) DO NOTHING
+        RETURNING *
+        """,
+        (report_date, str(employee["id"]), employee["telegram_user_id"], employee["role"]),
+    )
+
+
+async def set_report_prompt_message_id(report_id: str, message_id: int) -> None:
+    """Record the 16:00 ask's Telegram message id.
+
+    A reply to that exact message is the unambiguous signal that an
+    employee's text is their daily report rather than a task update.
+
+    Args:
+        report_id: ``daily_reports.id``.
+        message_id: Telegram message id of the ask.
+    """
+    await execute(
+        "UPDATE daily_reports SET prompt_message_id = %s WHERE id = %s", (message_id, report_id)
+    )
+
+
+async def pending_report(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """The report this employee was asked for today and hasn't sent yet.
+
+    Args:
+        telegram_user_id: The employee's Telegram numeric id.
+        report_date: The working day.
+
+    Returns:
+        The awaiting row, or None if they were never asked or already answered.
+    """
+    return await fetch_one(
+        """
+        SELECT * FROM daily_reports
+        WHERE telegram_user_id = %s AND report_date = %s AND status = 'asked'
+        """,
+        (telegram_user_id, report_date),
+    )
+
+
+async def save_report(
+    *, report_id: str, content: str, metrics: dict[str, int], tasks_done: int
+) -> dict[str, Any] | None:
+    """Store an employee's answer, idempotently.
+
+    Args:
+        report_id: ``daily_reports.id``.
+        content: Their written report.
+        metrics: Parsed KPI numbers (may be empty).
+        tasks_done: Tasks they completed today, counted from ``tasks``.
+
+    Returns:
+        The updated row, or None if it was already submitted — callers must
+        treat None as "already answered", not an error.
+    """
+    return await fetch_one(
+        """
+        UPDATE daily_reports
+        SET status = 'submitted', content = %s, metrics = %s::jsonb,
+            tasks_done = %s, submitted_at = now()
+        WHERE id = %s AND status = 'asked'
+        RETURNING *
+        """,
+        (content, json.dumps(metrics), tasks_done, report_id),
+    )
+
+
+async def submitted_report_today(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """Today's already-submitted report for this employee, if any.
+
+    Used for the common follow-up: someone writes their report in words,
+    then sends the numbers in a second message a minute later.
+
+    Args:
+        telegram_user_id: The employee's Telegram numeric id.
+        report_date: The working day.
+
+    Returns:
+        The submitted row, or None.
+    """
+    return await fetch_one(
+        """
+        SELECT * FROM daily_reports
+        WHERE telegram_user_id = %s AND report_date = %s AND status = 'submitted'
+        """,
+        (telegram_user_id, report_date),
+    )
+
+
+async def merge_report_metrics(report_id: str, metrics: dict[str, int]) -> dict[str, Any] | None:
+    """Add late-arriving numbers to an already-submitted report.
+
+    Merges rather than replaces, so a second message carrying one number
+    cannot wipe the ones already recorded.
+
+    Args:
+        report_id: ``daily_reports.id``.
+        metrics: Newly parsed values.
+
+    Returns:
+        The updated row, or None if the report no longer exists.
+    """
+    return await fetch_one(
+        """
+        UPDATE daily_reports
+        SET metrics = metrics || %s::jsonb
+        WHERE id = %s
+        RETURNING *
+        """,
+        (json.dumps(metrics), report_id),
+    )
+
+
+async def reports_awaiting_reminder(report_date: date) -> list[dict[str, Any]]:
+    """Everyone asked today who hasn't answered and hasn't been nudged yet.
+
+    Args:
+        report_date: The working day.
+
+    Returns:
+        Rows joined with the employee's display name, oldest ask first.
+    """
+    return await fetch_all(
+        """
+        SELECT r.*, e.display_name
+        FROM daily_reports r
+        JOIN employees e ON e.id = r.employee_id
+        WHERE r.report_date = %s AND r.status = 'asked' AND r.reminded_at IS NULL
+          AND e.status = 'active'
+        ORDER BY r.asked_at
+        """,
+        (report_date,),
+    )
+
+
+async def mark_report_reminded(report_id: str) -> None:
+    """Record that the one reminder for this report has been sent.
+
+    Args:
+        report_id: ``daily_reports.id``.
+    """
+    await execute("UPDATE daily_reports SET reminded_at = now() WHERE id = %s", (report_id,))
+
+
+async def count_tasks_completed(employee_id: str, day: date) -> int:
+    """How many tasks this employee marked done on a given day.
+
+    Counted from ``tasks`` rather than asked for, so the discipline figure
+    can't be self-reported.
+
+    Args:
+        employee_id: ``employees.id``.
+        day: The working day, in Tashkent terms.
+
+    Returns:
+        Completed task count.
+    """
+    row = await fetch_one(
+        """
+        SELECT count(*) AS done FROM tasks
+        WHERE assigned_employee_id = %s AND status = 'done'
+          AND (completed_at AT TIME ZONE 'Asia/Tashkent')::date = %s
+        """,
+        (employee_id, day),
+    )
+    return int(row["done"]) if row else 0
+
+
+async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
+    """Every daily report row of the last N days, newest first.
+
+    Args:
+        days: How far back to look.
+
+    Returns:
+        Rows joined with each employee's name and role.
+    """
+    return await fetch_all(
+        """
+        SELECT r.report_date, r.status, r.content, r.metrics, r.tasks_done,
+               r.submitted_at, e.display_name, e.role
+        FROM daily_reports r
+        JOIN employees e ON e.id = r.employee_id
+        WHERE r.report_date >= current_date - %s::int
+        ORDER BY r.report_date DESC, e.display_name
+        """,
+        (days,),
+    )

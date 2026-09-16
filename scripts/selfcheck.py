@@ -357,6 +357,58 @@ def test_receivables_rendering() -> None:
     check_true("min_days filters the 5-day invoice", "1–30 kun" not in text_30)
 
 
+def test_daily_report_kpi() -> None:
+    """Parsing employees' reported numbers, and how they render against target."""
+    print("daily report KPI")
+    from integrations.org_bot import kpi
+
+    sales = kpi.metrics_for_role("b2b_sotuv")
+    check("sales role has four metrics", len(sales), 4)
+    check("non-sales role reports text only", kpi.metrics_for_role("it"), ())
+
+    check(
+        "labelled Uzbek reply",
+        kpi.parse_metrics("Bugun uchrashuvlar 3, qo'ng'iroqlar 22, KP 5, yangi lidlar 2", sales),
+        {"meetings": 3, "calls": 22, "proposals": 5, "new_leads": 2},
+    )
+    check(
+        "number before the label, and a different apostrophe",
+        kpi.parse_metrics("3 ta uchrashuv, 22 ta qoʻngʻiroq", sales),
+        {"meetings": 3, "calls": 22},
+    )
+    check(
+        "Russian labels",
+        kpi.parse_metrics("встречи: 4, звонки: 30", sales),
+        {"meetings": 4, "calls": 30},
+    )
+    check(
+        "bare positional line",
+        kpi.parse_metrics("3/20/5/2", sales),
+        {"meetings": 3, "calls": 20, "proposals": 5, "new_leads": 2},
+    )
+    # A report with no numbers must never be given invented ones — the
+    # Director's scorecard has to distinguish "nothing reported" from "zero".
+    check("prose with no numbers stays empty", kpi.parse_metrics("Bugun ofisda ishladim.", sales), {})
+    check("wrong count of bare numbers is not positional", kpi.parse_metrics("3 20", sales), {})
+    check("no metrics for this role means no parsing", kpi.parse_metrics("uchrashuv 3", ()), {})
+
+    rendered = kpi.format_metrics({"meetings": 5, "calls": 10}, sales)
+    check_true("hit target marked", "Uchrashuvlar: 5/4 ✅" in rendered)
+    check_true("under target marked", "Qo'ng'iroqlar: 10/15 ⚠️" in rendered)
+    check_true("unreported metric shows a dash", "Yuborilgan KP: —" in rendered)
+    check("no metrics renders nothing", kpi.format_metrics({}, ()), "")
+    check(
+        "missing metrics are named",
+        kpi.missing_metrics({"meetings": 5}, sales),
+        ["Qo'ng'iroqlar", "Yuborilgan KP", "Yangi lidlar"],
+    )
+
+    ask = kpi.build_request_text("Dmitriy", sales)
+    check_true("ask names the person", "Dmitriy" in ask)
+    check_true("ask shows the numbers format", "Qo'ng'iroqlar" in ask)
+    check_true("text-only role gets no numbers block", "Qo'ng'iroqlar" not in kpi.build_request_text("Aziz", ()))
+
+
 def main() -> int:
     """Run every check.
 
@@ -369,6 +421,7 @@ def main() -> int:
         test_aging,
         test_telegram,
         test_org_bot,
+        test_daily_report_kpi,
         test_brief_rendering,
         test_receivables_rendering,
     ):

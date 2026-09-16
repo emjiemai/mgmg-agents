@@ -19,7 +19,8 @@ IMUS-Alliance · Service center · Properties.
 | 3 | Receivables | built, runs on schedule |
 | 4 | Lead Agent (Primus Laundry B2B sourcing) | built, runs on schedule |
 | 5 | Admin Bot + OPS Manager Bot (`integrations/org_bot/`) | live — see `docs/agent-specs/05-org-bot.md` |
-| 6 | Power BI Dashboard v1 | queries + DAX ready, report not built |
+| 6 | Daily reports + employee KPI | built — 16:00 ask, 17:00 reminder, Mon-Fri; see `docs/agent-specs/06-daily-reports.md` |
+| 7 | Power BI Dashboard v1 | queries + DAX ready, report not built |
 
 amoCRM, Verifix (attendance) and Microsoft Planner/Teams were removed from the
 project on 2026-09-15 — none of them were in use. Their old database tables
@@ -45,8 +46,11 @@ Google Sheets ──────┘         │
 
 mgmg-api      — always-on FastAPI web service (integrations/api/app.py): both
                 org_bot bots' webhooks and the SAP gateway pushes
-1 cron job    — mgmg-morning-agents (CEO brief + Lead Agent + receivables,
-                run back to back daily via scripts/run_morning_agents.py)
+3 cron jobs   — mgmg-morning-agents (CEO brief + Lead Agent + receivables,
+                run back to back daily via scripts/run_morning_agents.py),
+                mgmg-daily-reports (16:00 Mon-Fri, asks every employee for
+                their day) and mgmg-report-reminder (17:00, nudges whoever
+                hasn't answered) — see docs/agent-specs/06-daily-reports.md
 ```
 
 n8n is referenced in some older docs/history but is **not** part of the
@@ -133,6 +137,7 @@ agents/                      scheduled, cron-run agents (one process per run, th
   ceo-daily-brief/           morning brief
   receivables/               AR aging alert
   lead-agent/                B2B lead sourcing (Primus Laundry)
+  daily-reports/             16:00 report ask + 17:00 reminder (employee KPI)
 integrations/
   api/                       FastAPI webhook receiver (mgmg-api's entry point)
   common/                    config, logging, DB + audit, retrying HTTP, money, time

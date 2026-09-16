@@ -287,17 +287,23 @@ to justify repeating a past conclusion.
   rather than picking just one and silently ignoring the rest.
 - "Report" is genuinely ambiguous in both Uzbek and Russian ("hisobot"/
   "отчёт" cover both meanings) — do not default to reporter_agent just
-  because the word "report" appears. Two different things share that word:
-    - An EMPLOYEE'S OWN submitted report (a manager's daily/weekly standup
-      text — "kim report yozdi", "kechagi reportlar", "Ulug'bekning
-      hisoboti", "отчёт Дмитрия за вчера") — this is crm_agent, which holds
-      the actual report content, per manager, per day.
+  because the word "report" appears. Three different things share that word:
+    - The DAILY REPORTS THIS BOT COLLECTS ITSELF, asked of every employee at
+      16:00 and answered in Telegram, plus each person's KPI numbers against
+      target, completed tasks, and who didn't answer ("kim bugun hisobot
+      yubormadi", "bugungi reportlar", "KPI", "xodimlar qanday ishlayapti",
+      "кто не отправил отчёт") — this is xodimlar_kpi.
+    - An employee's report typed into the CRM's own web app ("CRMdagi
+      hisobotlar", a manager's weekly standup entry there) — this is
+      crm_agent.
     - A general trend/history of the daily brief's OWN numbers over several
       days (cash/AR/pipeline changing day to day, "so'nggi hafta savdo
       qanday bo'ldi", "how has AR trended") — this is reporter_agent, which
-      has no report content at all, only KPI figures.
-  If in doubt which one, prefer crm_agent — a Director asking about
-  "reports" almost always means what someone wrote, not a brief's numbers.
+      has no report content at all, only those figures.
+  If in doubt between the first two, prefer xodimlar_kpi — that is the live
+  daily collection the Director actually follows, and it also knows who is
+  missing. Never answer a "who reported / who didn't" question from
+  reporter_agent.
 - Watch for "yoz"/"write"/"написать" used loosely to mean "list it out for
   me" or "give me a report" — a very common way to ask for a report in
   casual Uzbek/Russian, NOT a request to author a new document. "SAPdagi

@@ -84,6 +84,38 @@ services:
           name: mgmg-db
           property: connectionString
 
+  # --------------------------------------------- daily reports: ask + remind
+  # Two services because Render gives one schedule per cron service and these
+  # are an hour apart. The replies themselves cost nothing extra: employees
+  # answer OPS Manager Bot, which the always-on mgmg-api already serves.
+  - type: cron
+    name: mgmg-daily-reports
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    schedule: "0 11 * * 1-5"  # 16:00 Asia/Tashkent, Mon-Fri
+    dockerCommand: python agents/daily-reports/agent.py --ask
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
+  - type: cron
+    name: mgmg-report-reminder
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    schedule: "0 12 * * 1-5"  # 17:00 Asia/Tashkent, one hour before home time
+    dockerCommand: python agents/daily-reports/agent.py --remind
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
 # ----------------------------------------------------------------------------
 # Shared settings for every service. Render prompts for each `sync: false`
 # value once, at blueprint creation, and reuses it across every service in

@@ -26,8 +26,9 @@ from integrations.common.config import settings
 from integrations.common.db import fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_uzs
+from integrations.common.timeutil import today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, store
+from integrations.org_bot import admin, kpi, store
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -543,6 +544,120 @@ async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text
     await store.log_conversation_turn(director_telegram_user_id, "bot", text)
 
 
+# ---------------------------------------------------------------- daily reports
+
+
+async def _try_daily_report(
+    employee: dict[str, Any], text: str, reply_to_message_id: int | None, run_id: uuid.UUID
+) -> str | None:
+    """Handle this message as today's daily report, if that's what it is.
+
+    Args:
+        employee: The sending employee's row.
+        text: Their message.
+        reply_to_message_id: What they replied to, if anything.
+        run_id: UUID grouping this webhook call's audit rows.
+
+    Returns:
+        An outcome string when the message WAS the report (the caller must
+        then not also relay it as a task update), or None to fall through to
+        the normal relay — including when late numbers were merged into an
+        already-submitted report, since that message still deserves to reach
+        the Director like any other.
+    """
+    day = today_local()
+    metrics_def = kpi.metrics_for_role(employee["role"])
+    pending = await store.pending_report(employee["telegram_user_id"], day)
+
+    if pending is None:
+        # Numbers arriving a minute after a report already sent in words:
+        # merge them so the scorecard is complete, and still fall through so
+        # the Director sees the message itself.
+        if metrics_def:
+            submitted = await store.submitted_report_today(employee["telegram_user_id"], day)
+            if submitted is not None:
+                already = submitted.get("metrics") or {}
+                fresh = {k: v for k, v in kpi.parse_metrics(text, metrics_def).items() if k not in already}
+                if fresh:
+                    await store.merge_report_metrics(str(submitted["id"]), fresh)
+                    log.info("Merged late numbers {} into {}'s report", fresh, employee["display_name"])
+        return None
+
+    # A reply to the 16:00 ask is unambiguous. Otherwise this only counts as
+    # the report when nothing else claims it — a message about a specific
+    # task stays a task update, exactly as it behaved before reports existed.
+    if reply_to_message_id is None or reply_to_message_id != pending["prompt_message_id"]:
+        task = None
+        if reply_to_message_id:
+            task = await store.find_task_by_message_id(reply_to_message_id, employee["telegram_user_id"])
+        if task is None:
+            task = await store.find_open_task_for_employee(employee["telegram_user_id"])
+        if task is not None:
+            return None
+
+    values = kpi.parse_metrics(text, metrics_def)
+    tasks_done = await store.count_tasks_completed(str(employee["id"]), day)
+    saved = await store.save_report(
+        report_id=str(pending["id"]), content=text, metrics=values, tasks_done=tasks_done
+    )
+    if saved is None:
+        return None  # a duplicate webhook delivery got here first — relay normally
+
+    await _relay_daily_report(employee, text, values, metrics_def, tasks_done, run_id)
+
+    ack = "✅ Hisobot qabul qilindi, rahmat!\n<i>Daily report received, thank you.</i>"
+    missing = kpi.missing_metrics(values, metrics_def)
+    if missing:
+        ack += (
+            f"\n\n⚠️ Raqamlar topilmadi: {escape(', '.join(missing))}.\n"
+            "Raqamlarni shu yerga yuborsangiz, hisobotingizga qo'shaman."
+        )
+    await _reply(employee["telegram_user_id"], run_id, ack)
+    return "daily_report"
+
+
+async def _relay_daily_report(
+    employee: dict[str, Any],
+    text: str,
+    values: dict[str, int],
+    metrics_def: tuple[kpi.Metric, ...],
+    tasks_done: int,
+    run_id: uuid.UUID,
+) -> None:
+    """Forward one submitted report to every active Director, as it arrives.
+
+    Recorded through ``create_task_update`` like any other relayed employee
+    message, so the Director can reply to the card and have it reach that
+    person (see ``_try_forward_director_reply``).
+    """
+    lines = [
+        f"📝 <b>Kunlik hisobot</b> — {escape(employee['display_name'])} "
+        f"({escape(ROLE_LABELS.get(employee['role'], employee['role']))})",
+        "",
+        escape(text),
+    ]
+    numbers = kpi.format_metrics(values, metrics_def)
+    if numbers:
+        lines += ["", escape(numbers)]
+    lines.append(f"\n<i>Bajarilgan topshiriqlar / tasks completed today: {tasks_done}</i>")
+    relay_text = "\n".join(lines)
+
+    for director in await store.active_employees_by_role(DIRECTOR_ROLE):
+        director_id = director["telegram_user_id"]
+        try:
+            message_ids = await _reply(director_id, run_id, relay_text)
+        except TelegramError as exc:
+            log.warning("Could not relay a daily report to Director {}: {}", director_id, exc)
+            continue
+        await store.create_task_update(
+            task_id=None,
+            employee_telegram_user_id=employee["telegram_user_id"],
+            message_text=text,
+            director_telegram_user_id=director_id,
+            director_message_id=message_ids[0] if message_ids else None,
+        )
+
+
 # -------------------------------------------------------------- employee updates
 
 
@@ -563,6 +678,10 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
         return "ignored"
 
     reply_to = message.get("reply_to_message") or {}
+    outcome = await _try_daily_report(employee, text, reply_to.get("message_id"), run_id)
+    if outcome is not None:
+        return outcome
+
     task = None
     if reply_to.get("message_id"):
         task = await store.find_task_by_message_id(reply_to["message_id"], telegram_user_id)
@@ -1016,6 +1135,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "finance_agent": _fetch_finance_agent_data,
         "crm_agent": _fetch_crm_agent_data,
         "reporter_agent": _fetch_reporter_agent_data,
+        "xodimlar_kpi": _fetch_kpi_agent_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1027,6 +1147,49 @@ async def _fetch_agent_data(agent_slug: str) -> str:
     if fetcher is None:
         return "(no data source configured for this agent)"
     return await fetcher()
+
+
+async def _fetch_kpi_agent_data() -> str:
+    """The bot's own daily reports: who answered, what they wrote, KPI vs target.
+
+    Includes the rows nobody ever answered — a report that was asked for and
+    never sent is the whole point of this data, and it exists only because
+    agents/daily-reports opens a row for everyone at 16:00 (see
+    docs/agent-specs/06-daily-reports.md).
+    """
+    rows = await store.recent_reports(days=14)
+    if not rows:
+        return (
+            "No daily reports collected yet. agents/daily-reports asks every active employee "
+            "(except the Director) at 16:00 Asia/Tashkent, Mon-Fri, and rows appear from that "
+            "run onward. Nobody has been asked yet, which is NOT the same as nobody reporting."
+        )
+
+    today = today_local()
+    today_rows = [r for r in rows if r["report_date"] == today]
+    lines = [f"Daily reports collected by this bot ({len(rows)} row(s), last 14 days):"]
+    if today_rows:
+        reported = [r["display_name"] for r in today_rows if r["status"] == "submitted"]
+        silent = [r["display_name"] for r in today_rows if r["status"] != "submitted"]
+        lines.append(
+            f"TODAY ({today}): {len(reported)} reported, {len(silent)} have not. "
+            f"Not reported yet: {', '.join(silent) if silent else 'nobody — everyone answered'}."
+        )
+    else:
+        lines.append(f"TODAY ({today}): nobody has been asked yet (the 16:00 run hasn't happened).")
+
+    for row in rows:
+        who = f"{row['display_name']} ({row['role']})"
+        if row["status"] != "submitted":
+            lines.append(f"- [{row['report_date']}] {who}: NO REPORT SENT")
+            continue
+        parts = [f"- [{row['report_date']}] {who}: {row['content']}"]
+        numbers = kpi.format_metrics(row["metrics"] or {}, kpi.metrics_for_role(row["role"]))
+        if numbers:
+            parts.append(numbers)
+        parts.append(f"tasks completed: {row['tasks_done']}")
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
 
 
 LEAD_SHEET_COLUMNS = [
