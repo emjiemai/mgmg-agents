@@ -1,9 +1,18 @@
 """Admin Bot — deterministic employee-access approval, no AI involved.
 
+Onboarding takes two admin decisions, both on this bot:
+
+1. **Access** — someone new messages OPS Manager Bot; the admin gets an
+   Accept/Reject card for the person.
+2. **Role** — once accepted, they pick a role in OPS Manager Bot; the admin
+   gets a second Accept/Reject card for that specific role. Only this second
+   Accept registers them. Without it, anyone past step 1 could pick
+   Operatsion Direktor and receive every report and give the bot orders.
+
 Admin Bot is admin-only: it is never messaged by employees directly (see the
 module docstring in ``ops_manager.py`` for why — Telegram cannot be
-cold-messaged, so the role-picker step after approval is sent via OPS Manager
-Bot, the chat the requester already started, not this one).
+cold-messaged, so everything employee-facing, including the role picker, goes
+through OPS Manager Bot, the chat the requester already started).
 """
 
 from __future__ import annotations
@@ -15,13 +24,21 @@ from integrations.common.config import settings
 from integrations.common.db import log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import store
-from integrations.org_bot.roles import ROLE_LABELS
+from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
 from integrations.telegram.bot import TelegramBot, escape
 
 AGENT = "admin-bot"
 log = setup_logging(AGENT)
 
 EMPLOYEE_LIST_COMMANDS = ("/employees", "/users", "/list")
+
+
+def _person_line(request: dict[str, Any]) -> str:
+    """Clickable name plus @username, for an admin card."""
+    name = request.get("display_name") or str(request["telegram_user_id"])
+    username = request.get("telegram_username")
+    username_line = f" (@{escape(username)})" if username else ""
+    return f'<a href="tg://user?id={request["telegram_user_id"]}">{escape(name)}</a>{username_line}'
 
 
 async def request_access(
@@ -52,13 +69,7 @@ async def request_access(
     if row is None:
         return "already_pending"
 
-    profile_link = f"tg://user?id={telegram_user_id}"
-    username_line = f" (@{escape(telegram_username)})" if telegram_username else ""
-    text = (
-        "🆕 <b>Access request</b>\n\n"
-        f'<a href="{profile_link}">{escape(display_name)}</a>{username_line} '
-        "wants to join OPS Manager Bot."
-    )
+    text = f"🆕 <b>Access request</b>\n\n{_person_line(row)} wants to join OPS Manager Bot."
     keyboard = {
         "inline_keyboard": [
             [
@@ -81,6 +92,54 @@ async def request_access(
 
     log.info("Access request {} created for telegram_user_id={}", str(row["id"])[:8], telegram_user_id)
     return "created"
+
+
+def role_decision_keyboard(request_id: str) -> dict[str, Any]:
+    """Accept/Reject buttons for a role request card.
+
+    Args:
+        request_id: ``access_requests.id``.
+
+    Returns:
+        A Telegram ``reply_markup`` dict.
+    """
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Accept", "callback_data": f"role_approve:{request_id}"},
+                {"text": "❌ Reject", "callback_data": f"role_reject:{request_id}"},
+            ]
+        ]
+    }
+
+
+async def request_role_approval(access_request: dict[str, Any], run_id: uuid.UUID) -> None:
+    """Send the admin a card asking to confirm the role someone just picked.
+
+    Args:
+        access_request: The ``access_requests`` row, with ``requested_role`` set.
+        run_id: UUID grouping this webhook call's audit rows.
+    """
+    role_slug = access_request["requested_role"]
+    role = ROLE_LABELS.get(role_slug, role_slug)
+    text = f"🧩 <b>Role request</b>\n\n{_person_line(access_request)} wants the role: <b>{escape(role)}</b>"
+    if role_slug == DIRECTOR_ROLE:
+        text += (
+            "\n\n⚠️ <b>Director role</b> — receives every employee's daily report "
+            "and can give OPS Manager Bot orders."
+        )
+
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        message_ids = await bot.send_message(text, reply_markup=role_decision_keyboard(str(access_request["id"])))
+
+    if message_ids:
+        await store.set_role_admin_message_id(str(access_request["id"]), message_ids[0])
+    log.info("Role request {} ({}) sent to the admin", str(access_request["id"])[:8], role_slug)
 
 
 async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -145,9 +204,9 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
         run_id: UUID grouping this webhook call's audit rows.
 
     Returns:
-        A short outcome string: 'approved', 'rejected', 'removed',
-        'already_approved', 'already_rejected', 'already_removed',
-        'not_found', 'unauthorized', or 'unrecognized'.
+        A short outcome string: 'approved', 'rejected', 'role_approved',
+        'role_rejected', 'removed', an 'already_*' variant, 'not_found',
+        'unauthorized', or 'unrecognized'.
     """
     data = callback.get("data", "")
     query_id = callback.get("id", "")
@@ -168,6 +227,9 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action == "removeuser":
         return await _handle_remove_user(target_id, query_id, decided_by, callback, run_id)
+
+    if action in ("role_approve", "role_reject"):
+        return await _handle_role_decision(target_id, action == "role_approve", query_id, decided_by, run_id)
 
     if action not in ("access_approve", "access_reject"):
         await _answer(query_id, "Unrecognized action")
@@ -226,6 +288,77 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     log.info("Access request {} {} by {}", str(request_id)[:8], decision, decided_by)
     return decision
+
+
+async def _handle_role_decision(
+    request_id: str, approve: bool, query_id: str, decided_by: str, run_id: uuid.UUID
+) -> str:
+    """Resolve the admin's Accept/Reject on a role request card.
+
+    Accept registers the employee with that role. Reject sends them the role
+    picker again — the admin turned down the role, not the person, who was
+    already accepted at the first step.
+    """
+    decision: Literal["approved", "rejected"] = "approved" if approve else "rejected"
+    request = await store.decide_role_request(request_id, decision, decided_by)
+    if request is None:
+        current = await store.get_access_request(request_id)
+        if current is None:
+            await _answer(query_id, "Request not found")
+            return "not_found"
+        status = current.get("role_status") or "not requested"
+        await _answer(query_id, f"Already {status}")
+        return f"already_{status}"
+
+    role = ROLE_LABELS.get(request["requested_role"], request["requested_role"])
+    name = request.get("display_name") or str(request["telegram_user_id"])
+    marker = "✅ Role accepted" if approve else "❌ Role rejected"
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        if request.get("role_admin_message_id"):
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=settings.admin_bot_telegram_chat_id,
+                message_id=request["role_admin_message_id"],
+                text=f"{marker} — {escape(name)}: <b>{escape(role)}</b>\n\n<i>by @{escape(decided_by)}</i>",
+            )
+        await bot._answer_callback(query_id, marker)  # noqa: SLF001
+
+    from integrations.org_bot import ops_manager  # local import breaks the admin<->ops_manager cycle
+
+    if approve:
+        employee = await store.create_employee(
+            telegram_user_id=request["telegram_user_id"],
+            telegram_username=request.get("telegram_username"),
+            display_name=name,
+            role=request["requested_role"],
+            approved_by=decided_by,
+        )
+        await ops_manager.send_registration_confirmed(request, run_id)
+        target_ref, action = str(employee["id"]), "employee_registered"
+    else:
+        await ops_manager.send_role_picker(request, run_id, retry=True)
+        target_ref, action = str(request_id), "role_rejected"
+
+    await log_action(
+        agent=AGENT,
+        action=action,
+        target_system="telegram",
+        status="success",
+        run_id=run_id,
+        target_ref=target_ref,
+        mode="write",
+        payload={
+            "role": request["requested_role"],
+            "decided_by": decided_by,
+            "telegram_user_id": request["telegram_user_id"],
+        },
+    )
+    log.info("Role request {} ({}) {} by {}", str(request_id)[:8], request["requested_role"], decision, decided_by)
+    return f"role_{decision}"
 
 
 async def _handle_remove_user(

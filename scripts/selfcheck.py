@@ -171,6 +171,20 @@ def test_org_bot() -> None:
     check_true("every role slug is a known role", all(r in ROLE_SLUGS for r in ("it", "hr", "ombor")))
     check_true("bogus role slug is rejected", "not_a_role" not in ROLE_SLUGS)
 
+    # 2026-09-16: a picked role now needs the admin's second Accept.
+    from integrations.org_bot.admin import role_decision_keyboard
+
+    role_buttons = role_decision_keyboard("3fa85f64-5717-4562-b3fc-2c963f66afa6")["inline_keyboard"][0]
+    check(
+        "role request card has Accept + Reject",
+        [b["callback_data"].split(":", 1)[0] for b in role_buttons],
+        ["role_approve", "role_reject"],
+    )
+    check_true(
+        "role request callback fits Telegram's 64-byte limit",
+        all(len(b["callback_data"].encode()) <= 64 for b in role_buttons),
+    )
+
     check(
         "classify: valid employee route",
         validate_classification({"target_type": "employee", "target_role": "it", "target_agent": None}),

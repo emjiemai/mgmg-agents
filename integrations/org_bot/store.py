@@ -219,6 +219,73 @@ async def decide_access_request(
     return rows_affected > 0
 
 
+async def request_role(request_id: str, role: str) -> dict[str, Any] | None:
+    """Record the role an accepted requester picked, pending the admin's confirmation.
+
+    Only allowed when no role request is outstanding — the first pick, or a
+    new pick after the admin rejected the previous one — so a double-tap or a
+    second button press can't swap the role under a card the admin is
+    already looking at.
+
+    Args:
+        request_id: ``access_requests.id``.
+        role: One of ``roles.ROLE_SLUGS``.
+
+    Returns:
+        The updated row, or None if a role is already pending/approved or the
+        person was never accepted — callers must treat None as "already
+        handled", not an error.
+    """
+    return await fetch_one(
+        """
+        UPDATE access_requests
+        SET requested_role = %s, role_status = 'pending',
+            role_decided_at = NULL, role_decided_by = NULL
+        WHERE id = %s AND status = 'approved'
+          AND (role_status IS NULL OR role_status = 'rejected')
+        RETURNING *
+        """,
+        (role, request_id),
+    )
+
+
+async def set_role_admin_message_id(request_id: str, message_id: int) -> None:
+    """Record the admin's role-request card message id, for in-place edits.
+
+    Args:
+        request_id: ``access_requests.id``.
+        message_id: The message id returned by ``sendMessage``.
+    """
+    await execute(
+        "UPDATE access_requests SET role_admin_message_id = %s WHERE id = %s", (message_id, request_id)
+    )
+
+
+async def decide_role_request(
+    request_id: str, decision: Literal["approved", "rejected"], decided_by: str
+) -> dict[str, Any] | None:
+    """Resolve a pending role request, idempotently.
+
+    Args:
+        request_id: ``access_requests.id``.
+        decision: 'approved' or 'rejected'.
+        decided_by: The deciding admin's identifier.
+
+    Returns:
+        The updated row if this call made the decision (first tap wins), or
+        None if there was no pending role request to decide.
+    """
+    return await fetch_one(
+        """
+        UPDATE access_requests
+        SET role_status = %s, role_decided_at = now(), role_decided_by = %s
+        WHERE id = %s AND role_status = 'pending'
+        RETURNING *
+        """,
+        (decision, decided_by, request_id),
+    )
+
+
 # ------------------------------------------------------------------------ tasks
 
 

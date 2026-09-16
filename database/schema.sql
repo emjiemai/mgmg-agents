@@ -393,6 +393,19 @@ CREATE TABLE IF NOT EXISTS access_requests (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_access_requests_pending ON access_requests (telegram_user_id) WHERE status = 'pending';
 
+-- Second approval step: after the admin accepts the PERSON, the role they pick
+-- also needs the admin's Accept before they're registered. Without it, anyone
+-- past the first step could pick Operatsion Direktor and receive every report
+-- and give the bot orders. role_status NULL = no role picked yet.
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS requested_role TEXT;
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS role_status TEXT;
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS role_admin_message_id BIGINT;
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS role_decided_at TIMESTAMPTZ;
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS role_decided_by TEXT;
+ALTER TABLE access_requests DROP CONSTRAINT IF EXISTS access_requests_role_status_check;
+ALTER TABLE access_requests ADD CONSTRAINT access_requests_role_status_check
+    CHECK (role_status IS NULL OR role_status IN ('pending', 'approved', 'rejected'));
+
 -- ---------------------------------------------------------------------------
 -- tasks — one row per (employee recipient) of a task OPS Manager Bot routed.
 -- The unique constraint is a backstop against Telegram's own occasionally-

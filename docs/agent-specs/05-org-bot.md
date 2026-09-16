@@ -37,8 +37,19 @@ exists only to receive the admin's own Accept/Reject tap.
    race between two admins) reports the existing outcome instead of
    double-processing. The card is edited in place to show the result.
 4. On Accept, **OPS Manager Bot** (not Admin Bot) sends the original requester
-   an 8-button role picker.
-5. The requester taps their role → an `employees` row is created → confirmed.
+   the role picker.
+5. The requester taps a role. They are **not** registered yet: the pick is
+   stored on the request (`requested_role`, `role_status = 'pending'`), the
+   picker is cleared, and they're told the admin will confirm it.
+6. **Admin Bot** posts a second card — the person and the role they chose
+   (with an extra warning for Operatsion Direktor) — with Accept/Reject.
+7. Accept → the `employees` row is created with that role and the requester
+   is told they're registered. Reject → the requester is told and gets the
+   role picker again (the admin turned down the role, not the person).
+
+The second approval exists because a picked role took effect immediately
+before 2026-09-16: anyone past step 3 could choose Operatsion Direktor and
+start receiving every daily report and giving the bot orders.
 
 ## Flow — task routing
 

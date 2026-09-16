@@ -228,27 +228,61 @@ async def _edit_task_card(
         log.warning("Task card edit failed: {}", err)
 
 
-async def send_role_picker(access_request: dict[str, Any], run_id: uuid.UUID) -> None:
-    """Send an approved requester their role-picker keyboard.
+async def send_role_picker(access_request: dict[str, Any], run_id: uuid.UUID, *, retry: bool = False) -> None:
+    """Send an accepted requester their role-picker keyboard.
 
-    Called from ``admin.py`` after an Accept decision — deliberately on OPS
-    Manager Bot's token, not Admin Bot's, since the requester already started
-    a chat with this bot (see module docstring).
+    Called from ``admin.py`` after the admin accepts the person, and again
+    after the admin rejects the role they picked (``retry=True``) —
+    deliberately on OPS Manager Bot's token, not Admin Bot's, since the
+    requester already started a chat with this bot (see module docstring).
 
     Args:
-        access_request: The now-approved ``access_requests`` row.
+        access_request: The ``access_requests`` row.
         run_id: UUID grouping this webhook call's audit rows.
+        retry: The admin rejected their previous pick; say so.
     """
     keyboard = role_picker_keyboard(str(access_request["id"]))
-    text = "🎉 Tasdiqlandingiz! Rolingizni tanlang:\n🎉 You're approved! Pick your role:"
+    if retry:
+        role = ROLE_LABELS.get(access_request.get("requested_role") or "", "")
+        text = (
+            f"❌ Admin <b>{escape(role)}</b> rolini tasdiqlamadi. Boshqa rolni tanlang:\n"
+            "<i>The admin didn't approve that role. Pick another one:</i>"
+        )
+    else:
+        text = (
+            "🎉 Tasdiqlandingiz! Rolingizni tanlang — tanlovingizni admin tasdiqlaydi.\n"
+            "<i>You're approved! Pick your role — the admin will confirm it.</i>"
+        )
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         await bot.send_message(text, chat_id=str(access_request["telegram_user_id"]), reply_markup=keyboard)
 
 
+async def send_registration_confirmed(access_request: dict[str, Any], run_id: uuid.UUID) -> None:
+    """Tell the requester the admin confirmed their role and they're registered.
+
+    Args:
+        access_request: The ``access_requests`` row, role now approved.
+        run_id: UUID grouping this webhook call's audit rows.
+    """
+    role = ROLE_LABELS.get(access_request["requested_role"], access_request["requested_role"])
+    await _reply(
+        access_request["telegram_user_id"],
+        run_id,
+        f"✅ Siz <b>{escape(role)}</b> sifatida ro'yxatdan o'tdingiz.\n"
+        f"<i>You're registered as {escape(role)}.</i>",
+    )
+
+
 async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Resolve a role-picker button press into a new ``employees`` row."""
+    """Record a role-picker press as a role request for the admin to confirm.
+
+    Nobody is registered here — picking a role only asks for it. The
+    employee row is created in ``admin.py`` when the admin accepts the role,
+    otherwise anyone past the first approval could pick Operatsion Direktor
+    and immediately receive every report and give the bot orders.
+    """
     query_id = callback.get("id", "")
     parsed = parse_role_and_request(rest)
     if parsed is None:
@@ -270,13 +304,10 @@ async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUI
         await _answer(query_id, "This isn't your request")
         return "unauthorized"
 
-    employee = await store.create_employee(
-        telegram_user_id=request["telegram_user_id"],
-        telegram_username=request.get("telegram_username"),
-        display_name=request.get("display_name") or str(request["telegram_user_id"]),
-        role=role_slug,
-        approved_by=request.get("decided_by"),
-    )
+    updated = await store.request_role(request_id, role_slug)
+    if updated is None:
+        await _answer(query_id, "Already sent to the admin")
+        return "already_requested"
 
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
@@ -286,22 +317,30 @@ async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUI
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=str(message["chat"]["id"]),
                 message_id=message["message_id"],
-                text=f"✅ Siz <b>{escape(ROLE_LABELS[role_slug])}</b> sifatida ro'yxatdan o'tdingiz.",
+                text=(
+                    f"⏳ <b>{escape(ROLE_LABELS[role_slug])}</b> rolini tanladingiz. Admin tasdiqlashini kuting.\n"
+                    "<i>Waiting for the admin to confirm your role.</i>"
+                ),
+                # Clear the picker: Telegram keeps the old keyboard unless
+                # told otherwise, and a second tap must not look possible.
+                reply_markup={"inline_keyboard": []},
             )
-        await bot._answer_callback(query_id, "Registered!")  # noqa: SLF001
+        await bot._answer_callback(query_id, "Sent to the admin")  # noqa: SLF001
+
+    await admin.request_role_approval(updated, run_id)
 
     await log_action(
         agent=AGENT,
-        action="employee_registered",
+        action="role_requested",
         target_system="telegram",
         status="success",
         run_id=run_id,
-        target_ref=str(employee["id"]),
+        target_ref=str(request_id),
         mode="write",
         payload={"role": role_slug, "telegram_user_id": request["telegram_user_id"]},
     )
-    log.info("Employee {} registered as {}", employee["id"], role_slug)
-    return "registered"
+    log.info("Access request {} asked for role {}", str(request_id)[:8], role_slug)
+    return "role_requested"
 
 
 async def _actor_display_name(clicker: dict[str, Any]) -> str:
