@@ -93,7 +93,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: starter
-    schedule: "50 8 * * 1-5"  # TEMPORARY for testing: 13:50 Asia/Tashkent. Production value: "0 11 * * 1-5" (16:00)
+    schedule: "5 9 * * 1-5"  # TEMPORARY for testing: 14:05 Asia/Tashkent. Production value: "0 11 * * 1-5" (16:00)
     dockerCommand: python agents/daily-reports/agent.py --ask
     envVars:
       - fromGroup: mgmg-shared
@@ -107,7 +107,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: starter
-    schedule: "0 9 * * 1-5"  # TEMPORARY for testing: 14:00 Asia/Tashkent. Production value: "0 12 * * 1-5" (17:00)
+    schedule: "15 9 * * 1-5"  # TEMPORARY for testing: 14:15 Asia/Tashkent. Production value: "0 12 * * 1-5" (17:00)
     dockerCommand: python agents/daily-reports/agent.py --remind
     envVars:
       - fromGroup: mgmg-shared
