@@ -642,7 +642,9 @@ async def _try_daily_report(
     if saved is None:
         return None  # a duplicate webhook delivery got here first — relay normally
 
-    await _relay_daily_report(employee, text, values, metrics_def, tasks_done, run_id)
+    # Deliberately NOT forwarded to the Director (the business's decision):
+    # the Director only hears who didn't report, in the next 08:00 brief.
+    # The report stays stored and queryable through the xodimlar_kpi agent.
 
     ack = "✅ Hisobot qabul qilindi, rahmat!\n<i>Daily report received, thank you.</i>"
     missing = kpi.missing_metrics(values, metrics_def)
@@ -653,48 +655,6 @@ async def _try_daily_report(
         )
     await _reply(employee["telegram_user_id"], run_id, ack)
     return "daily_report"
-
-
-async def _relay_daily_report(
-    employee: dict[str, Any],
-    text: str,
-    values: dict[str, int],
-    metrics_def: tuple[kpi.Metric, ...],
-    tasks_done: int,
-    run_id: uuid.UUID,
-) -> None:
-    """Forward one submitted report to every active Director, as it arrives.
-
-    Recorded through ``create_task_update`` like any other relayed employee
-    message, so the Director can reply to the card and have it reach that
-    person (see ``_try_forward_director_reply``).
-    """
-    lines = [
-        f"📝 <b>Kunlik hisobot</b> — {escape(employee['display_name'])} "
-        f"({escape(ROLE_LABELS.get(employee['role'], employee['role']))})",
-        "",
-        escape(text),
-    ]
-    numbers = kpi.format_metrics(values, metrics_def)
-    if numbers:
-        lines += ["", escape(numbers)]
-    lines.append(f"\n<i>Bajarilgan topshiriqlar / tasks completed today: {tasks_done}</i>")
-    relay_text = "\n".join(lines)
-
-    for director in await store.active_employees_by_role(DIRECTOR_ROLE):
-        director_id = director["telegram_user_id"]
-        try:
-            message_ids = await _reply(director_id, run_id, relay_text)
-        except TelegramError as exc:
-            log.warning("Could not relay a daily report to Director {}: {}", director_id, exc)
-            continue
-        await store.create_task_update(
-            task_id=None,
-            employee_telegram_user_id=employee["telegram_user_id"],
-            message_text=text,
-            director_telegram_user_id=director_id,
-            director_message_id=message_ids[0] if message_ids else None,
-        )
 
 
 # -------------------------------------------------------------- employee updates

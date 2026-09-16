@@ -328,6 +328,28 @@ def test_brief_rendering() -> None:
     text = brief.render(no_reports)
     check_true("no reports yesterday is stated plainly", "Hech kim report yozmagan" in text)
 
+    # 2026-09-16: daily reports no longer reach the Director one by one; the
+    # brief names only who didn't report on the last day they were asked.
+    asked_day = date(2026, 9, 15)
+    rows = [
+        {"report_date": asked_day, "status": "submitted", "display_name": "Aziz", "role": "it"},
+        {"report_date": asked_day, "status": "asked", "display_name": "Dmitriy", "role": "b2b_sotuv"},
+    ]
+    text = brief.render(brief.BriefData(report_rows=rows))
+    check_true("non-reporter named", "Dmitriy" in text)
+    check_true("someone who reported is not named", "Aziz" not in text)
+    check_true("missed out of asked is shown", "1 / 2" in text)
+    everyone_in = [dict(r, status="submitted") for r in rows]
+    check_true(
+        "everyone reporting is stated",
+        "hammasi yubordi (2/2)" in brief.render(brief.BriefData(report_rows=everyone_in)),
+    )
+    never_asked = brief.render(brief.BriefData(report_rows=[]))
+    check_true(
+        "no section before anyone was ever asked",
+        "Kunlik hisobotlar" not in never_asked and "yubormaganlar" not in never_asked,
+    )
+
 
 def test_receivables_rendering() -> None:
     """The receivables alert renders in both the empty and populated cases."""

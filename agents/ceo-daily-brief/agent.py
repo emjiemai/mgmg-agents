@@ -1,7 +1,8 @@
 """Agent 1 — CEO Daily Brief.
 
 Runs every morning at 08:00 Tashkent time and sends the CEO one Telegram
-message covering cash, receivables, pipeline and yesterday's employee reports.
+message covering cash, receivables, pipeline, yesterday's employee reports
+from the CRM, and who didn't send their daily report to OPS Manager Bot.
 
 Design rule: **the brief always goes out.** Each source is fetched
 independently and a failure in one (SAP down, CRM unreachable) degrades
@@ -42,6 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from integrations.common import snapshots
 from integrations.common.config import settings
@@ -51,13 +53,15 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
 from integrations.crm.client import CRMClient, CRMError
 from integrations.crm.models import EmployeeReport, PipelineSummary
+from integrations.org_bot import store as org_store
 from integrations.org_bot.notify import notify_directors
+from integrations.org_bot.roles import ROLE_LABELS
 from integrations.sap.client import SAPClient
 from integrations.sap.models import ARAging, ARInvoice, CashAccount
 from integrations.telegram.bot import escape
 
 AGENT = "ceo-daily-brief"
-SOURCE_COUNT = 3  # SAP cash, SAP aging (gateway-pushed), CRM
+SOURCE_COUNT = 4  # SAP cash, SAP aging (gateway-pushed), CRM, daily reports
 log = setup_logging(AGENT)
 
 # How many line items to show per section before collapsing into "+N more".
@@ -72,6 +76,9 @@ class BriefData:
     aging: ARAging | None = None
     pipeline: PipelineSummary | None = None
     reports: list[EmployeeReport] | None = None
+    # Rows from the last day employees were asked for a daily report (see
+    # store.report_results_before); None when that fetch failed.
+    report_rows: list[dict[str, Any]] | None = None
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def note_failure(self, source: str, error: BaseException) -> None:
@@ -111,9 +118,10 @@ async def collect(run_id: uuid.UUID) -> BriefData:
         _fetch_cash(run_id),
         _fetch_aging(run_id),
         _fetch_crm(run_id),
+        _fetch_report_results(),
         return_exceptions=True,
     )
-    cash_result, aging_result, crm_result = results
+    cash_result, aging_result, crm_result, report_result = results
 
     # Split from one combined SAP fetch into two independent ones: the AR
     # aging snapshot now comes from the gateway push (see _fetch_aging) and
@@ -134,6 +142,11 @@ async def collect(run_id: uuid.UUID) -> BriefData:
         data.note_failure("crm", crm_result)
     else:
         data.pipeline, data.reports = crm_result
+
+    if isinstance(report_result, BaseException):
+        data.note_failure("daily_reports", report_result)
+    else:
+        data.report_rows = report_result
 
     return data
 
@@ -274,6 +287,16 @@ async def _fetch_crm(run_id: uuid.UUID) -> tuple[PipelineSummary, list[EmployeeR
     return summary, yesterday_reports
 
 
+async def _fetch_report_results() -> list[dict[str, Any]]:
+    """Who was asked for a daily report on the last asked day, and who answered.
+
+    Returns:
+        Rows from ``store.report_results_before`` — empty if nobody has ever
+        been asked yet.
+    """
+    return await org_store.report_results_before(today_local())
+
+
 # ---------------------------------------------------------------------- render
 
 
@@ -289,7 +312,7 @@ def render(data: BriefData) -> str:
         The full message body (splitting happens in the Telegram client).
     """
     day = today_local()
-    parts: list[str] = [
+    parts: list[str | None] = [
         f"<b>☀️ CEO Kunlik Hisoboti — {fmt_date(day)}</b>",
         f"<i>{now_local().strftime('%H:%M')} Toshkent</i>",
         "",
@@ -297,6 +320,7 @@ def render(data: BriefData) -> str:
         _render_receivables(data),
         _render_pipeline(data),
         _render_reports(data),
+        _render_missed_reports(data),
     ]
 
     if data.errors:
@@ -417,6 +441,34 @@ def _render_reports(data: BriefData) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_missed_reports(data: BriefData) -> str | None:
+    """Who didn't send OPS Manager Bot their daily report on the last asked day.
+
+    The only daily-report signal that reaches the Director: individual reports
+    are not forwarded (the business's decision), only the people who stayed
+    silent, once that day is complete. Skipped entirely before the first 16:00
+    ask has ever run, so "nobody asked yet" never reads as "everyone reported".
+    """
+    if data.report_rows is None:
+        return "📋 <b>Kunlik hisobotlar</b>\n   ⚠️ Ma'lumot mavjud emas\n"
+    if not data.report_rows:
+        return None
+
+    day_label = fmt_date(data.report_rows[0]["report_date"])
+    total = len(data.report_rows)
+    missed = [r for r in data.report_rows if r["status"] != "submitted"]
+    if not missed:
+        return f"🟢 <b>Kunlik hisobotlar ({day_label}):</b> hammasi yubordi ({total}/{total})\n"
+
+    lines = [f"🔴 <b>Hisobot yubormaganlar ({day_label}): {len(missed)} / {total}</b>"]
+    for row in missed[:MAX_LINES]:
+        role = ROLE_LABELS.get(row["role"], row["role"])
+        lines.append(f"   • {escape(row['display_name'])} ({escape(role)})")
+    if len(missed) > MAX_LINES:
+        lines.append(f"   <i>+yana {len(missed) - MAX_LINES} ta</i>")
+    return "\n".join(lines) + "\n"
+
+
 # ----------------------------------------------------------------------- store
 
 
@@ -437,6 +489,9 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
         "ar_buckets": (data.aging.bucket_totals_tiyin if data.aging else {}),
         "pipeline_by_name": (data.pipeline.by_pipeline if data.pipeline else {}),
         "reports": [r.model_dump(mode="json") for r in (data.reports or [])],
+        "missed_daily_reports": [
+            r["display_name"] for r in (data.report_rows or []) if r["status"] != "submitted"
+        ],
     }
 
     status = "dry_run" if settings.dry_run else ("sent" if message_id else "failed")

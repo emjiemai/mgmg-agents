@@ -829,6 +829,32 @@ async def count_tasks_completed(employee_id: str, day: date) -> int:
     return int(row["done"]) if row else 0
 
 
+async def report_results_before(day: date) -> list[dict[str, Any]]:
+    """Every report row from the most recent day before ``day`` that anyone was asked.
+
+    The most recent *asked* day rather than literally yesterday: on a Monday
+    morning yesterday is Sunday, when nobody is asked, and the Director still
+    needs Friday's result.
+
+    Args:
+        day: Usually today; rows strictly before it are considered.
+
+    Returns:
+        That day's rows with each employee's name and role, or an empty list
+        if nobody has ever been asked.
+    """
+    return await fetch_all(
+        """
+        SELECT r.report_date, r.status, e.display_name, e.role
+        FROM daily_reports r
+        JOIN employees e ON e.id = r.employee_id
+        WHERE r.report_date = (SELECT max(report_date) FROM daily_reports WHERE report_date < %s)
+        ORDER BY e.display_name
+        """,
+        (day,),
+    )
+
+
 async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
     """Every daily report row of the last N days, newest first.
 

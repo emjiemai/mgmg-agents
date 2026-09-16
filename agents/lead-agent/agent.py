@@ -845,6 +845,14 @@ async def run(dry_run: bool = False) -> int:
     run_id = uuid.uuid4()
     log.info("Lead Agent run {} starting (dry_run={})", run_id, settings.dry_run)
 
+    # A dry run still goes ahead, so the agent can be checked locally while
+    # production stays paused.
+    if not settings.lead_agent_enabled and not settings.dry_run:
+        # Paused, not failed: exit 0 so the morning job's summary doesn't
+        # report a failure for a deliberate switch-off.
+        log.info("Lead Agent is paused (LEAD_AGENT_ENABLED is not true) — skipping this run")
+        return 0
+
     # settings.missing_placeholders() scans the ENTIRE config (SAP, CRM and
     # bot settings included) -- checking only the fields this
     # agent actually touches, so a machine set up for one agent isn't blocked

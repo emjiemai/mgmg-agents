@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     ops_manager_bot_model: str = "google/gemini-3.8-flash"
     ops_manager_bot_fallback_models: str = "google/gemini-3.7-flash"
 
+    # --- Lead Agent on/off ---
+    # Off unless explicitly turned on: every run spends SerpAPI, Tavily and
+    # OpenRouter credits, and the business paused it on 2026-09-16. Set
+    # LEAD_AGENT_ENABLED=true in Render's mgmg-shared group to resume; it takes
+    # effect on the next 08:00 run.
+    lead_agent_enabled: bool = False
+
     # --- Lead Agent sources ---
     serpapi_api_key: SecretStr = SecretStr("")
     tavily_api_key: SecretStr = SecretStr("")

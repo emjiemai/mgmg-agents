@@ -166,6 +166,11 @@ envVarGroups:
         value: https://sales-crm-roan-six.vercel.app
       - key: CRM_API_KEY
         sync: false
+      - key: LEAD_AGENT_ENABLED
+        # true = the Lead Agent runs each morning; false or unset = paused
+        # (see Settings.lead_agent_enabled). Dashboard-owned (sync: false) so a
+        # blueprint sync never flips it back.
+        sync: false
       - key: SERPAPI_API_KEY
         sync: false
       - key: TAVILY_API_KEY

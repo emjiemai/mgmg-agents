@@ -21,12 +21,18 @@ follows at 17:00.
    at all.
 2. **The employee replies** in Telegram. OPS Manager Bot saves the text,
    counts the tasks they completed today from `tasks` (not self-reported),
-   marks the row `submitted`, and forwards a card to the Director immediately.
+   marks the row `submitted`, and thanks them. The report is **not**
+   forwarded to the Director (the business's decision, 2026-09-16).
 3. **17:00** — anyone still at status `asked` gets exactly one nudge
    (`reminded_at` guards against repeats).
-4. **Any time** — the Director asks the bot "kim bugun hisobot yubormadi?",
-   "bugungi reportlar", "xodimlar KPI", and the `xodimlar_kpi` agent answers
-   from the last 14 days of rows.
+4. **08:00 next morning** — the CEO Daily Brief names only who didn't report
+   on the last day people were asked ("🔴 Hisobot yubormaganlar: 2 / 9", with
+   names), or says everyone did. It uses the last *asked* day, so Monday's
+   brief shows Friday. This is the only daily-report signal pushed to the
+   Director.
+5. **Any time** — the Director can still ask the bot "kim bugun hisobot
+   yubormadi?", "bugungi reportlar", "xodimlar KPI", and the `xodimlar_kpi`
+   agent answers from the last 14 days of rows, report text included.
 
 ## What is asked, and how KPI is measured
 
