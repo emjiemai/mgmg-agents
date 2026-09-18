@@ -292,8 +292,12 @@ async def _fetch_report_results() -> list[dict[str, Any]]:
 
     Returns:
         Rows from ``store.report_results_before`` — empty if nobody has ever
-        been asked yet.
+        been asked yet, or if daily reports are switched off (which hides the
+        section; otherwise it would keep naming the last asked day's
+        non-reporters for as long as the feature stays off).
     """
+    if not settings.daily_reports_enabled:
+        return []
     return await org_store.report_results_before(today_local())
 
 

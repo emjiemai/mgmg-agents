@@ -171,6 +171,11 @@ envVarGroups:
         # (see Settings.lead_agent_enabled). Dashboard-owned (sync: false) so a
         # blueprint sync never flips it back.
         sync: false
+      - key: DAILY_REPORTS_ENABLED
+        # true = the 16:00 ask and 17:00 reminder go out and the morning brief
+        # names non-reporters; false or unset = paused, nothing is sent (see
+        # Settings.daily_reports_enabled). Same sync: false reasoning as above.
+        sync: false
       - key: SERPAPI_API_KEY
         sync: false
       - key: TAVILY_API_KEY

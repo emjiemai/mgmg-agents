@@ -350,6 +350,15 @@ def test_brief_rendering() -> None:
         "Kunlik hisobotlar" not in never_asked and "yubormaganlar" not in never_asked,
     )
 
+    # 2026-09-18: with daily reports switched off, the brief must not keep
+    # naming the last asked day's non-reporters. (Returns before any DB call.)
+    import asyncio
+
+    from integrations.common.config import settings
+
+    if not settings.daily_reports_enabled:
+        check("switched off: no report rows fetched", asyncio.run(brief._fetch_report_results()), [])
+
 
 def test_receivables_rendering() -> None:
     """The receivables alert renders in both the empty and populated cases."""

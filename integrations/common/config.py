@@ -122,6 +122,14 @@ class Settings(BaseSettings):
     # effect on the next 08:00 run.
     lead_agent_enabled: bool = False
 
+    # --- Daily reports on/off ---
+    # Off unless explicitly turned on (paused 2026-09-18, not in use yet).
+    # When off, the 16:00/17:00 jobs send nothing and open no rows, and the
+    # morning brief hides its "didn't report" section — otherwise it would
+    # keep naming the last test day's non-reporters indefinitely. Set
+    # DAILY_REPORTS_ENABLED=true in Render's mgmg-shared group to start.
+    daily_reports_enabled: bool = False
+
     # --- Lead Agent sources ---
     serpapi_api_key: SecretStr = SecretStr("")
     tavily_api_key: SecretStr = SecretStr("")

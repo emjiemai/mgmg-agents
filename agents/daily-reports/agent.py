@@ -159,6 +159,12 @@ async def run(mode: str, dry_run: bool = False) -> int:
         log.error("Refusing to run — unfilled placeholders in .env: {}", ", ".join(sorted(unfilled)))
         return 2
 
+    # Paused, not failed: exit 0 so the cron run doesn't show as broken. A dry
+    # run still goes ahead, so the agent can be checked while it's switched off.
+    if not settings.daily_reports_enabled and not settings.dry_run:
+        log.info("Daily reports are paused (DAILY_REPORTS_ENABLED is not true) — nothing sent")
+        return 0
+
     # Same kill switch the bots and every other scheduled agent honour: when
     # frozen, nothing goes out and no rows are opened, so nobody is marked as
     # having missed a report they were never asked for.

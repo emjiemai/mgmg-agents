@@ -2,7 +2,10 @@
 
 **Code:** `agents/daily-reports/agent.py`, `integrations/org_bot/kpi.py`, the
 reply half in `integrations/org_bot/ops_manager.py`
-**Schedule:** 16:00 Asia/Tashkent ask, 17:00 reminder, Mon-Fri
+**Schedule:** 16:00 Asia/Tashkent ask, 17:00 reminder, Mon-Fri — **only when
+`DAILY_REPORTS_ENABLED=true`** (off by default; paused 2026-09-18 while not in
+use). Off means nothing is sent, no rows open, and the morning brief hides its
+"didn't report" section.
 **Mode:** writes to `daily_reports` + Telegram; no external system is touched
 **Owner:** Operations Director
 
