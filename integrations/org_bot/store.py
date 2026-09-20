@@ -829,6 +829,242 @@ async def count_tasks_completed(employee_id: str, day: date) -> int:
     return int(row["done"]) if row else 0
 
 
+# ------------------------------------------------- written permission requests
+
+
+# Columns an answer may fill, so a field name can never reach SQL unchecked.
+_PERMISSION_TEXT_FIELDS = frozenset(
+    {"subject", "reason", "execute_by", "decision_needed_by", "urgency", "attachments"}
+)
+
+
+async def create_permission_draft(employee: dict[str, Any]) -> dict[str, Any] | None:
+    """Open a draft request for this employee.
+
+    Returns:
+        The new row, or None if they already have an unfinished draft (one
+        per person — the bot fills a request one answer at a time, and two
+        drafts would make every answer ambiguous).
+    """
+    return await fetch_one(
+        """
+        INSERT INTO permission_requests
+            (requester_employee_id, requester_telegram_user_id, requester_name, requester_role)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (requester_telegram_user_id) WHERE status = 'draft' DO NOTHING
+        RETURNING *
+        """,
+        (
+            str(employee["id"]),
+            employee["telegram_user_id"],
+            employee["display_name"],
+            employee["role"],
+        ),
+    )
+
+
+async def get_permission_draft(telegram_user_id: int) -> dict[str, Any] | None:
+    """This person's unfinished draft, if any."""
+    return await fetch_one(
+        "SELECT * FROM permission_requests WHERE requester_telegram_user_id = %s AND status = 'draft'",
+        (telegram_user_id,),
+    )
+
+
+async def set_permission_field(request_id: str, field: str, value: str) -> dict[str, Any] | None:
+    """Store one text answer on a draft.
+
+    Args:
+        request_id: ``permission_requests.id``.
+        field: One of the SOP form's text fields.
+        value: The employee's answer.
+
+    Returns:
+        The updated row.
+
+    Raises:
+        ValueError: if ``field`` isn't a fillable column.
+    """
+    if field not in _PERMISSION_TEXT_FIELDS:
+        raise ValueError(f"not a fillable permission field: {field}")
+    return await fetch_one(
+        f"UPDATE permission_requests SET {field} = %s WHERE id = %s RETURNING *",  # noqa: S608 — whitelisted above
+        (value, request_id),
+    )
+
+
+async def set_permission_amount(
+    request_id: str, amount_tiyin: int | None, currency: str, raw: str
+) -> dict[str, Any] | None:
+    """Store the "Сумма ва валюта" answer.
+
+    Keeps the raw text as well as the parsed figure: an answer the parser
+    can't read ("тахминан 2 млн") is still a real answer, and the form shows
+    it as typed instead of inventing a number or asking again.
+    """
+    return await fetch_one(
+        """
+        UPDATE permission_requests
+        SET amount_tiyin = %s, currency = %s, amount_raw = %s
+        WHERE id = %s
+        RETURNING *
+        """,
+        (amount_tiyin, currency, raw, request_id),
+    )
+
+
+async def set_permission_pending_field(request_id: str, field: str | None) -> None:
+    """Record which answer the bot is waiting for next."""
+    await execute("UPDATE permission_requests SET pending_field = %s WHERE id = %s", (field, request_id))
+
+
+async def submit_permission_request(request_id: str, submitted_to: str) -> dict[str, Any] | None:
+    """Assign the request number and hand it to the approvers.
+
+    The number comes from a sequence inside the same statement, so two people
+    submitting at once can never share one.
+
+    Returns:
+        The submitted row, or None if it wasn't a draft anymore.
+    """
+    return await fetch_one(
+        """
+        UPDATE permission_requests
+        SET status = 'submitted',
+            submitted_at = now(),
+            submitted_to = %s,
+            pending_field = NULL,
+            request_no = 'EMJ-' || to_char(now() AT TIME ZONE 'Asia/Tashkent', 'YYYY') || '-' ||
+                         lpad(nextval('permission_request_no_seq')::text, 4, '0')
+        WHERE id = %s AND status = 'draft'
+        RETURNING *
+        """,
+        (submitted_to, request_id),
+    )
+
+
+async def get_permission_request(request_id: str) -> dict[str, Any] | None:
+    """Fetch one request by id."""
+    return await fetch_one("SELECT * FROM permission_requests WHERE id = %s", (request_id,))
+
+
+async def start_permission_decision(
+    request_id: str, decision: str, approver_telegram_user_id: int
+) -> dict[str, Any] | None:
+    """Park a picked outcome while the approver types their conditions/reason.
+
+    Returns:
+        The row if it was still awaiting a decision, else None — so a second
+        approver tapping the same card is told it's already handled.
+    """
+    return await fetch_one(
+        """
+        UPDATE permission_requests
+        SET pending_decision = %s, note_awaited_from = %s
+        WHERE id = %s AND status IN ('submitted', 'info_needed')
+        RETURNING *
+        """,
+        (decision, approver_telegram_user_id, request_id),
+    )
+
+
+async def awaiting_permission_note(approver_telegram_user_id: int) -> dict[str, Any] | None:
+    """The request whose conditions/reason this approver still owes."""
+    return await fetch_one(
+        "SELECT * FROM permission_requests WHERE note_awaited_from = %s AND pending_decision IS NOT NULL",
+        (approver_telegram_user_id,),
+    )
+
+
+async def decide_permission_request(
+    *,
+    request_id: str,
+    status: str,
+    decided_by: str,
+    decided_by_telegram_user_id: int,
+    approved_terms: str | None,
+    decision_note: str | None,
+) -> dict[str, Any] | None:
+    """Record the approver's decision, idempotently.
+
+    Returns:
+        The decided row, or None if it was already decided — callers must
+        treat None as "already handled", not an error.
+    """
+    return await fetch_one(
+        """
+        UPDATE permission_requests
+        SET status = %s, decided_by = %s, decided_by_telegram_user_id = %s,
+            approved_terms = %s, decision_note = %s, decided_at = now(),
+            pending_decision = NULL, note_awaited_from = NULL
+        WHERE id = %s AND status IN ('submitted', 'info_needed')
+        RETURNING *
+        """,
+        (status, decided_by, decided_by_telegram_user_id, approved_terms, decision_note, request_id),
+    )
+
+
+async def cancel_permission_request(request_id: str, telegram_user_id: int) -> dict[str, Any] | None:
+    """Let the requester drop their own unfinished draft."""
+    return await fetch_one(
+        """
+        UPDATE permission_requests
+        SET status = 'cancelled', pending_field = NULL
+        WHERE id = %s AND requester_telegram_user_id = %s AND status = 'draft'
+        RETURNING *
+        """,
+        (request_id, telegram_user_id),
+    )
+
+
+async def add_permission_event(
+    *,
+    request_id: str,
+    actor: str,
+    actor_telegram_user_id: int | None,
+    action: str,
+    detail: str | None = None,
+) -> None:
+    """Append one line to a request's history (never updated, never deleted)."""
+    await execute(
+        """
+        INSERT INTO permission_request_events
+            (request_id, actor, actor_telegram_user_id, action, detail)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (request_id, actor, actor_telegram_user_id, action, detail),
+    )
+
+
+async def permission_events(request_id: str) -> list[dict[str, Any]]:
+    """One request's history, oldest first."""
+    return await fetch_all(
+        "SELECT * FROM permission_request_events WHERE request_id = %s ORDER BY occurred_at",
+        (request_id,),
+    )
+
+
+async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
+    """The registry the SOP asks the coordinator to keep (§5), newest first.
+
+    Args:
+        days: How far back to include.
+
+    Returns:
+        Submitted/decided requests — drafts and cancelled ones are left out,
+        they were never part of the register.
+    """
+    return await fetch_all(
+        """
+        SELECT * FROM permission_requests
+        WHERE status <> 'draft' AND status <> 'cancelled'
+          AND created_at >= now() - make_interval(days => %s)
+        ORDER BY created_at DESC
+        """,
+        (days,),
+    )
+
+
 async def report_results_before(day: date) -> list[dict[str, Any]]:
     """Every report row from the most recent day before ``day`` that anyone was asked.
 

@@ -28,7 +28,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_uzs
 from integrations.common.timeutil import today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, kpi, store
+from integrations.org_bot import admin, kpi, permission_flow, store
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -173,6 +173,12 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_task_done(rest, callback, run_id)
     if prefix == "dispatchrole":
         return await _handle_dispatch_role(rest, callback, run_id)
+
+    # Written permission buttons (send / cancel / the four SOP decisions).
+    permission_outcome = await permission_flow.handle_callback(prefix, rest, callback, run_id)
+    if permission_outcome is not None:
+        await _answer(query_id, "OK")
+        return permission_outcome
 
     await _answer(query_id, "Unrecognized action")
     return "unrecognized"
@@ -456,6 +462,13 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     employee = await store.get_employee_by_telegram_id(telegram_user_id)
     if employee is None or employee["status"] != "active":
         return await _handle_unregistered_sender(telegram_user_id, sender, run_id)
+
+    # Written permission requests (EMJ-SOP-ADM-01) come before everything
+    # else, for the Director too: an answer to the form's own question, or an
+    # approver's conditions, must not be re-read as a task or a task update.
+    permission_outcome = await permission_flow.handle_message(employee, message, run_id)
+    if permission_outcome is not None:
+        return permission_outcome
 
     if employee["role"] != DIRECTOR_ROLE:
         return await _handle_employee_message(employee, message, run_id)
@@ -1135,6 +1148,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "crm_agent": _fetch_crm_agent_data,
         "reporter_agent": _fetch_reporter_agent_data,
         "xodimlar_kpi": _fetch_kpi_agent_data,
+        "ruxsatlar": permission_flow.registry_data,
     }
     if agent_slug == "all_systems":
         sections = []

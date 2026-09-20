@@ -19,8 +19,9 @@ IMUS-Alliance · Service center · Properties.
 | 3 | Receivables | built, runs on schedule |
 | 4 | Lead Agent (Primus Laundry B2B sourcing) | built, runs on schedule |
 | 5 | Admin Bot + OPS Manager Bot (`integrations/org_bot/`) | live — see `docs/agent-specs/05-org-bot.md` |
-| 6 | Daily reports + employee KPI | built — 16:00 ask, 17:00 reminder, Mon-Fri; see `docs/agent-specs/06-daily-reports.md` |
-| 7 | Power BI Dashboard v1 | queries + DAX ready, report not built |
+| 6 | Daily reports + employee KPI | built, paused (`DAILY_REPORTS_ENABLED`); see `docs/agent-specs/06-daily-reports.md` |
+| 7 | Written permissions (EMJ-SOP-ADM-01) | built — request → approval → filled .docx + register; see `docs/agent-specs/07-permissions.md` |
+| 8 | Power BI Dashboard v1 | queries + DAX ready, report not built |
 
 amoCRM, Verifix (attendance) and Microsoft Planner/Teams were removed from the
 project on 2026-09-15 — none of them were in use. Their old database tables

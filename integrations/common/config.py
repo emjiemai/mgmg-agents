@@ -130,6 +130,19 @@ class Settings(BaseSettings):
     # DAILY_REPORTS_ENABLED=true in Render's mgmg-shared group to start.
     daily_reports_enabled: bool = False
 
+    # --- Written permission requests (EMJ-SOP-ADM-01) ---
+    # The SOP allows an electronic approval only in the system the director
+    # officially designates, with the approver and the decision history kept
+    # (§3) -- which is why every request here stores who decided, when, and an
+    # append-only event trail. Have the director sign the one-page addendum
+    # naming this bot before relying on it.
+    permissions_enabled: bool = True
+    # Deputies who may also decide, besides whoever holds the Director role:
+    # comma-separated Telegram user ids. The SOP lets a deputy decide only
+    # with written authority (§3), so this list is deliberately explicit
+    # rather than derived from a role. Empty = the Director alone decides.
+    permission_deputy_telegram_ids: str = ""
+
     # --- Lead Agent sources ---
     serpapi_api_key: SecretStr = SecretStr("")
     tavily_api_key: SecretStr = SecretStr("")
@@ -199,6 +212,21 @@ class Settings(BaseSettings):
             f"dbname={self.postgres_db} user={self.postgres_user} "
             f"password={self.postgres_password.get_secret_value()}"
         )
+
+    @property
+    def permission_deputy_ids(self) -> list[int]:
+        """Deputy approvers' Telegram ids, parsed from the comma-separated setting.
+
+        Returns:
+            Numeric ids; anything unparseable is skipped rather than raising,
+            so one typo in the dashboard can't take the whole flow down.
+        """
+        ids: list[int] = []
+        for part in self.permission_deputy_telegram_ids.split(","):
+            part = part.strip()
+            if part.lstrip("-").isdigit():
+                ids.append(int(part))
+        return ids
 
     def missing_placeholders(self) -> list[str]:
         """Return names of settings still holding a ``[PLACEHOLDER]`` value.

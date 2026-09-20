@@ -575,3 +575,75 @@ CREATE TABLE IF NOT EXISTS daily_reports (
 
 CREATE INDEX IF NOT EXISTS idx_daily_reports_open ON daily_reports (report_date) WHERE status = 'asked';
 CREATE INDEX IF NOT EXISTS idx_daily_reports_employee ON daily_reports (employee_id, report_date DESC);
+
+-- ---------------------------------------------------------------------------
+-- permission_requests — written permission requests under EMJ-SOP-ADM-01
+-- ("Ёзма рухсат ва тасдиқ олиш тартиби"). One row per issue: the SOP requires
+-- one request per matter and forbids splitting a request to get under a limit.
+--
+-- This table plus permission_request_events IS the "ягона реестр" the SOP's
+-- documents coordinator is supposed to keep (§5): number, time received,
+-- who is responsible, the decision, and the execution state.
+-- ---------------------------------------------------------------------------
+CREATE SEQUENCE IF NOT EXISTS permission_request_no_seq;
+
+CREATE TABLE IF NOT EXISTS permission_requests (
+    id                          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_no                  TEXT         UNIQUE,          -- EMJ-2026-0001, assigned on submit
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    submitted_at                TIMESTAMPTZ,                  -- "Қабул қилинган сана ва вақт"
+    requester_employee_id       UUID         REFERENCES employees(id),
+    requester_telegram_user_id  BIGINT       NOT NULL,
+    requester_name              TEXT         NOT NULL,
+    requester_role              TEXT         NOT NULL,        -- doubles as "Бўлим"/position
+    subject                     TEXT,                         -- "Нимага рухсат сўралади"
+    reason                      TEXT,                         -- "Сабаб ва таклиф"
+    amount_tiyin                BIGINT,                       -- "Сумма", 0 when no cost
+    amount_raw                  TEXT,                         -- what they typed, when it isn't a plain number
+    currency                    TEXT         NOT NULL DEFAULT 'UZS',
+    execute_by                  TEXT,                         -- "Бажариш муддати"
+    decision_needed_by          TEXT,                         -- "Қарор керак бўлган сана ва вақт"
+    urgency                     TEXT,                         -- "Шошилинчлик сабаби" or "оддий"
+    attachments                 TEXT,                         -- "Иловалар"
+    pending_field               TEXT,                         -- which answer the bot is waiting for
+    status                      TEXT         NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'submitted', 'approved', 'approved_conditional',
+                          'rejected', 'info_needed', 'cancelled')),
+    submitted_to                TEXT,                         -- "Кимга тақдим этилади"
+    decided_at                  TIMESTAMPTZ,
+    decided_by                  TEXT,                         -- approver name + role
+    decided_by_telegram_user_id BIGINT,
+    approved_terms              TEXT,                         -- "Тасдиқланган сумма ва амал қилиш муддати"
+    decision_note               TEXT,                         -- "Шартлар ёки қарор сабаби"
+    pending_decision            TEXT,                         -- outcome picked, waiting for the approver's note
+    note_awaited_from           BIGINT,                       -- that approver's Telegram id
+    completion_note             TEXT,                         -- "Якун далили" (§5)
+    completed_at                TIMESTAMPTZ
+);
+
+-- One open draft per person: the bot fills a request by asking one question at
+-- a time, and a second half-finished draft would make every answer ambiguous.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_permission_draft_per_user
+    ON permission_requests (requester_telegram_user_id) WHERE status = 'draft';
+CREATE INDEX IF NOT EXISTS idx_permission_requests_open
+    ON permission_requests (created_at DESC) WHERE status IN ('submitted', 'info_needed');
+CREATE INDEX IF NOT EXISTS idx_permission_requests_requester
+    ON permission_requests (requester_telegram_user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- permission_request_events — append-only history for each request. SOP §3
+-- accepts an electronic approval only where the approver AND the decision
+-- history are preserved, so nothing here is ever updated or deleted.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS permission_request_events (
+    id                      BIGSERIAL    PRIMARY KEY,
+    request_id              UUID         NOT NULL REFERENCES permission_requests(id) ON DELETE CASCADE,
+    occurred_at             TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    actor                   TEXT         NOT NULL,
+    actor_telegram_user_id  BIGINT,
+    action                  TEXT         NOT NULL,  -- created | submitted | decided | info_needed | completed | cancelled
+    detail                  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_permission_events_request
+    ON permission_request_events (request_id, occurred_at);

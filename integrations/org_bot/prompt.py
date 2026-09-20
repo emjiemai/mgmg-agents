@@ -304,6 +304,12 @@ to justify repeating a past conclusion.
   daily collection the Director actually follows, and it also knows who is
   missing. Never answer a "who reported / who didn't" question from
   reporter_agent.
+- Questions about WRITTEN PERMISSIONS (EMJ-SOP-ADM-01) go to ruxsatlar: who
+  asked for permission, what is waiting for your decision, what was approved
+  or rejected, a request number ("EMJ-2026-0004"), "ruxsat so'rovlari",
+  "рухсат сўровлари", "кутилаётган рухсатлар", "кто просил разрешение". That
+  register is separate from tasks: a task is work you assigned, a permission
+  is something an employee asked to be allowed to do.
 - Watch for "yoz"/"write"/"написать" used loosely to mean "list it out for
   me" or "give me a report" — a very common way to ask for a report in
   casual Uzbek/Russian, NOT a request to author a new document. "SAPdagi

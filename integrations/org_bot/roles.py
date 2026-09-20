@@ -76,6 +76,13 @@ AGENTS: list[Agent] = [
         "stayed silent, each employee's written report, and how many tasks they completed — "
         "per employee, last 14 days",
     ),
+    Agent(
+        "ruxsatlar",
+        "Ёзма рухсатлар / Written permissions",
+        "the written permission register under EMJ-SOP-ADM-01: every request with its number, who "
+        "asked, what for, the amount, what is still awaiting a decision, and every decision made "
+        "(approved / conditional / rejected / more information needed), last 60 days",
+    ),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's

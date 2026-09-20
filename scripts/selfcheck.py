@@ -468,6 +468,66 @@ def test_daily_report_kpi() -> None:
     check_true("text-only role gets no numbers block", "Qo'ng'iroqlar" not in kpi.build_request_text("Aziz", ()))
 
 
+def test_permissions() -> None:
+    """Written permission requests: intake wording, amounts, question order."""
+    print("permissions (EMJ-SOP-ADM-01)")
+    from integrations.org_bot import permissions
+
+    # Starting a request
+    check_true("command starts a request", permissions.wants_permission("/ruxsat"))
+    check_true("Cyrillic request starts one", permissions.wants_permission("Рухсат керак: янги принтер"))
+    check_true("Latin request starts one", permissions.wants_permission("ruxsat kerak, mehmonxonaga borish"))
+    check_true("Russian request starts one", permissions.wants_permission("прошу разрешение на закупку"))
+    # A mention is not a request: this one must reach the Director as a normal
+    # message, not silently open a form.
+    check_true("mentioning permission is not a request", not permissions.wants_permission("Директор рухсат берди"))
+    check_true("unrelated message is not a request", not permissions.wants_permission("Бугун омборда ишладим"))
+
+    # Amounts
+    check("plain sum", permissions.parse_amount("5 000 000 сўм"), (500000000, "UZS"))
+    check("dotted sum", permissions.parse_amount("5.000.000 so'm"), (500000000, "UZS"))
+    check("dollars", permissions.parse_amount("$1200"), (120000, "USD"))
+    check("no cost", permissions.parse_amount("0"), (0, "UZS"))
+    check("unparseable stays unparsed", permissions.parse_amount("ҳали аниқ эмас"), (None, "UZS"))
+    check("zero renders as zero", permissions.format_amount(0, "UZS"), "0")
+    check("sum is grouped", permissions.format_amount(500000000, "UZS"), "5 000 000 сўм")
+    check("raw answer is kept when unparsed", permissions.format_amount(None, "UZS", "тахминан 2 млн"), "тахминан 2 млн")
+
+    # Question order follows the SOP form, and an unparseable amount still counts
+    draft: dict = {}
+    check("first question is the subject", permissions.next_missing_field(draft).key, "subject")
+    draft["subject"] = "Принтер сотиб олиш"
+    check("then the reason", permissions.next_missing_field(draft).key, "reason")
+    draft["reason"] = "Эскиси ишламайди"
+    check("then the amount", permissions.next_missing_field(draft).key, "amount")
+    draft["amount_raw"] = "тахминан 2 млн"
+    check("unparsed amount is not re-asked", permissions.next_missing_field(draft).key, "execute_by")
+    for key, value in (
+        ("execute_by", "25.09.2026"),
+        ("decision_needed_by", "23.09.2026 12:00"),
+        ("urgency", "оддий"),
+        ("attachments", "йўқ"),
+    ):
+        draft[key] = value
+    check("complete form asks nothing", permissions.next_missing_field(draft), None)
+
+    # Buttons
+    buttons = [b for row in permissions.decision_keyboard("abc")["inline_keyboard"] for b in row]
+    check(
+        "four SOP outcomes",
+        [b["callback_data"].split(":")[1] for b in buttons],
+        ["approved", "approved_conditional", "rejected", "info_needed"],
+    )
+    check_true(
+        "decision callbacks fit Telegram's 64-byte limit",
+        all(len(b["callback_data"].encode()) <= 64 for b in buttons),
+    )
+
+    card = permissions.request_card({**draft, "request_no": "EMJ-2026-0007", "amount_tiyin": None}, for_approver=True)
+    check_true("card carries the request number", "EMJ-2026-0007" in card)
+    check_true("card uses the SOP's own field wording", "Нимага рухсат сўралади" in card)
+
+
 def main() -> int:
     """Run every check.
 
@@ -480,6 +540,7 @@ def main() -> int:
         test_aging,
         test_telegram,
         test_org_bot,
+        test_permissions,
         test_daily_report_kpi,
         test_brief_rendering,
         test_receivables_rendering,
