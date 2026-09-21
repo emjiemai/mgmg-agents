@@ -527,6 +527,16 @@ def test_permissions() -> None:
     check_true("card carries the request number", "EMJ-2026-0007" in card)
     check_true("card uses the SOP's own field wording", "Нимага рухсат сўралади" in card)
 
+    # 2026-09-21: an unescaped "&" or "<" in a typed answer made Telegram
+    # reject the approver's card, so the Director silently received nothing.
+    risky = {**draft, "subject": "A&B <тест>", "requester_name": "Ali <IT>", "request_no": "EMJ-2026-0008"}
+    risky_card = permissions.request_card(risky, for_approver=True)
+    check_true("typed '&' is escaped in the card", "A&amp;B" in risky_card)
+    check_true("typed '<' is escaped in the card", "&lt;тест&gt;" in risky_card and "<тест>" not in risky_card)
+    check_true("requester name is escaped", "Ali &lt;IT&gt;" in risky_card)
+    decided = permissions.decision_text({"status": "rejected", "request_no": "X", "decision_note": "нарх > лимит"})
+    check_true("decision note is escaped", "нарх &gt; лимит" in decided)
+
 
 def main() -> int:
     """Run every check.

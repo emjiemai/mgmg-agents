@@ -12,6 +12,7 @@ parsing and card rendering are exercised offline in scripts/selfcheck.py.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -101,13 +102,22 @@ _CURRENCIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("UZS", ("сўм", "сум", "so'm", "som", "uzs")),
 )
 
-
 # Words that turn a mention of "рухсат" into an actual request. Without one,
 # "директор рухсат берди" ("the director gave permission") would open a form.
 _REQUEST_CUES = (
     "kerak", "керак", "so'ra", "sora", "сўра", "сура", "bering", "беринг",
     "mumkinmi", "мумкинми", "olsam", "олсам", "прошу", "нужно", "нужна", "можно",
 )
+
+
+def _h(value: Any) -> str:
+    """Escape anything a person typed before it goes into Telegram HTML.
+
+    Telegram rejects a whole message whose HTML doesn't parse, so a single
+    "&" or "<" in an employee's answer ("A&B", "нарх < 5 млн") would otherwise
+    make the approver's card silently fail to arrive.
+    """
+    return html.escape(str(value), quote=False)
 
 
 def wants_permission(text: str) -> bool:
@@ -218,7 +228,11 @@ def next_missing_field(request: dict[str, Any]) -> Field | None:
 
 
 def field_value(request: dict[str, Any], field: Field) -> str:
-    """One field's value as it should appear on the card and in the form."""
+    """One field's value as plain text (the .docx uses this directly).
+
+    Not HTML-safe on its own — Telegram cards must go through
+    ``summary_lines``/``request_card``, which escape it.
+    """
     if field.key == "amount":
         return format_amount(
             request.get("amount_tiyin"), request.get("currency") or "UZS", request.get("amount_raw")
@@ -227,8 +241,8 @@ def field_value(request: dict[str, Any], field: Field) -> str:
 
 
 def summary_lines(request: dict[str, Any]) -> list[str]:
-    """The request's fields as "label: value" lines, in SOP order."""
-    return [f"<b>{field.label}:</b> {field_value(request, field)}" for field in FIELDS]
+    """The request's fields as HTML-safe "label: value" lines, in SOP order."""
+    return [f"<b>{field.label}:</b> {_h(field_value(request, field))}" for field in FIELDS]
 
 
 def request_card(request: dict[str, Any], *, for_approver: bool) -> str:
@@ -236,35 +250,32 @@ def request_card(request: dict[str, Any], *, for_approver: bool) -> str:
 
     Args:
         request: A ``permission_requests`` row.
-        for_approver: Include who is asking and the SOP reminder about
-            self-approval; the requester's own copy doesn't need either.
+        for_approver: Include who is asking; the requester's own copy
+            doesn't need it.
 
     Returns:
-        Telegram HTML.
+        Telegram HTML, with every typed value escaped.
     """
     number = request.get("request_no") or "—"
-    head = f"📄 <b>Ёзма рухсат сўрови</b> № {number}"
-    lines = [head, f"<i>{SOP_CODE}</i>", ""]
+    lines = [f"📄 <b>Ёзма рухсат сўрови</b> № {_h(number)}", f"<i>{SOP_CODE}</i>", ""]
     if for_approver:
-        lines.append(
-            f"<b>Ходим:</b> {request.get('requester_name', '—')} "
-            f"({request.get('requester_role_label') or request.get('requester_role', '—')})"
-        )
+        role = request.get("requester_role_label") or request.get("requester_role", "—")
+        lines.append(f"<b>Ходим:</b> {_h(request.get('requester_name', '—'))} ({_h(role)})")
     lines.extend(summary_lines(request))
     return "\n".join(lines)
 
 
 def decision_text(request: dict[str, Any]) -> str:
-    """The decision block, as the requester and the registry see it."""
+    """The decision block, as the requester sees it (Telegram HTML, escaped)."""
     status = request.get("status") or ""
     emoji, label = DECISIONS.get(status, ("", STATUS_LABELS.get(status, status)))
-    lines = [f"{emoji} <b>{label}</b>", f"№ {request.get('request_no') or '—'}"]
+    lines = [f"{emoji} <b>{label}</b>", f"№ {_h(request.get('request_no') or '—')}"]
     if request.get("approved_terms"):
-        lines.append(f"<b>Тасдиқланган сумма ва муддат:</b> {request['approved_terms']}")
+        lines.append(f"<b>Тасдиқланган сумма ва муддат:</b> {_h(request['approved_terms'])}")
     if request.get("decision_note"):
-        lines.append(f"<b>Шартлар ёки сабаб:</b> {request['decision_note']}")
+        lines.append(f"<b>Шартлар ёки сабаб:</b> {_h(request['decision_note'])}")
     if request.get("decided_by"):
-        lines.append(f"<b>Тасдиқловчи:</b> {request['decided_by']}")
+        lines.append(f"<b>Тасдиқловчи:</b> {_h(request['decided_by'])}")
     return "\n".join(lines)
 
 

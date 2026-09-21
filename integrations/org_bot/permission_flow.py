@@ -294,11 +294,25 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
 
     card = permissions.request_card(_with_labels(request), for_approver=True)
     keyboard = permissions.decision_keyboard(request_id)
+    delivered = 0
     for approver in approvers:
         try:
             await _send(approver["telegram_user_id"], card, run_id, keyboard)
+            delivered += 1
         except TelegramError as exc:
             log.error("Could not deliver request {} to {}: {}", request.get("request_no"), approver["telegram_user_id"], exc)
+
+    if delivered == 0:
+        # Never tell someone "sent" when no approver actually has it — the SOP
+        # says a missing answer is no permission, so a silent failure here
+        # would leave them waiting on a decision nobody can see.
+        await _send(
+            clicker_id,
+            f"⚠️ Сўров № {escape(request.get('request_no') or '—')} сақланди, лекин тасдиқловчига "
+            "етказиб бўлмади. Админга хабар беринг.",
+            run_id,
+        )
+        return "permission_undelivered"
 
     await _send(
         clicker_id,
@@ -434,15 +448,31 @@ async def registry_data() -> str:
         decision first, then the decided requests.
     """
     rows = await store.permission_registry(days=60)
-    if not rows:
+    drafts = await store.permission_drafts()
+
+    draft_lines = []
+    for draft in drafts:
+        state = "not finished — still answering questions" if draft.get("pending_field") else (
+            "filled in but NOT sent to any approver (if the requester is the Director and no "
+            "deputy is configured, nobody else is allowed to decide it — SOP forbids self-approval)"
+        )
+        draft_lines.append(
+            f"- DRAFT | {draft['requester_name']} ({_label(draft['requester_role'])}) | "
+            f"what: {draft.get('subject') or '—'} | {state}"
+        )
+
+    if not rows and not drafts:
         return (
             "No written permission requests yet. Employees start one by writing "
             "\"ruxsat\"/\"рухсат\" to this bot (EMJ-SOP-ADM-01); nothing is recorded until then."
         )
 
     pending = [r for r in rows if r["status"] in ("submitted", "info_needed")]
-    lines = [f"Written permission requests (EMJ-SOP-ADM-01), last 60 days: {len(rows)} total."]
+    lines = [f"Written permission requests (EMJ-SOP-ADM-01), last 60 days: {len(rows)} sent."]
     lines.append(f"Awaiting a decision: {len(pending)}.")
+    if draft_lines:
+        lines.append(f"Started but never sent to an approver: {len(draft_lines)}.")
+        lines.extend(draft_lines)
     for row in rows:
         enriched = _with_labels(row)
         amount = permissions.field_value(enriched, permissions.FIELD_BY_KEY["amount"])

@@ -1065,6 +1065,21 @@ async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
     )
 
 
+async def permission_drafts() -> list[dict[str, Any]]:
+    """Requests started but never sent — unfinished, cancelled-by-nobody drafts.
+
+    Kept visible in the registry answer because a request that was filled in
+    but never reached an approver (e.g. refused for having no one else to
+    decide it) otherwise vanishes: "do we have requests?" would say none.
+    """
+    return await fetch_all(
+        """
+        SELECT requester_name, requester_role, subject, created_at, pending_field
+        FROM permission_requests WHERE status = 'draft' ORDER BY created_at DESC
+        """
+    )
+
+
 async def report_results_before(day: date) -> list[dict[str, Any]]:
     """Every report row from the most recent day before ``day`` that anyone was asked.
 
