@@ -524,7 +524,7 @@ def test_permissions() -> None:
     confirm = [b for row in permissions.confirm_keyboard(real_id)["inline_keyboard"] for b in row]
     for button in buttons + confirm:
         check_true(
-            f"{button['text']} fits Telegram's 64-byte limit with a real id",
+            f"{button['callback_data'].rsplit(':', 1)[0]} button fits Telegram's 64-byte limit with a real id",
             len(button["callback_data"].encode()) <= 64,
         )
 
