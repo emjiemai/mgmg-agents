@@ -33,14 +33,17 @@ it is an accurate register, not an authority.
    kerak…", "прошу разрешение…"). Merely mentioning permission ("директор
    рухсат берди") does **not** open a form.
 2. The bot asks the SOP form's questions one at a time, in the form's order:
+   full name (typed by the employee — never the Telegram profile name),
    position, department, what is asked for, reason and proposal, amount and
    currency, execution deadline, when the decision is needed, urgency,
    attachments. Nothing is pre-filled or guessed.
 3. **Every answer is checked by the AI before it is kept.** A greeting,
    filler/test text, an answer to a different question or something too vague
    for an official document is not accepted — the bot says what is missing
-   and asks again. The AI only judges; the answer goes onto the form exactly
-   as typed (spelling and alphabet untouched). If the AI is unreachable, any
+   and asks again. An accepted answer is written in Uzbek Cyrillic with its
+   spelling fixed and English/Russian words translated, to match the
+   document; facts, numbers, dates and names are never changed, and the
+   requester reviews the whole form before sending. If the AI is unreachable, any
    non-trivial answer is accepted so nobody is stuck, and the approver still
    sees exactly what was written. `/bekor` cancels at any point.
 4. It shows the finished form and asks the requester to confirm with
@@ -58,7 +61,11 @@ it is an accurate register, not an authority.
    form filled in: each `____` blank replaced by the answer, and the decision
    box ticked (☐ → ☑). Page 1, including the director's
    "Тасдиқлайман" line, is never touched; a blank with no answer stays blank.
-   Signatures are recorded as "электрон, Telegram ID …".
+   Signatures ("Ходим имзоси", "Имзо") are left blank for signing by hand.
+   "Кимга тақдим этилади" is the approver's position; "Тасдиқловчи исми" is
+   the name the approver typed (asked on their first decision, then
+   remembered in `employees.full_name`). A long answer continues on the
+   form's own second underline line.
 
 To change the form's wording, replace the template file — the filler matches
 the printed labels, so a renamed label must also be renamed in

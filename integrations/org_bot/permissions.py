@@ -47,6 +47,13 @@ class Field:
 # Order follows the SOP form top to bottom.
 FIELDS: tuple[Field, ...] = (
     Field(
+        "requester_full_name",
+        "Исм ва фамилия",
+        "Исмингиз ва фамилиянгизни тўлиқ ёзинг (масалан: Алишер Каримов).",
+        "a person's real first name AND surname (two words at least); a nickname, a single name "
+        "or a Telegram-style handle is not enough",
+    ),
+    Field(
         "requester_position",
         "Лавозим",
         "Лавозимингиз қандай? (масалан: сотув менежери, бухгалтер)",
@@ -105,6 +112,48 @@ FIELDS: tuple[Field, ...] = (
 )
 
 FIELD_BY_KEY: dict[str, Field] = {f.key: f for f in FIELDS}
+
+# Asked of an approver (once — then remembered) and for the text they owe
+# with a conditional approval, a rejection or an information request.
+APPROVER_NAME_FIELD = Field(
+    "approver_full_name",
+    "Тасдиқловчи исми",
+    "Шаклга ёзиш учун исмингиз ва фамилиянгизни тўлиқ ёзинг:",
+    "a person's real first name AND surname (two words at least)",
+)
+DECISION_NOTE_FIELDS: dict[str, Field] = {
+    "approved_conditional": Field(
+        "decision_note", "Шартлар", "Шартларни, тасдиқланган сумма ва амал қилиш муддатини ёзинг:",
+        "the actual conditions of the approval",
+    ),
+    "rejected": Field(
+        "decision_note", "Рад этиш сабаби", "Рад этиш сабабини ёзинг:",
+        "an actual reason for the rejection",
+    ),
+    "info_needed": Field(
+        "decision_note", "Керакли маълумот", "Қандай қўшимча маълумот керак? Ёзинг:",
+        "what additional information is needed",
+    ),
+}
+
+# Role names as they appear on the Cyrillic SOP form (roles.py holds the
+# Latin labels the rest of the bot uses).
+ROLE_LABELS_CYR: dict[str, str] = {
+    "b2b_sotuv": "B2B сотув бўлими",
+    "it": "IT бўлими",
+    "buxgalteriya": "Бухгалтерия",
+    "hr": "Кадрлар бўлими (HR)",
+    "ombor": "Омбор",
+    "operatsion_direktor": "Операцион директор",
+    "mobilograf": "Мобилограф",
+    "aloqa_markazi": "Алоқа маркази",
+    "garmin_sotuv": "Garmin сотув бўлими",
+}
+
+
+def role_label_cyr(role: str) -> str:
+    """A role's name for the SOP form."""
+    return ROLE_LABELS_CYR.get(role, role)
 
 # The SOP's four outcomes, with the status stored for each.
 DECISIONS: dict[str, tuple[str, str]] = {
@@ -269,13 +318,11 @@ def request_card(request: dict[str, Any], *, for_approver: bool) -> str:
 
     Args:
         request: A ``permission_requests`` row.
-        for_approver: Include who is asking; the requester's own copy
-            doesn't need it.
+        for_approver: Kept for callers; both sides now see the same card,
+            which already starts with the requester's full name.
     """
     number = request.get("request_no") or "—"
     lines = [f"📄 <b>Ёзма рухсат сўрови</b> № {_h(number)}", f"<i>{SOP_CODE}</i>", ""]
-    if for_approver:
-        lines.append(f"<b>Ходим:</b> {_h(request.get('requester_name', '—'))}")
     lines.extend(summary_lines(request))
     return "\n".join(lines)
 

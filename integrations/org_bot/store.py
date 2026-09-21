@@ -36,6 +36,11 @@ async def get_employee_by_telegram_id(telegram_user_id: int) -> dict[str, Any] |
     )
 
 
+async def set_employee_full_name(telegram_user_id: int, full_name: str) -> None:
+    """Remember the name a person gave for official documents."""
+    await execute("UPDATE employees SET full_name = %s WHERE telegram_user_id = %s", (full_name, telegram_user_id))
+
+
 async def create_employee(
     *,
     telegram_user_id: int,
@@ -835,6 +840,7 @@ async def count_tasks_completed(employee_id: str, day: date) -> int:
 # Columns an answer may fill, so a field name can never reach SQL unchecked.
 _PERMISSION_TEXT_FIELDS = frozenset(
     {
+        "requester_full_name",
         "requester_position",
         "department",
         "subject",

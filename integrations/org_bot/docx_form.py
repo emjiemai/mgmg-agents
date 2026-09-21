@@ -72,6 +72,37 @@ def fill_blank_after(text: str, label: str, value: str) -> str:
     return text[: blank.start()] + value + text[blank.end() :]
 
 
+def fill_blank_fitting(text: str, label: str, value: str) -> tuple[str, str]:
+    """Like ``fill_blank_after``, but only as much as the blank's width holds.
+
+    Used where the form prints a second underline line for a long answer
+    ("Нимага рухсат сўралади", "Сабаб ва таклиф", "Шартлар ёки қарор
+    сабаби"): the answer is cut at a word boundary and the rest returned, to
+    be written on that next line — the way a person would continue by hand.
+
+    Returns:
+        ``(line, the part of the answer that didn't fit)``.
+    """
+    start = text.find(label)
+    if not value or start < 0:
+        return text, ""
+    blank = _BLANK.search(text, start + len(label))
+    if blank is None:
+        return text, ""
+    width = len(blank.group())
+    if len(value) <= width:
+        return text[: blank.start()] + value + text[blank.end() :], ""
+    cut = value.rfind(" ", 0, width + 1)
+    if cut <= 0:
+        cut = width
+    return text[: blank.start()] + value[:cut].rstrip() + text[blank.end() :], value[cut:].strip()
+
+
+def _is_continuation(text: str) -> bool:
+    """A line that is nothing but an underline — room for a long answer."""
+    return bool(_BLANK.fullmatch(text.strip()))
+
+
 def tick_decision(text: str, status: str) -> str:
     """Tick the one box that matches the decision, leaving the others empty."""
     box = _DECISION_BOXES.get(status)
@@ -83,22 +114,14 @@ def tick_decision(text: str, status: str) -> str:
 def form_values(request: dict[str, Any]) -> list[tuple[str, str]]:
     """Every (printed label, answer) pair on the page-2 form, in form order.
 
-    Answers are the employee's and approver's own words. The only values not
-    typed by a person are facts the system records: the request number, the
-    times, and the Telegram account behind each electronic signature.
+    Answers are the employee's and approver's own words (made Cyrillic and
+    spell-checked when they were accepted). The only values not typed by a
+    person are the request number and the two times the system records.
+    Signatures ("Ходим имзоси", "Имзо") are never filled — they are signed by
+    hand on the printed form.
     """
     position = _one_line(request.get("requester_position"))
-    name = _one_line(request.get("requester_name"))
-    signed_by_requester = (
-        f"электрон, Telegram ID {request['requester_telegram_user_id']}"
-        if request.get("submitted_at") and request.get("requester_telegram_user_id")
-        else ""
-    )
-    signed_by_approver = (
-        f"электрон, Telegram ID {request['decided_by_telegram_user_id']}"
-        if request.get("decided_at") and request.get("decided_by_telegram_user_id")
-        else ""
-    )
+    name = _one_line(request.get("requester_full_name"))
     answer = {f.key: _one_line(permissions.field_value(request, f)) for f in permissions.FIELDS}
     answer = {key: ("" if value == "—" else value) for key, value in answer.items()}
 
@@ -115,11 +138,9 @@ def form_values(request: dict[str, Any]) -> list[tuple[str, str]]:
         ("Қарор керак бўлган сана ва вақт", answer["decision_needed_by"]),
         ("Шошилинчлик сабаби ёки «оддий»", answer["urgency"]),
         ("Иловалар", answer["attachments"]),
-        ("Ходим имзоси", signed_by_requester),
         ("Тасдиқланган сумма ва амал қилиш муддати", _one_line(request.get("approved_terms"))),
         ("Шартлар ёки қарор сабаби", _one_line(request.get("decision_note"))),
         ("Тасдиқловчи исми ва лавозими", _one_line(request.get("decided_by"))),
-        ("Имзо", signed_by_approver),
         ("Қарор санаси ва вақти", _stamp(request.get("decided_at"))),
     ]
 
@@ -138,17 +159,25 @@ def fill_form(request: dict[str, Any]) -> Path:
     values = form_values(request)
     status = request.get("status") or ""
 
-    in_form = False
-    for paragraph in document.paragraphs:
+    paragraphs = document.paragraphs
+    start = next((i for i, p in enumerate(paragraphs) if FORM_TITLE in p.text), len(paragraphs))
+    carry = ""
+    for index in range(start + 1, len(paragraphs)):
+        paragraph = paragraphs[index]
         text = paragraph.text
-        if not in_form:
-            in_form = FORM_TITLE in text
-            continue
 
-        filled = text
-        for label, value in values:
-            filled = fill_blank_after(filled, label, value)
-        filled = tick_decision(filled, status)
+        if _is_continuation(text):
+            filled, carry = (carry, "") if carry else (text, "")
+        else:
+            continues = index + 1 < len(paragraphs) and _is_continuation(paragraphs[index + 1].text)
+            filled = text
+            for label, value in values:
+                if continues and label in filled:
+                    filled, rest = fill_blank_fitting(filled, label, value)
+                    carry = carry or rest
+                else:
+                    filled = fill_blank_after(filled, label, value)
+            filled = tick_decision(filled, status)
         if filled == text:
             continue
 

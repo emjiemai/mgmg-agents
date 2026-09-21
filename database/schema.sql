@@ -652,4 +652,8 @@ CREATE INDEX IF NOT EXISTS idx_permission_events_request
 -- ва лавозими", "Бўлим"); the bot asks for both rather than guessing them
 -- from the role, so nothing on the filed form is invented.
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS requester_position TEXT;
+ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS requester_full_name TEXT;
+-- The approver's own full name as they typed it for the SOP form (not the
+-- Telegram profile name), asked once and reused on later decisions.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS full_name TEXT;
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;

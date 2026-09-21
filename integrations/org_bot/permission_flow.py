@@ -3,8 +3,13 @@
 The bot asks the SOP form's questions one at a time. Each answer is checked by
 the AI before it is accepted: an answer that is unclear, off-topic or filler
 ("alo", "test", a "date" with no date in it) is not written onto the form —
-the bot says what is missing and asks again. The AI only judges; the answer
-goes onto the form exactly as the employee typed it.
+the bot says what is missing and asks again. An accepted answer is written in
+Uzbek Cyrillic with its spelling fixed, to match the document — the meaning,
+facts, numbers and names stay exactly the employee's. The requester sees the
+whole form before sending it, so any change the AI made is visible.
+
+Names on the form are the full names people type, never Telegram profile
+names; signatures are left blank for signing by hand.
 
 When the form is complete the requester confirms it, it goes to the
 authorised approvers with the SOP's four outcomes as buttons, and the decision
@@ -34,23 +39,32 @@ log = setup_logging(AGENT)
 CANCEL_HINT = "\n\n<i>Бекор қилиш: /bekor</i>"
 
 VALIDATE_SYSTEM = """You check ONE answer on a written permission request form \
-(EMJ-SOP-ADM-01) before it is written onto the company's official document.
+(EMJ-SOP-ADM-01, written in Uzbek Cyrillic) before it goes onto the company's \
+official document.
 
 You are given the form field, what a valid answer looks like, the question the \
 employee was asked, and their answer. Employees write in Uzbek (Latin or \
-Cyrillic) or Russian — every one of these is fine.
+Cyrillic), Russian or English.
 
-Decide only whether the answer genuinely and clearly answers THIS question:
-- Reject greetings ("alo", "salom"), filler or test text ("test", "asd", \
+1. Decide whether the answer genuinely and clearly answers THIS question.
+   Reject greetings ("alo", "salom"), filler or test text ("test", "asd", \
 "...", "?"), an answer to a different question, and anything too vague to \
-stand on an official document.
-- Do NOT reject for spelling, grammar, alphabet or brevity when the meaning is \
-clear. A short but clear answer is acceptable.
-- Never rewrite, improve, translate or complete the answer. You only judge it.
+stand on an official document. Do NOT reject for spelling, alphabet, language \
+or brevity when the meaning is clear.
+2. If it is acceptable, write it for the form:
+   - in Uzbek Cyrillic (transliterate Uzbek Latin; translate Russian or \
+English words into Uzbek, e.g. "IT Specialist" -> "IT мутахассис");
+   - with spelling and grammar corrected, and shaped to fit the form's field \
+(e.g. for "Бўлим", "IT bo'limida" -> "IT бўлими");
+   - keep abbreviations and brand names as they are (IT, AI, CRM, SAP, \
+Telegram, Render);
+   - people's names: transliterate to Cyrillic, never change them;
+   - NEVER add, remove or change any fact, number, amount, date, time or \
+name. Do not expand or embellish: same meaning, roughly the same length.
 
-Return ONLY JSON. Acceptable: {"ok": true}. Not acceptable: \
-{"ok": false, "follow_up": "<one short, polite question in Uzbek Cyrillic that \
-says exactly what is missing or unclear>"}."""
+Return ONLY JSON. Acceptable: {"ok": true, "value": "<the answer for the form>"}. \
+Not acceptable: {"ok": false, "follow_up": "<one short, polite question in \
+Uzbek Cyrillic that says exactly what is missing or unclear>"}."""
 
 
 def _label(role: str) -> str:
@@ -90,14 +104,16 @@ async def _approvers(exclude_telegram_user_id: int) -> list[dict[str, Any]]:
     return list(found.values())
 
 
-async def _check_answer(field: permissions.Field, answer: str, run_id: uuid.UUID) -> tuple[bool, str | None]:
+async def _check_answer(
+    field: permissions.Field, answer: str, run_id: uuid.UUID
+) -> tuple[bool, str | None, str]:
     """Ask the AI whether this answer can go onto the official form.
 
     Returns:
-        ``(acceptable, follow-up question)``. If the AI can't be reached the
-        answer is accepted when it's more than a character or two — a
-        provider outage must not trap an employee in an endless loop — and
-        the approver still sees exactly what was written.
+        ``(acceptable, follow-up question, text for the form)``. If the AI
+        can't be reached the answer is accepted as typed when it's more than
+        a character or two — a provider outage must not trap an employee in
+        an endless loop — and the requester still reviews the form.
     """
     message = (
         f"Field: {field.label}\n"
@@ -116,12 +132,13 @@ async def _check_answer(field: permissions.Field, answer: str, run_id: uuid.UUID
             verdict = await ai.complete_json(VALIDATE_SYSTEM, message)
     except OpenRouterError as exc:
         log.warning("Answer check unavailable, accepting '{}' for {}: {}", answer[:60], field.key, exc)
-        return len(answer.strip()) >= 2, None
+        return len(answer.strip()) >= 2, None, answer.strip()
 
     if verdict.get("ok") is True:
-        return True, None
+        value = " ".join(str(verdict.get("value") or "").split())
+        return True, None, value or answer.strip()
     follow_up = str(verdict.get("follow_up") or "").strip()
-    return False, follow_up or None
+    return False, follow_up or None, ""
 
 
 async def _ask_next(request: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -136,7 +153,8 @@ async def _ask_next(request: dict[str, Any], run_id: uuid.UUID) -> str:
     card = permissions.request_card(request, for_approver=False)
     await _send(
         request["requester_telegram_user_id"],
-        f"{card}\n\nТўғри бўлса, юборинг:",
+        f"{card}\n\n<i>Жавоблар расмий шакл учун кирилл ёзувига ўтказилди ва имлоси тузатилди. "
+        "Текширинг — тўғри бўлса, юборинг:</i>",
         run_id,
         permissions.confirm_keyboard(str(request["id"])),
     )
@@ -144,7 +162,7 @@ async def _ask_next(request: dict[str, Any], run_id: uuid.UUID) -> str:
 
 
 async def _store_answer(draft: dict[str, Any], field: permissions.Field, answer: str) -> dict[str, Any]:
-    """Save an accepted answer exactly as typed."""
+    """Save an accepted answer (already in its form wording)."""
     if field.key == "amount":
         amount, currency = permissions.parse_amount(answer)
         return await store.set_permission_amount(str(draft["id"]), amount, currency, answer) or draft
@@ -172,7 +190,7 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     #    request — their next message is that text.
     awaiting = await store.awaiting_permission_note(telegram_user_id)
     if awaiting is not None:
-        return await _finalize_decision(awaiting, awaiting["pending_decision"], text, employee, run_id)
+        return await _approver_reply(awaiting, text, employee, run_id)
 
     draft = await store.get_permission_draft(telegram_user_id)
 
@@ -192,12 +210,12 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     if draft is not None and draft.get("pending_field"):
         field = permissions.FIELD_BY_KEY.get(draft["pending_field"])
         if field is not None:
-            acceptable, follow_up = await _check_answer(field, text, run_id)
+            acceptable, follow_up, value = await _check_answer(field, text, run_id)
             if not acceptable:
                 question = follow_up or f"Жавоб тушунарсиз. {field.question}"
                 await _send(telegram_user_id, f"🔁 {escape(question)}{CANCEL_HINT}", run_id)
                 return "permission_reasked"
-            draft = await _store_answer(draft, field, text)
+            draft = await _store_answer(draft, field, value)
             return await _ask_next(draft, run_id)
 
     # 4. A new request.
@@ -290,7 +308,8 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
         )
         return "permission_no_approver"
 
-    submitted_to = ", ".join(f"{a['display_name']} ({_label(a['role'])})" for a in approvers)
+    # The form names the position it goes to, not anyone's Telegram name.
+    submitted_to = ", ".join(dict.fromkeys(permissions.role_label_cyr(a["role"]) for a in approvers))
     request = await store.submit_permission_request(request_id, submitted_to) or request
     await store.add_permission_event(
         request_id=request_id,
@@ -354,20 +373,46 @@ async def _take_decision(request_id: str, decision: str, clicker: dict[str, Any]
         return "permission_already_decided"
 
     approver = await store.get_employee_by_telegram_id(clicker_id)
-    if decision == "approved":
+    has_name = bool(approver and (approver.get("full_name") or "").strip())
+    if decision == "approved" and has_name:
         return await _finalize_decision(request, decision, None, approver, run_id)
 
     started = await store.start_permission_decision(request_id, decision, clicker_id)
     if started is None:
         return "permission_already_decided"
 
-    prompts = {
-        "approved_conditional": "Шартларни, тасдиқланган сумма ва амал қилиш муддатини ёзинг:",
-        "rejected": "Рад этиш сабабини ёзинг:",
-        "info_needed": "Қандай қўшимча маълумот керак? Ёзинг:",
-    }
-    await _send(clicker_id, f"✍️ {prompts[decision]}", run_id)
+    # The form needs the approver's real name: asked once, then remembered.
+    field = permissions.DECISION_NOTE_FIELDS[decision] if has_name else permissions.APPROVER_NAME_FIELD
+    await _send(clicker_id, f"✍️ {escape(field.question)}", run_id)
     return "permission_decision_pending"
+
+
+async def _approver_reply(
+    request: dict[str, Any], text: str, approver: dict[str, Any], run_id: uuid.UUID
+) -> str:
+    """The approver's typed text: their full name first (once), then the note."""
+    decision = request["pending_decision"]
+    approver_id = approver["telegram_user_id"]
+    needs_name = not (approver.get("full_name") or "").strip()
+    field = permissions.APPROVER_NAME_FIELD if needs_name else permissions.DECISION_NOTE_FIELDS.get(decision)
+    if field is None:  # a plain approval owes no note
+        return await _finalize_decision(request, decision, None, approver, run_id)
+
+    acceptable, follow_up, value = await _check_answer(field, text, run_id)
+    if not acceptable:
+        await _send(approver_id, f"🔁 {escape(follow_up or field.question)}", run_id)
+        return "permission_reasked"
+
+    if needs_name:
+        await store.set_employee_full_name(approver_id, value)
+        approver = {**approver, "full_name": value}
+        note_field = permissions.DECISION_NOTE_FIELDS.get(decision)
+        if note_field is None:
+            return await _finalize_decision(request, decision, None, approver, run_id)
+        await _send(approver_id, f"✍️ {escape(note_field.question)}", run_id)
+        return "permission_decision_pending"
+
+    return await _finalize_decision(request, decision, value, approver, run_id)
 
 
 async def _finalize_decision(
@@ -378,7 +423,12 @@ async def _finalize_decision(
     run_id: uuid.UUID,
 ) -> str:
     """Store the decision, tell the requester, and send the filled SOP form."""
-    approver_name = f"{approver['display_name']} ({_label(approver['role'])})" if approver else "Ваколатли шахс"
+    # "Тасдиқловчи исми ва лавозими": the name they typed, and their position.
+    approver_name = (
+        f"{approver.get('full_name') or ''}, {permissions.role_label_cyr(approver['role'])}".strip(", ")
+        if approver
+        else "Ваколатли шахс"
+    )
     approver_id = approver["telegram_user_id"] if approver else None
 
     if decision == "approved":
@@ -473,7 +523,8 @@ async def registry_data() -> str:
         stamp = submitted.strftime("%d.%m.%Y %H:%M") if hasattr(submitted, "strftime") else "—"
         line = (
             f"- {row.get('request_no') or '(no number)'} | {stamp} | "
-            f"{row['requester_name']} ({row.get('requester_position') or _label(row['requester_role'])}) | "
+            f"{row.get('requester_full_name') or row['requester_name']} "
+            f"({row.get('requester_position') or _label(row['requester_role'])}) | "
             f"status: {permissions.STATUS_LABELS.get(row['status'], row['status'])} | "
             f"what: {row.get('subject') or '—'} | amount: {amount} | "
             f"needed by: {row.get('decision_needed_by') or '—'}"

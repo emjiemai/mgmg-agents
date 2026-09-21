@@ -495,7 +495,9 @@ def test_permissions() -> None:
 
     # Question order follows the SOP form, and an unparseable amount still counts
     draft: dict = {}
-    check("first question is the position", permissions.next_missing_field(draft).key, "requester_position")
+    check("first question is the full name", permissions.next_missing_field(draft).key, "requester_full_name")
+    draft["requester_full_name"] = "Алишер Каримов"
+    check("then the position", permissions.next_missing_field(draft).key, "requester_position")
     draft["requester_position"] = "IT мутахассис"
     check("then the department", permissions.next_missing_field(draft).key, "department")
     draft["department"] = "IT"
@@ -538,7 +540,7 @@ def test_permissions() -> None:
 
     # 2026-09-21: an unescaped "&" or "<" in a typed answer made Telegram
     # reject the approver's card, so the Director silently received nothing.
-    risky = {**draft, "subject": "A&B <тест>", "requester_name": "Ali <IT>", "request_no": "EMJ-2026-0008"}
+    risky = {**draft, "subject": "A&B <тест>", "requester_full_name": "Ali <IT>", "request_no": "EMJ-2026-0008"}
     risky_card = permissions.request_card(risky, for_approver=True)
     check_true("typed '&' is escaped in the card", "A&amp;B" in risky_card)
     check_true("typed '<' is escaped in the card", "&lt;тест&gt;" in risky_card and "<тест>" not in risky_card)
@@ -568,12 +570,14 @@ def test_permission_form() -> None:
 
     request = {
         "request_no": "EMJ-2026-0009",
-        "requester_name": "Test Xodim",
+        "requester_name": "tg_profile_name",
+        "requester_full_name": "Алишер Каримов",
         "requester_position": "IT мутахассис",
         "department": "IT",
-        "submitted_to": "Director (Операцион директор)",
+        "submitted_to": "Операцион директор",
         "subject": "Принтер сотиб олиш",
-        "reason": "Эскиси ишламайди",
+        "reason": "Эскиси ишламайди, ҳужжатлар кечикяпти; офис учун янги лазерли принтер олиш ва эскисини "
+        "омборга топшириш таклиф қилинади",
         "amount_raw": "2 000 000 сўм",
         "execute_by": "25.09.2026",
         "decision_needed_by": "23.09.2026 12:00",
@@ -584,7 +588,7 @@ def test_permission_form() -> None:
         "status": "approved_conditional",
         "approved_terms": "1 800 000 сўм, 30.09.2026 гача",
         "decision_note": "Фақат шартнома билан",
-        "decided_by": "Director (Операцион директор)",
+        "decided_by": "Бобур Алиев, Операцион директор",
         "decided_by_telegram_user_id": 222,
         "decided_at": datetime(2026, 9, 21, 8, 30, tzinfo=timezone.utc),
     }
@@ -595,10 +599,18 @@ def test_permission_form() -> None:
     title_at = next(i for i, t in enumerate(source) if docx_form.FORM_TITLE in t)
     check("page 1 is untouched (incl. director's approval line)", filled[: title_at + 1], source[: title_at + 1])
     for expected in (
-        "EMJ-2026-0009", "21.09.2026 11:00", "Test Xodim, IT мутахассис", "Принтер сотиб олиш",
-        "2 000 000 сўм", "Telegram ID 111", "Фақат шартнома билан", "Telegram ID 222", "21.09.2026 13:30",
+        "EMJ-2026-0009", "21.09.2026 11:00", "Алишер Каримов, IT мутахассис", "Принтер сотиб олиш",
+        "2 000 000 сўм", "Фақат шартнома билан", "Бобур Алиев, Операцион директор", "21.09.2026 13:30",
     ):
         check_true(f"form contains '{expected}'", expected in body)
+    check_true("no Telegram profile name on the form", "tg_profile_name" not in body)
+    form_part = chr(10).join(filled[title_at:])
+    check_true("no electronic signature text", "Telegram ID" not in form_part and "электрон" not in form_part)
+    check_true("employee signature left for hand", any(t.startswith("Иловалар") and t.rstrip().endswith("_") for t in filled))
+    check_true("approver signature left for hand", any(t.startswith("Имзо ___") for t in filled))
+    reason_at = next(i for i, t in enumerate(filled) if t.startswith("Сабаб ва таклиф"))
+    check_true("long reason continues on the form's next line", "омборга топшириш" in filled[reason_at + 1])
+    check_true("reason line keeps its width", len(filled[reason_at]) <= len(source[reason_at]))
     check_true("the conditional box is ticked", "☑ Шарт билан тасдиқланди" in body)
     check_true("the other boxes stay empty", "☐ Тасдиқланди" in body and "☐ Рад этилди" in body)
     changed = [i for i, (a, b) in enumerate(zip(source, filled)) if a != b]
