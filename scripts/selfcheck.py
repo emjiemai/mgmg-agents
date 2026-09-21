@@ -511,17 +511,22 @@ def test_permissions() -> None:
         draft[key] = value
     check("complete form asks nothing", permissions.next_missing_field(draft), None)
 
-    # Buttons
-    buttons = [b for row in permissions.decision_keyboard("abc")["inline_keyboard"] for b in row]
+    # Buttons — with a REAL 36-character id. A short fake id is exactly what
+    # hid the 65-byte "approved_conditional" button that made Telegram reject
+    # every approver card (2026-09-21).
+    real_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    buttons = [b for row in permissions.decision_keyboard(real_id)["inline_keyboard"] for b in row]
     check(
         "four SOP outcomes",
-        [b["callback_data"].split(":")[1] for b in buttons],
+        [permissions.DECISION_CODES[b["callback_data"].split(":")[1]] for b in buttons],
         ["approved", "approved_conditional", "rejected", "info_needed"],
     )
-    check_true(
-        "decision callbacks fit Telegram's 64-byte limit",
-        all(len(b["callback_data"].encode()) <= 64 for b in buttons),
-    )
+    confirm = [b for row in permissions.confirm_keyboard(real_id)["inline_keyboard"] for b in row]
+    for button in buttons + confirm:
+        check_true(
+            f"{button['text']} fits Telegram's 64-byte limit with a real id",
+            len(button["callback_data"].encode()) <= 64,
+        )
 
     card = permissions.request_card({**draft, "request_no": "EMJ-2026-0007", "amount_tiyin": None}, for_approver=True)
     check_true("card carries the request number", "EMJ-2026-0007" in card)

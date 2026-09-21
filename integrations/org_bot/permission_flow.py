@@ -256,7 +256,10 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         return await _submit(rest, clicker_id, run_id)
 
     if prefix == "permdec":
-        decision, _, request_id = rest.partition(":")
+        code, _, request_id = rest.partition(":")
+        decision = permissions.DECISION_CODES.get(code)
+        if decision is None:
+            return "permission_unknown_decision"
         return await _take_decision(request_id, decision, clicker, run_id)
 
     return None

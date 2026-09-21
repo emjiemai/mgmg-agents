@@ -291,18 +291,29 @@ def confirm_keyboard(request_id: str) -> dict[str, Any]:
     }
 
 
+# Telegram caps a button's callback_data at 64 bytes and rejects the WHOLE
+# message if one button exceeds it. "permdec:approved_conditional:" plus a
+# 36-character UUID is 65 bytes — which is why approvers never received a
+# single card. One-letter codes keep every button far under the limit.
+DECISION_CODES: dict[str, str] = {
+    "a": "approved",
+    "c": "approved_conditional",
+    "r": "rejected",
+    "i": "info_needed",
+}
+_CODE_BY_DECISION: dict[str, str] = {status: code for code, status in DECISION_CODES.items()}
+
+
 def decision_keyboard(request_id: str) -> dict[str, Any]:
     """The approver's four SOP outcomes, two per row so labels stay readable."""
+
+    def button(text: str, decision: str) -> dict[str, str]:
+        return {"text": text, "callback_data": f"permdec:{_CODE_BY_DECISION[decision]}:{request_id}"}
+
     return {
         "inline_keyboard": [
-            [
-                {"text": "✅ Тасдиқлаш", "callback_data": f"permdec:approved:{request_id}"},
-                {"text": "⚠️ Шарт билан", "callback_data": f"permdec:approved_conditional:{request_id}"},
-            ],
-            [
-                {"text": "❌ Рад этиш", "callback_data": f"permdec:rejected:{request_id}"},
-                {"text": "ℹ️ Маълумот", "callback_data": f"permdec:info_needed:{request_id}"},
-            ],
+            [button("✅ Тасдиқлаш", "approved"), button("⚠️ Шарт билан", "approved_conditional")],
+            [button("❌ Рад этиш", "rejected"), button("ℹ️ Маълумот", "info_needed")],
         ]
     }
 
