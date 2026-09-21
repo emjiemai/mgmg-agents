@@ -495,7 +495,11 @@ def test_permissions() -> None:
 
     # Question order follows the SOP form, and an unparseable amount still counts
     draft: dict = {}
-    check("first question is the subject", permissions.next_missing_field(draft).key, "subject")
+    check("first question is the position", permissions.next_missing_field(draft).key, "requester_position")
+    draft["requester_position"] = "IT мутахассис"
+    check("then the department", permissions.next_missing_field(draft).key, "department")
+    draft["department"] = "IT"
+    check("then the subject", permissions.next_missing_field(draft).key, "subject")
     draft["subject"] = "Принтер сотиб олиш"
     check("then the reason", permissions.next_missing_field(draft).key, "reason")
     draft["reason"] = "Эскиси ишламайди"
@@ -541,6 +545,64 @@ def test_permissions() -> None:
     check_true("requester name is escaped", "Ali &lt;IT&gt;" in risky_card)
     decided = permissions.decision_text({"status": "rejected", "request_no": "X", "decision_note": "нарх > лимит"})
     check_true("decision note is escaped", "нарх &gt; лимит" in decided)
+    check_true("/bekor cancels", permissions.is_cancel(" /bekor ") and permissions.is_cancel("/бекор"))
+    check_true("an answer is not a cancel", not permissions.is_cancel("бекор қилинган буюртма"))
+
+
+def test_permission_form() -> None:
+    """The company's own SOP .docx is filled in place — never regenerated."""
+    print("permission form (company docx filled in place)")
+    from datetime import datetime, timezone
+
+    from docx import Document
+
+    from integrations.org_bot import docx_form
+
+    check("blank after label is filled", docx_form.fill_blank_after("Бўлим: ______", "Бўлим", "IT"), "Бўлим: IT")
+    check("empty answer leaves the blank", docx_form.fill_blank_after("Бўлим: ______", "Бўлим", ""), "Бўлим: ______")
+    check(
+        "only the chosen box is ticked",
+        docx_form.tick_decision("☐ Тасдиқланди     ☐ Шарт билан тасдиқланди", "approved_conditional"),
+        "☐ Тасдиқланди     ☑ Шарт билан тасдиқланди",
+    )
+
+    request = {
+        "request_no": "EMJ-2026-0009",
+        "requester_name": "Test Xodim",
+        "requester_position": "IT мутахассис",
+        "department": "IT",
+        "submitted_to": "Director (Операцион директор)",
+        "subject": "Принтер сотиб олиш",
+        "reason": "Эскиси ишламайди",
+        "amount_raw": "2 000 000 сўм",
+        "execute_by": "25.09.2026",
+        "decision_needed_by": "23.09.2026 12:00",
+        "urgency": "оддий",
+        "attachments": "йўқ",
+        "requester_telegram_user_id": 111,
+        "submitted_at": datetime(2026, 9, 21, 6, 0, tzinfo=timezone.utc),
+        "status": "approved_conditional",
+        "approved_terms": "1 800 000 сўм, 30.09.2026 гача",
+        "decision_note": "Фақат шартнома билан",
+        "decided_by": "Director (Операцион директор)",
+        "decided_by_telegram_user_id": 222,
+        "decided_at": datetime(2026, 9, 21, 8, 30, tzinfo=timezone.utc),
+    }
+    source = [p.text for p in Document(str(docx_form.TEMPLATE_PATH)).paragraphs]
+    filled = [p.text for p in Document(str(docx_form.fill_form(request))).paragraphs]
+    body = chr(10).join(filled)
+    check("same paragraphs as the company's file", len(filled), len(source))
+    title_at = next(i for i, t in enumerate(source) if docx_form.FORM_TITLE in t)
+    check("page 1 is untouched (incl. director's approval line)", filled[: title_at + 1], source[: title_at + 1])
+    for expected in (
+        "EMJ-2026-0009", "21.09.2026 11:00", "Test Xodim, IT мутахассис", "Принтер сотиб олиш",
+        "2 000 000 сўм", "Telegram ID 111", "Фақат шартнома билан", "Telegram ID 222", "21.09.2026 13:30",
+    ):
+        check_true(f"form contains '{expected}'", expected in body)
+    check_true("the conditional box is ticked", "☑ Шарт билан тасдиқланди" in body)
+    check_true("the other boxes stay empty", "☐ Тасдиқланди" in body and "☐ Рад этилди" in body)
+    changed = [i for i, (a, b) in enumerate(zip(source, filled)) if a != b]
+    check_true("only form lines changed", all(i > title_at for i in changed))
 
 
 def main() -> int:
@@ -556,6 +618,7 @@ def main() -> int:
         test_telegram,
         test_org_bot,
         test_permissions,
+        test_permission_form,
         test_daily_report_kpi,
         test_brief_rendering,
         test_receivables_rendering,

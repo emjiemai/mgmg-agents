@@ -2,9 +2,10 @@
 
 The SOP's page-2 form is the contract this module implements: the same fields,
 in the same order, with the same four decision outcomes. Everything an
-employee or approver reads here is in Uzbek Cyrillic, matching the document
-itself — a filled form in one alphabet and a chat trail in another would be
-awkward to file together.
+employee or approver reads here is in Uzbek Cyrillic, matching the document.
+
+Answers are kept exactly as the employee wrote them — they go onto the official
+form word for word, so nothing here rewrites, completes or reformats them.
 
 Pure functions only (no DB, no Telegram), so the question order, amount
 parsing and card rendering are exercised offline in scripts/selfcheck.py.
@@ -15,67 +16,91 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 SOP_CODE = "EMJ-SOP-ADM-01"
 
 # Both alphabets, because people type either one: "ruxsat", "рухсат".
 TRIGGER_WORDS = ("ruxsat", "рухсат", "ruhsat", "разреш", "permission")
 COMMANDS = ("/ruxsat", "/ruhsat", "/permission")
+CANCEL_COMMANDS = ("/bekor", "/cancel", "/бекор")
 
 
 @dataclass(frozen=True)
 class Field:
-    """One question the bot asks, mapped to a field of the SOP form.
+    """One question the bot asks, mapped to a blank on the SOP form.
 
     Attributes:
         key: Column in ``permission_requests``.
-        label: The SOP form's own wording, used in the card and the .docx.
+        label: The SOP form's own wording.
         question: What the bot asks, in Uzbek Cyrillic.
+        rule: What a valid answer looks like — given to the AI that checks
+            each answer before it is accepted onto the official form.
     """
 
     key: str
     label: str
     question: str
+    rule: str
 
 
-# Order matters: it is the order of the SOP form, so a filled request reads
-# top to bottom exactly like the paper version.
+# Order follows the SOP form top to bottom.
 FIELDS: tuple[Field, ...] = (
+    Field(
+        "requester_position",
+        "Лавозим",
+        "Лавозимингиз қандай? (масалан: сотув менежери, бухгалтер)",
+        "a real job title or position",
+    ),
+    Field(
+        "department",
+        "Бўлим",
+        "Қайси бўлимда ишлайсиз?",
+        "a real department or team name",
+    ),
     Field(
         "subject",
         "Нимага рухсат сўралади",
         "Нимага рухсат сўраяпсиз? Қисқа ва аниқ ёзинг.",
+        "a concrete, specific thing the employee asks permission for",
     ),
     Field(
         "reason",
         "Сабаб ва таклиф",
         "Сабабини ва таклифингизни ёзинг: нима учун керак, қандай ҳал қилишни таклиф қиласиз?",
+        "an actual explanation of why it is needed and what they propose",
     ),
     Field(
         "amount",
         "Сумма ва валюта",
         "Сумма ва валютани ёзинг. Харажат бўлмаса «0» деб ёзинг.",
+        "'0' when there is no cost, or an amount that contains a number (a currency is expected; "
+        "an approximate amount with a number is acceptable)",
     ),
     Field(
         "execute_by",
         "Бажариш муддати",
         "Ишни қачонгача бажариш керак? (масалан: 25.09.2026)",
+        "an identifiable date or a clear time frame (e.g. 25.09.2026, 'эртага', 'шу ҳафта ичида')",
     ),
     Field(
         "decision_needed_by",
         "Қарор керак бўлган сана ва вақт",
         "Қарор қачонгача керак? (сана ва вақт)",
+        "an identifiable date/time or a clear time reference (e.g. '22.09.2026 12:00', 'бугун 15:00', "
+        "'ҳозир', 'эртага')",
     ),
     Field(
         "urgency",
-        "Шошилинчлик сабаби",
+        "Шошилинчлик сабаби ёки «оддий»",
         "Шошилинч бўлса сабабини ёзинг. Шошилинч бўлмаса «оддий» деб ёзинг.",
+        "either the word 'оддий'/'oddiy' (not urgent) or a real reason why it is urgent",
     ),
     Field(
         "attachments",
         "Иловалар",
         "Илова қиладиган ҳужжат борми? Номини ёзинг, бўлмаса «йўқ» деб ёзинг.",
+        "names of the documents attached, or 'йўқ'/'yo'q' when there are none",
     ),
 )
 
@@ -114,8 +139,8 @@ def _h(value: Any) -> str:
     """Escape anything a person typed before it goes into Telegram HTML.
 
     Telegram rejects a whole message whose HTML doesn't parse, so a single
-    "&" or "<" in an employee's answer ("A&B", "нарх < 5 млн") would otherwise
-    make the approver's card silently fail to arrive.
+    "&" or "<" in an answer would otherwise make the approver's card silently
+    fail to arrive.
     """
     return html.escape(str(value), quote=False)
 
@@ -124,9 +149,7 @@ def wants_permission(text: str) -> bool:
     """Whether this message is starting a written permission request.
 
     A command always counts. Otherwise the message must both mention
-    permission and read like a request — and be short enough to be one: a
-    long message that happens to contain the word is almost always a report
-    about a permission, not a request for one.
+    permission and read like a request, and be short enough to be one.
 
     Args:
         text: The employee's message.
@@ -146,16 +169,23 @@ def wants_permission(text: str) -> bool:
     return any(cue in lowered for cue in _REQUEST_CUES)
 
 
+def is_cancel(text: str) -> bool:
+    """Whether the message cancels the request being filled in."""
+    return (text or "").strip().lower() in CANCEL_COMMANDS
+
+
 def parse_amount(text: str) -> tuple[int | None, str]:
-    """Read "Сумма ва валюта" out of a free-text answer.
+    """Read a number and currency out of the "Сумма ва валюта" answer.
+
+    Used only for the register's machine-readable columns — the form itself
+    always shows the answer exactly as typed.
 
     Args:
         text: What the employee typed, e.g. "5 000 000 сўм", "$1200", "0".
 
     Returns:
-        ``(amount in minor units, currency code)``. The amount is None when no
-        number was found at all — never guessed, so the form shows the raw
-        answer rather than an invented figure. Currency defaults to UZS.
+        ``(amount in minor units or None, currency code)``. Never guessed:
+        no number means None.
     """
     lowered = (text or "").lower().replace(" ", " ")
     currency = "UZS"
@@ -164,8 +194,6 @@ def parse_amount(text: str) -> tuple[int | None, str]:
             currency = code
             break
 
-    # Keep digits with their separators, then drop the separators: "5 000 000"
-    # and "5.000.000" are both five million, not 5.
     match = re.search(r"\d[\d\s.,]*", lowered)
     if not match:
         return None, currency
@@ -176,19 +204,21 @@ def parse_amount(text: str) -> tuple[int | None, str]:
 
 
 def format_amount(amount_tiyin: int | None, currency: str, raw: str | None = None) -> str:
-    """Render the amount for the card and the form.
+    """Render a parsed amount, for places that only have the parsed figure.
 
     Args:
         amount_tiyin: Stored minor units, or None when nothing parsed.
         currency: Currency code.
-        raw: The employee's original answer, used when nothing parsed.
+        raw: The employee's original answer.
 
     Returns:
-        "0" for a no-cost request, a grouped amount with its currency
-        otherwise, or the raw answer when it couldn't be read as a number.
+        The raw answer when there is one (the form never shows anything the
+        employee didn't write), otherwise a grouped figure.
     """
+    if raw and raw.strip():
+        return raw.strip()
     if amount_tiyin is None:
-        return (raw or "").strip() or "—"
+        return "—"
     if amount_tiyin == 0:
         return "0"
     whole = amount_tiyin // 100
@@ -198,12 +228,7 @@ def format_amount(amount_tiyin: int | None, currency: str, raw: str | None = Non
 
 
 def _amount_answered(request: dict[str, Any]) -> bool:
-    """Whether "Сумма ва валюта" has been answered.
-
-    An answer that isn't a plain number ("тахминан 2 млн", "ҳали аниқ эмас")
-    still counts as answered — it's kept verbatim in ``amount_raw`` and shown
-    as typed, rather than re-asking the same question forever.
-    """
+    """Whether "Сумма ва валюта" has been answered (raw text is the answer)."""
     return request.get("amount_tiyin") is not None or bool((request.get("amount_raw") or "").strip())
 
 
@@ -228,15 +253,9 @@ def next_missing_field(request: dict[str, Any]) -> Field | None:
 
 
 def field_value(request: dict[str, Any], field: Field) -> str:
-    """One field's value as plain text (the .docx uses this directly).
-
-    Not HTML-safe on its own — Telegram cards must go through
-    ``summary_lines``/``request_card``, which escape it.
-    """
+    """One field's answer exactly as typed (plain text, not HTML-safe)."""
     if field.key == "amount":
-        return format_amount(
-            request.get("amount_tiyin"), request.get("currency") or "UZS", request.get("amount_raw")
-        )
+        return format_amount(request.get("amount_tiyin"), request.get("currency") or "UZS", request.get("amount_raw"))
     return (str(request.get(field.key) or "—")).strip()
 
 
@@ -246,21 +265,17 @@ def summary_lines(request: dict[str, Any]) -> list[str]:
 
 
 def request_card(request: dict[str, Any], *, for_approver: bool) -> str:
-    """The request as a Telegram card.
+    """The request as a Telegram card (every typed value escaped).
 
     Args:
         request: A ``permission_requests`` row.
         for_approver: Include who is asking; the requester's own copy
             doesn't need it.
-
-    Returns:
-        Telegram HTML, with every typed value escaped.
     """
     number = request.get("request_no") or "—"
     lines = [f"📄 <b>Ёзма рухсат сўрови</b> № {_h(number)}", f"<i>{SOP_CODE}</i>", ""]
     if for_approver:
-        role = request.get("requester_role_label") or request.get("requester_role", "—")
-        lines.append(f"<b>Ходим:</b> {_h(request.get('requester_name', '—'))} ({_h(role)})")
+        lines.append(f"<b>Ходим:</b> {_h(request.get('requester_name', '—'))}")
     lines.extend(summary_lines(request))
     return "\n".join(lines)
 
@@ -316,22 +331,3 @@ def decision_keyboard(request_id: str) -> dict[str, Any]:
             [button("❌ Рад этиш", "rejected"), button("ℹ️ Маълумот", "info_needed")],
         ]
     }
-
-
-def history_lines(events: Sequence[dict[str, Any]]) -> list[str]:
-    """The decision history, oldest first, for the form's audit block."""
-    labels = {
-        "created": "Сўров бошланди",
-        "submitted": "Сўров юборилди",
-        "decided": "Қарор қабул қилинди",
-        "completed": "Бажарилди",
-        "cancelled": "Бекор қилинди",
-    }
-    lines = []
-    for event in events:
-        when = event.get("occurred_at")
-        stamp = when.strftime("%d.%m.%Y %H:%M") if hasattr(when, "strftime") else str(when or "")
-        action = labels.get(event.get("action", ""), event.get("action", ""))
-        detail = f" — {event['detail']}" if event.get("detail") else ""
-        lines.append(f"{stamp} · {action} · {event.get('actor', '')}{detail}")
-    return lines

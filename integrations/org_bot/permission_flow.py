@@ -1,19 +1,18 @@
 """The written-permission conversation — EMJ-SOP-ADM-01, end to end.
 
-An employee says they need permission; the bot opens a request, fills in
-whatever their message already states, asks for the rest one question at a
-time, shows them the finished form, and sends it to the authorised approvers
-with the SOP's four outcomes as buttons. The decision comes back to the
-requester with a filled .docx of the SOP's own form attached.
+The bot asks the SOP form's questions one at a time. Each answer is checked by
+the AI before it is accepted: an answer that is unclear, off-topic or filler
+("alo", "test", a "date" with no date in it) is not written onto the form —
+the bot says what is missing and asks again. The AI only judges; the answer
+goes onto the form exactly as the employee typed it.
+
+When the form is complete the requester confirms it, it goes to the
+authorised approvers with the SOP's four outcomes as buttons, and the decision
+returns with the company's own SOP document filled in (see docx_form.py).
 
 Two SOP rules are enforced in code rather than trusted to habit:
-  * Nobody approves their own request (§3) — the requester is removed from the
-    approver list, and a request with no one left to decide it is not sent.
-  * The approver, the timestamps and the full decision history are recorded
-    (§3), which is what lets an electronic approval count at all.
-
-Kept out of ops_manager.py so that file stays about task routing: this module
-owns every message, button and document of the permission flow.
+  * Nobody approves their own request (§3).
+  * The approver, the timestamps and the decision history are recorded (§3).
 """
 
 from __future__ import annotations
@@ -32,33 +31,31 @@ from integrations.telegram.bot import TelegramBot, TelegramError, escape
 AGENT = "permissions"
 log = setup_logging(AGENT)
 
-PREFILL_SYSTEM = """You extract fields for a written permission request form \
-(EMJ-SOP-ADM-01) from an employee's own message.
+CANCEL_HINT = "\n\n<i>Бекор қилиш: /bekor</i>"
 
-Return ONLY a JSON object with exactly these string keys:
-  subject — what permission is being asked for
-  reason — why it is needed and what they propose
-  amount — the amount and currency exactly as written ("0" if they say there is no cost)
-  execute_by — by when the work must be done
-  decision_needed_by — by when they need the decision
-  urgency — the stated reason for urgency, or "оддий" if they say it is not urgent
-  attachments — attachment names, or "йўқ" if they say there are none
+VALIDATE_SYSTEM = """You check ONE answer on a written permission request form \
+(EMJ-SOP-ADM-01) before it is written onto the company's official document.
 
-Rules: never invent a value. Copy the employee's own wording and alphabet. \
-If the message does not clearly state a field, return "" for it — an empty \
-string is always better than a guess, because the bot will simply ask."""
+You are given the form field, what a valid answer looks like, the question the \
+employee was asked, and their answer. Employees write in Uzbek (Latin or \
+Cyrillic) or Russian — every one of these is fine.
+
+Decide only whether the answer genuinely and clearly answers THIS question:
+- Reject greetings ("alo", "salom"), filler or test text ("test", "asd", \
+"...", "?"), an answer to a different question, and anything too vague to \
+stand on an official document.
+- Do NOT reject for spelling, grammar, alphabet or brevity when the meaning is \
+clear. A short but clear answer is acceptable.
+- Never rewrite, improve, translate or complete the answer. You only judge it.
+
+Return ONLY JSON. Acceptable: {"ok": true}. Not acceptable: \
+{"ok": false, "follow_up": "<one short, polite question in Uzbek Cyrillic that \
+says exactly what is missing or unclear>"}."""
 
 
 def _label(role: str) -> str:
-    """Role label as the SOP form's "Бўлим"/position column."""
+    """Role label, for the approver list shown to the requester."""
     return ROLE_LABELS.get(role, role)
-
-
-def _with_labels(request: dict[str, Any]) -> dict[str, Any]:
-    """A request row plus the role label the card and form display."""
-    enriched = dict(request)
-    enriched["requester_role_label"] = _label(request.get("requester_role", ""))
-    return enriched
 
 
 async def _send(chat_id: int, text: str, run_id: uuid.UUID, keyboard: dict[str, Any] | None = None) -> list[int]:
@@ -81,12 +78,7 @@ async def _send_document(path: Path, chat_id: int, caption: str, run_id: uuid.UU
 
 
 async def _approvers(exclude_telegram_user_id: int) -> list[dict[str, Any]]:
-    """Who may decide a request, minus the person who raised it.
-
-    Directors plus the deputies named in ``PERMISSION_DEPUTY_TELEGRAM_IDS``.
-    Excluding the requester is the SOP's "do not approve your own request"
-    rule (§3), enforced here rather than left to the approver to notice.
-    """
+    """Who may decide a request, minus the person who raised it (SOP §3)."""
     found: dict[int, dict[str, Any]] = {}
     for director in await store.active_employees_by_role(DIRECTOR_ROLE):
         found[director["telegram_user_id"]] = director
@@ -98,15 +90,21 @@ async def _approvers(exclude_telegram_user_id: int) -> list[dict[str, Any]]:
     return list(found.values())
 
 
-async def _prefill(text: str, run_id: uuid.UUID) -> dict[str, str]:
-    """Pull whatever the opening message already states, via one AI call.
+async def _check_answer(field: permissions.Field, answer: str, run_id: uuid.UUID) -> tuple[bool, str | None]:
+    """Ask the AI whether this answer can go onto the official form.
 
     Returns:
-        Field values keyed like the SOP form; empty on any failure — the bot
-        then simply asks every question, which is the normal path anyway.
+        ``(acceptable, follow-up question)``. If the AI can't be reached the
+        answer is accepted when it's more than a character or two — a
+        provider outage must not trap an employee in an endless loop — and
+        the approver still sees exactly what was written.
     """
-    if len(text.strip()) < 25:  # "ruxsat kerak" carries nothing to extract
-        return {}
+    message = (
+        f"Field: {field.label}\n"
+        f"A valid answer is: {field.rule}\n"
+        f"Question asked: {field.question}\n"
+        f"Employee's answer: {answer}"
+    )
     try:
         async with OpenRouterClient(
             agent=AGENT,
@@ -115,26 +113,15 @@ async def _prefill(text: str, run_id: uuid.UUID) -> dict[str, str]:
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
-            result = await ai.complete_json(PREFILL_SYSTEM, text)
+            verdict = await ai.complete_json(VALIDATE_SYSTEM, message)
     except OpenRouterError as exc:
-        log.warning("Permission prefill failed, asking every field instead: {}", exc)
-        return {}
-    return {key: str(value).strip() for key, value in result.items() if isinstance(value, (str, int, float))}
+        log.warning("Answer check unavailable, accepting '{}' for {}: {}", answer[:60], field.key, exc)
+        return len(answer.strip()) >= 2, None
 
-
-async def _apply_prefill(request: dict[str, Any], values: dict[str, str]) -> dict[str, Any]:
-    """Store the extracted values on the draft, skipping blanks."""
-    current = request
-    for field in permissions.FIELDS:
-        value = (values.get(field.key) or "").strip()
-        if not value:
-            continue
-        if field.key == "amount":
-            amount, currency = permissions.parse_amount(value)
-            current = await store.set_permission_amount(str(request["id"]), amount, currency, value) or current
-        else:
-            current = await store.set_permission_field(str(request["id"]), field.key, value) or current
-    return current
+    if verdict.get("ok") is True:
+        return True, None
+    follow_up = str(verdict.get("follow_up") or "").strip()
+    return False, follow_up or None
 
 
 async def _ask_next(request: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -146,23 +133,26 @@ async def _ask_next(request: dict[str, Any], run_id: uuid.UUID) -> str:
         return "permission_question"
 
     await store.set_permission_pending_field(str(request["id"]), None)
-    card = permissions.request_card(_with_labels(request), for_approver=False)
+    card = permissions.request_card(request, for_approver=False)
     await _send(
         request["requester_telegram_user_id"],
-        f"{card}\n\nЮборишни тасдиқланг:",
+        f"{card}\n\nТўғри бўлса, юборинг:",
         run_id,
         permissions.confirm_keyboard(str(request["id"])),
     )
     return "permission_ready"
 
 
+async def _store_answer(draft: dict[str, Any], field: permissions.Field, answer: str) -> dict[str, Any]:
+    """Save an accepted answer exactly as typed."""
+    if field.key == "amount":
+        amount, currency = permissions.parse_amount(answer)
+        return await store.set_permission_amount(str(draft["id"]), amount, currency, answer) or draft
+    return await store.set_permission_field(str(draft["id"]), field.key, answer) or draft
+
+
 async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID) -> str | None:
     """Handle one message if it belongs to the permission flow.
-
-    Args:
-        employee: The sender's employee row.
-        message: The Telegram ``message`` object.
-        run_id: UUID grouping this webhook call's audit rows.
 
     Returns:
         An outcome string when this message was part of the flow (the caller
@@ -184,26 +174,40 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     if awaiting is not None:
         return await _finalize_decision(awaiting, awaiting["pending_decision"], text, employee, run_id)
 
-    # 2. A half-filled request is waiting for this answer.
     draft = await store.get_permission_draft(telegram_user_id)
+
+    # 2. Cancelling the request being filled in.
+    if draft is not None and permissions.is_cancel(text):
+        await store.cancel_permission_request(str(draft["id"]), telegram_user_id)
+        await store.add_permission_event(
+            request_id=str(draft["id"]),
+            actor=employee["display_name"],
+            actor_telegram_user_id=telegram_user_id,
+            action="cancelled",
+        )
+        await _send(telegram_user_id, "❌ Сўров бекор қилинди.", run_id)
+        return "permission_cancelled"
+
+    # 3. The answer to the question just asked — checked before it is kept.
     if draft is not None and draft.get("pending_field"):
         field = permissions.FIELD_BY_KEY.get(draft["pending_field"])
         if field is not None:
-            if field.key == "amount":
-                amount, currency = permissions.parse_amount(text)
-                draft = await store.set_permission_amount(str(draft["id"]), amount, currency, text) or draft
-            else:
-                draft = await store.set_permission_field(str(draft["id"]), field.key, text) or draft
+            acceptable, follow_up = await _check_answer(field, text, run_id)
+            if not acceptable:
+                question = follow_up or f"Жавоб тушунарсиз. {field.question}"
+                await _send(telegram_user_id, f"🔁 {escape(question)}{CANCEL_HINT}", run_id)
+                return "permission_reasked"
+            draft = await _store_answer(draft, field, text)
             return await _ask_next(draft, run_id)
 
-    # 3. A new request.
+    # 4. A new request.
     if not permissions.wants_permission(text):
         return None
 
     if draft is not None:
         await _send(
             telegram_user_id,
-            "Сизда тугалланмаган сўров бор. Аввал шуни тугатинг ёки «❌ Бекор қилиш» тугмасини босинг.",
+            f"Сизда тугалланмаган сўров бор — аввал шуни тугатинг.{CANCEL_HINT}",
             run_id,
         )
         return await _ask_next(draft, run_id)
@@ -223,11 +227,11 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
         telegram_user_id,
         "📄 <b>Ёзма рухсат сўрови</b>\n"
         f"<i>{permissions.SOP_CODE} — оғзаки рухсат ҳисобланмайди</i>\n\n"
-        "Бир неча савол бераман, сўнг сўровни ваколатли шахсга юбораман.",
+        "Бир неча савол бераман. Жавобларингиз расмий шаклга айнан ёзилади.\n"
+        f"Бекор қилиш: /bekor",
         run_id,
     )
-    filled = await _apply_prefill(created, await _prefill(text, run_id))
-    return await _ask_next(filled, run_id)
+    return await _ask_next(created, run_id)
 
 
 async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str | None:
@@ -247,7 +251,6 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
                 actor=clicker.get("username") or str(clicker_id),
                 actor_telegram_user_id=clicker_id,
                 action="cancelled",
-                detail=None,
             )
             await _send(clicker_id, "❌ Сўров бекор қилинди.", run_id)
         return "permission_cancelled"
@@ -272,6 +275,8 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
         return "permission_already_sent"
     if request["requester_telegram_user_id"] != clicker_id:
         return "permission_not_yours"
+    if permissions.next_missing_field(request) is not None:
+        return await _ask_next(request, run_id)
 
     approvers = await _approvers(clicker_id)
     if not approvers:
@@ -295,7 +300,7 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
         detail=f"Кимга: {submitted_to}",
     )
 
-    card = permissions.request_card(_with_labels(request), for_approver=True)
+    card = permissions.request_card(request, for_approver=True)
     keyboard = permissions.decision_keyboard(request_id)
     delivered = 0
     for approver in approvers:
@@ -306,9 +311,7 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
             log.error("Could not deliver request {} to {}: {}", request.get("request_no"), approver["telegram_user_id"], exc)
 
     if delivered == 0:
-        # Never tell someone "sent" when no approver actually has it — the SOP
-        # says a missing answer is no permission, so a silent failure here
-        # would leave them waiting on a decision nobody can see.
+        # Never tell someone "sent" when no approver actually has it.
         await _send(
             clicker_id,
             f"⚠️ Сўров № {escape(request.get('request_no') or '—')} сақланди, лекин тасдиқловчига "
@@ -330,9 +333,6 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
 
 async def _take_decision(request_id: str, decision: str, clicker: dict[str, Any], run_id: uuid.UUID) -> str:
     """Record which outcome an approver picked, asking for text when needed."""
-    if decision not in permissions.DECISIONS:
-        return "permission_unknown_decision"
-
     clicker_id = clicker.get("id")
     request = await store.get_permission_request(request_id)
     if request is None:
@@ -377,17 +377,15 @@ async def _finalize_decision(
     approver: dict[str, Any] | None,
     run_id: uuid.UUID,
 ) -> str:
-    """Store the decision, tell the requester, and file the filled form."""
-    approver_name = (
-        f"{approver['display_name']} ({_label(approver['role'])})" if approver else "Ваколатли шахс"
-    )
+    """Store the decision, tell the requester, and send the filled SOP form."""
+    approver_name = f"{approver['display_name']} ({_label(approver['role'])})" if approver else "Ваколатли шахс"
     approver_id = approver["telegram_user_id"] if approver else None
 
     if decision == "approved":
-        approved_terms = (
-            f"{permissions.field_value(_with_labels(request), permissions.FIELD_BY_KEY['amount'])} · "
-            f"{request.get('execute_by') or '—'}"
-        )
+        # A plain approval approves exactly what was asked — say so, in the
+        # requester's own words, rather than inventing new terms.
+        amount = permissions.field_value(request, permissions.FIELD_BY_KEY["amount"])
+        approved_terms = f"{amount}, {request.get('execute_by') or '—'} (сўралгандек)"
     elif decision == "approved_conditional":
         approved_terms = note
     else:
@@ -412,8 +410,7 @@ async def _finalize_decision(
         detail=f"{permissions.DECISIONS[decision][1]}" + (f" — {note}" if note else ""),
     )
 
-    enriched = _with_labels(decided)
-    requester_text = permissions.decision_text(enriched)
+    requester_text = permissions.decision_text(decided)
     if decision in ("approved", "approved_conditional"):
         requester_text += "\n\n<i>Фақат тасдиқланган ҳажм ва шартларда бажаринг.</i>"
     elif decision == "rejected":
@@ -425,11 +422,10 @@ async def _finalize_decision(
     if approver_id:
         await _send(approver_id, f"✅ Қарор қайд этилди: № {escape(decided.get('request_no') or '—')}", run_id)
 
-    events = await store.permission_events(str(request["id"]))
     try:
-        path = docx_form.build_form(enriched, events)
+        path = docx_form.fill_form(decided)
     except Exception as exc:  # noqa: BLE001 — a document failure must not lose the decision
-        log.error("Could not build the permission form for {}: {}", decided.get("request_no"), exc)
+        log.error("Could not fill the permission form for {}: {}", decided.get("request_no"), exc)
         return "permission_decided"
 
     caption = f"📄 {escape(decided.get('request_no') or '')} — {permissions.DECISIONS[decision][1]}"
@@ -444,12 +440,7 @@ async def _finalize_decision(
 
 
 async def registry_data() -> str:
-    """The permission registry, for OPS Manager Bot's own agent answers.
-
-    Returns:
-        Plain text for the answering model: what is still waiting for a
-        decision first, then the decided requests.
-    """
+    """The permission registry, for OPS Manager Bot's own agent answers."""
     rows = await store.permission_registry(days=60)
     drafts = await store.permission_drafts()
 
@@ -477,13 +468,12 @@ async def registry_data() -> str:
         lines.append(f"Started but never sent to an approver: {len(draft_lines)}.")
         lines.extend(draft_lines)
     for row in rows:
-        enriched = _with_labels(row)
-        amount = permissions.field_value(enriched, permissions.FIELD_BY_KEY["amount"])
+        amount = permissions.field_value(row, permissions.FIELD_BY_KEY["amount"])
         submitted = row.get("submitted_at")
         stamp = submitted.strftime("%d.%m.%Y %H:%M") if hasattr(submitted, "strftime") else "—"
         line = (
             f"- {row.get('request_no') or '(no number)'} | {stamp} | "
-            f"{row['requester_name']} ({_label(row['requester_role'])}) | "
+            f"{row['requester_name']} ({row.get('requester_position') or _label(row['requester_role'])}) | "
             f"status: {permissions.STATUS_LABELS.get(row['status'], row['status'])} | "
             f"what: {row.get('subject') or '—'} | amount: {amount} | "
             f"needed by: {row.get('decision_needed_by') or '—'}"

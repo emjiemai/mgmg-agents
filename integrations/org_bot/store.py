@@ -834,7 +834,16 @@ async def count_tasks_completed(employee_id: str, day: date) -> int:
 
 # Columns an answer may fill, so a field name can never reach SQL unchecked.
 _PERMISSION_TEXT_FIELDS = frozenset(
-    {"subject", "reason", "execute_by", "decision_needed_by", "urgency", "attachments"}
+    {
+        "requester_position",
+        "department",
+        "subject",
+        "reason",
+        "execute_by",
+        "decision_needed_by",
+        "urgency",
+        "attachments",
+    }
 )
 
 

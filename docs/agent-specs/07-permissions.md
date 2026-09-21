@@ -32,12 +32,17 @@ it is an accurate register, not an authority.
    mentions permission and reads like a request ("рухсат керак…", "ruxsat
    kerak…", "прошу разрешение…"). Merely mentioning permission ("директор
    рухсат берди") does **not** open a form.
-2. The bot opens a draft, and one AI call extracts whatever the opening
-   message already states. Nothing is invented: a field the message doesn't
-   clearly state stays empty and is asked.
-3. The bot asks the remaining questions one at a time, in the SOP form's
-   order: what is asked for, reason and proposal, amount and currency,
-   execution deadline, when the decision is needed, urgency, attachments.
+2. The bot asks the SOP form's questions one at a time, in the form's order:
+   position, department, what is asked for, reason and proposal, amount and
+   currency, execution deadline, when the decision is needed, urgency,
+   attachments. Nothing is pre-filled or guessed.
+3. **Every answer is checked by the AI before it is kept.** A greeting,
+   filler/test text, an answer to a different question or something too vague
+   for an official document is not accepted — the bot says what is missing
+   and asks again. The AI only judges; the answer goes onto the form exactly
+   as typed (spelling and alphabet untouched). If the AI is unreachable, any
+   non-trivial answer is accepted so nobody is stuck, and the approver still
+   sees exactly what was written. `/bekor` cancels at any point.
 4. It shows the finished form and asks the requester to confirm with
    **📨 Юбориш** (or **❌ Бекор қилиш**).
 5. On sending, the request gets its number (`EMJ-2026-0001`, from a database
@@ -45,9 +50,19 @@ it is an accurate register, not an authority.
    every approver with four buttons: **Тасдиқлаш · Шарт билан · Рад этиш ·
    Маълумот**.
 6. For anything except a plain approval, the bot asks the approver to type the
-   conditions, the rejection reason, or what information is missing.
-7. The requester gets the decision, and both sides get the **filled .docx**
-   of the SOP's page-2 form, including the decision block and the history.
+   conditions, the rejection reason, or what information is missing. A plain
+   approval records the requested amount and deadline "(сўралгандек)".
+7. The requester gets the decision, and both sides get **the company's own
+   SOP document** (`integrations/org_bot/templates/EMJ-SOP-ADM-01.docx`, an
+   unchanged copy of `EMJIEM_Yozma_Ruxsat_SOP_UZ_Cyr.docx`) with the page-2
+   form filled in: each `____` blank replaced by the answer, and the decision
+   box ticked (☐ → ☑). Page 1, including the director's
+   "Тасдиқлайман" line, is never touched; a blank with no answer stays blank.
+   Signatures are recorded as "электрон, Telegram ID …".
+
+To change the form's wording, replace the template file — the filler matches
+the printed labels, so a renamed label must also be renamed in
+`docx_form.form_values`.
 
 ## Who may decide
 

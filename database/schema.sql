@@ -647,3 +647,9 @@ CREATE TABLE IF NOT EXISTS permission_request_events (
 
 CREATE INDEX IF NOT EXISTS idx_permission_events_request
     ON permission_request_events (request_id, occurred_at);
+
+-- The SOP form asks for position and department explicitly ("Ходимнинг исми
+-- ва лавозими", "Бўлим"); the bot asks for both rather than guessing them
+-- from the role, so nothing on the filed form is invented.
+ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS requester_position TEXT;
+ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;
