@@ -103,3 +103,11 @@ DELETE FROM daily_reports WHERE report_date = CURRENT_DATE;
 - Weekly Monday scorecard per employee (reports submitted out of working
   days, tasks completed) — the data is already there.
 - Saturday schedule, if the working week changes (currently Mon-Fri).
+
+## Vague reports
+
+If a report says nothing concrete ("ok", "ishladim", "hammasi yaxshi"), the AI
+asks **one** short follow-up question. The first answer is already saved, so
+the employee counts as reported either way; whatever they send next is added to
+the report and nothing more is asked. Reports longer than 120 characters are
+never checked, and if the AI is unavailable the report simply stands.

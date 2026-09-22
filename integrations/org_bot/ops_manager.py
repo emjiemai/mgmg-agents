@@ -598,6 +598,47 @@ async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text
 
 # ---------------------------------------------------------------- daily reports
 
+WEAK_REPORT_SYSTEM = """You read an employee's end-of-day work report and \
+decide ONLY whether it is too weak to be a report.
+
+WEAK means it says nothing concrete about what they did today: "ok", "ishladim", \
+"hammasi yaxshi", "bajarildi", "normal", "ish qildim", an emoji, a single vague \
+word or phrase.
+NOT weak: anything that names at least one concrete piece of work, however \
+short ("mijozlarga qo'ng'iroq qildim", "omborni sanadim", "3 ta KP yubordim"). \
+Do not judge how much they did or how well — that is not your job. When in \
+doubt, it is NOT weak.
+
+Return ONLY JSON: {"weak": false} or {"weak": true, "follow_up": "<one short, \
+friendly question in Uzbek (Latin) asking what concretely they did today>"}."""
+
+# Longer than this is never "ok"/"ishladim" — skip the AI call entirely.
+_WEAK_REPORT_MAX_LEN = 120
+
+
+async def _weak_report_follow_up(text: str, run_id: uuid.UUID) -> str | None:
+    """A short follow-up question if the report is vague, else None.
+
+    Never blocks the report: on any AI failure the report simply stands.
+    """
+    if len(text) > _WEAK_REPORT_MAX_LEN:
+        return None
+    try:
+        async with OpenRouterClient(
+            agent=AGENT,
+            run_id=run_id,
+            provider_override=settings.ops_manager_bot_provider,
+            model_override=settings.ops_manager_bot_model,
+            fallback_override=settings.ops_manager_bot_fallback_models,
+        ) as ai:
+            verdict = await ai.complete_json(WEAK_REPORT_SYSTEM, text)
+    except OpenRouterError as exc:
+        log.warning("Weak-report check unavailable, accepting as is: {}", exc)
+        return None
+    if verdict.get("weak") is not True:
+        return None
+    return str(verdict.get("follow_up") or "").strip() or "Bugun aniq qanday ishlarni bajardingiz? Qisqacha yozing."
+
 
 async def _try_daily_report(
     employee: dict[str, Any], text: str, reply_to_message_id: int | None, run_id: uuid.UUID
@@ -622,6 +663,18 @@ async def _try_daily_report(
     pending = await store.pending_report(employee["telegram_user_id"], day)
 
     if pending is None:
+        # The answer to the one follow-up question on a vague report. It is
+        # added to the report and the conversation ends there — no further
+        # questions, whatever it says.
+        followup = await store.open_report_followup(employee["telegram_user_id"], day)
+        if followup is not None:
+            if await store.answer_report_followup(str(followup["id"]), text) is not None:
+                fresh = kpi.parse_metrics(text, metrics_def) if metrics_def else {}
+                if fresh:
+                    await store.merge_report_metrics(str(followup["id"]), fresh)
+                await _reply(employee["telegram_user_id"], run_id, "✅ Rahmat, hisobotingizga qo'shildi.")
+                return "daily_report_followup"
+
         # Numbers arriving a minute after a report already sent in words:
         # merge them so the scorecard is complete, and still fall through so
         # the Director sees the message itself.
@@ -658,6 +711,15 @@ async def _try_daily_report(
     # Deliberately NOT forwarded to the Director (the business's decision):
     # the Director only hears who didn't report, in the next 08:00 brief.
     # The report stays stored and queryable through the xodimlar_kpi agent.
+
+    # A vague report ("ok", "ishladim") is already saved — the employee has
+    # reported — but gets ONE short question. Whatever comes back is added to
+    # the report and nothing more is asked.
+    follow_up = await _weak_report_follow_up(text, run_id)
+    if follow_up:
+        await store.mark_report_followup(str(saved["id"]))
+        await _reply(employee["telegram_user_id"], run_id, f"📝 {escape(follow_up)}")
+        return "daily_report_weak"
 
     ack = "✅ Hisobot qabul qilindi, rahmat!\n<i>Daily report received, thank you.</i>"
     missing = kpi.missing_metrics(values, metrics_def)

@@ -755,6 +755,40 @@ async def submitted_report_today(telegram_user_id: int, report_date: date) -> di
     )
 
 
+async def mark_report_followup(report_id: str) -> None:
+    """Record that a vague report got its one follow-up question."""
+    await execute("UPDATE daily_reports SET followup_asked_at = now() WHERE id = %s", (report_id,))
+
+
+async def open_report_followup(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """Today's report whose follow-up question hasn't been answered yet."""
+    return await fetch_one(
+        """
+        SELECT * FROM daily_reports
+        WHERE telegram_user_id = %s AND report_date = %s AND status = 'submitted'
+          AND followup_asked_at IS NOT NULL AND followup_answered_at IS NULL
+        """,
+        (telegram_user_id, report_date),
+    )
+
+
+async def answer_report_followup(report_id: str, text: str) -> dict[str, Any] | None:
+    """Append the follow-up answer to the report, once.
+
+    Returns:
+        The updated row, or None if it was already answered.
+    """
+    return await fetch_one(
+        """
+        UPDATE daily_reports
+        SET content = COALESCE(content, '') || E'\n' || %s, followup_answered_at = now()
+        WHERE id = %s AND followup_answered_at IS NULL
+        RETURNING *
+        """,
+        (text, report_id),
+    )
+
+
 async def merge_report_metrics(report_id: str, metrics: dict[str, int]) -> dict[str, Any] | None:
     """Add late-arriving numbers to an already-submitted report.
 

@@ -574,6 +574,9 @@ CREATE TABLE IF NOT EXISTS daily_reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_daily_reports_open ON daily_reports (report_date) WHERE status = 'asked';
+-- One short follow-up when a report says nothing concrete ("ok", "ishladim").
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS followup_asked_at TIMESTAMPTZ;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS followup_answered_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_daily_reports_employee ON daily_reports (employee_id, report_date DESC);
 
 -- ---------------------------------------------------------------------------
