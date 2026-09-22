@@ -315,23 +315,19 @@ def render(data: BriefData) -> str:
     Returns:
         The full message body (splitting happens in the Telegram client).
     """
+    # 2026-09-22: cut to reports only, at the business's request. Cash
+    # (never connected), the receivables headline (the Receivables alert
+    # follows as its own message) and the CRM pipeline were noise every
+    # morning. Their renderers stay below, unused, so a section can be put
+    # back by adding it to this list.
     day = today_local()
     parts: list[str | None] = [
-        f"<b>☀️ CEO Kunlik Hisoboti — {fmt_date(day)}</b>",
-        f"<i>{now_local().strftime('%H:%M')} Toshkent</i>",
+        f"<b>☀️ CEO Kunlik Hisoboti — {fmt_date(day)}.</b> <i>{now_local().strftime('%H:%M')} Toshkent</i>",
         "",
-        _render_cash(data),
-        _render_receivables(data),
-        _render_pipeline(data),
         _render_reports(data),
         _render_missed_reports(data),
     ]
-
-    if data.errors:
-        failed = ", ".join(escape(e["source"]) for e in data.errors)
-        parts.append(f"⚠️ <i>Ma'lumot yo'q: {failed} — yuqoridagi ko'rsatkichlar to'liq emas.</i>")
-
-    return "\n".join(p for p in parts if p is not None)
+    return "\n".join(p for p in parts if p is not None).rstrip()
 
 
 def _render_cash(data: BriefData) -> str:

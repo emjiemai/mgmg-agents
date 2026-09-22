@@ -159,47 +159,19 @@ def render(aging: ARAging, min_days: int) -> str:
     critical = aging.bucket_totals_tiyin.get("90_plus", 0)
     headline = "🔴" if critical > 0 else "🟡"
 
-    lines = [
-        f"{headline} <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>",
-        "",
-        f"<b>Muddati o'tgan: {escape(_total_of(overdue))}</b> ({len(overdue)} ta hisob-faktura)",
-        f"Jami ochiq debitorlik: {escape(_total_of(aging.invoices, short=True))}",
-        "",
-    ]
-
-    by_bucket: dict[str, list[ARInvoice]] = defaultdict(list)
-    for invoice in overdue:
-        by_bucket[invoice.aging_bucket].append(invoice)
-
-    for bucket in BUCKET_ORDER:
-        invoices = sorted(by_bucket.get(bucket, []), key=lambda i: i.balance_due_tiyin, reverse=True)
-        if not invoices:
-            continue
-
-        lines.append(
-            f"{BUCKET_EMOJI[bucket]} <b>{BUCKET_LABELS[bucket]}: "
-            f"{escape(_total_of(invoices, short=True))}</b> ({len(invoices)})"
-        )
-
-        for invoice in invoices[:MAX_PER_BUCKET]:
-            lines.append(f"   • {_invoice_line(invoice)}")
-
-        if len(invoices) > MAX_PER_BUCKET:
-            rest = invoices[MAX_PER_BUCKET:]
-            lines.append(
-                f"   <i>+yana {len(rest)} ta, "
-                f"{escape(_total_of(rest, short=True))}</i>"
-            )
-        lines.append("")
-
-    owners = _by_owner(overdue)
-    if owners:
-        lines.append("<b>Mas'ul xodim bo'yicha:</b>")
-        ranked = sorted(owners.items(), key=lambda kv: sum(i.balance_due_tiyin for i in kv[1]), reverse=True)
-        for owner, owner_invoices in ranked[:8]:
-            lines.append(f"   {escape(owner)} — {escape(_total_of(owner_invoices, short=True))}")
-
-    return "\n".join(lines)
+    # 2026-09-22: headline only, at the business's request — the per-invoice
+    # and per-owner detail below is no longer sent. The age range is folded
+    # into the one line instead.
+    counts = {bucket: sum(1 for i in overdue if i.aging_bucket == bucket) for bucket in BUCKET_ORDER}
+    ranges = [(BUCKET_LABELS[b], n) for b, n in counts.items() if n and b in BUCKET_LABELS]
+    if len(ranges) == 1:
+        spread = f"{len(overdue)} ta hisob-faktura, {ranges[0][0]} ichida"
+    else:
+        spread = f"{len(overdue)} ta hisob-faktura: " + ", ".join(f"{label} — {n}" for label, n in ranges)
+    return (
+        f"{headline} <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>\n"
+        f"<b>Muddati o'tgan: {escape(_total_of(overdue))}</b> ({spread})"
+    )
 
 
 def _total_of(invoices: list[ARInvoice], *, short: bool = False) -> str:

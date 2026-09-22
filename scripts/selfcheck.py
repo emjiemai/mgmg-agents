@@ -268,8 +268,8 @@ def test_brief_rendering() -> None:
     empty = brief.BriefData()
     empty.note_failure("sap", RuntimeError("connection refused"))
     text = brief.render(empty)
-    check_true("failure shows as not-connected", "Hali ulanmagan" in text)
-    check_true("failed sources named", "Ma'lumot yo'q: sap" in text)
+    check_true("title and time on one line", "CEO Kunlik Hisoboti" in text.splitlines()[0] and "Toshkent" in text.splitlines()[0])
+    check_true("no failure footer", "Ma'lumot yo'q" not in text)
 
     aging = ARAging(snapshot_date=date(2026, 8, 18))
     aging.invoices = [
@@ -305,15 +305,11 @@ def test_brief_rendering() -> None:
         ],
     )
     text = brief.render(full)
-    check_true("cash rendered", "Kapital Bank" in text)
-    check_true("critical marker on 90+", "🔴" in text)
-    # 2026-09-07: the brief's receivables section was deliberately trimmed to
-    # a headline total, not per-invoice detail (owner/customer names) --
-    # that detail now lives only in the standalone Receivables Agent alert,
-    # which already sends it moments later. Assert the new headline +
-    # signpost instead of names that no longer belong in this section.
-    check_true("overdue total shown", format_money(500_000_000, "UZS") in text)
-    check_true("points to the detailed alert instead of repeating it", "batafsili keyingi xabarda" in text)
+    # 2026-09-22: the brief is reports only — cash, receivables and pipeline
+    # were cut at the business's request (receivables has its own message).
+    check_true("no cash section", "Kassa" not in text and "Kapital Bank" not in text)
+    check_true("no receivables section", "qarz" not in text)
+    check_true("no pipeline section", "Pipeline" not in text)
     # 2026-09-08: previous day's employee-submitted CRM reports, added after
     # a Director's actual submitted report never showed up anywhere the bot
     # would surface it proactively -- only on direct question.
@@ -393,10 +389,12 @@ def test_receivables_rendering() -> None:
 
     text = receivables.render(aging, min_days=1)
     check_true("headline critical", text.startswith("🔴"))
-    check_true("90+ bucket shown", "90+ kun" in text)
-    check_true("1-30 bucket shown", "1–30 kun" in text)
-    check_true("owner breakdown present", "Mas'ul xodim bo'yicha:" in text)
-    check_true("unmapped owner falls back to Boshqa", "Boshqa" in text)
+    check_true("age ranges folded into the headline", "90+ kun — 2" in text and "1–30 kun — 1" in text)
+    check_true("two lines only", len(text.splitlines()) == 2)
+    check_true("no per-invoice detail", "Customer" not in text)
+    check_true("no owner breakdown", "Mas'ul xodim" not in text)
+    one_range = receivables.render(aging, min_days=100)
+    check_true("single range reads 'ichida'", "2 ta hisob-faktura, 90+ kun ichida" in one_range)
 
     text_30 = receivables.render(aging, min_days=30)
     check_true("min_days filters the 5-day invoice", "1–30 kun" not in text_30)
