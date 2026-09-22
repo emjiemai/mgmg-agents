@@ -111,3 +111,16 @@ asks **one** short follow-up question. The first answer is already saved, so
 the employee counts as reported either way; whatever they send next is added to
 the report and nothing more is asked. Reports longer than 120 characters are
 never checked, and if the AI is unavailable the report simply stands.
+
+## Late replies
+
+- **Late report.** The employee's most recent ask stays open for up to 3 days,
+  until the next 16:00 ask replaces it, so a report written after midnight (or
+  a Friday report sent on Monday) is saved against the day it was asked for,
+  with a "kechikib" note, instead of being relayed to the Director. A reply to
+  the ask always counts. A late message that is *not* a reply counts only if
+  the AI confirms it is a work report ("bugun kech kelaman" is not). If the AI
+  is unavailable, it does not count.
+- **Late follow-up answer.** The one follow-up question waits 3 hours. After
+  that it lapses: the report stands as first sent, and later messages are
+  never glued onto it.
