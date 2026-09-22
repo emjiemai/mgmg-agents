@@ -612,36 +612,6 @@ doubt, it is NOT weak.
 Return ONLY JSON: {"weak": false} or {"weak": true, "follow_up": "<one short, \
 friendly question in Uzbek (Latin) asking what concretely they did today>"}."""
 
-LATE_REPORT_SYSTEM = """An employee was asked for yesterday's end-of-day work \
-report and never sent it. Today they wrote the message below, NOT as a reply to \
-that request. Decide whether this message is that work report — a description \
-of work they did — or something else (a question, a task update, "I'll be \
-late", a greeting, a request).
-
-Return ONLY JSON: {"is_report": true} or {"is_report": false}."""
-
-
-async def _is_late_report(text: str, run_id: uuid.UUID) -> bool:
-    """Whether a non-reply message on a later day is the overdue report.
-
-    On any AI failure the answer is no: the message then goes where it
-    would have gone anyway, rather than disappearing into an old report.
-    """
-    try:
-        async with OpenRouterClient(
-            agent=AGENT,
-            run_id=run_id,
-            provider_override=settings.ops_manager_bot_provider,
-            model_override=settings.ops_manager_bot_model,
-            fallback_override=settings.ops_manager_bot_fallback_models,
-        ) as ai:
-            verdict = await ai.complete_json(LATE_REPORT_SYSTEM, text)
-    except OpenRouterError as exc:
-        log.warning("Late-report check unavailable, not treating as report: {}", exc)
-        return False
-    return verdict.get("is_report") is True
-
-
 # Longer than this is never "ok"/"ishladim" — skip the AI call entirely.
 _WEAK_REPORT_MAX_LEN = 120
 
@@ -696,7 +666,7 @@ async def _try_daily_report(
         # The answer to the one follow-up question on a vague report. It is
         # added to the report and the conversation ends there — no further
         # questions, whatever it says.
-        followup = await store.open_report_followup(employee["telegram_user_id"])
+        followup = await store.open_report_followup(employee["telegram_user_id"], day)
         if followup is not None:
             if await store.answer_report_followup(str(followup["id"]), text) is not None:
                 fresh = kpi.parse_metrics(text, metrics_def) if metrics_def else {}
@@ -704,6 +674,20 @@ async def _try_daily_report(
                     await store.merge_report_metrics(str(followup["id"]), fresh)
                 await _reply(employee["telegram_user_id"], run_id, "✅ Rahmat, hisobotingizga qo'shildi.")
                 return "daily_report_followup"
+
+        # A reply to an earlier day's ask: reports close at midnight, so say
+        # so instead of relaying a stale report to the Director.
+        if reply_to_message_id:
+            expired = await store.expired_report_for_prompt(employee["telegram_user_id"], reply_to_message_id)
+            if expired is not None:
+                await _reply(
+                    employee["telegram_user_id"],
+                    run_id,
+                    f"⏰ {expired['report_date'].strftime('%d.%m')} kungi hisobot muddati tugagan — "
+                    "hisobotlar o'sha kuni soat 24:00 gacha qabul qilinadi.\n"
+                    "<i>Reports are accepted only until midnight of the same day.</i>",
+                )
+                return "daily_report_expired"
 
         # Numbers arriving a minute after a report already sent in words:
         # merge them so the scorecard is complete, and still fall through so
@@ -729,15 +713,9 @@ async def _try_daily_report(
             task = await store.find_open_task_for_employee(employee["telegram_user_id"])
         if task is not None:
             return None
-        # On a later day, a message that isn't a reply to the ask might be
-        # anything ("bugun kech kelaman") — only an actual report closes it.
-        if pending["report_date"] != day and not await _is_late_report(text, run_id):
-            return None
 
     values = kpi.parse_metrics(text, metrics_def)
-    # A late report belongs to the day it was asked for, not the day it arrived.
-    report_day = pending["report_date"]
-    tasks_done = await store.count_tasks_completed(str(employee["id"]), report_day)
+    tasks_done = await store.count_tasks_completed(str(employee["id"]), day)
     saved = await store.save_report(
         report_id=str(pending["id"]), content=text, metrics=values, tasks_done=tasks_done
     )
@@ -758,11 +736,6 @@ async def _try_daily_report(
         return "daily_report_weak"
 
     ack = "✅ Hisobot qabul qilindi, rahmat!\n<i>Daily report received, thank you.</i>"
-    if report_day != day:
-        ack = (
-            f"✅ {report_day.strftime('%d.%m')} kungi hisobot qabul qilindi (kechikib).\n"
-            "<i>Late report received and recorded.</i>"
-        )
     missing = kpi.missing_metrics(values, metrics_def)
     if missing:
         ack += (

@@ -114,13 +114,10 @@ never checked, and if the AI is unavailable the report simply stands.
 
 ## Late replies
 
-- **Late report.** The employee's most recent ask stays open for up to 3 days,
-  until the next 16:00 ask replaces it, so a report written after midnight (or
-  a Friday report sent on Monday) is saved against the day it was asked for,
-  with a "kechikib" note, instead of being relayed to the Director. A reply to
-  the ask always counts. A late message that is *not* a reply counts only if
-  the AI confirms it is a work report ("bugun kech kelaman" is not). If the AI
-  is unavailable, it does not count.
-- **Late follow-up answer.** The one follow-up question waits 3 hours. After
-  that it lapses: the report stands as first sent, and later messages are
-  never glued onto it.
+- **Reports close at midnight** (Tashkent) of the day they were asked for.
+  A report sent after that is not recorded; the employee counts as missed in
+  the 08:00 brief. Replying to an old ask gets "hisobot muddati tugagan"
+  instead of being relayed to the Director.
+- **Follow-up answer.** The one follow-up question on a vague report waits up
+  to 3 hours, and never past midnight. After that it lapses: the report
+  stands as first sent, and later messages are never glued onto it.

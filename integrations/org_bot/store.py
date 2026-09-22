@@ -687,38 +687,36 @@ async def set_report_prompt_message_id(report_id: str, message_id: int) -> None:
     )
 
 
-# How long an unanswered ask stays open. Covers a report sent after midnight
-# and a Friday report sent on Monday morning; the next 16:00 ask replaces it
-# sooner, since only the employee's most recent ask is ever open.
-REPORT_LATE_DAYS = 3
-
-
 async def pending_report(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
-    """The report this employee still owes: their most recent ask, if unanswered.
+    """The report this employee was asked for today and hasn't sent yet.
 
-    Not limited to today — a report written after midnight belongs to the
-    day it was asked for, rather than being relayed to the Director as a
-    stray message. Only the LATEST ask counts, so once the next day's ask
-    goes out, the older one is closed.
+    Reports are accepted until midnight of the day they were asked for (the
+    business's rule); after that the ask is closed and counts as missed.
 
     Args:
         telegram_user_id: The employee's Telegram numeric id.
-        report_date: Today (the working day).
+        report_date: The working day.
 
     Returns:
-        The awaiting row, or None if their latest ask is answered or too old.
+        The awaiting row, or None if they were never asked or already answered.
     """
     return await fetch_one(
         """
-        SELECT * FROM (
-            SELECT * FROM daily_reports
-            WHERE telegram_user_id = %s AND report_date <= %s
-            ORDER BY report_date DESC
-            LIMIT 1
-        ) latest
-        WHERE status = 'asked' AND report_date >= %s::date - %s::int
+        SELECT * FROM daily_reports
+        WHERE telegram_user_id = %s AND report_date = %s AND status = 'asked'
         """,
-        (telegram_user_id, report_date, report_date, REPORT_LATE_DAYS),
+        (telegram_user_id, report_date),
+    )
+
+
+async def expired_report_for_prompt(telegram_user_id: int, message_id: int) -> dict[str, Any] | None:
+    """An earlier day's unanswered ask that this message replies to, if any."""
+    return await fetch_one(
+        """
+        SELECT * FROM daily_reports
+        WHERE telegram_user_id = %s AND prompt_message_id = %s AND status = 'asked'
+        """,
+        (telegram_user_id, message_id),
     )
 
 
@@ -776,24 +774,23 @@ async def mark_report_followup(report_id: str) -> None:
     await execute("UPDATE daily_reports SET followup_asked_at = now() WHERE id = %s", (report_id,))
 
 
-# The follow-up question on a vague report waits this long for an answer.
-# After that it lapses quietly: the report stands as first sent, and a later
-# message (a task update, a question) is never glued onto it by mistake.
+# The follow-up question on a vague report waits this long for an answer,
+# and never past midnight (reports close with the day). After that it lapses
+# quietly: the report stands as first sent, and a later message (a task
+# update, a question) is never glued onto it by mistake.
 REPORT_FOLLOWUP_HOURS = 3
 
 
-async def open_report_followup(telegram_user_id: int) -> dict[str, Any] | None:
-    """The report whose follow-up question was asked recently and not answered."""
+async def open_report_followup(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """Today's report whose follow-up question was asked recently and not answered."""
     return await fetch_one(
         """
         SELECT * FROM daily_reports
-        WHERE telegram_user_id = %s AND status = 'submitted'
+        WHERE telegram_user_id = %s AND report_date = %s AND status = 'submitted'
           AND followup_asked_at > now() - make_interval(hours => %s)
           AND followup_answered_at IS NULL
-        ORDER BY followup_asked_at DESC
-        LIMIT 1
         """,
-        (telegram_user_id, REPORT_FOLLOWUP_HOURS),
+        (telegram_user_id, report_date, REPORT_FOLLOWUP_HOURS),
     )
 
 
