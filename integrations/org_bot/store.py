@@ -18,6 +18,7 @@ from datetime import date
 from typing import Any, Literal
 
 from integrations.common.db import execute, fetch_all, fetch_one
+from integrations.common.timeutil import today_local
 
 # ------------------------------------------------------------------ employees
 
@@ -305,6 +306,7 @@ async def create_task(
     assigned_employee_id: str | None,
     task_summary: str,
     has_media: bool = False,
+    due_date: date | None = None,
 ) -> dict[str, Any] | None:
     """Create one task-dispatch row (one per recipient employee).
 
@@ -325,6 +327,7 @@ async def create_task(
             video/audio/voice/document/animation) rather than plain text —
             determines whether later edits use ``editMessageCaption`` instead
             of ``editMessageText``.
+        due_date: The deadline the Director stated, if any (A3).
 
     Returns:
         The new row, or None if this exact (director, message, employee)
@@ -334,8 +337,8 @@ async def create_task(
         """
         INSERT INTO tasks
             (director_telegram_user_id, source_message_id, raw_message,
-             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media, due_date)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT ON CONSTRAINT uq_task_dispatch DO NOTHING
         RETURNING *
         """,
@@ -349,8 +352,136 @@ async def create_task(
             assigned_employee_id,
             task_summary,
             has_media,
+            due_date,
         ),
     )
+
+
+# ------------------------------------------------------ A3: task deadlines
+
+
+async def set_dispatch_due_date(
+    director_telegram_user_id: int, source_message_id: int, due_date: date
+) -> list[dict[str, Any]]:
+    """Give every still-open task from one Director message the same deadline.
+
+    Only tasks without a deadline yet are touched, so a second tap on the
+    choice buttons can't quietly move a deadline already set.
+
+    Returns:
+        The updated rows, each with the employee's Telegram id and name.
+    """
+    return await fetch_all(
+        """
+        UPDATE tasks t
+        SET due_date = %s
+        FROM employees e
+        WHERE t.director_telegram_user_id = %s AND t.source_message_id = %s
+          AND t.due_date IS NULL AND t.status IN ('sent', 'started')
+          AND e.id = t.assigned_employee_id
+        RETURNING t.*, e.telegram_user_id AS employee_telegram_user_id, e.display_name
+        """,
+        (due_date, director_telegram_user_id, source_message_id),
+    )
+
+
+async def tasks_needing_reminder(today: date) -> list[dict[str, Any]]:
+    """Open tasks due today or tomorrow that haven't had their reminder yet."""
+    return await fetch_all(
+        """
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id, e.display_name
+        FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.status IN ('sent', 'started') AND t.reminded_at IS NULL
+          AND t.due_date BETWEEN %s AND %s::date + 1
+          AND e.status = 'active'
+        ORDER BY t.due_date, t.created_at
+        """,
+        (today, today),
+    )
+
+
+async def mark_task_reminded(task_id: str) -> None:
+    """Record that a task's one reminder went out."""
+    await execute("UPDATE tasks SET reminded_at = now() WHERE id = %s", (task_id,))
+
+
+async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
+    """Open tasks past their deadline whose overdue notice hasn't gone out."""
+    return await fetch_all(
+        """
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id, e.display_name
+        FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.status IN ('sent', 'started') AND t.overdue_notified_at IS NULL
+          AND t.due_date < %s
+        ORDER BY t.director_telegram_user_id, t.due_date
+        """,
+        (today,),
+    )
+
+
+async def mark_task_overdue_notified(task_id: str) -> None:
+    """Record that a task's one overdue notice went out."""
+    await execute("UPDATE tasks SET overdue_notified_at = now() WHERE id = %s", (task_id,))
+
+
+async def tasks_due_between(start: date, end: date) -> list[dict[str, Any]]:
+    """Every task whose deadline falls in ``[start, end]``, with the employee's name."""
+    return await fetch_all(
+        """
+        SELECT t.id, t.task_summary, t.status, t.due_date, t.completed_at, t.created_at,
+               t.director_telegram_user_id, e.display_name, e.role
+        FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.due_date BETWEEN %s AND %s
+        ORDER BY t.due_date, e.display_name
+        """,
+        (start, end),
+    )
+
+
+async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
+    """Every unfinished task, oldest deadline first, for the Director's questions."""
+    return await fetch_all(
+        """
+        SELECT t.task_summary, t.status, t.due_date, t.created_at, e.display_name, e.role
+        FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.status IN ('sent', 'started')
+        ORDER BY t.due_date NULLS LAST, t.created_at
+        LIMIT %s
+        """,
+        (limit,),
+    )
+
+
+async def reports_between(start: date, end: date) -> list[dict[str, Any]]:
+    """Every daily report row in ``[start, end]``, with the employee's name (A1's И)."""
+    return await fetch_all(
+        """
+        SELECT r.report_date, r.status, r.submitted_at, e.display_name, e.role
+        FROM daily_reports r
+        JOIN employees e ON e.id = r.employee_id
+        WHERE r.report_date BETWEEN %s AND %s
+        ORDER BY r.report_date, e.display_name
+        """,
+        (start, end),
+    )
+
+
+async def permission_counts_between(start: date, end: date) -> dict[str, int]:
+    """Permission requests submitted in ``[start, end]`` (Tashkent), by status."""
+    rows = await fetch_all(
+        """
+        SELECT status, count(*) AS n FROM permission_requests
+        WHERE submitted_at IS NOT NULL
+          AND (submitted_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s
+        GROUP BY status
+        """,
+        (start, end),
+    )
+    return {row["status"]: int(row["n"]) for row in rows}
 
 
 async def set_task_message_id(task_id: str, message_id: int) -> None:
@@ -1192,8 +1323,10 @@ async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
                r.submitted_at, e.display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
-        WHERE r.report_date >= current_date - %s::int
+        WHERE r.report_date >= %s::date - %s::int
         ORDER BY r.report_date DESC, e.display_name
         """,
-        (days,),
+        # Tashkent's date, not the database's: in UTC the day turns over five
+        # hours late, so current_date was "yesterday" until 05:00 local time.
+        (today_local(), days),
     )

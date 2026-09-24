@@ -33,6 +33,7 @@ routes for things no path in this system can actually do.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from integrations.org_bot.roles import AGENTS, ROUTABLE_ROLES
@@ -310,6 +311,11 @@ to justify repeating a past conclusion.
   "рухсат сўровлари", "кутилаётган рухсатлар", "кто просил разрешение". That
   register is separate from tasks: a task is work you assigned, a permission
   is something an employee asked to be allowed to do.
+- Questions about the STATUS of tasks you already assigned go to
+  topshiriqlar: what is still open, what is overdue, who is late, who
+  finishes on time ("qaysi topshiriqlar bajarilmadi", "muddati o'tganlar",
+  "kim kechikyapti", "какие задачи просрочены"). This is about tracking work
+  already handed out — a NEW instruction is still an employee task.
 - Watch for "yoz"/"write"/"написать" used loosely to mean "list it out for
   me" or "give me a report" — a very common way to ask for a report in
   casual Uzbek/Russian, NOT a request to author a new document. "SAPdagi
@@ -357,6 +363,16 @@ are relaying what the Director meant, not repurposing it into memo
 language. If in doubt, phrase it the way you'd actually say it out loud to
 a coworker, not how you'd write a policy notice.
 
+# DEADLINE (target_type="employee" only)
+If the Director STATED when the task must be done, put that date in due_date
+as YYYY-MM-DD, resolved against today's date given with the message:
+"bugun"/"сегодня" = today, "ertaga"/"завтра" = tomorrow, "juma kuni"/"в
+пятницу" = the coming Friday, "3 kun ichida" = today + 3, "25-sentabrgacha" /
+"до 25.09" = that date, "shu hafta" = this Friday. If the Director said
+nothing about timing, due_date MUST be null — never invent, estimate or
+default a deadline. "Tezroq"/"срочно" without a date is not a deadline:
+null. A wrong deadline makes a real person look late when they weren't.
+
 # FORMATTING
 You may use <b>...</b> around one or two key terms (a name, an amount) if it
 genuinely helps someone scanning quickly — sparingly, not on every sentence.
@@ -370,6 +386,7 @@ Respond with a single JSON object, no prose before or after it:
   "target_role": "one of the role slugs above, or null",
   "target_agent": "one of the agent slugs above, or null",
   "task_summary": "in Uzbek or Russian, shown directly to whoever/whatever receives this outcome — the actual message for an employee, your explanation for none, your refusal for refused",
+  "due_date": "YYYY-MM-DD only if the Director stated a deadline, else null",
   "confidence": 0.0-1.0
 }}
 """
@@ -396,17 +413,24 @@ def format_history(turns: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def build_classify_message(director_message: str, history: str = "") -> str:
+_WEEKDAYS_EN = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def build_classify_message(director_message: str, history: str = "", today: date | None = None) -> str:
     """Format the Director's raw message for the classification call.
 
     Args:
         director_message: The Telegram message text, as sent.
         history: Formatted recent conversation, from ``format_history`` — "" omits it.
+        today: Today in Tashkent, so "ertaga"/"juma kuni" resolve to a real
+            date; None omits it (and with it any deadline).
 
     Returns:
         The user message to send alongside ``CLASSIFY_SYSTEM_PROMPT``.
     """
     parts = []
+    if today is not None:
+        parts.append(f"Today is {_WEEKDAYS_EN[today.weekday()]}, {today.isoformat()} (Asia/Tashkent).\n")
     if history:
         parts.append(f"Recent conversation with this Director:\n{history}\n")
     parts.append(f'Director\'s new message:\n"""\n{director_message}\n"""')

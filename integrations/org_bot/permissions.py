@@ -252,6 +252,43 @@ def parse_amount(text: str) -> tuple[int | None, str]:
     return int(digits) * 100, currency
 
 
+def parse_tiers(text: str) -> list[tuple[int, int]]:
+    """Read the B1 approval limits setting ("5000000:111,20000000:222").
+
+    Args:
+        text: ``PERMISSION_APPROVAL_TIERS`` — limit in whole so'm, a colon,
+            and the Telegram id of whoever decides up to that limit.
+
+    Returns:
+        ``(limit in tiyin, telegram id)`` pairs, smallest limit first.
+        Malformed pairs are skipped, so a typo can't take the flow down.
+    """
+    tiers: list[tuple[int, int]] = []
+    for part in (text or "").split(","):
+        limit, _, telegram_id = part.strip().partition(":")
+        limit = limit.replace(" ", "").replace("_", "")
+        telegram_id = telegram_id.strip()
+        if limit.isdigit() and telegram_id.lstrip("-").isdigit() and int(limit) > 0:
+            tiers.append((int(limit) * 100, int(telegram_id)))
+    return sorted(tiers)
+
+
+def tier_approver(amount_tiyin: int | None, currency: str | None, tiers: list[tuple[int, int]]) -> int | None:
+    """Who decides this amount under the B1 limits, if anyone below the Director.
+
+    Returns:
+        The Telegram id of the lowest tier whose limit covers the amount, or
+        None when the Director decides: no tiers configured, no cost, not in
+        so'm, unreadable, or above every limit.
+    """
+    if not tiers or not amount_tiyin or amount_tiyin <= 0 or (currency or "UZS") != "UZS":
+        return None
+    for limit, telegram_id in tiers:
+        if amount_tiyin <= limit:
+            return telegram_id
+    return None
+
+
 def format_amount(amount_tiyin: int | None, currency: str, raw: str | None = None) -> str:
     """Render a parsed amount, for places that only have the parsed figure.
 

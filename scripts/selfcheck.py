@@ -549,6 +549,91 @@ def test_permissions() -> None:
     check_true("an answer is not a cancel", not permissions.is_cancel("бекор қилинган буюртма"))
 
 
+def test_task_tracker() -> None:
+    """A3 deadlines/reminders and the plan's И coefficients (A1, A3)."""
+    print("task tracker (A3) and И")
+    from datetime import datetime, timezone
+
+    from integrations.org_bot import task_tracker as tt
+    from integrations.org_bot.prompt import build_classify_message
+
+    today = date(2026, 9, 23)  # a Wednesday
+    check("stated deadline kept", tt.parse_due_date("2026-09-25", today), date(2026, 9, 25))
+    check("today is a valid deadline", tt.parse_due_date("2026-09-23", today), today)
+    check("no deadline stays none", tt.parse_due_date(None, today), None)
+    check("a past date is dropped, not guessed", tt.parse_due_date("2026-09-01", today), None)
+    check("garbage is dropped", tt.parse_due_date("juma", today), None)
+    check("a year-plus date is a misread", tt.parse_due_date("2028-01-01", today), None)
+
+    check("'Ertaga' button", tt.due_from_choice("1", today), (True, date(2026, 9, 24)))
+    check("'Muddatsiz' button is no deadline", tt.due_from_choice("n", today), (True, None))
+    check("unknown button refused", tt.due_from_choice("x", today)[0], False)
+    buttons = [b for row in tt.deadline_keyboard(987654321)["inline_keyboard"] for b in row]
+    check_true("deadline buttons fit Telegram's 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in buttons))
+    check_true("card line names the weekday", "juma" in tt.deadline_line(date(2026, 9, 25), today))
+    check_true("card line says 'ertaga'", "ertaga" in tt.deadline_line(date(2026, 9, 24), today))
+
+    message = build_classify_message("ertaga hisobotni tayyorla", today=today)
+    check_true("classifier is told today's date", "Wednesday, 2026-09-23" in message)
+
+    def at(day: int, hour: int) -> datetime:
+        return datetime(2026, 9, day, hour - 5, 0, tzinfo=timezone.utc)  # Tashkent = UTC+5
+
+    tasks = [
+        {"display_name": "Aziz", "task_summary": "A", "status": "done", "due_date": date(2026, 9, 22), "completed_at": at(22, 17)},
+        {"display_name": "Aziz", "task_summary": "B", "status": "done", "due_date": date(2026, 9, 21), "completed_at": at(22, 10)},
+        {"display_name": "Dilnoza", "task_summary": "C", "status": "sent", "due_date": date(2026, 9, 22), "completed_at": None},
+        {"display_name": "Dilnoza", "task_summary": "D", "status": "sent", "due_date": today, "completed_at": None},
+        {"display_name": "Dilnoza", "task_summary": "E", "status": "sent", "due_date": None, "completed_at": None},
+    ]
+    score = tt.score_tasks(tasks, date(2026, 9, 21), today)
+    check("tasks judged (open, due today, not yet late)", score.due, 3)
+    check("done by 17:00 on the day counts as on time", score.on_time, 1)
+    check("done the day after is late", score.late, 1)
+    check("open past deadline is overdue", score.open_overdue, 1)
+    check("A3 И", round(score.index, 2), 0.33)
+
+    rows = [
+        {"display_name": "Aziz", "status": "submitted", "report_date": today, "submitted_at": at(23, 16)},
+        {"display_name": "Bobur", "status": "submitted", "report_date": today, "submitted_at": at(23, 19)},
+        {"display_name": "Dilnoza", "status": "asked", "report_date": today, "submitted_at": None},
+    ]
+    reports = tt.score_reports(rows)
+    check("reports: 2 of 3 sent", (reports.reported, reports.asked), (2, 3))
+    check("a report after 18:00 isn't on time", reports.on_time, 1)
+    check("A1 И = (2/3)*(1/2)", round(reports.index, 2), 0.33)
+
+    text = tt.weekly_text(date(2026, 9, 21), today, score, reports, {"approved": 2, "submitted": 1})
+    check_true("scorecard shows the tasks И", "1/3 o'z vaqtida" in text and "И = 0.33" in text)
+    check_true("below 0.50 is red", "🔴" in text)
+    check_true("names who didn't report", "Dilnoza (1 kun)" in text)
+    check_true("names the overdue task", "Dilnoza — C" in text)
+    check_true("permissions counted", "тасдиқланди 2" in text and "кутилмоқда 1" in text)
+    quiet = tt.weekly_text(date(2026, 9, 21), today, tt.TaskScore(), None, None)
+    check_true("no reports section when reports are off", "hisobot" not in quiet)
+    check_true("typed names are escaped", "&lt;" in tt.overdue_director_text(
+        [{"display_name": "A<b>", "task_summary": "x", "due_date": today}]
+    ))
+
+
+def test_payment_gate() -> None:
+    """B1: requests route by amount to whoever holds that limit."""
+    print("payment gate (B1)")
+    from integrations.org_bot import permissions as p
+
+    tiers = p.parse_tiers("20 000 000:222, 5000000:111, junk, 0:9")
+    check("limits parsed, sorted, junk skipped", tiers, [(500000000, 111), (2000000000, 222)])
+    check("empty setting = no tiers", p.parse_tiers(""), [])
+    check("small amount -> first limit", p.tier_approver(300000000, "UZS", tiers), 111)
+    check("exactly the limit stays in that tier", p.tier_approver(500000000, "UZS", tiers), 111)
+    check("mid amount -> second limit", p.tier_approver(1500000000, "UZS", tiers), 222)
+    check("above every limit -> Director", p.tier_approver(9000000000, "UZS", tiers), None)
+    check("dollars always go to the Director", p.tier_approver(100000, "USD", tiers), None)
+    check("no cost goes to the Director", p.tier_approver(0, "UZS", tiers), None)
+    check("unreadable amount goes to the Director", p.tier_approver(None, "UZS", tiers), None)
+    check("no tiers configured -> Director", p.tier_approver(300000000, "UZS", []), None)
+
+
 def test_permission_form() -> None:
     """The company's own SOP .docx is filled in place — never regenerated."""
     print("permission form (company docx filled in place)")
@@ -629,6 +714,8 @@ def main() -> int:
         test_org_bot,
         test_permissions,
         test_permission_form,
+        test_task_tracker,
+        test_payment_gate,
         test_daily_report_kpi,
         test_brief_rendering,
         test_receivables_rendering,

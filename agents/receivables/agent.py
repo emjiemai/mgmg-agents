@@ -47,7 +47,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all
 from integrations.common.divisions import label as division_label
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_money, format_money_by_currency
+from integrations.common.money import format_money_by_currency
 from integrations.common.timeutil import fmt_date
 from integrations.org_bot.notify import notify_directors
 from integrations.sap.models import ARAging, ARInvoice
@@ -64,10 +64,6 @@ BUCKET_LABELS = {
     "90_plus": "90+ kun",
 }
 BUCKET_SEVERITY = {"1_30": "info", "31_60": "warning", "61_90": "warning", "90_plus": "critical"}
-BUCKET_EMOJI = {"1_30": "🟢", "31_60": "🟡", "61_90": "🟡", "90_plus": "🔴"}
-
-# Invoices shown per bucket before the rest are summarized.
-MAX_PER_BUCKET = 5
 
 
 async def collect(run_id: uuid.UUID) -> ARAging:
@@ -186,45 +182,6 @@ def _total_of(invoices: list[ARInvoice], *, short: bool = False) -> str:
         invoices actually span more than one currency.
     """
     return format_money_by_currency([(i.balance_due_tiyin, i.currency) for i in invoices], short=short)
-
-
-def _invoice_line(invoice: ARInvoice) -> str:
-    """Render one invoice as a single alert line.
-
-    Args:
-        invoice: The overdue invoice.
-
-    Returns:
-        HTML-safe text naming customer, amount, age and owner.
-    """
-    owner = invoice.sales_person_name or division_label(invoice.division)
-    customer = invoice.card_name or invoice.card_code
-    doc = f"#{invoice.doc_num}" if invoice.doc_num else f"Hujjat {invoice.doc_entry}"
-    amount = format_money(invoice.balance_due_tiyin, invoice.currency, short=True)
-    return (
-        f"{escape(customer)} — <b>{escape(amount)}</b>, "
-        f"{invoice.days_overdue} kun, {escape(doc)} ({escape(owner)})"
-    )
-
-
-def _by_owner(invoices: list[ARInvoice]) -> dict[str, list[ARInvoice]]:
-    """Group overdue invoices by responsible person.
-
-    Kept as invoice lists rather than pre-summed totals so the caller can
-    total them currency-safely (``_total_of``) instead of blending, say,
-    UZS tiyin and USD cents into one meaningless number.
-
-    Args:
-        invoices: Overdue invoices.
-
-    Returns:
-        Mapping of owner name to their invoices.
-    """
-    grouped: dict[str, list[ARInvoice]] = defaultdict(list)
-    for invoice in invoices:
-        owner = invoice.sales_person_name or division_label(invoice.division)
-        grouped[owner].append(invoice)
-    return dict(grouped)
 
 
 async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, message_id: int | None) -> None:

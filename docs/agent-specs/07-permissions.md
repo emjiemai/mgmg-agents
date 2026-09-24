@@ -100,6 +100,7 @@ history that can be edited is not a decision history.
 | ------- | ------ |
 | `PERMISSIONS_ENABLED` | `true` (default) enables the flow; `false` makes the bot ignore permission messages entirely |
 | `PERMISSION_DEPUTY_TELEGRAM_IDS` | Comma-separated Telegram ids who may also decide |
+| `PERMISSION_APPROVAL_TIERS` | B1 payment gate: who decides by amount (see `08-task-tracker.md`). Empty = the Director decides everything |
 
 ## Deliberately not built yet
 

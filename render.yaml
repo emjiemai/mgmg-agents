@@ -108,7 +108,9 @@ services:
     dockerfilePath: ./Dockerfile
     plan: starter
     schedule: "0 12 * * 1-5"  # 17:00 Asia/Tashkent, one hour before home time
-    dockerCommand: python agents/daily-reports/agent.py --remind
+    # Report reminder + the Friday task scorecard (A3), one service to keep
+    # it to one ~$1/month minimum. The scorecard skips itself Mon-Thu.
+    dockerCommand: python scripts/run_morning_agents.py --evening
     envVars:
       - fromGroup: mgmg-shared
       - key: DATABASE_URL

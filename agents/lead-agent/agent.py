@@ -524,7 +524,6 @@ async def qualify_leads(raw_leads: list[RawLead], run_id: uuid.UUID) -> list[dic
         return []
 
     by_url = {r.url: r for r in raw_leads}
-    known_urls = set(by_url)
     batches = [
         raw_leads[i : i + QUALIFY_BATCH_SIZE]
         for i in range(0, len(raw_leads), QUALIFY_BATCH_SIZE)

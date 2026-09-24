@@ -442,6 +442,14 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by TEXT;
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('sent', 'started', 'done'));
 
+-- A3 task tracker: the deadline the Director stated (or picked with one tap),
+-- and when the one reminder / one overdue notice went out, so a cron retry
+-- never nags twice.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS overdue_notified_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks (due_date) WHERE due_date IS NOT NULL;
+
 DROP INDEX IF EXISTS idx_tasks_open;
 CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started');
 

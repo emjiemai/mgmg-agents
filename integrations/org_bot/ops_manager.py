@@ -17,18 +17,19 @@ registered can trigger:
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import BackgroundTasks
 
 from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
-from integrations.common.db import fetch_all, fetch_one, log_action
+from integrations.common.db import fetch_all, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_uzs
 from integrations.common.timeutil import today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, kpi, permission_flow, store
+from integrations.org_bot import admin, kpi, permission_flow, store, task_tracker
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -173,6 +174,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_task_done(rest, callback, run_id)
     if prefix == "dispatchrole":
         return await _handle_dispatch_role(rest, callback, run_id)
+    if prefix == "taskdue":
+        return await _handle_task_due(rest, callback, run_id)
 
     # Written permission buttons (send / cancel / the four SOP decisions).
     permission_outcome = await permission_flow.handle_callback(prefix, rest, callback, run_id)
@@ -184,7 +187,7 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
     return "unrecognized"
 
 
-def _task_card_text(task_summary: str, raw_message: str | None = None) -> str:
+def _task_card_text(task_summary: str, raw_message: str | None = None, due_date: date | None = None) -> str:
     """The base text/caption every task card starts with — recomputed (not
     stored) so edits can append a status line without needing to fetch or
     guess the message's current content.
@@ -199,6 +202,9 @@ def _task_card_text(task_summary: str, raw_message: str | None = None) -> str:
     text = f"📋 <b>Yangi topshiriq / New task</b>\n\n{sanitize_model_html(task_summary)}"
     if raw_message and raw_message.strip() and raw_message.strip() != task_summary.strip():
         text += f"\n\n<i>Direktordan / From the Director:</i>\n{escape(raw_message.strip())}"
+    deadline = task_tracker.deadline_line(due_date, today_local())
+    if deadline:
+        text += f"\n\n{deadline}"
     return text
 
 
@@ -383,7 +389,10 @@ async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uui
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         if message.get("message_id") and message.get("chat", {}).get("id"):
-            text = _task_card_text(task["task_summary"], task.get("raw_message")) + "\n\n▶️ Boshlandi / Started"
+            text = (
+                _task_card_text(task["task_summary"], task.get("raw_message"), task.get("due_date"))
+                + "\n\n▶️ Boshlandi / Started"
+            )
             keyboard = _task_keyboard(str(task["id"]), started=True)
             await _edit_task_card(
                 bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text, keyboard
@@ -419,7 +428,10 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         if message.get("message_id") and message.get("chat", {}).get("id"):
-            text = _task_card_text(task["task_summary"], task.get("raw_message")) + "\n\n✅ Bajarildi / Done"
+            text = (
+                _task_card_text(task["task_summary"], task.get("raw_message"), task.get("due_date"))
+                + "\n\n✅ Bajarildi / Done"
+            )
             await _edit_task_card(
                 bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text,
                 {"inline_keyboard": []},
@@ -846,9 +858,12 @@ async def _dispatch_director_task(
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
-            result = await ai.complete_json(CLASSIFY_SYSTEM_PROMPT, build_classify_message(raw_message, history))
+            result = await ai.complete_json(
+                CLASSIFY_SYSTEM_PROMPT, build_classify_message(raw_message, history, today_local())
+            )
 
         task_summary = (result.get("task_summary") or raw_message[:200]).strip()
+        due_date = task_tracker.parse_due_date(result.get("due_date"), today_local())
         validated = validate_classification(result)
 
         if validated is None:
@@ -870,7 +885,8 @@ async def _dispatch_director_task(
         )
         if target_type == "employee":
             await _dispatch_to_role(
-                director_telegram_user_id, source_message_id, raw_message, target_role, task_summary, run_id
+                director_telegram_user_id, source_message_id, raw_message, target_role, task_summary, run_id,
+                due_date,
             )
         elif target_type == "agent":
             await _answer_from_agent(director_telegram_user_id, target_agent, raw_message, run_id, history)
@@ -926,6 +942,7 @@ async def _dispatch_to_role(
     role_slug: str,
     task_summary: str,
     run_id: uuid.UUID,
+    due_date: date | None = None,
 ) -> None:
     """Create + send one task card per active employee holding ``role_slug``."""
     employees = await store.active_employees_by_role(role_slug)
@@ -951,12 +968,13 @@ async def _dispatch_to_role(
                 target_agent=None,
                 assigned_employee_id=str(employee["id"]),
                 task_summary=task_summary,
+                due_date=due_date,
             )
             if task is None:
                 continue  # already dispatched -- duplicate webhook delivery
 
             message_ids = await bot.send_message(
-                _task_card_text(task_summary, raw_message),
+                _task_card_text(task_summary, raw_message, due_date),
                 chat_id=str(employee["telegram_user_id"]),
                 reply_markup=_task_keyboard(str(task["id"])),
             )
@@ -965,8 +983,87 @@ async def _dispatch_to_role(
             sent_names.append(employee["display_name"])
 
     if sent_names:
-        names = ", ".join(escape(n) for n in sent_names)
-        await _reply_and_log(director_id, run_id, f"Yuborildi: {names} ({ROLE_LABELS[role_slug]}).")
+        await _confirm_dispatch(director_id, source_message_id, sent_names, role_slug, due_date, run_id)
+
+
+async def _confirm_dispatch(
+    director_id: int,
+    source_message_id: int | None,
+    sent_names: list[str],
+    role_slug: str,
+    due_date: date | None,
+    run_id: uuid.UUID,
+) -> None:
+    """Tell the Director who got the task — and ask for a deadline if none was stated.
+
+    A3 needs "who, what, by when" for every task. The deadline is never
+    guessed: when the Director didn't state one, they get one-tap choices,
+    and "Muddatsiz" (no deadline) is an answer too.
+    """
+    names = ", ".join(escape(n) for n in sent_names)
+    text = f"Yuborildi: {names} ({ROLE_LABELS[role_slug]})."
+    if due_date is not None:
+        text += f"\n{task_tracker.deadline_line(due_date, today_local())}"
+        await _reply_and_log(director_id, run_id, text)
+        return
+    if not source_message_id:
+        await _reply_and_log(director_id, run_id, text)
+        return
+    text += "\n⏰ Muddat ko'rsatilmadi — qachongacha?"
+    await _reply(director_id, run_id, text, task_tracker.deadline_keyboard(source_message_id))
+    await store.log_conversation_turn(director_id, "bot", text)
+
+
+async def _handle_task_due(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The Director picked a deadline for a task they just sent."""
+    query_id = callback.get("id", "")
+    code, _, message_part = rest.partition(":")
+    clicker_id = callback.get("from", {}).get("id")
+    try:
+        source_message_id = int(message_part)
+    except ValueError:
+        await _answer(query_id, "Unrecognized action")
+        return "unrecognized"
+
+    recognised, due = task_tracker.due_from_choice(code, today_local())
+    if not recognised:
+        await _answer(query_id, "Unrecognized action")
+        return "unrecognized"
+
+    director = await store.get_employee_by_telegram_id(clicker_id) if clicker_id else None
+    if director is None or director["role"] != DIRECTOR_ROLE or director["status"] != "active":
+        await _answer(query_id, "Not allowed")
+        return "unauthorized"
+
+    updated = [] if due is None else await store.set_dispatch_due_date(clicker_id, source_message_id, due)
+    label = "Muddatsiz" if due is None else task_tracker.deadline_line(due, today_local())
+
+    message = callback.get("message") or {}
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        if message.get("message_id") and message.get("chat", {}).get("id"):
+            original = (message.get("text") or "").split("\n⏰", 1)[0]
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=str(message["chat"]["id"]),
+                message_id=message["message_id"],
+                text=f"{escape(original)}\n{label}",
+                reply_markup={"inline_keyboard": []},
+            )
+        await bot._answer_callback(query_id, "OK")  # noqa: SLF001
+        # The employee's card went out without a deadline; tell them now.
+        for task in updated:
+            try:
+                await bot.send_message(
+                    f"{task_tracker.deadline_line(due, today_local())}\n"
+                    f"{sanitize_model_html(task['task_summary'])}",
+                    chat_id=str(task["employee_telegram_user_id"]),
+                )
+            except TelegramError as exc:
+                log.warning("Could not send the deadline to {}: {}", task.get("display_name"), exc)
+
+    log.info("Deadline {} set on {} task(s) from message {}", due, len(updated), source_message_id)
+    return "task_due_set"
 
 
 # ------------------------------------------------------------------- media/files
@@ -997,6 +1094,7 @@ async def _dispatch_director_media(
 
     validated = None
     refusal_text: str | None = None
+    media_due: date | None = None
     if caption:
         try:
             async with OpenRouterClient(
@@ -1006,8 +1104,11 @@ async def _dispatch_director_media(
                 model_override=settings.ops_manager_bot_model,
                 fallback_override=settings.ops_manager_bot_fallback_models,
             ) as ai:
-                result = await ai.complete_json(CLASSIFY_SYSTEM_PROMPT, build_classify_message(caption))
+                result = await ai.complete_json(
+                    CLASSIFY_SYSTEM_PROMPT, build_classify_message(caption, today=today_local())
+                )
             validated = validate_classification(result)
+            media_due = task_tracker.parse_due_date(result.get("due_date"), today_local())
             if validated is not None and validated[0] == "refused":
                 refusal_text = (result.get("task_summary") or "").strip() or None
         except OpenRouterError as exc:
@@ -1016,7 +1117,8 @@ async def _dispatch_director_media(
     try:
         if validated is not None and validated[0] == "employee":
             await _dispatch_media_to_role(
-                director_telegram_user_id, source_message_id, caption or "Media fayl / Media file", validated[1], run_id
+                director_telegram_user_id, source_message_id, caption or "Media fayl / Media file", validated[1], run_id,
+                media_due,
             )
         elif validated is not None and validated[0] == "refused":
             # Guardrail path — refuse and stop, same as the text-task flow.
@@ -1088,7 +1190,12 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
 
 
 async def _dispatch_media_to_role(
-    director_id: int, source_message_id: int, task_summary: str, role_slug: str, run_id: uuid.UUID
+    director_id: int,
+    source_message_id: int,
+    task_summary: str,
+    role_slug: str,
+    run_id: uuid.UUID,
+    due_date: date | None = None,
 ) -> None:
     """Create + copy one task card per active employee holding ``role_slug``.
 
@@ -1121,6 +1228,7 @@ async def _dispatch_media_to_role(
                 assigned_employee_id=str(employee["id"]),
                 task_summary=task_summary,
                 has_media=True,
+                due_date=due_date,
             )
             if task is None:
                 continue  # already dispatched -- duplicate webhook delivery
@@ -1131,7 +1239,7 @@ async def _dispatch_media_to_role(
                     "chat_id": str(employee["telegram_user_id"]),
                     "from_chat_id": str(director_id),
                     "message_id": source_message_id,
-                    "caption": _task_card_text(task_summary),
+                    "caption": _task_card_text(task_summary, due_date=due_date),
                     "parse_mode": "HTML",
                     "reply_markup": _task_keyboard(str(task["id"])),
                 },
@@ -1143,8 +1251,7 @@ async def _dispatch_media_to_role(
             sent_names.append(employee["display_name"])
 
     if sent_names:
-        names = ", ".join(escape(n) for n in sent_names)
-        await _reply_and_log(director_id, run_id, f"Yuborildi: {names} ({ROLE_LABELS[role_slug]}).")
+        await _confirm_dispatch(director_id, source_message_id, sent_names, role_slug, due_date, run_id)
 
 
 async def _answer_from_agent(
@@ -1219,6 +1326,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         return await _fetch_sap_gateway_data(sap_gateway_tools[agent_slug])
 
     fetchers = {
+        "topshiriqlar": _fetch_task_tracker_data,
         "lead_agent": _fetch_lead_agent_data,
         "finance_agent": _fetch_finance_agent_data,
         "crm_agent": _fetch_crm_agent_data,
@@ -1278,6 +1386,42 @@ async def _fetch_kpi_agent_data() -> str:
             parts.append(numbers)
         parts.append(f"tasks completed: {row['tasks_done']}")
         lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+async def _fetch_task_tracker_data() -> str:
+    """Open tasks with deadlines, what's overdue, and on-time rates (A3)."""
+    today = today_local()
+    open_tasks = await store.open_tasks_with_names()
+    lines = [f"Today is {today.isoformat()}. Tasks the Director assigned through this bot."]
+    if not open_tasks:
+        lines.append("No open tasks: everything assigned has been marked done.")
+    else:
+        lines.append(f"OPEN TASKS ({len(open_tasks)}), oldest deadline first:")
+        for task in open_tasks:
+            due = task.get("due_date")
+            if due is None:
+                state = "no deadline"
+            elif due < today:
+                state = f"OVERDUE since {due.isoformat()} ({(today - due).days} day(s))"
+            else:
+                state = f"due {due.isoformat()}"
+            lines.append(
+                f"- {task['display_name']} ({task['role']}) | {task['status']} | {state} | "
+                f"assigned {task['created_at'].date().isoformat()} | {' '.join(task['task_summary'].split())}"
+            )
+
+    start = today - timedelta(days=30)
+    score = task_tracker.score_tasks(await store.tasks_due_between(start, today), start, today)
+    if score.due:
+        lines.append(
+            f"LAST 30 DAYS: {score.due} task(s) were due; {score.on_time} done on time, {score.late} done late, "
+            f"{score.open_overdue} still not done. On-time index = {score.index:.2f}."
+        )
+        for name, (due, done) in sorted(score.by_person.items()):
+            lines.append(f"- {name}: {done}/{due} on time")
+    else:
+        lines.append("LAST 30 DAYS: no task with a deadline fell due, so there is no on-time rate yet.")
     return "\n".join(lines)
 
 

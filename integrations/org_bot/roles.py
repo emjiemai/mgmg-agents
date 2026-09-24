@@ -83,6 +83,13 @@ AGENTS: list[Agent] = [
         "asked, what for, the amount, what is still awaiting a decision, and every decision made "
         "(approved / conditional / rejected / more information needed), last 60 days",
     ),
+    Agent(
+        "topshiriqlar",
+        "Topshiriqlar nazorati / Task tracker",
+        "every task the Director assigned through this bot that is still open, with its deadline, who "
+        "has it, and which are overdue; plus each employee's on-time rate for tasks due in the last "
+        "30 days",
+    ),
     Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's

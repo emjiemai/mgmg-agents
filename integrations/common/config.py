@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     # DAILY_REPORTS_ENABLED=true in Render's mgmg-shared group to start.
     daily_reports_enabled: bool = False
 
+    # --- Task tracker (A3 in the owner's AI agent plan) ---
+    # Deadline reminders to employees, one overdue notice to the Director, and
+    # the Friday scorecard. On by default: it only ever acts on a deadline the
+    # Director set, so nothing is sent until a task has one. Set
+    # TASK_TRACKER_ENABLED=false in Render's mgmg-shared group to pause it.
+    task_tracker_enabled: bool = True
+
     # --- Written permission requests (EMJ-SOP-ADM-01) ---
     # The SOP allows an electronic approval only in the system the director
     # officially designates, with the approver and the decision history kept
@@ -142,6 +149,14 @@ class Settings(BaseSettings):
     # with written authority (§3), so this list is deliberately explicit
     # rather than derived from a role. Empty = the Director alone decides.
     permission_deputy_telegram_ids: str = ""
+    # B1 payment gate (owner's AI agent plan): who decides by amount, as
+    # "limit_in_som:telegram_id" pairs, e.g. "5000000:111,20000000:222" =
+    # up to 5 mln so'm -> 111, up to 20 mln -> 222, above that -> the Director.
+    # The limits are the business's to write, so empty (the default) keeps
+    # every request going to the Director and deputies as before. Only whole
+    # so'm amounts are routed; "0", other currencies and unreadable amounts
+    # always go to the Director.
+    permission_approval_tiers: str = ""
 
     # --- Lead Agent sources ---
     serpapi_api_key: SecretStr = SecretStr("")

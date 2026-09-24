@@ -14,8 +14,12 @@ wrapper's own exit code is non-zero if any agent failed, so Render's cron run
 history still shows a real failure rather than a false "success" if one of
 the three had a problem.
 
+The 17:00 job reuses this runner (``--evening``) for the same reason: the
+report reminder and the Friday task scorecard share one cron service.
+
 Run:
-    python scripts/run_morning_agents.py
+    python scripts/run_morning_agents.py            # 08:00
+    python scripts/run_morning_agents.py --evening  # 17:00
 """
 
 from __future__ import annotations
@@ -32,6 +36,14 @@ AGENTS = [
     "agents/ceo-daily-brief/agent.py",
     "agents/lead-agent/agent.py",
     "agents/receivables/agent.py",
+    "agents/task-tracker/agent.py --morning",
+]
+
+# 17:00 Mon-Fri. The scorecard checks for Friday itself, so this list can run
+# every weekday.
+EVENING_AGENTS = [
+    "agents/daily-reports/agent.py --remind",
+    "agents/task-tracker/agent.py --weekly",
 ]
 
 
@@ -55,8 +67,9 @@ def run_agent(relative_command: str) -> int:
 
 
 def main() -> None:
+    commands = EVENING_AGENTS if "--evening" in sys.argv[1:] else AGENTS
     results: dict[str, int] = {}
-    for command in AGENTS:
+    for command in commands:
         results[command] = run_agent(command)
 
     print("\n=== Morning agents summary ===")

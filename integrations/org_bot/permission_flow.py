@@ -104,6 +104,37 @@ async def _approvers(exclude_telegram_user_id: int) -> list[dict[str, Any]]:
     return list(found.values())
 
 
+async def _tier_approver(request: dict[str, Any]) -> dict[str, Any] | None:
+    """The B1 limit holder for this request's amount, if one applies.
+
+    Never the requester themselves (SOP §3) and never someone inactive — in
+    either case the request simply goes to the Director instead.
+    """
+    tiers = permissions.parse_tiers(settings.permission_approval_tiers)
+    telegram_id = permissions.tier_approver(request.get("amount_tiyin"), request.get("currency"), tiers)
+    if telegram_id is None or telegram_id == request["requester_telegram_user_id"]:
+        return None
+    holder = await store.get_employee_by_telegram_id(telegram_id)
+    return holder if holder is not None and holder["status"] == "active" else None
+
+
+async def _route(request: dict[str, Any]) -> list[dict[str, Any]]:
+    """Who receives the card: the limit holder for this amount, else the Director(s)."""
+    holder = await _tier_approver(request)
+    if holder is not None:
+        return [holder]
+    return await _approvers(request["requester_telegram_user_id"])
+
+
+async def _may_decide(request: dict[str, Any], telegram_user_id: int) -> bool:
+    """The Director and deputies can always decide; a limit holder only their own tier."""
+    allowed = {a["telegram_user_id"] for a in await _approvers(request["requester_telegram_user_id"])}
+    holder = await _tier_approver(request)
+    if holder is not None:
+        allowed.add(holder["telegram_user_id"])
+    return telegram_user_id in allowed
+
+
 async def _check_answer(
     field: permissions.Field, answer: str, run_id: uuid.UUID
 ) -> tuple[bool, str | None, str]:
@@ -296,7 +327,7 @@ async def _submit(request_id: str, clicker_id: int, run_id: uuid.UUID) -> str:
     if permissions.next_missing_field(request) is not None:
         return await _ask_next(request, run_id)
 
-    approvers = await _approvers(clicker_id)
+    approvers = await _route(request)
     if not approvers:
         # SOP §3: nobody may approve their own request. Better to refuse than
         # to let a request sit as "sent" with no one able to decide it.
@@ -357,8 +388,7 @@ async def _take_decision(request_id: str, decision: str, clicker: dict[str, Any]
     if request is None:
         return "permission_not_found"
 
-    approvers = await _approvers(request["requester_telegram_user_id"])
-    if clicker_id not in {a["telegram_user_id"] for a in approvers}:
+    if not await _may_decide(request, clicker_id):
         # Covers both "not an approver" and the requester tapping their own card.
         await _send(clicker_id, "⚠️ Бу сўров бўйича қарор қабул қилиш ваколатингиз йўқ.", run_id)
         return "permission_not_authorised"
