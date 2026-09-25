@@ -34,7 +34,7 @@ from integrations.common.db import audited, execute
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import to_tiyin
 from integrations.common.timeutil import days_between, parse_sap_date, today_local
-from integrations.sap.client import aging_bucket
+from integrations.sap.aging import aging_bucket
 
 log = setup_logging("sap-push-handler")
 

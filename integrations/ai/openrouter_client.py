@@ -1,21 +1,12 @@
-"""AI completion client — used by the Lead Agent to qualify raw search hits.
+"""AI completion client — OpenRouter (verified against openrouter.ai/docs).
 
-Supports two providers behind one interface, selected by ``AI_PROVIDER``:
+Every AI call in the project goes through here: OPS Manager Bot's routing and
+answers, the answer checks, the Lead Agent. OpenRouter supports
+``response_format: json_object``; ``complete_json`` also strips a fenced code
+block, since some models wrap JSON in one regardless.
 
-- **openrouter** — verified against openrouter.ai/docs/quickstart on
-  2026-08-19. Confirmed to support ``response_format: json_object``.
-- **deepseek** — DeepSeek's own API, verified against api-docs.deepseek.com
-  on 2026-08-19. Also OpenAI-compatible (``chat/completions``, Bearer auth,
-  reply at ``choices[0].message.content``), but its docs do not confirm
-  ``response_format`` support, so JSON mode is only requested for OpenRouter;
-  DeepSeek relies on the prompt's own JSON instruction plus the defensive
-  fenced-code-block stripping already in ``complete_json``.
-
-Switching providers is a one-line env change (``AI_PROVIDER=deepseek`` or
-``AI_PROVIDER=openrouter``), not a code change — this class stays named
-``OpenRouterClient`` for import stability even though it now serves both,
-since the class itself is generic (base URL, auth, and JSON-mode support are
-the only per-provider differences).
+DeepSeek support was removed on 2026-09-26: the business moved to OpenRouter
++ Gemini on 2026-09-14 and removed the DeepSeek keys.
 """
 
 from __future__ import annotations
@@ -43,30 +34,13 @@ DEFAULT_MAX_TOKENS = 8000
 # call site in complete() for why this is scoped to that one failure mode.
 EMPTY_CONTENT_RETRIES = 2
 
-PROVIDERS: dict[str, dict[str, object]] = {
-    "openrouter": {
-        "base_url": "https://openrouter.ai/api/v1/chat/completions",
-        "supports_json_mode": True,
-        "extra_headers": {
-            "HTTP-Referer": "https://mgmg-command-center.internal",
-            "X-Title": "MGMG Lead Agent",
-        },
-        "extra_payload": {},
-    },
-    "deepseek": {
-        "base_url": "https://api.deepseek.com/chat/completions",
-        "supports_json_mode": False,
-        "extra_headers": {},
-        # DeepSeek's reasoning-capable models emit chain-of-thought into a
-        # SEPARATE `reasoning_content` field before the final answer in
-        # `content` -- confirmed 2026-08-20 after batches failed with an
-        # empty `content` (the model spent its turn reasoning without ever
-        # committing to a final answer). This is a plain classification
-        # task with no need for that, so thinking is turned off: faster,
-        # cheaper, and removes the empty-content failure mode entirely.
-        "extra_payload": {"thinking": {"type": "disabled"}},
-    },
+BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+EXTRA_HEADERS = {
+    "HTTP-Referer": "https://mgmg-command-center.internal",
+    "X-Title": "MGMG Command Center",
 }
+# Recorded as the target system on every audit row.
+PROVIDER = "openrouter"
 
 
 async def describe_openrouter_key() -> str:
@@ -102,7 +76,7 @@ async def describe_openrouter_key() -> str:
 
 
 class OpenRouterError(RuntimeError):
-    """Raised when the configured AI provider returns an unrecoverable error."""
+    """Raised when OpenRouter returns an unrecoverable error."""
 
 
 class OpenRouterClient:
@@ -111,17 +85,10 @@ class OpenRouterClient:
     Args:
         agent: Calling agent name, recorded on every audit row.
         run_id: UUID grouping this run's audit rows.
-        provider_override: If set, used instead of the global ``ai_provider``
-            setting — lets one caller (e.g. OPS Manager Bot) run on a
-            different provider than another (e.g. Lead Agent) without a
-            second settings switch. Must be a key in ``PROVIDERS``.
         model_override: If set, used as the primary model instead of the
-            active provider's global ``*_model`` setting.
+            global ``OPENROUTER_MODEL`` (OPS Manager Bot has its own).
         fallback_override: Comma-separated fallback chain to use alongside
-            ``model_override``. Ignored if ``model_override`` is unset. Must
-            name models on the SAME provider — this client opens one HTTP
-            client against one provider's base URL, so a cross-provider
-            fallback isn't possible within a single instance.
+            ``model_override``. Ignored if ``model_override`` is unset.
     """
 
     def __init__(
@@ -129,50 +96,37 @@ class OpenRouterClient:
         agent: str = "-",
         run_id: uuid.UUID | str | None = None,
         *,
-        provider_override: str | None = None,
         model_override: str | None = None,
         fallback_override: str | None = None,
     ) -> None:
         self.agent = agent
         self.run_id = run_id
         self._client: httpx.AsyncClient | None = None
-        self.provider = (provider_override or settings.ai_provider).strip().lower()
+        self.provider = PROVIDER
         self._model_override = model_override
         self._fallback_override = fallback_override
 
     async def __aenter__(self) -> "OpenRouterClient":
-        """Open the HTTP client with the configured provider's auth attached.
+        """Open the HTTP client with the OpenRouter key attached.
 
         Returns:
             The ready client.
 
         Raises:
-            OpenRouterError: if the provider is unknown or its key is unset.
+            OpenRouterError: if the key is unset.
         """
-        if self.provider not in PROVIDERS:
-            raise OpenRouterError(
-                f"Unknown AI_PROVIDER '{self.provider}' — use 'openrouter' or 'deepseek'"
-            )
-
         # strip(): a key pasted into a dashboard with a trailing newline/space
         # would otherwise become an invalid or rejected Authorization header.
-        key = (
-            settings.deepseek_api_key.get_secret_value()
-            if self.provider == "deepseek"
-            else settings.openrouter_api_key.get_secret_value()
-        ).strip()
+        key = settings.openrouter_api_key.get_secret_value().strip()
         if not key:
-            raise OpenRouterError(
-                f"{self.provider} is not configured — fill "
-                f"{'DEEPSEEK_API_KEY' if self.provider == 'deepseek' else 'OPENROUTER_API_KEY'} in .env"
-            )
+            raise OpenRouterError("OpenRouter is not configured — fill OPENROUTER_API_KEY")
 
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(60.0),
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                **PROVIDERS[self.provider]["extra_headers"],
+                **EXTRA_HEADERS,
             },
         )
         return self
@@ -192,10 +146,7 @@ class OpenRouterClient:
         Args:
             system: System prompt.
             user: User message.
-            json_mode: Request a JSON-only response. Only sent when the
-                active provider is confirmed to support it (OpenRouter); on
-                DeepSeek this is a no-op and callers should rely on prompt
-                instructions plus defensive parsing instead.
+            json_mode: Request a JSON-only response.
 
         Returns:
             The model's reply text.
@@ -243,7 +194,7 @@ class OpenRouterClient:
         )
 
     def model_chain(self) -> list[str]:
-        """Return the ordered list of models to try for the active provider.
+        """Return the ordered list of models to try.
 
         The primary model is always tried first, then any comma-separated
         entries in the matching fallback setting, deduplicated while
@@ -254,8 +205,6 @@ class OpenRouterClient:
         """
         if self._model_override:
             primary, fallbacks = self._model_override, (self._fallback_override or "")
-        elif self.provider == "deepseek":
-            primary, fallbacks = settings.deepseek_model, settings.deepseek_fallback_models
         else:
             primary, fallbacks = settings.openrouter_model, settings.openrouter_fallback_models
 
@@ -272,10 +221,10 @@ class OpenRouterClient:
         """Run one completion against one specific model.
 
         Args:
-            model: Model id for the active provider.
+            model: OpenRouter model id.
             system: System prompt.
             user: User message.
-            json_mode: Request JSON-only output, if the provider supports it.
+            json_mode: Request JSON-only output.
 
         Returns:
             The model's reply text.
@@ -284,7 +233,6 @@ class OpenRouterClient:
             OpenRouterError: on any failure with this particular model.
         """
         assert self._client is not None
-        base_url = str(PROVIDERS[self.provider]["base_url"])
         payload: dict = {
             "model": model,
             "messages": [
@@ -298,9 +246,8 @@ class OpenRouterClient:
             # though the actual reply needed is a few thousand tokens. Capping
             # here avoids that regardless of account balance.
             "max_tokens": DEFAULT_MAX_TOKENS,
-            **PROVIDERS[self.provider]["extra_payload"],
         }
-        if json_mode and PROVIDERS[self.provider]["supports_json_mode"]:
+        if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
         async with audited(
@@ -317,7 +264,7 @@ class OpenRouterClient:
             # so callers catching our typed error (not just Exception) degrade
             # gracefully instead of crashing the whole agent run.
             try:
-                response = await request_with_retry(self._client, "POST", base_url, json=payload)
+                response = await request_with_retry(self._client, "POST", BASE_URL, json=payload)
             except (httpx.HTTPStatusError, httpx.RequestError) as exc:
                 ctx["http_status"] = getattr(getattr(exc, "response", None), "status_code", None)
                 raise OpenRouterError(f"{self.provider} completion failed after retries: {exc}") from exc

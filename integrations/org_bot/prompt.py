@@ -287,23 +287,18 @@ to justify repeating a past conclusion.
   rather than picking just one and silently ignoring the rest.
 - "Report" is genuinely ambiguous in both Uzbek and Russian ("hisobot"/
   "отчёт" cover both meanings) — do not default to reporter_agent just
-  because the word "report" appears. Three different things share that word:
+  because the word "report" appears. Two different things share that word:
     - The DAILY REPORTS THIS BOT COLLECTS ITSELF, asked of every employee at
-      16:00 and answered in Telegram, plus each person's completed tasks and
-      who didn't answer ("kim bugun hisobot
-      yubormadi", "bugungi reportlar", "KPI", "xodimlar qanday ishlayapti",
-      "кто не отправил отчёт") — this is xodimlar_kpi.
-    - An employee's report typed into the CRM's own web app ("CRMdagi
-      hisobotlar", a manager's weekly standup entry there) — this is
-      crm_agent.
-    - A general trend/history of the daily brief's OWN numbers over several
-      days (cash/AR/pipeline changing day to day, "so'nggi hafta savdo
-      qanday bo'ldi", "how has AR trended") — this is reporter_agent, which
-      has no report content at all, only those figures.
-  If in doubt between the first two, prefer xodimlar_kpi — that is the live
-  daily collection the Director actually follows, and it also knows who is
-  missing. Never answer a "who reported / who didn't" question from
-  reporter_agent.
+      16:00 and answered in Telegram, and who didn't answer ("kim bugun
+      hisobot yubormadi", "bugungi reportlar", "KPI", "xodimlar qanday
+      ishlayapti", "кто не отправил отчёт") — this is xodimlar_kpi.
+    - A trend/history of the morning brief's OWN figures over several days
+      ("so'nggi hafta qarz qanday o'zgardi", "how has AR trended") — this is
+      reporter_agent, which has no report content at all, only those figures.
+  If in doubt, prefer xodimlar_kpi — that is the live daily collection the
+  Director actually follows. Never answer a "who reported / who didn't"
+  question from reporter_agent. (The in-house CRM is not used by the
+  business; there is no CRM agent.)
 - Questions about WRITTEN PERMISSIONS (EMJ-SOP-ADM-01) go to ruxsatlar: who
   asked for permission, what is waiting for your decision, what was approved
   or rejected, a request number ("EMJ-2026-0004"), "ruxsat so'rovlari",

@@ -148,14 +148,6 @@ envVarGroups:
         # this same value on their next restart/run. Defaults to `False`
         # (see Settings.bots_frozen) until you set it.
         sync: false
-      - key: SAP_BASE_URL
-        sync: false
-      - key: SAP_COMPANY_DB
-        sync: false
-      - key: SAP_USERNAME
-        sync: false
-      - key: SAP_PASSWORD
-        sync: false
       # The SAP gateway (on its own machine, deliberately loopback-only)
       # pushes here instead of us reaching in -- one secret shared by both
       # /webhooks/sap-push/{secret} (AR aging) and
@@ -163,10 +155,6 @@ envVarGroups:
       # customers/warehouses/inventory/payments). See
       # scripts/sap-gateway-push/ and integrations/sap/push_handler.py.
       - key: SAP_PUSH_WEBHOOK_SECRET
-        sync: false
-      - key: CRM_BASE_URL
-        value: https://sales-crm-roan-six.vercel.app
-      - key: CRM_API_KEY
         sync: false
       - key: LEAD_AGENT_ENABLED
         # true = the Lead Agent runs each morning; false or unset = paused
@@ -188,28 +176,12 @@ envVarGroups:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
-      - key: WORLDBANK_SEARCH_URL
-        value: https://search.worldbank.org/api/v3/projects
-      - key: ETENDER_UZEX_URL
-        value: https://etender.uzex.uz/api/lots
-      - key: XT_XARID_URL
-        value: https://xt-xarid.uz/api/search
-      - key: EGOV_OPENDATA_URL
-        value: https://data.egov.uz/apiPartner/Partner
-      - key: AI_PROVIDER
-        value: openrouter  # "openrouter" or "deepseek" -- switching is a one-line change here
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
         sync: false  # code default: google/gemini-3.8-flash; a ':free' model will 429 unreliably
       - key: OPENROUTER_FALLBACK_MODELS
         sync: false  # code default: google/gemini-3.7-flash; comma-separated, end the chain on cheap PAID capacity
-      - key: DEEPSEEK_API_KEY
-        sync: false
-      - key: DEEPSEEK_MODEL
-        value: deepseek-v4-flash
-      - key: DEEPSEEK_FALLBACK_MODELS
-        value: deepseek-v4-flash,deepseek-v4-pro
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID
@@ -229,24 +201,8 @@ envVarGroups:
         sync: false
       - key: OPS_MANAGER_BOT_WEBHOOK_SECRET
         sync: false
-      # Runs on its own provider, independent of AI_PROVIDER above (which
-      # Lead Agent uses) -- confirmed working live via OpenRouterClient's
-      # provider_override for both JSON-mode and plain-text calls.
-      #
-      # sync: false (not a static value:) for the same reason as
-      # AGENT_WRITES_ENABLED above -- a hardcoded blueprint default here would
-      # get silently re-applied and wipe out a manual switch on every
-      # push-triggered blueprint sync. Defaults shown are what to enter once
-      # in the dashboard; change the dashboard value directly to switch
-      # providers, never this file, or the next sync will revert it.
-      #
-      # NOTE 2026-09-14: whatever is CURRENTLY set in the dashboard keeps
-      # running regardless of the code defaults below -- sync: false means
-      # this push does not change the live value. Set these three in the
-      # dashboard directly (or delete them there so the code defaults apply)
-      # to actually switch to OpenRouter + Gemini 3.8 Flash.
-      - key: OPS_MANAGER_BOT_PROVIDER
-        sync: false  # code default: openrouter (was deepseek 2026-09-05 to 2026-09-14)
+      # OPS Manager Bot's own model chain (OpenRouter, same key as above).
+      # sync: false so a blueprint sync never overwrites a dashboard change.
       - key: OPS_MANAGER_BOT_MODEL
         sync: false  # code default: google/gemini-3.8-flash
       - key: OPS_MANAGER_BOT_FALLBACK_MODELS

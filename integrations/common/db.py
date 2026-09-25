@@ -161,26 +161,6 @@ async def execute(query: str, params: Any = None) -> int:
             return cur.rowcount
 
 
-async def execute_many(query: str, rows: list[tuple[Any, ...]]) -> int:
-    """Run one statement against many parameter tuples in a single transaction.
-
-    Args:
-        query: SQL with ``%s`` placeholders.
-        rows: Parameter tuples, one per statement execution.
-
-    Returns:
-        Number of rows submitted (0 if ``rows`` is empty).
-
-    Raises:
-        psycopg.Error: on SQL or connection failure; the whole batch rolls back.
-    """
-    if not rows:
-        return 0
-    async with connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.executemany(query, rows)
-    return len(rows)
-
 
 async def log_action(
     *,

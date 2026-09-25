@@ -1315,14 +1315,6 @@ async def add_permission_event(
     )
 
 
-async def permission_events(request_id: str) -> list[dict[str, Any]]:
-    """One request's history, oldest first."""
-    return await fetch_all(
-        "SELECT * FROM permission_request_events WHERE request_id = %s ORDER BY occurred_at",
-        (request_id,),
-    )
-
-
 async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
     """The registry the SOP asks the coordinator to keep (§5), newest first.
 
@@ -1339,6 +1331,27 @@ async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
         WHERE status <> 'draft' AND status <> 'cancelled'
           AND created_at >= now() - make_interval(days => %s)
         ORDER BY created_at DESC
+        """,
+        (days,),
+    )
+
+
+async def approved_payment_requests(days: int = 120) -> list[dict[str, Any]]:
+    """Approved written requests that carry an amount, decided in the last ``days`` days.
+
+    The payment gate (B1) makes the written form the single channel for
+    spending, so these are the company's approved payments — what the brief
+    shows as today's payments and the cash calendar as money going out.
+    """
+    return await fetch_all(
+        """
+        SELECT id, request_no, subject, amount_tiyin, currency, amount_raw, execute_by, status,
+               submitted_at, decided_at,
+               COALESCE(NULLIF(btrim(requester_full_name), ''), requester_name) AS requester
+        FROM permission_requests
+        WHERE status IN ('approved', 'approved_conditional') AND amount_tiyin > 0
+          AND decided_at >= now() - make_interval(days => %s)
+        ORDER BY decided_at
         """,
         (days,),
     )

@@ -16,7 +16,11 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
+
+from integrations.common.dates import parse_day
+from integrations.common.timeutil import to_local
 
 SOP_CODE = "EMJ-SOP-ADM-01"
 
@@ -311,6 +315,23 @@ def format_amount(amount_tiyin: int | None, currency: str, raw: str | None = Non
     grouped = f"{whole:,}".replace(",", " ")
     suffix = {"UZS": "сўм", "USD": "$", "EUR": "€"}.get(currency, currency)
     return f"{grouped} {suffix}" if currency == "UZS" else f"{suffix}{grouped}"
+
+
+def due_day(request: dict[str, Any]) -> date | None:
+    """The day an approved payment is due, read from "Бажариш муддати".
+
+    Relative answers ("эртага") are resolved against the day the request was
+    sent. None when the answer names no specific day — such a payment is
+    listed as "date unclear", never placed on a guessed day.
+    """
+    written = request.get("submitted_at") or request.get("decided_at")
+    if isinstance(written, datetime):
+        reference = to_local(written).date()
+    elif isinstance(written, date):
+        reference = written
+    else:
+        return None
+    return parse_day(request.get("execute_by"), reference)
 
 
 def _amount_answered(request: dict[str, Any]) -> bool:

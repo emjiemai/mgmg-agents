@@ -1,89 +1,88 @@
-# CEO Daily Brief
+# CEO Daily Brief — the five numbers (A2)
 
-**Code:** `agents/ceo-daily-brief/agent.py`
+**Code:** `agents/ceo-daily-brief/agent.py`, figures in `integrations/sap/figures.py`
 **Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily, inside `mgmg-morning-agents`
-**Mode:** read-only from every source; the only write is one Telegram message
-**Owner:** automation team
+**Mode:** read-only; the only writes are one Telegram message and one `daily_briefs` row
+**Source:** A2 "5 рақам дашборди" in the owner's plan (ЭМЖИЕМ AI Агентлар Тизими)
 
-## Purpose
+## What the Director gets
 
-One short Telegram message every morning, in Uzbek Cyrillic like every bot
-message:
+    ☀️ CEO кунлик ҳисоботи — 26.09.2026. 08:00 Тошкент
 
-    ☀️ CEO кунлик ҳисоботи — 25.09.2026. 08:00 Тошкент
+    📊 5 рақам
+    💰 Касса: уланмаган
+    📈 Кечаги сотув: $12,340.00 (8 та буюртма)
+    📦 Захира: камида $120,000.00*
+    🧾 Мижоз қарзи: $15,200.00 (кечагига ▲ $800.00), муддати ўтгани $7,384.36 (16 та)
+    💳 Бугунги тўловлар: 2 та — 15 000 000 сўм
+    * SAP'дан фақат чекланган миқдордаги ёзув келди — рақам тўлиқ эмас.
 
-    🔴 Ҳисобот юбормаганлар (24.09.2026): 1 / 5
+    🔴 Ҳисобот юбормаганлар (25.09.2026): 1 / 5
        • Алишер Каримов (IT)
 
-— who didn't send OPS Manager Bot their daily report on the last day they
-were asked ("ҳаммаси юборди (5/5)" when everyone did, "кеча ҳеч кимдан
-сўралмаган" when nobody was asked).
+The overdue-debt detail by age follows as its own message (receivables).
 
-History of what was cut, at the business's request:
-- 2026-09-22: cash (never connected), the receivables headline (the
-  Receivables alert follows as its own message) and the CRM pipeline.
-- 2026-09-25: the CRM "Reportlar" section — the business doesn't use the
-  in-house CRM, so the brief no longer reads it at all.
+## Where each number comes from
 
-Cash and receivables are still collected and stored in `daily_briefs` (the
-bot's "Kunlik brif tarixi" answers come from there); they're just not shown.
+| Line | Source | Notes |
+| ---- | ------ | ----- |
+| 💰 Касса | — | **Not connected.** The SAP gateway has no cash tool, and the SAP Service Layer was never reachable from Render (its client was removed 2026-09-26). Shown as "уланмаган", never as a number. |
+| 📈 Кечаги сотув | SAP orders (ORDR) pushed by the gateway, `DocDate` = yesterday, cancelled left out | |
+| 📦 Захира | SAP stock (OITW) pushed by the gateway: `StockValue`, else `OnHand × AvgPrice` | |
+| 🧾 Мижоз қарзи | SAP open invoices (`v_ar_aging_latest`) | Overdue part, and 🔴 when anything is 90+ days late |
+| 💳 Бугунги тўловлар | Approved written permissions (B1) whose "Бажариш муддати" is today | The payment gate makes that form the single channel for spending. A date that can't be read (`integrations/common/dates.py` reads only explicit dates and бугун/эртага/N кун) is counted as "сана аниқ эмас", never put on a guessed day. |
 
-## Inputs
+**Change since yesterday** is shown when the previous sent brief has the same
+number, in the same currency, and neither day's figure is a lower bound.
 
-| Source | Data | Method |
-| ------ | ---- | ------ |
-| SAP B1 | Cash/bank G/L balances | `GET /ChartOfAccounts` |
-| SAP B1 | Open A/R invoices, aged | pushed from the SAP gateway's machine (`/webhooks/sap-push`), read from `v_ar_aging_latest` |
-| OPS Manager Bot | Who was asked for a daily report and who answered | `daily_reports`, last asked day |
+## Honesty rules
 
-Migrated off amoCRM on 2026-08-18 — MGMG built its own sales CRM
-(`sales-crm-roan-six.vercel.app`), a read-only-by-design API (the issued key
-has no write scope at all). amoCRM, Verifix attendance and Microsoft Planner
-were removed from the project entirely on 2026-09-15.
+- **Push limits.** Every SAP gateway tool is pulled with a row limit
+  (`limit: 100`, products 20 — `scripts/sap-gateway-push/push-ar-aging.ps1`).
+  A push that returns exactly the limit probably had more, so the total is a
+  lower bound: shown as **"камида"** with the footnote. For invoices the row
+  count comes from the push's own audit row
+  (`agent_actions.payload.rows_received`), because closed invoices are
+  filtered out before they're stored. **To make stock and sales complete, the
+  gateway push needs a higher limit or date filtering — check with whoever
+  runs the gateway machine.**
+- **Stale feeds.** A SAP feed not pushed for more than 3 days reads
+  "… дан бери янгиланмаган" instead of a number.
+- **Unreadable rows.** Rows without the needed SAP columns give
+  "SAP маълумоти ўқилмади", not a zero.
+- **Failures.** One source failing never stops the brief ("маълумот йўқ" on
+  that line); if every source fails, a short failure notice is sent instead.
+  Telegram failing → the brief is still stored with status `failed`, exit code 1.
 
-## Outputs
+## Daily reports section
 
-- One Telegram message via OPS Manager Bot to whoever holds the Director role
-- One row in `daily_briefs` (headline figures, full JSON payload, exact message text)
-- Snapshot rows in `cash_balance_snapshots`, `amocrm_pipeline_snapshots` (legacy
-  table name — the in-house CRM writes here), `crm_stats_snapshots`, and
-  `crm_employee_reports`
-- Audit rows in `agent_actions` for every API call
+Who didn't send OPS Manager Bot their daily report on the last day anyone was
+asked ("ҳаммаси юборди (5/5)" when everyone did; "кеча ҳеч кимдан
+сўралмаган" when nobody was asked or reports are switched off). Individual
+reports never reach the Director.
 
-## Severity markers
+## Storage
 
-| Marker | Meaning | Triggered by |
-| ------ | ------- | ------------ |
-| 🔴 | Act today | any 90+ day receivable, negative cash account, >10 stalled deals |
-| 🟡 | Watch | any overdue receivable under 90 days, 1–10 stalled deals |
-| 🟢 | Fine | nothing outstanding in that section |
+One row in `daily_briefs` per run: `ar_overdue_total_tiyin`, the five numbers
+in `sections.a2` (tomorrow's change is computed from it), the exact message
+text and any source errors. The `pipeline_*`, `new_leads_24h`,
+`deals_without_task` and `cash_total_tiyin` columns stay empty since the CRM
+and SAP-cash sections were removed.
 
-## Failure behaviour
+## History
 
-**The brief always goes out.** Sources are fetched concurrently and independently:
-
-- One source fails → that section reads `⚠️ <system> unavailable`, the footer
-  names the failed systems, and the error is stored in `daily_briefs.source_errors`.
-- All three fail (SAP cash, SAP aging, daily reports) → a short failure notice is sent
-  instead of a brief, so silence is never mistaken for good news.
-- Telegram itself fails → the brief is still written to `daily_briefs` with
-  status `failed`, and the exit code is 1 so cron surfaces it.
-
-## Configuration
-
-| Setting | Effect |
-| ------- | ------ |
-| `DAILY_BRIEF_HOUR_LOCAL` | Documentation only — the actual time comes from cron |
-| `DRY_RUN=true` | Print the message instead of sending |
+- 2026-09-22: cut to reports only, at the business's request.
+- 2026-09-25: CRM "Reportlar" section removed — the in-house CRM isn't used.
+- 2026-09-26: A2 restored — the owner's plan specifies these five numbers.
 
 ## Runbook
 
 ```bash
-python agents/ceo-daily-brief/agent.py --dry-run   # see today's brief, send nothing
+python agents/ceo-daily-brief/agent.py --dry-run   # print with real data, send nothing
 python agents/ceo-daily-brief/agent.py            # send it
 ```
 
-**Exit codes:** 0 sent · 1 built but not sent · 2 refused to run (unfilled `.env`)
+**Exit codes:** 0 sent · 1 built but not sent · 2 refused to run (bot token unset)
 
 **Brief did not arrive:**
 
@@ -92,9 +91,3 @@ SELECT brief_date, status, source_errors FROM daily_briefs ORDER BY id DESC LIMI
 SELECT occurred_at, target_system, action, error_message
 FROM agent_actions WHERE status = 'failure' ORDER BY id DESC LIMIT 20;
 ```
-
-## Future
-
-- Per-division briefs to division heads (same data, filtered by `division`)
-- Day-over-day deltas on cash and overdue AR
-- Bank balances from Kapital/Asia Alliance APIs instead of SAP-only

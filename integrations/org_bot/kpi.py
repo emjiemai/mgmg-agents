@@ -62,7 +62,6 @@ SALES_METRICS: tuple[Metric, ...] = (
 # the KPI answers all follow with no other change.
 ROLE_METRICS: dict[str, tuple[Metric, ...]] = {}
 
-_NUMBER = r"(\d{1,4})"
 # Apostrophes: Uzbek Latin uses several characters interchangeably for the
 # same letter (o'/oʻ/o`/o’), and phone keyboards pick different ones.
 _APOSTROPHES = {"ʻ": "'", "`": "'", "’": "'", "‘": "'"}

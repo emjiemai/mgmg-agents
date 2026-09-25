@@ -27,7 +27,7 @@ from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
 from integrations.common.db import fetch_all, log_action
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_money, format_uzs
+from integrations.common.money import format_money
 from integrations.common.timeutil import now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import admin, kpi, names, permission_flow, store, task_tracker
@@ -673,7 +673,6 @@ async def _weak_report_follow_up(text: str, run_id: uuid.UUID) -> str | None:
         async with OpenRouterClient(
             agent=AGENT,
             run_id=run_id,
-            provider_override=settings.ops_manager_bot_provider,
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
@@ -1041,7 +1040,6 @@ async def _dispatch_director_task(
         async with OpenRouterClient(
             agent=AGENT,
             run_id=run_id,
-            provider_override=settings.ops_manager_bot_provider,
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
@@ -1340,8 +1338,7 @@ async def _dispatch_director_media(
             async with OpenRouterClient(
                 agent=AGENT,
                 run_id=run_id,
-                provider_override=settings.ops_manager_bot_provider,
-                model_override=settings.ops_manager_bot_model,
+                    model_override=settings.ops_manager_bot_model,
                 fallback_override=settings.ops_manager_bot_fallback_models,
             ) as ai:
                 roster_lines, roster = await _roster()
@@ -1573,7 +1570,6 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "topshiriqlar": _fetch_task_tracker_data,
         "lead_agent": _fetch_lead_agent_data,
         "finance_agent": _fetch_finance_agent_data,
-        "crm_agent": _fetch_crm_agent_data,
         "reporter_agent": _fetch_reporter_agent_data,
         "xodimlar_kpi": _fetch_kpi_agent_data,
         "ruxsatlar": permission_flow.registry_data,
@@ -1780,92 +1776,20 @@ async def _fetch_sap_gateway_data(tool: str) -> str:
     return "\n".join(lines)
 
 
-async def _fetch_crm_agent_data() -> str:
-    """The pipeline snapshot, whole-CRM stats, and recent employee reports
-    from the in-house CRM.
-
-    `amocrm_pipeline_snapshots` (behind `v_pipeline_latest`) despite its
-    legacy name is what the IN-HOUSE CRM writes to, once a day, via
-    ceo-daily-brief's own `_fetch_crm -> persist_crm_pipeline` (the name
-    predates the move off amoCRM, which has since been removed from this
-    project entirely). `crm_stats_snapshots` and `crm_employee_reports` are the same
-    daily fetch's newer siblings (added 2026-09-05) — contacts/conversion and
-    employee-submitted reports, previously fetched live by the brief but
-    never saved anywhere this bot could read back.
-    """
-    pipeline = await fetch_all(
-        "SELECT pipeline_name, status_name, deals_count, deals_value_uzs, division, snapshot_date "
-        "FROM v_pipeline_latest"
-    )
-    if not pipeline:
-        return (
-            "No CRM pipeline data recorded yet. This is populated once a day by the "
-            "CEO Daily Brief agent's own CRM read — if that's been failing, the most "
-            "likely cause is CRM_API_KEY still being an unfilled placeholder."
-        )
-
-    lines = [f"Pipeline snapshot as of {pipeline[0]['snapshot_date']}:"]
-    for p in pipeline:
-        lines.append(
-            f"- {p.get('pipeline_name')} / {p.get('status_name')} ({p.get('division')}): "
-            f"{p.get('deals_count')} deal(s), {p.get('deals_value_uzs')} UZS"
-        )
-
-    stats = await fetch_all(
-        "SELECT total_contacts, total_deals, won_deals, conversion_rate, snapshot_date "
-        "FROM v_crm_stats_latest"
-    )
-    if stats:
-        s = stats[0]
-        lines.append(
-            f"\nWhole-CRM stats as of {s['snapshot_date']}: {s['total_contacts']} contact(s), "
-            f"{s['total_deals']} total deal(s), {s['won_deals']} won, "
-            f"{s['conversion_rate']}% conversion rate."
-        )
-    else:
-        lines.append(
-            "\nNo whole-CRM stats (contacts/conversion) recorded yet — this is a newer "
-            "part of the daily CRM sync (added 2026-09-05), populated once a day by the "
-            "same CEO Daily Brief run as the pipeline above. If the pipeline snapshot date "
-            "above is recent but this still says no data, the sync ran before this feature "
-            "existed — it will appear after the next run, not automatically."
-        )
-
-    reports = await fetch_all(
-        "SELECT manager_name, report_type, report_date, content, submitted_at "
-        "FROM crm_employee_reports ORDER BY submitted_at DESC LIMIT 20"
-    )
-    if reports:
-        lines.append(f"\nMost recent employee reports ({len(reports)} shown, newest first):")
-        for r in reports:
-            lines.append(f"- [{r['report_date']}] {r.get('manager_name')} ({r.get('report_type')}): {r.get('content')}")
-    else:
-        lines.append(
-            "\nNo employee reports synced yet — same as the stats above, this is a newer "
-            "part of the daily CRM sync (added 2026-09-05) and needs one more run to "
-            "populate for the first time."
-        )
-
-    return "\n".join(lines)
-
-
 async def _fetch_reporter_agent_data() -> str:
     """The last 14 days of daily briefs, so trend questions aren't limited
     to a single snapshot the way a one-day-only fetch would be."""
     briefs = await fetch_all(
-        "SELECT brief_date, cash_total_tiyin, ar_overdue_total_tiyin, pipeline_total_tiyin, "
-        "new_leads_24h, deals_without_task "
-        "FROM daily_briefs ORDER BY generated_at DESC LIMIT 14"
+        "SELECT brief_date, ar_overdue_total_tiyin FROM daily_briefs ORDER BY generated_at DESC LIMIT 14"
     )
     if not briefs:
         return "No daily brief has been generated yet."
 
     lines = [f"Daily brief history, most recent first ({len(briefs)} day(s)):"]
     for brief in briefs:
+        overdue = brief["ar_overdue_total_tiyin"]
         lines.append(
-            f"- {brief['brief_date']}: cash={format_uzs(brief['cash_total_tiyin'] or 0)}, "
-            f"AR overdue={format_uzs(brief['ar_overdue_total_tiyin'] or 0)}, "
-            f"pipeline={format_uzs(brief['pipeline_total_tiyin'] or 0)}, "
-            f"new leads={brief['new_leads_24h']}, deals w/o task={brief['deals_without_task']}"
+            f"- {brief['brief_date']}: AR overdue="
+            f"{format_money(overdue, settings.sap_default_currency) if overdue is not None else 'no data'}"
         )
     return "\n".join(lines)

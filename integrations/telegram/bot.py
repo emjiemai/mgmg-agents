@@ -23,7 +23,6 @@ from integrations.common.logging_setup import setup_logging
 
 log = setup_logging("telegram")
 
-TELEGRAM_MAX_CHARS = 4096
 SAFE_CHUNK = 3900  # leaves room for the "(1/3)" continuation marker
 
 Severity = Literal["critical", "warning", "info"]

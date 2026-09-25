@@ -57,14 +57,12 @@ async def _shutdown() -> None:
 
 
 async def _log_ai_config() -> None:
-    """Log the AI provider/model and OpenRouter key/balance this process actually loaded."""
+    """Log the models and the OpenRouter key/balance this process actually loaded."""
     try:
         log.info(
-            "AI config loaded: OPS Manager Bot provider={} model={} fallback={} | AI_PROVIDER={} OPENROUTER_MODEL={}",
-            settings.ops_manager_bot_provider,
+            "AI config loaded: OPS Manager Bot model={} fallback={} | OPENROUTER_MODEL={}",
             settings.ops_manager_bot_model,
             settings.ops_manager_bot_fallback_models,
-            settings.ai_provider,
             settings.openrouter_model,
         )
         log.info("{}", await describe_openrouter_key())

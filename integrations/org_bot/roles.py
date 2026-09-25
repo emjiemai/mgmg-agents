@@ -54,24 +54,13 @@ AGENTS: list[Agent] = [
     # confirm this data WAS SAP data when asked specifically about SAP --
     # confirmed live: it said outright "these are receivables, not SAP."
     Agent("finance_agent", "Молия агенти (SAP ҳисоб-фактуралар / дебиторлик)", "every open invoice/receivable + recent alerts — sourced from SAP Business One (OINV)"),
-    Agent(
-        "crm_agent",
-        "CRM агенти",
-        "in-house CRM: pipeline snapshot (deals by stage), whole-CRM stats "
-        "(contact count, conversion rate), and the 20 most recent employee-"
-        "submitted reports (daily standup style)",
-    ),
     # Label deliberately does NOT contain the word "report"/"reporter" --
     # confirmed live: a Director asking about an EMPLOYEE's submitted report
     # ("kechagi reportlar", "kim nima report yozgan") got misrouted here by
     # the classifier, which read "report" in the question and matched it to
-    # the word "Reporter" in this label -- even though this agent only has
-    # daily-brief KPI trend data (cash/AR/pipeline over time), not anyone's
-    # actual report content. That data lives under crm_agent instead (see its
-    # data_source below). Renamed so the classifier has nothing homophone-y
-    # to latch onto; see also the explicit disambiguation rule in prompt.py's
-    # HOW TO DECIDE section.
-    Agent("reporter_agent", "Кунлик бриф тарихи", "14 days of daily-brief KPI history (cash/AR/pipeline trend) -- NOT employee-submitted reports, those are under crm_agent"),
+    # the word "Reporter" in this label. See also the explicit
+    # disambiguation rule in prompt.py's HOW TO DECIDE section.
+    Agent("reporter_agent", "Кунлик бриф тарихи", "14 days of the morning brief's own figures (overdue receivables trend) -- NOT employee reports, those are xodimlar_kpi"),
     Agent(
         "xodimlar_kpi",
         "Ходимлар KPI",

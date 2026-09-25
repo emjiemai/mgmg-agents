@@ -315,9 +315,6 @@ SEARCH_FRESHNESS_DAYS = 365  # Tavily time_range
 # freshness filter there would drop real open tenders for no reason.
 FRESH_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES + SPORTS_TECH_QUERIES + LAUNDRY_NEW_SEGMENT_QUERIES
 ALL_TENDER_SITE_QUERIES = TENDER_SITE_QUERIES + SPORTS_TECH_TENDER_SITE_QUERIES
-ALL_QUERIES = FRESH_QUERIES + ALL_TENDER_SITE_QUERIES
-
-
 async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
     """Fetch every source, tolerating individual failures, and dedupe by URL.
 
@@ -855,12 +852,9 @@ async def run(dry_run: bool = False) -> int:
     # settings.missing_placeholders() scans the ENTIRE config (SAP, CRM and
     # bot settings included) -- checking only the fields this
     # agent actually touches, so a machine set up for one agent isn't blocked
-    # by another agent's unrelated placeholders. Only the active AI
-    # provider's key is required -- the other provider's is allowed to stay
-    # a placeholder.
-    ai_key_field = "deepseek_api_key" if settings.ai_provider.strip().lower() == "deepseek" else "openrouter_api_key"
+    # by another agent's unrelated placeholders.
     required = {
-        "serpapi_api_key", "tavily_api_key", ai_key_field,
+        "serpapi_api_key", "tavily_api_key", "openrouter_api_key",
         "google_service_account_json", "google_leads_sheet_id",
         # Telegram delivery now goes through OPS Manager Bot's own token
         # (see integrations/org_bot/notify.py), not a dedicated Lead Agent

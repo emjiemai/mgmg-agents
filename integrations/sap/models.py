@@ -15,16 +15,6 @@ from pydantic import BaseModel, Field
 AgingBucket = Literal["current", "1_30", "31_60", "61_90", "90_plus"]
 
 
-class CashAccount(BaseModel):
-    """One cash or bank G/L account balance at a point in time."""
-
-    account_code: str
-    account_name: str | None = None
-    bank_name: str | None = None
-    currency: str = "UZS"
-    balance_tiyin: int = 0
-
-
 class ARInvoice(BaseModel):
     """One open A/R invoice with its aging position."""
 
@@ -61,24 +51,3 @@ class ARAging(BaseModel):
         return sum(1 for inv in self.invoices if inv.days_overdue > 0)
 
 
-class SalesSummary(BaseModel):
-    """Aggregated sales for a period, optionally split by division."""
-
-    period_start: date
-    period_end: date
-    invoices_count: int = 0
-    gross_total_tiyin: int = 0
-    currency: str = "UZS"
-    by_division: dict[str, int] = Field(default_factory=dict)
-
-
-class StockItem(BaseModel):
-    """Stock position for one item."""
-
-    item_code: str
-    item_name: str | None = None
-    warehouse_code: str | None = None
-    in_stock: float = 0.0
-    committed: float = 0.0
-    ordered: float = 0.0
-    available: float = 0.0

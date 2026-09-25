@@ -78,7 +78,6 @@ async def check_answer(
         async with OpenRouterClient(
             agent=agent,
             run_id=run_id,
-            provider_override=settings.ops_manager_bot_provider,
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:

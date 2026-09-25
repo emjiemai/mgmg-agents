@@ -35,7 +35,7 @@ from integrations.org_bot.ops_manager import (
 )
 from integrations.org_bot.roles import AGENT_SLUGS, ROLE_SLUGS
 from integrations.telegram.bot import sanitize_model_html
-from integrations.sap.client import aging_bucket
+from integrations.sap.aging import aging_bucket
 from integrations.telegram.bot import escape, split_message
 
 FAILURES: list[str] = []
@@ -77,7 +77,7 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Bot"}
     allowed |= allow or set()
     plain = re.sub(r"<[^>]+>", " ", text)
-    return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9']*", plain) if w not in allowed]
+    return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9]*(?:'[A-Za-z]+)*", plain) if w not in allowed]
 
 
 def test_money() -> None:
@@ -271,68 +271,59 @@ def test_org_bot() -> None:
 
 
 def test_brief_rendering() -> None:
-    """The CEO brief renders with partial and total source failure."""
-    print("brief rendering")
+    """The CEO brief: the five numbers (A2), honest gaps, and who didn't report."""
+    print("brief rendering (A2)")
     from integrations.common.agent_loader import load_agent
-    from integrations.crm.models import EmployeeReport
-    from integrations.sap.models import ARAging, ARInvoice, CashAccount
+    from integrations.sap.figures import Figure
+    from integrations.sap.models import ARAging, ARInvoice
 
     brief = load_agent("ceo-daily-brief")
 
     empty = brief.BriefData()
-    empty.note_failure("sap", RuntimeError("connection refused"))
+    empty.note_failure("sap_orders", RuntimeError("connection refused"))
     text = brief.render(empty)
     check_true("title and time on one line", "CEO кунлик ҳисоботи" in text.splitlines()[0] and "Тошкент" in text.splitlines()[0])
-    check_true("no failure footer", "Ma'lumot yo'q" not in text)
+    check_true("cash says plainly it isn't connected", "💰 Касса: <i>уланмаган</i>" in text)
+    check_true("a missing feed reads 'маълумот йўқ', never a number", "📈 Кечаги сотув: <i>маълумот йўқ</i>" in text)
+    check_true("all five lines are there", all(k in text for k in ("Касса", "Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар")))
 
-    aging = ARAging(snapshot_date=date(2026, 8, 18))
+    aging = ARAging(snapshot_date=date(2026, 9, 25))
     aging.invoices = [
-        ARInvoice(
-            doc_entry=1,
-            doc_num=1001,
-            card_code="C001",
-            card_name="Buyuk Savdo MChJ",
-            days_overdue=120,
-            aging_bucket="90_plus",
-            doc_total_tiyin=500_000_000,
-            balance_due_tiyin=500_000_000,
-            sales_person_name="Aliyev A.",
-        )
+        ARInvoice(doc_entry=1, doc_num=1001, card_code="C1", card_name="A", days_overdue=120, aging_bucket="90_plus",
+                  currency="USD", doc_total_tiyin=500_000, balance_due_tiyin=500_000),
+        ARInvoice(doc_entry=2, doc_num=1002, card_code="C2", card_name="B", days_overdue=0, aging_bucket="current",
+                  currency="USD", doc_total_tiyin=1_000_000, balance_due_tiyin=1_000_000),
     ]
-    aging.total_open_tiyin = 500_000_000
-    aging.total_overdue_tiyin = 500_000_000
-    aging.bucket_totals_tiyin = {"90_plus": 500_000_000}
+    aging.total_overdue_tiyin = 500_000
+    aging.bucket_totals_tiyin = {"90_plus": 500_000}
     aging.bucket_counts = {"90_plus": 1}
-
-    yesterday = date.today() - timedelta(days=1)
-    full = brief.BriefData(
-        cash=[CashAccount(account_code="5110", bank_name="Kapital Bank", balance_tiyin=1_200_000_000)],
+    data = brief.BriefData(
         aging=aging,
-        reports=[
-            EmployeeReport(
-                id=1,
-                manager_name="Ulug'bek AI",
-                report_type="daily",
-                report_date=datetime(yesterday.year, yesterday.month, yesterday.day),
-                content="OPS Manager botdagi bug fixlar, formatlash to'g'irlash",
-            )
-        ],
+        sales=Figure(status="ok", totals={"USD": 1_234_000}, count=3, as_of=date(2026, 9, 26)),
+        inventory=Figure(status="ok", totals={"USD": 12_000_000}, count=100, capped=True, as_of=date(2026, 9, 26)),
+        payments=brief.PaymentsDue(totals={"UZS": 1_500_000_000}, count=2, unclear=1),
+        report_rows=[],
+        previous={"debt": {"status": "ok", "totals": {"USD": 1_300_000}, "capped": False},
+                  "sales": {"status": "ok", "totals": {"USD": 1_234_000}, "capped": False}},
     )
-    text = brief.render(full)
-    # 2026-09-22: the brief is reports only — cash, receivables and pipeline
-    # were cut at the business's request (receivables has its own message).
-    check_true("no cash section", "Касса" not in text and "Kapital Bank" not in text)
-    check_true("no receivables section", "қарз" not in text)
-    check_true("no pipeline section", "Pipeline" not in text)
-    # 2026-09-25: the CRM isn't used, so its "Reportlar" section is gone —
-    # only the bot's own daily reports are shown.
-    check_true("no CRM reports section", "Reportlar" not in text and "OPS Manager botdagi" not in text)
-    # 2026-09-15: Verifix attendance and Microsoft Planner were removed from
-    # the project, so their sections must not come back.
-    check_true("no attendance section", "Davomat" not in text)
-    check_true("no Planner tasks section", "Vazifalar" not in text)
+    text = brief.render(data)
+    check_true("yesterday's sales with the order count", "📈 Кечаги сотув: $12,340.00 (3 та буюртма)" in text)
+    check_true("unchanged sales show no change", "Кечаги сотув: $12,340.00 (3 та буюртма)\n" in text)
+    check_true("a capped feed is a lower bound", "📦 Захира: камида $120,000.00*" in text)
+    check_true("the lower bound is explained", "рақам тўлиқ эмас" in text)
+    check_true("debt total, overdue part, 90+ marker", "$15,000.00" in text and "муддати ўтгани $5,000.00 (1 та) 🔴" in text)
+    check_true("debt change since the last brief", "кечагига ▲ $2,000.00" in text)
+    check_true("today's approved payments", "💳 Бугунги тўловлар: 2 та — 15" in text and "сўм" in text)
+    check_true("an unreadable payment date is said, not guessed", "1 та тасдиқланган сўровда сана аниқ эмас" in text)
+    check_true("the brief is Uzbek Cyrillic", latin_words(text, allow={"CEO", "SAP"}) == [])
+    stored = brief.five_numbers_json(data)
+    check("stored for tomorrow's change", stored["debt"]["totals"], {"USD": 1_500_000})
+    check("capped flag kept", stored["inventory"]["capped"], True)
 
-    # 2026-09-16: daily reports no longer reach the Director one by one; the
+    stale = Figure(status="stale", as_of=date(2026, 9, 1))
+    check_true("an old feed says since when", "01.09.2026 дан бери янгиланмаган" in brief.render(brief.BriefData(sales=stale)))
+
+    # 2026-09-16: daily reports never reach the Director one by one; the
     # brief names only who didn't report on the last day they were asked.
     asked_day = date(2026, 9, 15)
     rows = [
@@ -353,16 +344,54 @@ def test_brief_rendering() -> None:
         "nobody asked is said plainly, not 'everyone reported'",
         "сўралмаган" in never_asked and "ҳаммаси юборди" not in never_asked,
     )
-    check_true("the brief is Uzbek Cyrillic", latin_words(text, allow={"CEO", "Dmitriy", "B2B"}) == [])
+    check_true("removed sections stay removed", all(w not in never_asked for w in ("Reportlar", "Pipeline", "Davomat")))
 
-    # 2026-09-18: with daily reports switched off, the brief must not keep
-    # naming the last asked day's non-reporters. (Returns before any DB call.)
     import asyncio
 
     from integrations.common.config import settings
 
     if not settings.daily_reports_enabled:
         check("switched off: no report rows fetched", asyncio.run(brief._fetch_report_results()), [])
+
+
+def test_dates_and_figures() -> None:
+    """Strict date reading, SAP dashboard figures, and payment due days."""
+    print("dates and SAP figures")
+    from integrations.common.dates import parse_day
+    from integrations.org_bot.permissions import due_day
+    from integrations.sap import figures
+
+    ref = date(2026, 9, 23)
+    for text, want in (
+        ("25.09.2026", date(2026, 9, 25)), ("25.09", date(2026, 9, 25)), ("2026-09-25", date(2026, 9, 25)),
+        ("25 сентябр", date(2026, 9, 25)), ("25-sentabr", date(2026, 9, 25)), ("эртага", date(2026, 9, 24)),
+        ("бугун 15.00", ref), ("3 кун ичида", date(2026, 9, 26)), ("05.01", date(2027, 1, 5)),
+        ("шу ҳафта ичида", None), ("тезроқ", None), ("30.02.2026", None), ("5 млн сўм", None),
+    ):
+        check(f"date '{text}'", parse_day(text, ref), want)
+
+    from datetime import datetime, timezone
+
+    request = {"execute_by": "эртага", "submitted_at": datetime(2026, 9, 23, 20, 30, tzinfo=timezone.utc)}
+    check("'эртага' is the day after it was sent, in Tashkent", due_day(request), date(2026, 9, 25))
+
+    orders = [
+        {"DocEntry": 1, "DocDate": "2026-09-25", "DocTotal": 100.5, "CANCELED": "N"},
+        {"DocEntry": 2, "DocDate": "2026-09-25T00:00:00", "DocTotal": "200"},
+        {"DocEntry": 3, "DocDate": "2026-09-25", "DocTotal": 999, "CANCELED": "Y"},
+        {"DocEntry": 4, "DocDate": "2026-09-24", "DocTotal": 50},
+    ]
+    fig = figures.documents_on(orders, date(2026, 9, 25), "USD", tool="orders", as_of=date(2026, 9, 26))
+    check("yesterday's orders, cancelled left out", (fig.totals, fig.count, fig.capped), ({"USD": 30050}, 2, False))
+    capped = figures.documents_on(orders * 25, date(2026, 9, 25), "USD", tool="orders", as_of=None)
+    check_true("100 rows = the push limit = a lower bound", capped.capped)
+    check("rows without the columns -> unknown, not zero",
+          figures.documents_on([{"x": 1}], date(2026, 9, 25), "USD", tool="orders", as_of=None).status, "unknown_format")
+    check("no rows -> no data", figures.documents_on([], date(2026, 9, 25), "USD", tool="orders", as_of=None).status, "no_data")
+
+    stock = [{"ItemCode": "A", "WhsCode": "01", "StockValue": 1000}, {"ItemCode": "B", "WhsCode": "01", "OnHand": 2, "AvgPrice": 25.5}]
+    check("stock value: SAP's own, else on hand x price", figures.inventory_value(stock, "USD", as_of=None).totals, {"USD": 105100})
+    check("change only where both days have it", figures.change({"USD": 500, "UZS": 7}, {"USD": 200}), {"USD": 300})
 
 
 def test_receivables_rendering() -> None:
@@ -787,6 +816,7 @@ def main() -> int:
         test_report_or_message,
         test_daily_report_kpi,
         test_brief_rendering,
+        test_dates_and_figures,
         test_receivables_rendering,
     ):
         suite()
