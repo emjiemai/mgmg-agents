@@ -3,7 +3,7 @@
 No source system stores "division" as such; ``ar_aging_snapshots.division``
 is left empty by the SAP push, so an invoice without a sales person shows as
 "Бошқа" (other). Mapping SAP sales-person codes to divisions was never filled
-in and was removed with the SAP Service Layer client (2026-09-26).
+in and was removed with the SAP Service Layer client (2026-09-25).
 """
 
 from __future__ import annotations

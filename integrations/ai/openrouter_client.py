@@ -5,7 +5,7 @@ answers, the answer checks, the Lead Agent. OpenRouter supports
 ``response_format: json_object``; ``complete_json`` also strips a fenced code
 block, since some models wrap JSON in one regardless.
 
-DeepSeek support was removed on 2026-09-26: the business moved to OpenRouter
+DeepSeek support was removed on 2026-09-25: the business moved to OpenRouter
 + Gemini on 2026-09-14 and removed the DeepSeek keys.
 """
 

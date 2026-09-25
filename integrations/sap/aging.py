@@ -1,7 +1,7 @@
 """Receivables aging buckets — the one SAP rule the push path needs.
 
 The SAP B1 Service Layer client that used to live next to this was removed
-(2026-09-26): it has never been reachable from Render. SAP data arrives only
+(2026-09-25): it has never been reachable from Render. SAP data arrives only
 by push from the gateway's own machine (``push_handler.py``).
 """
 

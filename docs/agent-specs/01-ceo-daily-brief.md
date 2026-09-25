@@ -26,7 +26,7 @@ The overdue-debt detail by age follows as its own message (receivables).
 
 | Line | Source | Notes |
 | ---- | ------ | ----- |
-| 💰 Касса | — | **Not connected.** The SAP gateway has no cash tool, and the SAP Service Layer was never reachable from Render (its client was removed 2026-09-26). Shown as "уланмаган", never as a number. |
+| 💰 Касса | — | **Not connected.** The SAP gateway has no cash tool, and the SAP Service Layer was never reachable from Render (its client was removed 2026-09-25). Shown as "уланмаган", never as a number. |
 | 📈 Кечаги сотув | SAP orders (ORDR) pushed by the gateway, `DocDate` = yesterday, cancelled left out | |
 | 📦 Захира | SAP stock (OITW) pushed by the gateway: `StockValue`, else `OnHand × AvgPrice` | |
 | 🧾 Мижоз қарзи | SAP open invoices (`v_ar_aging_latest`) | Overdue part, and 🔴 when anything is 90+ days late |
@@ -73,7 +73,7 @@ and SAP-cash sections were removed.
 
 - 2026-09-22: cut to reports only, at the business's request.
 - 2026-09-25: CRM "Reportlar" section removed — the in-house CRM isn't used.
-- 2026-09-26: A2 restored — the owner's plan specifies these five numbers.
+- 2026-09-25: A2 restored — the owner's plan specifies these five numbers.
 
 ## Runbook
 
