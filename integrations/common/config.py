@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     # scripts/sap-gateway-push/ and integrations/sap/push_handler.py) ---
     sap_push_webhook_secret: SecretStr = SecretStr("")
 
+    # --- Read-only database viewer at /db (integrations/api/db_viewer.py) ---
+    # Empty = the page doesn't exist (404). Set a long random password in
+    # Render's mgmg-shared group to switch it on; log in with any name.
+    db_viewer_password: SecretStr = SecretStr("")
+
     # --- MGMG's own sales CRM ---
 
     # --- Telegram ---

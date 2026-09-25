@@ -9,6 +9,7 @@ Endpoints:
     POST /webhooks/telegram/ops/{secret}              OPS Manager Bot (task routing)
     POST /webhooks/sap-push/{secret}                  AR-aging snapshot pushed from the SAP gateway's machine
     POST /webhooks/sap-gateway-push/{tool}/{secret}   every other SAP gateway tool's raw snapshot
+    GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
 
 Security:
     * Every webhook path carries a shared secret compared in constant time.
@@ -31,6 +32,7 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, Request
 
 from integrations.ai.openrouter_client import describe_openrouter_key
+from integrations.api import db_viewer
 from integrations.common.config import settings
 from integrations.common.db import close_pool, fetch_one
 from integrations.common.logging_setup import setup_logging
@@ -48,6 +50,7 @@ app = FastAPI(
     docs_url=None,  # no public API docs on an internet-facing service
     redoc_url=None,
 )
+app.include_router(db_viewer.router)
 
 
 @app.on_event("shutdown")

@@ -1,184 +1,132 @@
 # MGMG Digital Command Center
 
-Central AI operating system for MGMG (Tashkent) — connects SAP Business One,
-the in-house CRM, Google Sheets, and Telegram into one hub where the
-CEO/Operations Director sees everything, agents handle the repetitive work,
-and two Telegram bots turn plain-language instructions into tracked,
-dispatched tasks.
+Central AI operating system for MGMG (Tashkent): SAP Business One data,
+Telegram bots and scheduled agents in one place, so the Director sees what
+matters and employees are asked, reminded and recorded without anyone doing
+it by hand. The roadmap is the owner's plan, *ЭМЖИЕМ AI Агентлар Тизими*
+(21 agents; agent codes like A2/B1 below refer to it).
 
 **Business lines:** Primus Laundry (ONDRY — industrial laundry equipment) ·
-Garmin watch retail. Also referenced in older division mappings: Armin ·
-IMUS-Alliance · Service center · Properties.
+Garmin watch retail.
 
-## Status
+## What runs
 
-| # | Deliverable | State |
-| - | ----------- | ----- |
-| 1 | Infrastructure (Render Blueprint: API + Postgres + 1 cron job) | deployed — see `render.yaml` |
-| 2 | CEO Daily Brief | built, runs on schedule |
-| 3 | Receivables | built, runs on schedule |
-| 4 | Lead Agent (Primus Laundry B2B sourcing) | built, runs on schedule |
-| 5 | Admin Bot + OPS Manager Bot (`integrations/org_bot/`) | live — see `docs/agent-specs/05-org-bot.md` |
-| 6 | Daily reports + employee KPI | built, paused (`DAILY_REPORTS_ENABLED`); see `docs/agent-specs/06-daily-reports.md` |
-| 7 | Written permissions (EMJ-SOP-ADM-01) | built — request → approval → filled .docx + register; see `docs/agent-specs/07-permissions.md` |
-| 8 | Power BI Dashboard v1 | queries + DAX ready, report not built |
+| Plan | What | Where |
+| ---- | ---- | ----- |
+| H0 | Hub: FastAPI + PostgreSQL + two Telegram bots on Render | `integrations/api/`, `render.yaml` |
+| A1 | Daily reports: 16:00 ask, 17:00 reminder, one follow-up for a vague report | `docs/agent-specs/06-daily-reports.md` |
+| A2 | Morning brief — five numbers + who didn't report | `docs/agent-specs/01-ceo-daily-brief.md` |
+| A3 | Task tracker: deadlines, reminders, overdue notices, Friday scorecard | `docs/agent-specs/08-task-tracker.md` |
+| B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | `docs/agent-specs/07-permissions.md` |
+| — | Receivables alert (overdue debt by age) | `docs/agent-specs/03-receivables.md` |
+| — | OPS Manager Bot: routes the Director's tasks (to a department or one named person), answers questions from data | `docs/agent-specs/05-org-bot.md` |
+| — | Lead Agent — paused by the business (`LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
 
-amoCRM, Verifix (attendance) and Microsoft Planner/Teams were removed from the
-project on 2026-09-15 — none of them were in use. Their old database tables
-are left in place with their history; nothing writes to them anymore.
-
-Every `[PLACEHOLDER]` in `.env`/Render's `mgmg-shared` env group must be filled
-before the agent that needs it will run — each one refuses to start while its
-own placeholders remain. A known example: while `CRM_API_KEY` is a
-placeholder, the CRM pipeline snapshot (`v_pipeline_latest`) never gets
-populated, and anything reading it (including OPS Manager Bot's CRM agent
-query) reports "no data" rather than failing silently.
+Every message the bots send is Uzbek Cyrillic. Nothing reaches the Director
+from an employee without the employee confirming it. Every employee gives
+their real name once; Telegram profile names are never used on documents.
 
 ## Architecture
 
 ```
-SAP Business One ─┐
-In-house CRM ──────┼─→ Python integration clients ─→ PostgreSQL ─→ Power BI (dashboard)
-Google Sheets ──────┘         │
-                               └─→ Telegram — briefs and alerts
-                                        └─→ Admin Bot + OPS Manager Bot
-                                             (employee onboarding, AI task routing —
-                                              see docs/agent-specs/05-org-bot.md)
-
-mgmg-api      — always-on FastAPI web service (integrations/api/app.py): both
-                org_bot bots' webhooks and the SAP gateway pushes
-3 cron jobs   — mgmg-morning-agents (CEO brief + Lead Agent + receivables,
-                run back to back daily via scripts/run_morning_agents.py),
-                mgmg-daily-reports (16:00 Mon-Fri, asks every employee for
-                their day) and mgmg-report-reminder (17:00, nudges whoever
-                hasn't answered) — see docs/agent-specs/06-daily-reports.md
+SAP gateway (its own Windows machine) ──push──┐
+                                              ▼
+Telegram ◀──▶ mgmg-api (FastAPI) ──▶ PostgreSQL ◀── cron: 08:00 morning agents
+             Admin Bot, OPS Manager Bot,             16:00 report ask
+             SAP push webhooks, /db viewer           17:00 reminder + Friday scorecard
 ```
 
-n8n is referenced in some older docs/history but is **not** part of the
-current deployment (see the header comment in `render.yaml`) — every agent
-talks to SAP/CRM/Sheets/Telegram directly from Python.
+- **mgmg-api** — always-on web service: both bots' webhooks, the SAP pushes,
+  and the read-only database viewer.
+- **mgmg-morning-agents** (08:00) — brief, Lead Agent, receivables, task
+  reminders, name requests — `scripts/run_morning_agents.py`.
+- **mgmg-daily-reports** (16:00 Mon–Fri) and **mgmg-report-reminder**
+  (17:00 Mon–Fri, also the Friday scorecard).
 
-Money is stored as integer **tiyin** (1 UZS = 100 tiyin) everywhere. Time is
-stored in **UTC** and displayed in **Asia/Tashkent**. Both rules are enforced in
-`integrations/common/money.py` and `integrations/common/timeutil.py`.
+SAP data arrives **only by push** from the gateway's own machine
+(`scripts/sap-gateway-push/`); nothing reaches into SAP. Each tool is pushed
+with a row limit, so totals built from a capped push are shown as lower
+bounds ("камида") — see the brief spec.
 
-### AI providers
+Money is stored as integer minor units (tiyin/cents) everywhere; time is
+stored in UTC and shown in Asia/Tashkent (`integrations/common/money.py`,
+`timeutil.py`). AI calls go through OpenRouter only
+(`integrations/ai/openrouter_client.py`, Gemini 3.8 Flash → 3.7 Flash).
 
-Every AI call goes through `integrations/ai/openrouter_client.py`, which
-supports two OpenAI-compatible providers (OpenRouter and DeepSeek):
-- **Lead Agent** uses the global `AI_PROVIDER`, currently `openrouter` with
-  `google/gemini-3.8-flash` (fallback `google/gemini-3.7-flash`).
-- **OPS Manager Bot** has its own switch (`OPS_MANAGER_BOT_PROVIDER`,
-  `OPS_MANAGER_BOT_MODEL`, `OPS_MANAGER_BOT_FALLBACK_MODELS`), currently the
-  same OpenRouter + Gemini 3.8 Flash setup, independent of `AI_PROVIDER` via
-  `provider_override`/`model_override` on the client.
-- DeepSeek stays supported as a one-line switch back (`deepseek` provider).
+## Looking at the database
+
+`https://<mgmg-api host>/db` — a minimal read-only viewer: every table with
+its row count, rows newest first, and a text search. It is **off** until
+`DB_VIEWER_PASSWORD` is set in Render's `mgmg-shared` group; then the browser
+asks for a login (any name, that password). It can't change anything: every
+query runs in a read-only transaction. For heavier work, any Postgres client
+(DBeaver, TablePlus) connects with Render's External Database URL.
 
 ## Security model
 
 | Rule | How it is enforced |
 | ---- | ------------------ |
-| 1. Read-only for SAP and the CRM | The SAP client has no write path at all, and the CRM API key has no write scope. Other agent writes (e.g. the Lead Agent's Google Sheet) are gated behind `AGENT_WRITES_ENABLED`; while closed, every intended write is audited as `dry_run` and nothing is sent. |
-| 2. Everything audited | `integrations/common/db.audited()` wraps every external call; rows land in `agent_actions`. Audit failures are logged, never silently swallowed. |
-| 3. No hardcoded secrets | All credentials come from `.env`/Render's env group through `integrations/common/config.py`, wrapped in `SecretStr` so they cannot leak into logs or tracebacks. |
-| 4. Human in the loop | No agent takes autonomous action against an external system: the scheduled agents report, and org_bot only acts on what a person explicitly sent or tapped. |
-| 5. Least privilege | One service account per system; the SAP user is read-only in SAP itself, and a separate `powerbi` Postgres role has `SELECT` only. |
-| 6. org_bot is the one deliberate exception to rule 1 | Admin Bot and OPS Manager Bot write directly to Postgres/Telegram (task status, employee registration) with no `AGENT_WRITES_ENABLED` gate — those tables aren't touched by any other agent. Every write is still a direct, bounded reflection of something a human explicitly did (a task the Director sent, a button an employee tapped), never an autonomous decision the model made — see `docs/agent-specs/05-org-bot.md`'s "On write access" section. |
+| Read-only for SAP | SAP data only arrives by push; there is no code path that writes to SAP. |
+| Everything audited | `integrations/common/db.audited()` wraps every external call; rows land in `agent_actions`. |
+| No hardcoded secrets | All credentials come from `.env`/Render's env group through `integrations/common/config.py`, wrapped in `SecretStr`. |
+| Human in the loop | The bots act only on what a person sent or tapped; scheduled agents report, they don't act. |
+| Written approvals | Nobody approves their own permission request; every decision records who, when and from which account. |
 
 ## Setup
 
 ### Production — Render Blueprint
 
 ```bash
-git push origin main   # then in the Render dashboard: New -> Blueprint, point at this repo
+git push origin main   # Render auto-deploys; the Blueprint is render.yaml
 ```
 
-`render.yaml` deploys `mgmg-db` (Postgres), `mgmg-api` (the always-on web
-service — both org_bot bots and the SAP gateway pushes), and one cron service
-(`mgmg-morning-agents`: CEO brief, Lead Agent, receivables). Secrets marked
-`sync: false` are entered once in the Render dashboard under the `mgmg-shared`
-environment group, not committed to this repo — every service reads from that
-one group.
-
-Register both org_bot webhooks once (see `docs/agent-specs/05-org-bot.md` for
-the exact URLs).
+Secrets marked `sync: false` live in the Render dashboard under the
+`mgmg-shared` environment group, never in this repo. Switches worth knowing:
+`DAILY_REPORTS_ENABLED`, `TASK_TRACKER_ENABLED`, `PERMISSIONS_ENABLED`,
+`PERMISSION_APPROVAL_TIERS`, `LEAD_AGENT_ENABLED`, `BOTS_FROZEN`,
+`DB_VIEWER_PASSWORD` — each is described in `.env.example`.
 
 ### Local development
 
 ```bash
 cp .env.example .env   # edit .env
-docker compose up -d   # PostgreSQL (schema applied automatically) + the FastAPI app
+docker compose up -d   # PostgreSQL (schema applied automatically) + the API
 ```
 
-Check what's still missing:
-
-```bash
-python -c "from integrations.common.config import settings; print(settings.missing_placeholders())"
-```
-
-Applying the schema to an existing database by hand:
-
-```bash
-psql -U <user> -d mgmg -f database/schema.sql
-```
-
-### Verify before going live
+### Checks
 
 ```bash
 python scripts/selfcheck.py                          # offline logic checks, no credentials needed
 python agents/ceo-daily-brief/agent.py --dry-run     # real data, nothing sent
-python agents/receivables/agent.py --dry-run
-python agents/lead-agent/agent.py --dry-run
+python agents/task-tracker/agent.py --weekly --dry-run --force
 ```
 
 ## Layout
 
 ```
-agents/                      scheduled, cron-run agents (one process per run, then exit)
-  ceo-daily-brief/           morning brief
-  receivables/               AR aging alert
-  lead-agent/                B2B lead sourcing (Primus Laundry)
-  daily-reports/             16:00 report ask + 17:00 reminder (employee KPI)
+agents/                      scheduled agents (one process per run, then exit)
+  ceo-daily-brief/           08:00 brief — the five numbers (A2)
+  receivables/               overdue debt alert
+  daily-reports/             16:00 ask + 17:00 reminder (A1)
+  task-tracker/              reminders, overdue notices, Friday scorecard (A3)
+  lead-agent/                B2B lead sourcing (paused)
 integrations/
-  api/                       FastAPI webhook receiver (mgmg-api's entry point)
-  common/                    config, logging, DB + audit, retrying HTTP, money, time
-  sap/                       SAP Business One client (read-only) + gateway push handler
-  crm/                       MGMG's own CRM client (read-only)
-  org_bot/                   Admin Bot + OPS Manager Bot — see docs/agent-specs/05-org-bot.md
-  ai/                        multi-provider LLM client (OpenRouter / DeepSeek)
-  google/                    Google Sheets client (Lead Agent's data store)
-  search/, tenders/          Lead Agent's search and tender sources
+  api/                       FastAPI app: webhooks + /db viewer
+  common/                    config, logging, DB + audit, HTTP retry, money, time, dates
+  sap/                       gateway push handler, aging buckets, dashboard figures
+  org_bot/                   Admin Bot + OPS Manager Bot, permissions, tasks, names
+  ai/                        OpenRouter client
   telegram/                  bot primitives — send, edit, HTML sanitization
-database/                    schema.sql — self-applying, no separate migration tool
-dashboard/powerbi-queries/   SQL sources, DAX measures, build guide
-scripts/                     selfcheck, setup scripts, crontab
-docs/agent-specs/            what each agent/bot does, and its runbook
-render.yaml                  production deployment (Render Blueprint)
-docker-compose.yml           local development
+  google/, search/, tenders/ Lead Agent's sources and sheet
+database/schema.sql          self-applying schema (ALTER ... IF NOT EXISTS, no migration tool)
+dashboard/powerbi-queries/   SQL sources + DAX for a Power BI report (not built)
+scripts/                     selfcheck, cron runner, SAP gateway push script
+docs/agent-specs/            what each agent does, and its runbook
 ```
 
 ## Conventions
 
 - Python 3.11+, `httpx` (async), `pydantic`/`pydantic-settings`, `loguru`
-- Every external call retries 3× with exponential backoff and jitter
-- Every function has a docstring stating what it does, what it returns, and what it can fail on
-- Agents degrade rather than crash: one dead source never blocks the whole brief
-- No migration framework: schema changes are `ALTER TABLE ... IF NOT EXISTS`
-  statements appended to `database/schema.sql`, re-applied safely on every boot
-- Comments and docstrings state the *why*, not the *what* — code that needs a
-  comment to explain what it does gets rewritten instead
-
-## Before first production run
-
-These need real-world values that cannot be guessed from here:
-
-- [ ] `CASH_ACCOUNT_CODES` and `BANK_NAME_BY_ACCOUNT` — `integrations/sap/client.py`
-- [ ] Division mappings — `integrations/common/divisions.py`
-- [ ] Reconcile one day of AR output against SAP's own aging report
-- [ ] `CRM_API_KEY` — the CRM pipeline snapshot silently stays empty until
-      it's filled in
-- [ ] OpenRouter account balance — both Lead Agent and OPS Manager Bot
-      (`google/gemini-3.8-flash`) fail with HTTP 402 if the account runs out
-      of credits; DeepSeek (`AI_PROVIDER=deepseek` /
-      `OPS_MANAGER_BOT_PROVIDER=deepseek`) is a separately-billed path to
-      switch back to if that happens
+- Every external call retries with backoff; agents degrade rather than crash
+- Numbers are never guessed: missing, stale or partial data is said out loud
+- Comments and docstrings state the *why*, not the *what*

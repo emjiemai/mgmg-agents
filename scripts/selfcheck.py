@@ -712,6 +712,71 @@ def test_report_or_message() -> None:
     check_true("buttons are Uzbek Cyrillic", all(latin_words(b["text"]) == [] for b in buttons))
 
 
+def test_db_viewer() -> None:
+    """The /db viewer: locked by default, read-only, escapes what it shows."""
+    print("database viewer")
+    import base64
+    from datetime import datetime, timezone
+
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from integrations.api import app as api_app
+    from integrations.api import db_viewer
+    from integrations.common.config import settings
+
+    fake_rows = {
+        "relations": [{"name": "employees", "kind": "r"}, {"name": "v_ar_aging_latest", "kind": "v"}],
+        "columns": [{"column_name": "id"}, {"column_name": "full_name"}, {"column_name": "created_at"}],
+        "rows": [{"id": 7, "full_name": "<script>x</script>", "created_at": datetime(2026, 9, 26, 3, 0, tzinfo=timezone.utc)}],
+    }
+    seen_queries: list[str] = []
+
+    async def fake_read(query, params=None):
+        text = query if isinstance(query, str) else repr(query)
+        seen_queries.append(text)
+        if "pg_class" in text:
+            return fake_rows["relations"]
+        if "information_schema.columns" in text:
+            return fake_rows["columns"]
+        if "count(*)" in text:
+            return [{"n": 1}]
+        return fake_rows["rows"]
+
+    original_read, original_password = db_viewer._read, settings.db_viewer_password
+    db_viewer._read = fake_read
+    client = TestClient(api_app.app)
+    try:
+        settings.db_viewer_password = SecretStr("")
+        check("switched off without a password", client.get("/db").status_code, 404)
+
+        settings.db_viewer_password = SecretStr("s3cret-long")
+        check("asks for a login", client.get("/db").status_code, 401)
+        wrong = {"Authorization": "Basic " + base64.b64encode(b"admin:nope").decode()}
+        check("wrong password refused", client.get("/db", headers=wrong).status_code, 401)
+
+        good = {"Authorization": "Basic " + base64.b64encode(b"any:s3cret-long").decode()}
+        index = client.get("/db", headers=good)
+        check("right password lets you in", index.status_code, 200)
+        check_true("lists the tables", "employees" in index.text and "1 қатор" in index.text)
+        check_true("never indexed or cached", index.headers.get("x-robots-tag", "").startswith("noindex")
+                   and index.headers.get("cache-control") == "no-store")
+
+        page = client.get("/db/employees", headers=good)
+        check_true("shows a row", page.status_code == 200 and "full_name" in page.text)
+        check_true("what the data holds is escaped", "&lt;script&gt;" in page.text and "<script>x" not in page.text)
+        check_true("timestamps in Tashkent time", "2026-09-26 08:00:00" in page.text)
+        check_true("newest first", any("ORDER BY" in q and "created_at" in q for q in seen_queries))
+
+        seen_queries.clear()
+        missing = client.get("/db/pg_authid", headers=good)
+        check_true("a table outside the list is refused", "Бундай жадвал йўқ" in missing.text)
+        check_true("...without ever being queried", not any("pg_authid" in q for q in seen_queries))
+    finally:
+        db_viewer._read = original_read
+        settings.db_viewer_password = original_password
+
+
 def test_payment_gate() -> None:
     """B1: requests route by amount to whoever holds that limit."""
     print("payment gate (B1)")
@@ -812,6 +877,7 @@ def main() -> int:
         test_permission_form,
         test_task_tracker,
         test_payment_gate,
+        test_db_viewer,
         test_names_and_routing,
         test_report_or_message,
         test_daily_report_kpi,
