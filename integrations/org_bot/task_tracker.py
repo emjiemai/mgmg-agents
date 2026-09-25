@@ -349,3 +349,77 @@ def weekly_text(
             lines.append("📄 <b>Ёзма рухсатлар:</b> бу ҳафта сўров бўлмади")
 
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ E1: monthly KPI
+
+MONTHS_UZ = (
+    "январ", "феврал", "март", "апрел", "май", "июн",
+    "июл", "август", "сентябр", "октябр", "ноябр", "декабр",
+)
+
+
+@dataclass
+class EmployeeKPI:
+    """One person's month (E1): report discipline and tasks on time."""
+
+    name: str
+    reports: ReportScore = field(default_factory=ReportScore)
+    tasks: TaskScore = field(default_factory=TaskScore)
+
+    @property
+    def mark(self) -> str:
+        """The worse of the two, by the plan's thresholds; ⚪ with no data at all."""
+        marks = []
+        if self.reports.asked:
+            marks.append(_mark(self.reports.index or 0.0, A1_GREEN, A1_RED))
+        if self.tasks.due:
+            marks.append(_mark(self.tasks.index or 0.0, A3_GREEN, A3_RED))
+        if not marks:
+            return "⚪"
+        return "🔴" if "🔴" in marks else "🟡" if "🟡" in marks else "🟢"
+
+
+def employee_kpis(
+    report_rows: list[dict[str, Any]], task_rows: list[dict[str, Any]], start: date, end: date
+) -> list[EmployeeKPI]:
+    """Per-person KPI for ``[start, end]``, worst first.
+
+    Uses the same rules as the weekly scorecard (``score_reports``,
+    ``score_tasks``), per person, so the two never disagree.
+    """
+    by_name: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for row in report_rows:
+        by_name.setdefault(row.get("display_name") or "—", {"reports": [], "tasks": []})["reports"].append(row)
+    for row in task_rows:
+        by_name.setdefault(row.get("display_name") or "—", {"reports": [], "tasks": []})["tasks"].append(row)
+
+    kpis = [
+        EmployeeKPI(name=name, reports=score_reports(rows["reports"]), tasks=score_tasks(rows["tasks"], start, end))
+        for name, rows in by_name.items()
+    ]
+    order = {"🔴": 0, "🟡": 1, "⚪": 2, "🟢": 3}
+    return sorted((k for k in kpis if k.reports.asked or k.tasks.due), key=lambda k: (order[k.mark], k.name))
+
+
+def monthly_text(month_start: date, kpis: list[EmployeeKPI]) -> str:
+    """The message on the 1st: each person's month, worst first."""
+    title = f"{MONTHS_UZ[month_start.month - 1]} {month_start.year}"
+    lines = [
+        f"📈 <b>Ойлик KPI — {title}</b>",
+        "<i>Ҳисобот: юборган/сўралган (ўз вақтида) · Топшириқ: ўз вақтида/муддати келган</i>",
+        "",
+    ]
+    if not kpis:
+        lines.append("Бу ойда на ҳисобот сўралди, на муддатли топшириқ бўлди.")
+        return "\n".join(lines)
+    for kpi in kpis:
+        report = (
+            f"ҳисобот {kpi.reports.reported}/{kpi.reports.asked} ({kpi.reports.on_time})"
+            if kpi.reports.asked
+            else "ҳисобот —"
+        )
+        task = f"топшириқ {kpi.tasks.on_time}/{kpi.tasks.due}" if kpi.tasks.due else "топшириқ —"
+        lines.append(f"{kpi.mark} {_h(kpi.name)} — {report} · {task}")
+    return "\n".join(lines)
+

@@ -33,6 +33,8 @@ log = setup_logging(AGENT)
 EMPLOYEE_LIST_COMMANDS = ("/employees", "/users", "/list", "/xodimlar")
 # Sends the name question to every employee who hasn't given one (names.py).
 ASK_NAMES_COMMANDS = ("/ismlar", "/names")
+# Runs the weekly data-quality report (B4) now.
+DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
 
 
 def _person_line(request: dict[str, Any]) -> str:
@@ -170,6 +172,10 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await _list_employees(run_id)
     if text in ASK_NAMES_COMMANDS:
         return await _ask_names(run_id)
+    if text in DATA_QUALITY_COMMANDS:
+        from integrations.common.agent_loader import load_agent  # the agent lives in a hyphenated folder
+
+        return await load_agent("data-quality").check_now(run_id)
 
     return "ignored"
 
@@ -216,7 +222,7 @@ async def _list_employees(run_id: uuid.UUID) -> str:
             buttons.append(
                 [{"text": f"🗑 {full_name or emp['display_name']} ({label})", "callback_data": f"removeuser:{emp['id']}"}]
             )
-        lines.append("\n<i>Исм ёзмаганлардан сўраш: /ismlar</i>")
+        lines.append("\n<i>Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat</i>")
         await bot.send_message("\n".join(lines), reply_markup={"inline_keyboard": buttons})
     return "listed"
 

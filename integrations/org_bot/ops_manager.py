@@ -1573,6 +1573,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "reporter_agent": _fetch_reporter_agent_data,
         "xodimlar_kpi": _fetch_kpi_agent_data,
         "ruxsatlar": permission_flow.registry_data,
+        "pul_kalendari": _fetch_cash_calendar_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1625,7 +1626,31 @@ async def _fetch_kpi_agent_data() -> str:
         if numbers:
             parts.append(numbers)
         lines.append(" | ".join(parts))
+
+    # E1: each person's last 30 days, by the same rules as the monthly KPI.
+    start = today - timedelta(days=30)
+    kpis = task_tracker.employee_kpis(
+        await store.reports_between(start, today), await store.tasks_due_between(start, today), start, today
+    )
+    if kpis:
+        lines.append("PER-EMPLOYEE KPI, last 30 days (reports sent/asked, on time before 18:00; tasks on time/due):")
+        for person in kpis:
+            reports = (
+                f"reports {person.reports.reported}/{person.reports.asked} ({person.reports.on_time} on time)"
+                if person.reports.asked
+                else "reports: not asked"
+            )
+            tasks = f"tasks {person.tasks.on_time}/{person.tasks.due} on time" if person.tasks.due else "tasks: none due"
+            lines.append(f"- {person.mark} {person.name}: {reports}; {tasks}")
     return "\n".join(lines)
+
+
+async def _fetch_cash_calendar_data() -> str:
+    """The next 30 days of money in and out (B2), same as the Monday message."""
+    from integrations.common.agent_loader import load_agent  # the agent lives in a hyphenated folder
+
+    calendar = load_agent("cash-calendar")
+    return calendar.describe(await calendar.load(today_local()))
 
 
 async def _fetch_task_tracker_data() -> str:

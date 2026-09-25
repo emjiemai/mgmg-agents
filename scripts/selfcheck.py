@@ -74,9 +74,10 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     """
     import re
 
-    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Bot"}
+    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot"}
     allowed |= allow or set()
-    plain = re.sub(r"<[^>]+>", " ", text)
+    # Telegram commands (/ismlar, /bekor) can only be Latin.
+    plain = re.sub(r"/[a-z_]+", " ", re.sub(r"<[^>]+>", " ", text))
     return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9]*(?:'[A-Za-z]+)*", plain) if w not in allowed]
 
 
@@ -777,6 +778,87 @@ def test_db_viewer() -> None:
         settings.db_viewer_password = original_password
 
 
+def test_plan_agents() -> None:
+    """B2 cash calendar, B4 data quality, E1 monthly KPI."""
+    print("B2 / B4 / E1")
+    from datetime import datetime, timezone
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import task_tracker as tt
+
+    # ---- B2: 30-day cash calendar
+    cc = load_agent("cash-calendar")
+    today = date(2026, 9, 28)
+    sent = datetime(2026, 9, 27, 5, tzinfo=timezone.utc)
+    invoices = [
+        {"due_date": date(2026, 9, 30), "balance_due_tiyin": 320000, "currency": "USD"},
+        {"due_date": date(2026, 10, 20), "balance_due_tiyin": 550000, "currency": "USD"},
+        {"due_date": date(2026, 9, 10), "balance_due_tiyin": 738436, "currency": "USD"},
+        {"due_date": None, "balance_due_tiyin": 5, "currency": "USD"},
+    ]
+    payments = [
+        {"request_no": "EMJ-2026-0007", "subject": "Принтер", "amount_tiyin": 1_500_000_000, "currency": "UZS",
+         "execute_by": "30.09.2026", "submitted_at": sent},
+        {"request_no": "EMJ-2026-0008", "subject": "Мебель", "amount_tiyin": 100, "currency": "UZS",
+         "execute_by": "тезроқ", "submitted_at": sent},
+        {"request_no": "EMJ-2026-0009", "subject": "Кеча", "amount_tiyin": 100, "currency": "UZS",
+         "execute_by": "01.09.2026", "submitted_at": sent},
+    ]
+    cal = cc.build(invoices, payments, today, capped=False)
+    check("four blocks cover the 30 days", (cal.incoming[0].start, cal.incoming[-1].end), (today, date(2026, 10, 27)))
+    check("invoice due this week lands in week 1", (cal.incoming[0].count, cal.incoming[0].totals), (1, {"USD": 320000}))
+    check("overdue kept apart", (cal.overdue_count, cal.overdue), (1, {"USD": 738436}))
+    check("only in-window approved payments go out", [p["no"] for p in cal.outgoing], ["EMJ-2026-0007"])
+    check("an unreadable date is counted, not placed", cal.unclear, 1)
+    text = cc.render(cal)
+    check_true("says there is no balance", "Касса қолдиғи уланмаган" in text)
+    check_true("the calendar is Uzbek Cyrillic", latin_words(text, allow={"EMJ"}) == [])
+    check_true("a capped invoice feed is a lower bound", "камида" in cc.render(cc.build(invoices, [], today, capped=True)))
+
+    # ---- B4: data quality
+    dq = load_agent("data-quality")
+    inp = dq.Inputs(today=today)
+    inp.invoices = [
+        {"doc_num": 2253, "doc_date": date(2026, 9, 1), "due_date": date(2026, 9, 10), "currency": "USD",
+         "doc_total_tiyin": 100, "balance_due_tiyin": 100, "sales_person_code": -1},
+        {"doc_num": 2332, "doc_date": date(2026, 9, 5), "due_date": None, "currency": "USD",
+         "doc_total_tiyin": 100, "balance_due_tiyin": 150, "sales_person_code": 4},
+    ]
+    inp.feeds = {"invoices": {"at": datetime(2026, 9, 28, 2, tzinfo=timezone.utc), "rows": 20},
+                 "payments": {"at": datetime(2026, 9, 28, 2, tzinfo=timezone.utc), "rows": 100}}
+    inp.unnamed = ["GMHRD"]
+    report = dq.render(inp)
+    check_true("no sales person is flagged", "Масъул сотувчиси йўқ очиқ ҳисоб-фактура: 1 та" in report and "#2253" in report)
+    check_true("missing due date is flagged", "Тўлов муддати йўқ ҳисоб-фактура: 1 та (#2332)" in report)
+    check_true("a balance above the total is flagged", "Қолдиғи нотўғри ҳисоб-фактура: 1 та (#2332)" in report)
+    check_true("a capped feed is flagged", "тўловлар — чекланган (100 та" in report)
+    check_true("a feed that never came is flagged", "буюртмалар — ҳеч қачон келмаган" in report)
+    check_true("unnamed employees are flagged", "Исм ёзмаган ходимлар: 1" in report)
+    check_true("the report is Uzbek Cyrillic", latin_words(report, allow={"GMHRD"}) == [])
+    clean = dq.Inputs(today=today, feeds={t: {"at": datetime(2026, 9, 28, 2, tzinfo=timezone.utc), "rows": 1}
+                                          for t in dq.FEED_LABELS})
+    check_true("clean data says so", dq.render(clean).count("✅ тоза") == 2)
+
+    # ---- E1: monthly KPI
+    def at(d: int, h: int) -> datetime:
+        return datetime(2026, 9, d, h - 5, tzinfo=timezone.utc)
+
+    reports = [{"display_name": "Алишер", "status": "submitted", "report_date": date(2026, 9, d), "submitted_at": at(d, 17)}
+               for d in range(1, 11)]
+    reports += [{"display_name": "Дилноза", "status": "asked" if d % 2 else "submitted", "report_date": date(2026, 9, d),
+                 "submitted_at": at(d, 17)} for d in range(1, 11)]
+    tasks = [{"display_name": "Бобур", "task_summary": "x", "status": "done", "due_date": date(2026, 9, 10),
+              "completed_at": at(12, 10)}]
+    kpis = tt.employee_kpis(reports, tasks, date(2026, 9, 1), date(2026, 9, 30))
+    check("worst first: late tasks, then half the reports, then all good",
+          [(k.name, k.mark) for k in kpis], [("Бобур", "🔴"), ("Дилноза", "🟡"), ("Алишер", "🟢")])
+    monthly = tt.monthly_text(date(2026, 9, 1), kpis)
+    check_true("month named in Uzbek", "сентябр 2026" in monthly)
+    check_true("per-person line", "Дилноза — ҳисобот 5/10 (5) · топшириқ —" in monthly)
+    check_true("the KPI message is Uzbek Cyrillic", latin_words(monthly) == [])
+    check_true("an empty month says so", "на ҳисобот сўралди" in tt.monthly_text(date(2026, 9, 1), []))
+
+
 def test_payment_gate() -> None:
     """B1: requests route by amount to whoever holds that limit."""
     print("payment gate (B1)")
@@ -877,6 +959,7 @@ def main() -> int:
         test_permission_form,
         test_task_tracker,
         test_payment_gate,
+        test_plan_agents,
         test_db_viewer,
         test_names_and_routing,
         test_report_or_message,

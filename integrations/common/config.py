@@ -133,6 +133,21 @@ class Settings(BaseSettings):
     # TASK_TRACKER_ENABLED=false in Render's mgmg-shared group to pause it.
     task_tracker_enabled: bool = True
 
+    # --- Data quality (B4) ---
+    # Monday 08:00 report to the admin chat (IT), never to the Director:
+    # invoices with no sales person, stale or capped SAP feeds, employees
+    # without names, undated tasks, unreadable payment dates.
+    data_quality_enabled: bool = True
+
+    # --- 30-day cash calendar (B2) ---
+    # Monday 08:00 to the Director and accountants: open invoices by due date
+    # coming in, approved written payments going out.
+    cash_calendar_enabled: bool = True
+
+    # --- Monthly KPI (E1) ---
+    # 08:00 on the 1st to the Director and HR: last month per person.
+    monthly_kpi_enabled: bool = True
+
     # --- Written permission requests (EMJ-SOP-ADM-01) ---
     # The SOP allows an electronic approval only in the system the director
     # officially designates, with the approver and the decision history kept

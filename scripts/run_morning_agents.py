@@ -37,6 +37,9 @@ AGENTS = [
     "agents/lead-agent/agent.py",
     "agents/receivables/agent.py",
     "agents/task-tracker/agent.py --morning",
+    "agents/data-quality/agent.py",  # sends only on Mondays
+    "agents/cash-calendar/agent.py",  # sends only on Mondays
+    "agents/task-tracker/agent.py --monthly",  # sends only on the 1st
 ]
 
 # 17:00 Mon-Fri. The scorecard checks for Friday itself, so this list can run

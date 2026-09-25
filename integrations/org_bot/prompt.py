@@ -305,6 +305,11 @@ to justify repeating a past conclusion.
   "рухсат сўровлари", "кутилаётган рухсатлар", "кто просил разрешение". That
   register is separate from tasks: a task is work you assigned, a permission
   is something an employee asked to be allowed to do.
+- Questions about UPCOMING money — what comes in or goes out and when
+  ("keyingi haftada qancha pul tushadi", "qachon to'lov bor", "pul
+  kalendari", "кассовый план", "какие платежи на этой неделе") — go to
+  pul_kalendari. Questions about who owes what right now (a list of debtors
+  or invoices) stay with finance_agent.
 - Questions about the STATUS of tasks you already assigned go to
   topshiriqlar: what is still open, what is overdue, who is late, who
   finishes on time ("qaysi topshiriqlar bajarilmadi", "muddati o'tganlar",

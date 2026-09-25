@@ -12,6 +12,9 @@ reminding so the Director doesn't have to.
       * The Director gets the week's scorecard: tasks done on time (A3's И),
         daily reports sent and on time (A1's И), and written permissions.
         Sent only on Fridays, so the evening job can run it every weekday.
+  --monthly (08:00 on the 1st, E1)
+      * The Director and HR get last month per person: report discipline and
+        tasks on time, worst first, marked by the plan's thresholds.
 
 Deadlines come only from the Director (stated in the task, or picked with one
 tap) — see integrations/org_bot/task_tracker.py. A task without a deadline is
@@ -21,6 +24,7 @@ Run:
     python agents/task-tracker/agent.py --morning
     python agents/task-tracker/agent.py --weekly
     python agents/task-tracker/agent.py --weekly --force    # any weekday
+    python agents/task-tracker/agent.py --monthly --force   # last month's KPI, any day
     python agents/task-tracker/agent.py --morning --dry-run # print, send nothing
 """
 
@@ -52,6 +56,7 @@ log = setup_logging(AGENT)
 REQUIRED_SETTINGS = {"ops_manager_bot_telegram_bot_token"}
 
 FRIDAY = 4
+HR_ROLE = "hr"
 
 
 def _bot(run_id: uuid.UUID) -> TelegramBot:
@@ -148,6 +153,41 @@ async def weekly(run_id: uuid.UUID, force: bool = False) -> None:
     log.info("Weekly scorecard sent to {} director(s)", len(directors))
 
 
+async def monthly(run_id: uuid.UUID, force: bool = False) -> None:
+    """Send last month's per-person KPI (E1) to the Director(s) and HR."""
+    today = today_local()
+    if today.day != 1 and not force:
+        log.info("Not the 1st — no monthly KPI")
+        return
+    if not settings.monthly_kpi_enabled and not settings.dry_run:
+        log.info("Monthly KPI is paused (MONTHLY_KPI_ENABLED is not true)")
+        return
+
+    end = today.replace(day=1) - timedelta(days=1)  # last day of last month
+    start = end.replace(day=1)
+    kpis = task_tracker.employee_kpis(
+        await store.reports_between(start, end) if settings.daily_reports_enabled else [],
+        await store.tasks_due_between(start, end),
+        start,
+        end,
+    )
+    text = task_tracker.monthly_text(start, kpis)
+
+    recipients = {
+        e["telegram_user_id"]: e for role in (DIRECTOR_ROLE, HR_ROLE) for e in await store.active_employees_by_role(role)
+    }
+    if settings.dry_run:
+        log.info("[dry-run] monthly KPI for {} person(s):\n{}", len(recipients), text)
+        return
+    async with _bot(run_id) as bot:
+        for telegram_user_id in recipients:
+            try:
+                await bot.send_message(text, chat_id=str(telegram_user_id))
+            except TelegramError as exc:
+                log.error("Could not send the monthly KPI to {}: {}", telegram_user_id, exc)
+    log.info("Monthly KPI sent to {} person(s)", len(recipients))
+
+
 async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
     """Run one mode of the agent.
 
@@ -173,6 +213,8 @@ async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
 
     if mode == "morning":
         await morning(run_id)
+    elif mode == "monthly":
+        await monthly(run_id, force)
     else:
         await weekly(run_id, force)
     return 0
@@ -184,12 +226,14 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--morning", action="store_true", help="08:00 — reminders and overdue notices")
     group.add_argument("--weekly", action="store_true", help="Friday 17:00 — the Director's scorecard")
+    group.add_argument("--monthly", action="store_true", help="08:00 on the 1st — last month's KPI (E1)")
     parser.add_argument("--force", action="store_true", help="send the weekly scorecard on any weekday")
     parser.add_argument("--dry-run", action="store_true", help="send nothing")
     args = parser.parse_args()
 
     try:
-        exit_code = asyncio.run(_main("morning" if args.morning else "weekly", args.dry_run, args.force))
+        mode = "morning" if args.morning else "monthly" if args.monthly else "weekly"
+        exit_code = asyncio.run(_main(mode, args.dry_run, args.force))
     except KeyboardInterrupt:
         exit_code = 130
     sys.exit(exit_code)
