@@ -127,11 +127,11 @@ async def remind_silent(run_id: uuid.UUID) -> int:
         for report in pending:
             text = kpi.build_reminder_text(kpi.metrics_for_role(report["role"]))
             try:
-                await bot.send_message(text, chat_id=str(report["telegram_user_id"]))
+                message_ids = await bot.send_message(text, chat_id=str(report["telegram_user_id"]))
             except TelegramError as exc:
                 log.error("Could not remind {}: {}", report.get("display_name"), exc)
                 continue
-            await store.mark_report_reminded(str(report["id"]))
+            await store.mark_report_reminded(str(report["id"]), message_ids[0] if message_ids else None)
             sent += 1
 
     log.info("Reminded {} of {} employee(s) who hadn't reported", sent, len(pending))

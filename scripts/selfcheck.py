@@ -666,6 +666,23 @@ def test_names_and_routing() -> None:
     check("preview drops the AI's tags", _plain("<b>Отчёт</b>  тайёрланг"), "Отчёт тайёрланг")
 
 
+def test_report_or_message() -> None:
+    """A report never needs Telegram's reply; an unclear message gets one tap."""
+    print("report or message")
+    from integrations.org_bot.ops_manager import report_message_kind, report_or_relay_keyboard
+
+    check("plain message, no task -> report", report_message_kind(False, False, 0), "report")
+    check("reply to the ask/reminder -> report, even with tasks", report_message_kind(True, False, 3), "report")
+    check("reply to a task card -> task update", report_message_kind(False, True, 1), "task_update")
+    check("plain message with a task in flight -> ask", report_message_kind(False, False, 1), "ask")
+    check("plain message with several tasks -> ask", report_message_kind(False, False, 4), "ask")
+    real_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    buttons = [b for row in report_or_relay_keyboard(real_id)["inline_keyboard"] for b in row]
+    check("three choices", [b["callback_data"].split(":")[0] for b in buttons], ["asrep", "relayok", "relayno"])
+    check_true("every button fits Telegram's 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in buttons))
+    check_true("buttons are Uzbek Cyrillic", all(latin_words(b["text"]) == [] for b in buttons))
+
+
 def test_payment_gate() -> None:
     """B1: requests route by amount to whoever holds that limit."""
     print("payment gate (B1)")
@@ -767,6 +784,7 @@ def main() -> int:
         test_task_tracker,
         test_payment_gate,
         test_names_and_routing,
+        test_report_or_message,
         test_daily_report_kpi,
         test_brief_rendering,
         test_receivables_rendering,

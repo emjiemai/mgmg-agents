@@ -22,7 +22,8 @@ follows at 17:00.
    asking what they did today. A `daily_reports` row opens for each person
    with status `asked`, which is what makes "who never answered" answerable
    at all.
-2. **The employee replies** in Telegram. OPS Manager Bot saves the text,
+2. **The employee writes their report** — just a message, no need to use
+   Telegram's reply. OPS Manager Bot saves the text,
    counts the tasks they completed today from `tasks` (not self-reported),
    marks the row `submitted`, and thanks them. The report is **not**
    forwarded to the Director (the business's decision, 2026-09-16).
@@ -62,10 +63,19 @@ unrecognized number is never invented — it shows as `—`.
 
 ## Which message counts as the report
 
-A reply to the 16:00 ask always counts. Otherwise, a message counts as the
-report only when nothing else claims it: if it replies to a task card, or the
-employee has exactly one open task, it is treated as a task update as before.
-This keeps the pre-existing task conversation working on report days.
+Nobody has to use Telegram's reply feature (2026-09-25 — employees found
+"reply to the bot's message" confusing):
+
+| The message is… | It is… |
+| --------------- | ------ |
+| a reply to the 16:00 ask or the 17:00 reminder | the report |
+| a reply to a task card | a task update (goes to the Director after "юборилсинми?") |
+| a plain message, no task in flight | the report |
+| a plain message while a task is in flight | unclear — the bot asks once: **📝 Ҳа, ҳисобот · 📨 Директорга хабар · ❌ Бекор қилиш** |
+
+The choice replaces the usual "send to the Director?" confirmation, so it's
+never an extra tap. The logic is `ops_manager.report_message_kind`, tested in
+`scripts/selfcheck.py`.
 
 ## Failure behaviour
 

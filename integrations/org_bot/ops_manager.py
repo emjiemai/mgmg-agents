@@ -97,6 +97,37 @@ def parse_role_and_request(rest: str) -> tuple[str, str] | None:
     return role_slug, request_id
 
 
+def report_message_kind(replied_to_ask: bool, replied_to_task: bool, open_tasks: int) -> str:
+    """What a message sent while today's report is still owed should be.
+
+    Nobody has to use Telegram's reply feature: a plain message is the report,
+    unless the employee has a task in flight — then it could be either, and
+    the bot asks with one tap instead of guessing.
+
+    Returns:
+        "report" (save it as today's report), "task_update" (a reply to a
+        task card — the normal relay), or "ask" (report or message? buttons).
+    """
+    if replied_to_ask:
+        return "report"
+    if replied_to_task:
+        return "task_update"
+    return "ask" if open_tasks else "report"
+
+
+def report_or_relay_keyboard(relay_id: str) -> dict[str, Any]:
+    """The one-tap choice for a message that could be the report or a message."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📝 Ҳа, ҳисобот", "callback_data": f"asrep:{relay_id}"},
+                {"text": "📨 Директорга хабар", "callback_data": f"relayok:{relay_id}"},
+            ],
+            [{"text": "❌ Бекор қилиш", "callback_data": f"relayno:{relay_id}"}],
+        ]
+    }
+
+
 def validate_classification(result: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
     """Validate the classification model's output against the known vocabulary.
 
@@ -179,6 +210,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_task_due(rest, callback, run_id)
     if prefix in ("relayok", "relayno"):
         return await _handle_relay_decision(rest, prefix == "relayok", callback, run_id)
+    if prefix == "asrep":
+        return await _handle_save_as_report(rest, callback, run_id)
 
     # Written permission buttons (send / cancel / the four SOP decisions).
     permission_outcome = await permission_flow.handle_callback(prefix, rest, callback, run_id)
@@ -714,25 +747,49 @@ async def _try_daily_report(
                     log.info("Merged late numbers {} into {}'s report", fresh, employee["display_name"])
         return None
 
-    # A reply to the 16:00 ask is unambiguous. Otherwise this only counts as
-    # the report when nothing else claims it — a message about a specific
-    # task stays a task update, exactly as it behaved before reports existed.
-    if reply_to_message_id is None or reply_to_message_id != pending["prompt_message_id"]:
-        task = None
-        if reply_to_message_id:
-            task = await store.find_task_by_message_id(reply_to_message_id, employee["telegram_user_id"])
-        if task is None:
-            task = await store.find_open_task_for_employee(employee["telegram_user_id"])
-        if task is not None:
-            return None
+    # No one has to reply to anything (2026-09-25): a reply to the 16:00 ask
+    # or the 17:00 reminder is the report, a reply to a task card is a task
+    # update, and a plain message is the report — unless a task is in flight,
+    # when the bot asks with one tap instead of guessing.
+    telegram_user_id = employee["telegram_user_id"]
+    replied_to_ask = reply_to_message_id is not None and reply_to_message_id in (
+        pending.get("prompt_message_id"),
+        pending.get("reminder_message_id"),
+    )
+    replied_to_task = (
+        not replied_to_ask
+        and reply_to_message_id is not None
+        and await store.find_task_by_message_id(reply_to_message_id, telegram_user_id) is not None
+    )
+    open_tasks = [] if replied_to_ask or replied_to_task else await store.open_tasks_for_employee(telegram_user_id)
+    kind = report_message_kind(replied_to_ask, replied_to_task, len(open_tasks))
+    if kind == "task_update":
+        return None
+    if kind == "ask":
+        return await _ask_report_or_relay(employee, text, open_tasks[0] if len(open_tasks) == 1 else None, run_id)
+    # None means Telegram delivered this same report twice and the first copy
+    # already saved it — stop here rather than offer the copy to the Director.
+    return await _save_daily_report(employee, pending, text, run_id) or "daily_report_duplicate"
 
+
+async def _save_daily_report(
+    employee: dict[str, Any], pending: dict[str, Any], text: str, run_id: uuid.UUID
+) -> str | None:
+    """Store today's report and answer the employee.
+
+    Returns:
+        The outcome, or None if it had already been saved (a duplicate
+        webhook delivery got there first).
+    """
+    day = today_local()
+    metrics_def = kpi.metrics_for_role(employee["role"])
     values = kpi.parse_metrics(text, metrics_def)
     tasks_done = await store.count_tasks_completed(str(employee["id"]), day)
     saved = await store.save_report(
         report_id=str(pending["id"]), content=text, metrics=values, tasks_done=tasks_done
     )
     if saved is None:
-        return None  # a duplicate webhook delivery got here first — relay normally
+        return None  # a duplicate webhook delivery got here first
 
     # Deliberately NOT forwarded to the Director (the business's decision):
     # the Director only hears who didn't report, in the next 08:00 brief.
@@ -756,6 +813,60 @@ async def _try_daily_report(
         )
     await _reply(employee["telegram_user_id"], run_id, ack)
     return "daily_report"
+
+
+async def _ask_report_or_relay(
+    employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID
+) -> str:
+    """Ask whether a message is today's report or a message for the Director."""
+    pending = await store.create_pending_relay(employee["telegram_user_id"], text, str(task["id"]) if task else None)
+    preview = text if len(text) <= 300 else text[:299].rstrip() + "…"
+    await _reply(
+        employee["telegram_user_id"],
+        run_id,
+        f"📝 <b>Бу хабар — бугунги ҳисоботингизми?</b>\n\n«{escape(preview)}»",
+        report_or_relay_keyboard(str(pending["id"])),
+    )
+    return "report_or_relay_asked"
+
+
+async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The employee said the held message is their daily report."""
+    query_id = callback.get("id", "")
+    clicker_id = callback.get("from", {}).get("id")
+    relay = await store.resolve_pending_relay(relay_id, clicker_id, "report")
+    if relay is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "relay_already_resolved"
+
+    day = today_local()
+    employee = await store.get_employee_by_telegram_id(clicker_id)
+    pending = await store.pending_report(clicker_id, day)
+    outcome = None
+    if employee is not None and pending is not None:
+        outcome = await _save_daily_report(employee, pending, relay["message_text"], run_id)
+    if outcome is not None:
+        status_line = "📝 Кунлик ҳисобот сифатида сақланди."
+    elif await store.submitted_report_today(clicker_id, day) is not None:
+        status_line = "✅ Бугунги ҳисоботингиз аллақачон қабул қилинган."
+        outcome = "report_already_submitted"
+    else:
+        status_line = "⏰ Ҳисобот қабул қилинмади — ҳисоботлар ўша куни соат 24:00 гача қабул қилинади."
+        outcome = "report_window_closed"
+
+    message = callback.get("message") or {}
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        if message.get("message_id") and message.get("chat", {}).get("id"):
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=str(message["chat"]["id"]),
+                message_id=message["message_id"],
+                text=f"{status_line}\n\n«{escape(relay['message_text'][:300])}»",
+                reply_markup={"inline_keyboard": []},
+            )
+        await bot._answer_callback(query_id, "OK")  # noqa: SLF001
+    return outcome
 
 
 # -------------------------------------------------------------- employee updates

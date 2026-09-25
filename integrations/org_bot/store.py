@@ -771,6 +771,19 @@ async def find_task_by_message_id(telegram_message_id: int, employee_telegram_us
     )
 
 
+async def open_tasks_for_employee(employee_telegram_user_id: int) -> list[dict[str, Any]]:
+    """Every task this employee hasn't finished yet, newest first."""
+    return await fetch_all(
+        """
+        SELECT t.* FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE e.telegram_user_id = %s AND t.status IN ('sent', 'started')
+        ORDER BY t.created_at DESC
+        """,
+        (employee_telegram_user_id,),
+    )
+
+
 async def find_open_task_for_employee(employee_telegram_user_id: int) -> dict[str, Any] | None:
     """The employee's single open task, if exactly one exists.
 
@@ -1047,13 +1060,18 @@ async def reports_awaiting_reminder(report_date: date) -> list[dict[str, Any]]:
     )
 
 
-async def mark_report_reminded(report_id: str) -> None:
+async def mark_report_reminded(report_id: str, message_id: int | None = None) -> None:
     """Record that the one reminder for this report has been sent.
 
     Args:
         report_id: ``daily_reports.id``.
+        message_id: The reminder's Telegram message id, so a reply to it
+            counts as the report.
     """
-    await execute("UPDATE daily_reports SET reminded_at = now() WHERE id = %s", (report_id,))
+    await execute(
+        "UPDATE daily_reports SET reminded_at = now(), reminder_message_id = %s WHERE id = %s",
+        (message_id, report_id),
+    )
 
 
 async def count_tasks_completed(employee_id: str, day: date) -> int:

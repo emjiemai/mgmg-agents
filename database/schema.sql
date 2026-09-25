@@ -584,6 +584,9 @@ CREATE TABLE IF NOT EXISTS daily_reports (
 CREATE INDEX IF NOT EXISTS idx_daily_reports_open ON daily_reports (report_date) WHERE status = 'asked';
 -- One short follow-up when a report says nothing concrete ("ok", "ishladim").
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS followup_asked_at TIMESTAMPTZ;
+-- The 17:00 reminder's message id: a reply to it is as clearly the report as
+-- a reply to the 16:00 ask.
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS reminder_message_id BIGINT;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS followup_answered_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_daily_reports_employee ON daily_reports (employee_id, report_date DESC);
 
@@ -683,6 +686,11 @@ CREATE TABLE IF NOT EXISTS pending_relays (
     message_text                TEXT         NOT NULL,
     created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
     resolved_at                 TIMESTAMPTZ,
-    outcome                     TEXT         CHECK (outcome IN ('sent', 'cancelled'))
+    outcome                     TEXT         CHECK (outcome IN ('sent', 'cancelled', 'report'))
 );
+-- 'report': the employee chose "this is my daily report" for a message that
+-- could have been either (see ops_manager._ask_report_or_relay).
+ALTER TABLE pending_relays DROP CONSTRAINT IF EXISTS pending_relays_outcome_check;
+ALTER TABLE pending_relays ADD CONSTRAINT pending_relays_outcome_check
+    CHECK (outcome IN ('sent', 'cancelled', 'report'));
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;
