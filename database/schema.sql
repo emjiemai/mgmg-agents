@@ -667,4 +667,22 @@ ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS requester_full_name TEX
 -- The approver's own full name as they typed it for the SOP form (not the
 -- Telegram profile name), asked once and reused on later decisions.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS full_name TEXT;
+-- When the bot asked this employee for their name (integrations/org_bot/names.py):
+-- once asked, their next message is taken as the answer.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_asked_at TIMESTAMPTZ;
+
+-- ---------------------------------------------------------------------------
+-- pending_relays — an employee's message held until they confirm it should
+-- go to the Director ("Директорга юборилсинми?"). One accidental message to
+-- the CEO is one too many; nothing is relayed without the tap.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pending_relays (
+    id                          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_telegram_user_id   BIGINT       NOT NULL,
+    task_id                     UUID         REFERENCES tasks(id),
+    message_text                TEXT         NOT NULL,
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    resolved_at                 TIMESTAMPTZ,
+    outcome                     TEXT         CHECK (outcome IN ('sent', 'cancelled'))
+);
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;

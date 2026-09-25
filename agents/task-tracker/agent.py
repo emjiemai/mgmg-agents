@@ -42,7 +42,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
-from integrations.org_bot import store, task_tracker
+from integrations.org_bot import names, store, task_tracker
 from integrations.org_bot.roles import DIRECTOR_ROLE
 from integrations.telegram.bot import TelegramBot, TelegramError
 
@@ -111,6 +111,10 @@ async def morning(run_id: uuid.UUID) -> None:
                 continue
             for task in tasks:
                 await store.mark_task_overdue_notified(str(task["id"]))
+
+    # Anyone the bot still has no real name for (joined before names were
+    # asked, or never answered): one question each, once (names.py).
+    await names.ask_missing_names(run_id)
 
 
 async def weekly(run_id: uuid.UUID, force: bool = False) -> None:

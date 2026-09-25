@@ -36,7 +36,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
-from integrations.org_bot import kpi, store
+from integrations.org_bot import kpi, names, store
 from integrations.org_bot.roles import DIRECTOR_ROLE
 from integrations.telegram.bot import TelegramBot, TelegramError
 
@@ -85,7 +85,7 @@ async def ask_everyone(run_id: uuid.UUID) -> int:
                 continue
 
             metrics = kpi.metrics_for_role(employee["role"])
-            text = kpi.build_request_text(employee["display_name"], metrics)
+            text = kpi.build_request_text(names.person_name(employee), metrics)
             try:
                 message_ids = await bot.send_message(text, chat_id=str(employee["telegram_user_id"]))
             except TelegramError as exc:

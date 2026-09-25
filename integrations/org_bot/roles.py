@@ -28,20 +28,23 @@ class Agent:
     data_source: str  # human-readable description of what gets fetched, for docs/logs
 
 
+# Labels are what people see (role picker buttons, messages): Uzbek Cyrillic,
+# the business's rule for every bot message (2026-09-25). Slugs stay Latin —
+# they're database keys, never shown.
 ROLES: list[Role] = [
-    Role("b2b_sotuv", "B2B Sotuv"),
+    Role("b2b_sotuv", "B2B сотув"),
     Role("it", "IT"),
-    Role("buxgalteriya", "Buxgalteriya"),
-    Role("hr", "HR"),
-    Role("ombor", "Ombor"),
-    Role("operatsion_direktor", "Operatsion Direktor"),
-    Role("mobilograf", "Mobilograf"),
-    Role("aloqa_markazi", "Aloqa Markazi (Call Center)"),
-    Role("garmin_sotuv", "Garmin Sotuv"),
+    Role("buxgalteriya", "Бухгалтерия"),
+    Role("hr", "HR (кадрлар)"),
+    Role("ombor", "Омбор"),
+    Role("operatsion_direktor", "Операцион директор"),
+    Role("mobilograf", "Мобилограф"),
+    Role("aloqa_markazi", "Алоқа маркази"),
+    Role("garmin_sotuv", "Garmin сотув"),
 ]
 
 AGENTS: list[Agent] = [
-    Agent("lead_agent", "Lead Agent", "Leads Google Sheet, every row"),
+    Agent("lead_agent", "Лид агенти", "Leads Google Sheet, every row"),
     # The label (not just data_source) says SAP explicitly -- data_source
     # only feeds the CLASSIFICATION prompt's vocabulary, but the label is
     # what the ANSWER prompt actually sees as "System: {label}". Without SAP
@@ -50,10 +53,10 @@ AGENTS: list[Agent] = [
     # either the label or the data payload itself, had no textual basis to
     # confirm this data WAS SAP data when asked specifically about SAP --
     # confirmed live: it said outright "these are receivables, not SAP."
-    Agent("finance_agent", "Finance Agent (SAP Invoices/Receivables)", "every open invoice/receivable + recent alerts — sourced from SAP Business One (OINV)"),
+    Agent("finance_agent", "Молия агенти (SAP ҳисоб-фактуралар / дебиторлик)", "every open invoice/receivable + recent alerts — sourced from SAP Business One (OINV)"),
     Agent(
         "crm_agent",
-        "CRM Agent",
+        "CRM агенти",
         "in-house CRM: pipeline snapshot (deals by stage), whole-CRM stats "
         "(contact count, conversion rate), and the 20 most recent employee-"
         "submitted reports (daily standup style)",
@@ -68,42 +71,41 @@ AGENTS: list[Agent] = [
     # data_source below). Renamed so the classifier has nothing homophone-y
     # to latch onto; see also the explicit disambiguation rule in prompt.py's
     # HOW TO DECIDE section.
-    Agent("reporter_agent", "Kunlik Brif Tarixi / Daily Brief History", "14 days of daily-brief KPI history (cash/AR/pipeline trend) -- NOT employee-submitted reports, those are under crm_agent"),
+    Agent("reporter_agent", "Кунлик бриф тарихи", "14 days of daily-brief KPI history (cash/AR/pipeline trend) -- NOT employee-submitted reports, those are under crm_agent"),
     Agent(
         "xodimlar_kpi",
-        "Xodimlar KPI / Employee KPI",
+        "Ходимлар KPI",
         "the bot's OWN daily reports (asked at 16:00, answered in Telegram): who reported and who "
-        "stayed silent, each employee's written report, and how many tasks they completed — "
-        "per employee, last 14 days",
+        "stayed silent, and each employee's written report — per employee, last 14 days",
     ),
     Agent(
         "ruxsatlar",
-        "Ёзма рухсатлар / Written permissions",
+        "Ёзма рухсатлар",
         "the written permission register under EMJ-SOP-ADM-01: every request with its number, who "
         "asked, what for, the amount, what is still awaiting a decision, and every decision made "
         "(approved / conditional / rejected / more information needed), last 60 days",
     ),
     Agent(
         "topshiriqlar",
-        "Topshiriqlar nazorati / Task tracker",
+        "Топшириқлар назорати",
         "every task the Director assigned through this bot that is still open, with its deadline, who "
         "has it, and which are overdue; plus each employee's on-time rate for tasks due in the last "
         "30 days",
     ),
-    Agent("all_systems", "Barcha tizimlar / All Systems", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
-    Agent("garmin_catalog", "Garmin Katalogi / Garmin Catalog", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
+    Agent("all_systems", "Барча тизимлар", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
+    Agent("garmin_catalog", "Garmin каталоги", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's
     # own machine (integrations/sap/push_handler.handle_gateway_push) —
     # deliberately NOT folded into all_systems: these are reference lookups
     # and periodic status snapshots, not "how's the business doing" figures
     # the way the four systems above are (same reasoning garmin_catalog is
     # excluded for).
-    Agent("sap_orders", "SAP Sotuv Buyurtmalari / SAP Sales Orders", "recent sales orders (SAP ORDR) pushed from the gateway"),
-    Agent("sap_products", "SAP Mahsulotlar / SAP Products", "item master data (SAP OITM) pushed from the gateway"),
-    Agent("sap_customers", "SAP Mijozlar / SAP Customers", "business partner records (SAP OCRD) pushed from the gateway"),
-    Agent("sap_warehouses", "SAP Omborlar / SAP Warehouses", "warehouse list (SAP OWHS) pushed from the gateway"),
-    Agent("sap_inventory", "SAP Ombordagi Qoldiq / SAP Inventory", "stock levels by item/warehouse (SAP OITW) pushed from the gateway"),
-    Agent("sap_payments", "SAP To'lovlar / SAP Payments", "recent incoming payments (SAP ORCT) pushed from the gateway"),
+    Agent("sap_orders", "SAP сотув буюртмалари", "recent sales orders (SAP ORDR) pushed from the gateway"),
+    Agent("sap_products", "SAP маҳсулотлар", "item master data (SAP OITM) pushed from the gateway"),
+    Agent("sap_customers", "SAP мижозлар", "business partner records (SAP OCRD) pushed from the gateway"),
+    Agent("sap_warehouses", "SAP омборлар", "warehouse list (SAP OWHS) pushed from the gateway"),
+    Agent("sap_inventory", "SAP омбордаги қолдиқ", "stock levels by item/warehouse (SAP OITW) pushed from the gateway"),
+    Agent("sap_payments", "SAP тўловлар", "recent incoming payments (SAP ORCT) pushed from the gateway"),
 ]
 
 ROLE_SLUGS: set[str] = {r.slug for r in ROLES}

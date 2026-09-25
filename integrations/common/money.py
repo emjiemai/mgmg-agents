@@ -51,12 +51,12 @@ def format_uzs(tiyin: int, *, with_currency: bool = True, decimals: bool = False
 
     Args:
         tiyin: Amount in tiyin.
-        with_currency: Append the "so'm" suffix.
+        with_currency: Append the "сўм" suffix.
         decimals: Show tiyin as two decimals. Off by default — sum amounts are
             large enough that tiyin are noise in a CEO brief.
 
     Returns:
-        e.g. ``"1 250 000 so'm"`` (with non-breaking spaces as separators).
+        e.g. ``"1 250 000 сўм"`` (with non-breaking spaces as separators).
     """
     value = from_tiyin(tiyin)
     if decimals:
@@ -64,26 +64,27 @@ def format_uzs(tiyin: int, *, with_currency: bool = True, decimals: bool = False
         body = f"{_group(whole)},{frac}"
     else:
         body = _group(f"{value:.0f}")
-    return f"{body}{NBSP}so'm" if with_currency else body
+    return f"{body}{NBSP}сўм" if with_currency else body
 
 
 def format_uzs_short(tiyin: int) -> str:
     """Format tiyin compactly for headline figures.
 
-    Uses Uzbek scale abbreviations: mln (10^6), mlrd (10^9).
+    Uses Uzbek scale abbreviations, in Cyrillic like every bot message: млн
+    (10^6), млрд (10^9).
 
     Args:
         tiyin: Amount in tiyin.
 
     Returns:
-        e.g. ``"1,25 mlrd so'm"``, ``"340 mln so'm"``, ``"85 000 so'm"``.
+        e.g. ``"1,25 млрд сўм"``, ``"340 млн сўм"``, ``"85 000 сўм"``.
     """
     uzs = abs(from_tiyin(tiyin))
     sign = "-" if tiyin < 0 else ""
     if uzs >= 1_000_000_000:
-        return f"{sign}{_decimal_comma(uzs / 1_000_000_000)}{NBSP}mlrd{NBSP}so'm"
+        return f"{sign}{_decimal_comma(uzs / 1_000_000_000)}{NBSP}млрд{NBSP}сўм"
     if uzs >= 1_000_000:
-        return f"{sign}{_decimal_comma(uzs / 1_000_000)}{NBSP}mln{NBSP}so'm"
+        return f"{sign}{_decimal_comma(uzs / 1_000_000)}{NBSP}млн{NBSP}сўм"
     return format_uzs(tiyin)
 
 
@@ -115,7 +116,7 @@ def format_money(minor_units: int, currency: str | None, *, short: bool = False)
         e.g. ``"1 250 000 so'm"``, ``"$9,764.00"``, ``"1234.56 EUR"``.
     """
     code = (currency or "UZS").strip().upper()
-    if code in ("", "UZS", "SUM", "SO'M"):
+    if code in ("", "UZS", "SUM", "SO'M", "СЎМ", "СУМ"):
         return format_uzs_short(minor_units) if short else format_uzs(minor_units)
 
     value = Decimal(minor_units) / TIYIN_PER_UZS

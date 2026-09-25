@@ -56,9 +56,9 @@ log = setup_logging(AGENT)
 
 VALID_TRACKS = ("equipment_sales", "service_maintenance", "sponsorship_partnership")
 TRACK_LABELS = {
-    "equipment_sales": "🏗 Uskunalar sotuvi",
-    "service_maintenance": "🔧 Xizmat va texnik xizmat",
-    "sponsorship_partnership": "🤝 Homiylik / hamkorlik",
+    "equipment_sales": "🏗 Ускуналар сотуви",
+    "service_maintenance": "🔧 Хизмат ва техник хизмат",
+    "sponsorship_partnership": "🤝 Ҳомийлик / ҳамкорлик",
 }
 
 SHEET_TAB = "Sheet1"
@@ -808,18 +808,18 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
         run_id: UUID grouping this run's audit rows.
     """
     if not new_leads:
-        text = "🔍 <b>Lid Agenti</b>\n\nBugun yangi mos lid topilmadi."
+        text = "🔍 <b>Лид агенти</b>\n\nБугун янги мос лид топилмади."
     else:
         by_track: dict[str, list[dict]] = {}
         for lead in new_leads:
             by_track.setdefault(lead.get("track", "?"), []).append(lead)
 
-        lines = [f"🔍 <b>Lid Agenti — {len(new_leads)} ta yangi lid</b>\n"]
+        lines = [f"🔍 <b>Лид агенти — {len(new_leads)} та янги лид</b>\n"]
         for track, leads in by_track.items():
-            label = TRACK_LABELS.get(track, "❔ Boshqa")
+            label = TRACK_LABELS.get(track, "❔ Бошқа")
             lines.append(f"<b>{escape(label)} ({len(leads)})</b>")
             for lead in leads[:10]:
-                name = lead.get("company_name") or "Nomsiz"
+                name = lead.get("company_name") or "Номсиз"
                 stage = lead.get("project_stage", "")
                 priority = lead.get("priority", "")
                 lines.append(f"  • {escape(name)} — {escape(stage)} ({escape(priority)})")

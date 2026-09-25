@@ -131,7 +131,44 @@ gated on task status. Resolution order:
    attached to the wrong task.
 
 Every update is stored in `task_updates` (a paper trail) and relayed to the
-Director live, tagged with the task's current stage.
+Director, tagged with the task's current stage.
+
+**Nothing reaches the Director without the employee confirming it**
+(2026-09-25). The bot first answers "📨 Бу хабар директорга юборилсинми?"
+with a preview and **✅ Ҳа, юбориш / ❌ Йўқ**; only the tap sends it. Held
+messages live in `pending_relays`; a tap after 24 hours doesn't deliver
+(write it again), and a double tap can't send twice. Daily reports and
+permission requests have their own flows and never pass through here.
+
+## Names — every employee's real name (2026-09-25)
+
+Telegram profile names ("GMHRD") can't be used on documents, and the
+Director can't say "tell Alisher" to a bot that doesn't know who Alisher is.
+So every employee (not the Director) gives their first name and surname
+once — `integrations/org_bot/names.py`:
+
+- Asked right after registration, by the 08:00 run for anyone still missing
+  one, or on demand with **`/ismlar`** in Admin Bot.
+- Until the bot has it, any message from that employee gets the question
+  instead (and "хабарингиз ҳали юборилмади — қайта юборинг").
+- The answer is AI-checked like the permission form's answers (a real first
+  name and surname, not "alo"), written in Cyrillic, and stored in
+  `employees.full_name`. It's used everywhere a person is named: relays,
+  task confirmations, the brief, the weekly scorecard, the permission form.
+
+**The Director can address one person.** The classifier gets the employee
+list (`E1 = Алишер Каримов (it)`, ...) and returns `target_employee` when
+the Director names someone: only that person gets the task. A name matching
+several people, or nobody, gets a question back — never a broadcast to the
+whole department. Naming a department still reaches everyone in it.
+
+## Language — Uzbek Cyrillic everywhere (2026-09-25)
+
+Every message either bot sends — buttons, toasts, scheduled messages and the
+AI's own words — is Uzbek in Cyrillic script, whatever language the person
+wrote in. Brand names and codes stay as they are (SAP, CRM, IT, KPI, Garmin,
+EMJ-2026-0004). `scripts/selfcheck.py` fails if a message it renders has
+leftover Latin words (`latin_words`).
 
 ## Grounding — the model must know what it can't do
 
@@ -240,8 +277,9 @@ resolved against the prior turn's task.
 
 ## Admin: employee list & removal
 
-`/employees` (or `/users`, `/list`) sent to **Admin Bot** lists every active
-employee with a 🗑 Remove button each. Tapping one sets `status='revoked'` —
+`/employees` (or `/users`, `/list`, `/xodimlar`) sent to **Admin Bot** lists
+every active employee — with the name they typed, or "(исм ёзилмаган)" — and
+a 🗑 button each. `/ismlar` asks every employee without a name for it now. Tapping one sets `status='revoked'` —
 idempotent, gated by `ADMIN_BOT_ADMIN_USER_ID` the same way access decisions
 are when it's set. A removed employee would need to message OPS Manager Bot
 and go through the join flow again to regain access. Added specifically as a

@@ -7,14 +7,26 @@
 
 ## Purpose
 
-Replace the CEO's morning round of logins with one Telegram message. The
-brief answers four questions in a fixed order, so it can be read in fifteen
-seconds and the order itself carries meaning:
+One short Telegram message every morning, in Uzbek Cyrillic like every bot
+message:
 
-1. How much cash do we have? (SAP)
-2. Who owes us money and how late are they? (SAP)
-3. What is in the pipeline and what is stalling? (MGMG's own CRM)
-4. What did employees report yesterday? (MGMG's own CRM)
+    ☀️ CEO кунлик ҳисоботи — 25.09.2026. 08:00 Тошкент
+
+    🔴 Ҳисобот юбормаганлар (24.09.2026): 1 / 5
+       • Алишер Каримов (IT)
+
+— who didn't send OPS Manager Bot their daily report on the last day they
+were asked ("ҳаммаси юборди (5/5)" when everyone did, "кеча ҳеч кимдан
+сўралмаган" when nobody was asked).
+
+History of what was cut, at the business's request:
+- 2026-09-22: cash (never connected), the receivables headline (the
+  Receivables alert follows as its own message) and the CRM pipeline.
+- 2026-09-25: the CRM "Reportlar" section — the business doesn't use the
+  in-house CRM, so the brief no longer reads it at all.
+
+Cash and receivables are still collected and stored in `daily_briefs` (the
+bot's "Kunlik brif tarixi" answers come from there); they're just not shown.
 
 ## Inputs
 
@@ -22,8 +34,7 @@ seconds and the order itself carries meaning:
 | ------ | ---- | ------ |
 | SAP B1 | Cash/bank G/L balances | `GET /ChartOfAccounts` |
 | SAP B1 | Open A/R invoices, aged | pushed from the SAP gateway's machine (`/webhooks/sap-push`), read from `v_ar_aging_latest` |
-| MGMG CRM | Open deals, stages, next-task status | `GET /api/external/{deals,manager-tasks,stats}` — see `integrations/crm/client.py` |
-| MGMG CRM | Employee-submitted reports | `GET /api/external/reports`, filtered to yesterday |
+| OPS Manager Bot | Who was asked for a daily report and who answered | `daily_reports`, last asked day |
 
 Migrated off amoCRM on 2026-08-18 — MGMG built its own sales CRM
 (`sales-crm-roan-six.vercel.app`), a read-only-by-design API (the issued key
@@ -53,7 +64,7 @@ were removed from the project entirely on 2026-09-15.
 
 - One source fails → that section reads `⚠️ <system> unavailable`, the footer
   names the failed systems, and the error is stored in `daily_briefs.source_errors`.
-- All three fail (SAP cash, SAP aging, CRM) → a short failure notice is sent
+- All three fail (SAP cash, SAP aging, daily reports) → a short failure notice is sent
   instead of a brief, so silence is never mistaken for good news.
 - Telegram itself fails → the brief is still written to `daily_briefs` with
   status `failed`, and the exit code is 1 so cron surfaces it.
@@ -63,7 +74,6 @@ were removed from the project entirely on 2026-09-15.
 | Setting | Effect |
 | ------- | ------ |
 | `DAILY_BRIEF_HOUR_LOCAL` | Documentation only — the actual time comes from cron |
-| `CRM_API_KEY` | Required for the pipeline and reports sections |
 | `DRY_RUN=true` | Print the message instead of sending |
 
 ## Runbook

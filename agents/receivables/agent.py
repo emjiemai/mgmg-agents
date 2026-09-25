@@ -58,10 +58,10 @@ log = setup_logging(AGENT)
 
 BUCKET_ORDER = ["90_plus", "61_90", "31_60", "1_30"]
 BUCKET_LABELS = {
-    "1_30": "1–30 kun",
-    "31_60": "31–60 kun",
-    "61_90": "61–90 kun",
-    "90_plus": "90+ kun",
+    "1_30": "1–30 кун",
+    "31_60": "31–60 кун",
+    "61_90": "61–90 кун",
+    "90_plus": "90+ кун",
 }
 BUCKET_SEVERITY = {"1_30": "info", "31_60": "warning", "61_90": "warning", "90_plus": "critical"}
 
@@ -147,9 +147,9 @@ def render(aging: ARAging, min_days: int) -> str:
 
     if not overdue:
         return (
-            f"🟢 <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>\n\n"
-            f"{min_days}+ kundan ortiq muddati o'tgan qarz yo'q. "
-            f"Jami ochiq: {escape(_total_of(aging.invoices, short=True))}."
+            f"🟢 <b>Дебиторлик қарзлари — {fmt_date(aging.snapshot_date)}</b>\n\n"
+            f"{min_days}+ кундан ортиқ муддати ўтган қарз йўқ. "
+            f"Жами очиқ: {escape(_total_of(aging.invoices, short=True))}."
         )
 
     critical = aging.bucket_totals_tiyin.get("90_plus", 0)
@@ -161,12 +161,12 @@ def render(aging: ARAging, min_days: int) -> str:
     counts = {bucket: sum(1 for i in overdue if i.aging_bucket == bucket) for bucket in BUCKET_ORDER}
     ranges = [(BUCKET_LABELS[b], n) for b, n in counts.items() if n and b in BUCKET_LABELS]
     if len(ranges) == 1:
-        spread = f"{len(overdue)} ta hisob-faktura, {ranges[0][0]} ichida"
+        spread = f"{len(overdue)} та ҳисоб-фактура, {ranges[0][0]} ичида"
     else:
-        spread = f"{len(overdue)} ta hisob-faktura: " + ", ".join(f"{label} — {n}" for label, n in ranges)
+        spread = f"{len(overdue)} та ҳисоб-фактура: " + ", ".join(f"{label} — {n}" for label, n in ranges)
     return (
-        f"{headline} <b>Debitorlik qarzlari — {fmt_date(aging.snapshot_date)}</b>\n"
-        f"<b>Muddati o'tgan: {escape(_total_of(overdue))}</b> ({spread})"
+        f"{headline} <b>Дебиторлик қарзлари — {fmt_date(aging.snapshot_date)}</b>\n"
+        f"<b>Муддати ўтган: {escape(_total_of(overdue))}</b> ({spread})"
     )
 
 
@@ -227,8 +227,8 @@ async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, messag
                 str(run_id),
                 f"ar_overdue:{bucket}:{aging.snapshot_date.isoformat()}",
                 BUCKET_SEVERITY.get(bucket, "info"),
-                f"Muddati o'tgan debitorlik {BUCKET_LABELS.get(bucket, bucket)}: {_total_of(invoices)}",
-                f"{len(invoices)} ta hisob-faktura; eng kattasi: {top.card_name or top.card_code}",
+                f"Муддати ўтган дебиторлик {BUCKET_LABELS.get(bucket, bucket)}: {_total_of(invoices)}",
+                f"{len(invoices)} та ҳисоб-фактура; энг каттаси: {top.card_name or top.card_code}",
                 total,
                 top.sales_person_name or division_label(top.division),
                 "telegram",
@@ -278,7 +278,7 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
                 agent=AGENT,
                 run_id=run_id,
                 severity="critical",
-                title="Debitorlik agenti: hisobot ma'lumotlari mavjud emas",
+                title="Дебиторлик агенти: ҳисобот маълумотлари мавжуд эмас",
             )
         except Exception as send_exc:  # noqa: BLE001
             log.error("Could not send the failure alert either: {}", send_exc)

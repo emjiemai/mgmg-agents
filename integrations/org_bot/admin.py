@@ -30,7 +30,9 @@ from integrations.telegram.bot import TelegramBot, escape
 AGENT = "admin-bot"
 log = setup_logging(AGENT)
 
-EMPLOYEE_LIST_COMMANDS = ("/employees", "/users", "/list")
+EMPLOYEE_LIST_COMMANDS = ("/employees", "/users", "/list", "/xodimlar")
+# Sends the name question to every employee who hasn't given one (names.py).
+ASK_NAMES_COMMANDS = ("/ismlar", "/names")
 
 
 def _person_line(request: dict[str, Any]) -> str:
@@ -69,12 +71,12 @@ async def request_access(
     if row is None:
         return "already_pending"
 
-    text = f"🆕 <b>Access request</b>\n\n{_person_line(row)} wants to join OPS Manager Bot."
+    text = f"🆕 <b>Кириш сўрови</b>\n\n{_person_line(row)} OPS Manager Bot'га қўшилмоқчи."
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "✅ Accept", "callback_data": f"access_approve:{row['id']}"},
-                {"text": "❌ Reject", "callback_data": f"access_reject:{row['id']}"},
+                {"text": "✅ Қабул қилиш", "callback_data": f"access_approve:{row['id']}"},
+                {"text": "❌ Рад этиш", "callback_data": f"access_reject:{row['id']}"},
             ]
         ]
     }
@@ -106,8 +108,8 @@ def role_decision_keyboard(request_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
-                {"text": "✅ Accept", "callback_data": f"role_approve:{request_id}"},
-                {"text": "❌ Reject", "callback_data": f"role_reject:{request_id}"},
+                {"text": "✅ Қабул қилиш", "callback_data": f"role_approve:{request_id}"},
+                {"text": "❌ Рад этиш", "callback_data": f"role_reject:{request_id}"},
             ]
         ]
     }
@@ -122,11 +124,11 @@ async def request_role_approval(access_request: dict[str, Any], run_id: uuid.UUI
     """
     role_slug = access_request["requested_role"]
     role = ROLE_LABELS.get(role_slug, role_slug)
-    text = f"🧩 <b>Role request</b>\n\n{_person_line(access_request)} wants the role: <b>{escape(role)}</b>"
+    text = f"🧩 <b>Роль сўрови</b>\n\n{_person_line(access_request)} сўраган роль: <b>{escape(role)}</b>"
     if role_slug == DIRECTOR_ROLE:
         text += (
-            "\n\n⚠️ <b>Director role</b> — receives every employee's daily report "
-            "and can give OPS Manager Bot orders."
+            "\n\n⚠️ <b>Директор роли</b> — ходимларга топшириқ беради, ҳисобот юбормаганлар рўйхатини, "
+            "ходимларнинг хабарларини ва ёзма рухсат сўровларини олади."
         )
 
     async with TelegramBot(
@@ -166,8 +168,28 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
     text = (message.get("text") or "").strip().lower()
     if text in EMPLOYEE_LIST_COMMANDS:
         return await _list_employees(run_id)
+    if text in ASK_NAMES_COMMANDS:
+        return await _ask_names(run_id)
 
     return "ignored"
+
+
+async def _ask_names(run_id: uuid.UUID) -> str:
+    """Ask every employee without a name for it now, and tell the admin how many."""
+    from integrations.org_bot import names  # local import: names -> store is fine, keeps admin light
+
+    asked = await names.ask_missing_names(run_id)
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        if asked:
+            await bot.send_message(f"👤 {asked} та ходимдан исм ва фамилияси сўралди.")
+        else:
+            await bot.send_message("👤 Сўрайдиган ходим қолмади — ҳамма исмини ёзган ёки аллақачон сўралган.")
+    return "names_asked"
 
 
 async def _list_employees(run_id: uuid.UUID) -> str:
@@ -180,18 +202,21 @@ async def _list_employees(run_id: uuid.UUID) -> str:
         default_chat_id=settings.admin_bot_telegram_chat_id,
     ) as bot:
         if not employees:
-            await bot.send_message("Ro'yxatdan o'tgan xodimlar yo'q. / No registered employees.")
+            await bot.send_message("Рўйхатдан ўтган ходимлар йўқ.")
             return "empty"
 
-        lines = ["<b>Ro'yxatdan o'tgan xodimlar / Registered employees</b>\n"]
+        lines = ["<b>Рўйхатдан ўтган ходимлар</b>\n"]
         buttons = []
         for emp in employees:
             label = ROLE_LABELS.get(emp["role"], emp["role"])
             username = f" (@{escape(emp['telegram_username'])})" if emp.get("telegram_username") else ""
-            lines.append(f"• {escape(emp['display_name'])}{username} — {label}")
+            full_name = (emp.get("full_name") or "").strip()
+            name = escape(full_name) if full_name else f"{escape(emp['display_name'])} <i>(исм ёзилмаган)</i>"
+            lines.append(f"• {name}{username} — {label}")
             buttons.append(
-                [{"text": f"🗑 {emp['display_name']} ({label})", "callback_data": f"removeuser:{emp['id']}"}]
+                [{"text": f"🗑 {full_name or emp['display_name']} ({label})", "callback_data": f"removeuser:{emp['id']}"}]
             )
+        lines.append("\n<i>Исм ёзмаганлардан сўраш: /ismlar</i>")
         await bot.send_message("\n".join(lines), reply_markup={"inline_keyboard": buttons})
     return "listed"
 
@@ -214,7 +239,7 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
     decided_by = clicker.get("username") or str(clicker.get("id", "unknown"))
 
     if ":" not in data:
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     action, target_id = data.split(":", 1)
@@ -222,7 +247,7 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
     admin_id = settings.admin_bot_admin_user_id
     if admin_id and clicker.get("id") != admin_id:
         log.warning("Admin action attempted by non-admin telegram_user_id={}", clicker.get("id"))
-        await _answer(query_id, "Not authorized")
+        await _answer(query_id, "Рухсат йўқ")
         return "unauthorized"
 
     if action == "removeuser":
@@ -232,17 +257,17 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
         return await _handle_role_decision(target_id, action == "role_approve", query_id, decided_by, run_id)
 
     if action not in ("access_approve", "access_reject"):
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     request_id = target_id
     request = await store.get_access_request(request_id)
     if request is None:
-        await _answer(query_id, "Request not found")
+        await _answer(query_id, "Сўров топилмади")
         return "not_found"
 
     if request["status"] != "pending":
-        await _answer(query_id, f"Already {request['status']}")
+        await _answer(query_id, f"Аллақачон ҳал қилинган ({request['status']})")
         return f"already_{request['status']}"
 
     decision: Literal["approved", "rejected"] = "approved" if action == "access_approve" else "rejected"
@@ -251,10 +276,10 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
         # Lost a race to a concurrent tap -- report the outcome, don't error.
         current = await store.get_access_request(request_id)
         status = current["status"] if current else decision
-        await _answer(query_id, f"Already {status}")
+        await _answer(query_id, f"Аллақачон ҳал қилинган ({status})")
         return f"already_{status}"
 
-    marker = "✅ Accepted" if decision == "approved" else "❌ Rejected"
+    marker = "✅ Қабул қилинди" if decision == "approved" else "❌ Рад этилди"
     name = request.get("display_name") or str(request["telegram_user_id"])
     async with TelegramBot(
         agent=AGENT,
@@ -266,7 +291,7 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=settings.admin_bot_telegram_chat_id,
                 message_id=request["admin_message_id"],
-                text=f"{marker} — {escape(name)}\n\n<i>by @{escape(decided_by)}</i>",
+                text=f"{marker} — {escape(name)}\n\n<i>@{escape(decided_by)}</i>",
             )
         await bot._answer_callback(query_id, marker)  # noqa: SLF001 — reuse the already-open bot, not a new one
 
@@ -304,15 +329,15 @@ async def _handle_role_decision(
     if request is None:
         current = await store.get_access_request(request_id)
         if current is None:
-            await _answer(query_id, "Request not found")
+            await _answer(query_id, "Сўров топилмади")
             return "not_found"
-        status = current.get("role_status") or "not requested"
-        await _answer(query_id, f"Already {status}")
+        status = current.get("role_status") or "сўралмаган"
+        await _answer(query_id, f"Аллақачон ҳал қилинган ({status})")
         return f"already_{status}"
 
     role = ROLE_LABELS.get(request["requested_role"], request["requested_role"])
     name = request.get("display_name") or str(request["telegram_user_id"])
-    marker = "✅ Role accepted" if approve else "❌ Role rejected"
+    marker = "✅ Роль тасдиқланди" if approve else "❌ Роль рад этилди"
     async with TelegramBot(
         agent=AGENT,
         run_id=run_id,
@@ -323,7 +348,7 @@ async def _handle_role_decision(
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=settings.admin_bot_telegram_chat_id,
                 message_id=request["role_admin_message_id"],
-                text=f"{marker} — {escape(name)}: <b>{escape(role)}</b>\n\n<i>by @{escape(decided_by)}</i>",
+                text=f"{marker} — {escape(name)}: <b>{escape(role)}</b>\n\n<i>@{escape(decided_by)}</i>",
             )
         await bot._answer_callback(query_id, marker)  # noqa: SLF001
 
@@ -372,7 +397,7 @@ async def _handle_remove_user(
     """
     employee = await store.revoke_employee(employee_id, removed_by)
     if employee is None:
-        await _answer(query_id, "Already removed")
+        await _answer(query_id, "Аллақачон ўчирилган")
         return "already_removed"
 
     message = callback.get("message") or {}
@@ -383,9 +408,10 @@ async def _handle_remove_user(
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=str(message["chat"]["id"]),
                 message_id=message["message_id"],
-                text=f"🗑 Removed — {escape(employee['display_name'])}\n\n<i>by @{escape(removed_by)}</i>",
+                text=f"🗑 Ўчирилди — {escape((employee.get('full_name') or '').strip() or employee['display_name'])}"
+                f"\n\n<i>@{escape(removed_by)}</i>",
             )
-        await bot._answer_callback(query_id, "Removed")  # noqa: SLF001
+        await bot._answer_callback(query_id, "Ўчирилди")  # noqa: SLF001
 
     await log_action(
         agent=AGENT,

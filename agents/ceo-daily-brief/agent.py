@@ -1,8 +1,11 @@
 """Agent 1 — CEO Daily Brief.
 
 Runs every morning at 08:00 Tashkent time and sends the CEO one Telegram
-message covering cash, receivables, pipeline, yesterday's employee reports
-from the CRM, and who didn't send their daily report to OPS Manager Bot.
+message: who didn't send their daily report to OPS Manager Bot yesterday.
+Cash and receivables are still collected and stored (for the brief history
+the bot answers from), but not shown — receivables has its own message.
+The in-house CRM is not used by the business (2026-09-25), so it is no
+longer read at all.
 
 Design rule: **the brief always goes out.** Each source is fetched
 independently and a failure in one (SAP down, CRM unreachable) degrades
@@ -34,7 +37,6 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import timedelta
 import uuid
 from pathlib import Path
 
@@ -51,7 +53,6 @@ from integrations.common.db import close_pool, execute, fetch_all, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
-from integrations.crm.client import CRMClient, CRMError
 from integrations.crm.models import EmployeeReport, PipelineSummary
 from integrations.org_bot import store as org_store
 from integrations.org_bot.notify import notify_directors
@@ -61,7 +62,7 @@ from integrations.sap.models import ARAging, ARInvoice, CashAccount
 from integrations.telegram.bot import escape
 
 AGENT = "ceo-daily-brief"
-SOURCE_COUNT = 4  # SAP cash, SAP aging (gateway-pushed), CRM, daily reports
+SOURCE_COUNT = 3  # SAP cash, SAP aging (gateway-pushed), daily reports
 log = setup_logging(AGENT)
 
 # How many line items to show per section before collapsing into "+N more".
@@ -117,11 +118,10 @@ async def collect(run_id: uuid.UUID) -> BriefData:
     results = await asyncio.gather(
         _fetch_cash(run_id),
         _fetch_aging(run_id),
-        _fetch_crm(run_id),
         _fetch_report_results(),
         return_exceptions=True,
     )
-    cash_result, aging_result, crm_result, report_result = results
+    cash_result, aging_result, report_result = results
 
     # Split from one combined SAP fetch into two independent ones: the AR
     # aging snapshot now comes from the gateway push (see _fetch_aging) and
@@ -137,11 +137,6 @@ async def collect(run_id: uuid.UUID) -> BriefData:
         data.note_failure("sap_aging", aging_result)
     else:
         data.aging = aging_result
-
-    if isinstance(crm_result, BaseException):
-        data.note_failure("crm", crm_result)
-    else:
-        data.pipeline, data.reports = crm_result
 
     if isinstance(report_result, BaseException):
         data.note_failure("daily_reports", report_result)
@@ -238,55 +233,6 @@ async def _fetch_aging(run_id: uuid.UUID) -> ARAging:
     return aging
 
 
-async def _fetch_crm(run_id: uuid.UUID) -> tuple[PipelineSummary, list[EmployeeReport]]:
-    """Pull the pipeline summary from MGMG's own CRM and snapshot it.
-
-    Also snapshots whole-CRM stats (contacts, conversion rate) and syncs
-    employee reports, best-effort — a failure in either degrades to a logged
-    warning rather than failing the pipeline fetch, same "one source's
-    failure doesn't kill the others" rule this whole agent already follows
-    (see module docstring). Both are new as of 2026-09-05, added so OPS
-    Manager Bot's CRM agent can answer contacts/reports questions instead of
-    only pipeline stage counts.
-
-    Args:
-        run_id: UUID grouping this run's audit rows.
-
-    Returns:
-        The pipeline summary, and YESTERDAY's employee reports for the
-        brief's own reports section (yesterday, since this runs at 08:00,
-        before today's own reports could exist). Empty list, not a failure,
-        if the reports fetch/sync itself failed — that degrades independently
-        of the pipeline, same as stats above.
-
-    Raises:
-        CRMError: if the CRM is unreachable or rejects the pipeline queries
-            (deals/stats) — the two sources the pipeline summary itself
-            cannot do without.
-    """
-    async with CRMClient(agent=AGENT, run_id=run_id) as crm:
-        summary = await crm.get_pipeline_summary()
-
-        try:
-            stats = await crm.get_stats()
-            await snapshots.persist_crm_stats(stats)
-        except CRMError as exc:
-            log.warning("CRM stats snapshot failed, continuing: {}", exc)
-
-        reports: list[EmployeeReport] = []
-        try:
-            reports = await crm.get_reports()
-            await snapshots.sync_crm_reports(reports)
-        except CRMError as exc:
-            log.warning("CRM reports sync failed, continuing: {}", exc)
-
-    await snapshots.persist_crm_pipeline(summary)
-
-    yesterday = today_local() - timedelta(days=1)
-    yesterday_reports = [r for r in reports if r.report_date and r.report_date.date() == yesterday]
-    return summary, yesterday_reports
-
-
 async def _fetch_report_results() -> list[dict[str, Any]]:
     """Who was asked for a daily report on the last asked day, and who answered.
 
@@ -315,16 +261,15 @@ def render(data: BriefData) -> str:
     Returns:
         The full message body (splitting happens in the Telegram client).
     """
-    # 2026-09-22: cut to reports only, at the business's request. Cash
-    # (never connected), the receivables headline (the Receivables alert
-    # follows as its own message) and the CRM pipeline were noise every
-    # morning. Their renderers stay below, unused, so a section can be put
-    # back by adding it to this list.
+    # 2026-09-22: cut to the daily reports only, at the business's request.
+    # Cash (never connected) and the receivables headline (the Receivables
+    # alert follows as its own message) were noise every morning; their
+    # renderers stay below, unused, so a section can be put back by adding it
+    # here. 2026-09-25: the CRM "Reportlar" section was removed with the CRM.
     day = today_local()
     parts: list[str | None] = [
-        f"<b>☀️ CEO Kunlik Hisoboti — {fmt_date(day)}.</b> <i>{now_local().strftime('%H:%M')} Toshkent</i>",
+        f"<b>☀️ CEO кунлик ҳисоботи — {fmt_date(day)}.</b> <i>{now_local().strftime('%H:%M')} Тошкент</i>",
         "",
-        _render_reports(data),
         _render_missed_reports(data),
     ]
     return "\n".join(p for p in parts if p is not None).rstrip()
@@ -342,19 +287,19 @@ def _render_cash(data: BriefData) -> str:
     brief's own "No data from: sap_cash..." footer line either way.
     """
     if data.cash is None:
-        return "💰 <b>Kassa</b>\n   Hali ulanmagan — ma'lumot manbai sozlanmagan\n"
+        return "💰 <b>Касса</b>\n   Ҳали уланмаган — маълумот манбаи созланмаган\n"
     if not data.cash:
-        return "💰 <b>Kassa</b>\n   Kassa hisoblari sozlanmagan\n"
+        return "💰 <b>Касса</b>\n   Касса ҳисоблари созланмаган\n"
 
     cash_total = format_money_by_currency([(a.balance_tiyin, a.currency) for a in data.cash])
-    lines = [f"💰 <b>Kassa: {escape(cash_total)}</b>"]
+    lines = [f"💰 <b>Касса: {escape(cash_total)}</b>"]
     for account in sorted(data.cash, key=lambda a: a.balance_tiyin, reverse=True)[:MAX_LINES]:
         name = account.bank_name or account.account_name or account.account_code
         marker = "🔴" if account.balance_tiyin < 0 else "  "
         balance = format_money(account.balance_tiyin, account.currency, short=True)
         lines.append(f"   {marker} {escape(name)}: {escape(balance)}")
     if len(data.cash) > MAX_LINES:
-        lines.append(f"   <i>+yana {len(data.cash) - MAX_LINES} ta hisob</i>")
+        lines.append(f"   <i>+яна {len(data.cash) - MAX_LINES} та ҳисоб</i>")
     return "\n".join(lines) + "\n"
 
 
@@ -370,7 +315,7 @@ def _render_receivables(data: BriefData) -> str:
     always going to arrive again in the very next message anyway.
     """
     if data.aging is None:
-        return "📉 <b>Debitorlik qarzlari</b>\n   ⚠️ Ma'lumot mavjud emas\n"
+        return "📉 <b>Дебиторлик қарзлари</b>\n   ⚠️ Маълумот мавжуд эмас\n"
 
     aging = data.aging
     marker = "🟢"
@@ -383,62 +328,9 @@ def _render_receivables(data: BriefData) -> str:
     overdue_total = format_money_by_currency([(i.balance_due_tiyin, i.currency) for i in overdue_invoices])
 
     return (
-        f"{marker} <b>Muddati o'tgan qarz: {escape(overdue_total)}</b> "
-        f"({aging.overdue_count} ta hisob-faktura) — batafsili keyingi xabarda\n"
+        f"{marker} <b>Муддати ўтган қарз: {escape(overdue_total)}</b> "
+        f"({aging.overdue_count} та ҳисоб-фактура) — батафсили кейинги хабарда\n"
     )
-
-
-def _render_pipeline(data: BriefData) -> str:
-    """Render the CRM pipeline section."""
-    if data.pipeline is None:
-        return "📊 <b>Pipeline</b>\n   ⚠️ CRM mavjud emas\n"
-
-    pipeline = data.pipeline
-    stalled = len(pipeline.deals_without_task)
-    marker = "🔴" if stalled > 10 else "🟡" if stalled else "🟢"
-
-    # The in-house CRM's own /stats response always names deals in UZS
-    # (confirmed live) — no per-deal currency field the way SAP invoices
-    # have, so format_money(..., "UZS", ...) here, not format_money_by_currency.
-    #
-    # Headline only, no per-deal list — OPS Manager Bot's crm_agent already
-    # answers "which deals are stalled" conversationally with full detail
-    # (see docs/agent-specs/05-org-bot.md); repeating the list here just
-    # made a quick morning skim longer for something one Telegram message
-    # away on request.
-    return (
-        f"📊 <b>Pipeline: {escape(format_money(pipeline.total_value_tiyin, 'UZS', short=True))}</b> "
-        f"({pipeline.total_deals} ta bitim)\n"
-        f"   🆕 Yangi leadlar (24 soat): {pipeline.new_leads_24h}\n"
-        f"   {marker} Vazifasiz bitimlar: {stalled}\n"
-    )
-
-
-def _render_reports(data: BriefData) -> str:
-    """Render yesterday's employee-submitted reports (from the in-house CRM).
-
-    Yesterday, not today: this runs at 08:00, before today's own reports
-    could exist yet, so yesterday is the freshest complete day worth showing.
-    One line per employee, content truncated hard: this is a quick morning
-    skim, and the full text is already sitting in the CRM for anyone who
-    wants to open it up.
-    """
-    if data.reports is None:
-        return "📝 <b>Reportlar</b>\n   ⚠️ CRM mavjud emas\n"
-
-    day_label = fmt_date(today_local() - timedelta(days=1))
-    if not data.reports:
-        return f"📝 <b>Reportlar ({day_label})</b>\n   ⚠️ Hech kim report yozmagan\n"
-
-    lines = [f"📝 <b>Reportlar ({day_label}): {len(data.reports)} ta xodimdan</b>"]
-    for r in data.reports[:MAX_LINES]:
-        content = (r.content or "").strip().replace("\n", " ")
-        if len(content) > 80:
-            content = content[:77] + "..."
-        lines.append(f"   • {escape(r.manager_name or 'Nomaʻlum')}: {escape(content)}")
-    if len(data.reports) > MAX_LINES:
-        lines.append(f"   <i>+yana {len(data.reports) - MAX_LINES} ta</i>")
-    return "\n".join(lines) + "\n"
 
 
 def _render_missed_reports(data: BriefData) -> str | None:
@@ -450,22 +342,24 @@ def _render_missed_reports(data: BriefData) -> str | None:
     ask has ever run, so "nobody asked yet" never reads as "everyone reported".
     """
     if data.report_rows is None:
-        return "📋 <b>Kunlik hisobotlar</b>\n   ⚠️ Ma'lumot mavjud emas\n"
+        return "📋 <b>Кунлик ҳисоботлар</b>\n   ⚠️ Маълумот мавжуд эмас\n"
     if not data.report_rows:
-        return None
+        # Said out loud rather than an empty brief: nobody was asked (daily
+        # reports switched off, or no working day yet) — not "all reported".
+        return "📋 <b>Кунлик ҳисоботлар:</b> кеча ҳеч кимдан сўралмаган\n"
 
     day_label = fmt_date(data.report_rows[0]["report_date"])
     total = len(data.report_rows)
     missed = [r for r in data.report_rows if r["status"] != "submitted"]
     if not missed:
-        return f"🟢 <b>Kunlik hisobotlar ({day_label}):</b> hammasi yubordi ({total}/{total})\n"
+        return f"🟢 <b>Кунлик ҳисоботлар ({day_label}):</b> ҳаммаси юборди ({total}/{total})\n"
 
-    lines = [f"🔴 <b>Hisobot yubormaganlar ({day_label}): {len(missed)} / {total}</b>"]
+    lines = [f"🔴 <b>Ҳисобот юбормаганлар ({day_label}): {len(missed)} / {total}</b>"]
     for row in missed[:MAX_LINES]:
         role = ROLE_LABELS.get(row["role"], row["role"])
         lines.append(f"   • {escape(row['display_name'])} ({escape(role)})")
     if len(missed) > MAX_LINES:
-        lines.append(f"   <i>+yana {len(missed) - MAX_LINES} ta</i>")
+        lines.append(f"   <i>+яна {len(missed) - MAX_LINES} та</i>")
     return "\n".join(lines) + "\n"
 
 
@@ -557,9 +451,9 @@ async def run(dry_run: bool = False) -> int:
     if len(data.errors) == SOURCE_COUNT:
         log.error("Every source failed — sending a failure notice instead of a brief")
         message = (
-            f"🔴 <b>CEO Kunlik Hisoboti — {fmt_date(today_local())}</b>\n\n"
-            "Hech qanday tizimdan ma'lumot olib bo'lmadi. "
-            "Server va integratsiya loglarini tekshiring."
+            f"🔴 <b>CEO кунлик ҳисоботи — {fmt_date(today_local())}</b>\n\n"
+            "Ҳеч қандай тизимдан маълумот олиб бўлмади. "
+            "Сервер ва интеграция логларини текширинг."
         )
 
     message_id: int | None = None

@@ -40,16 +40,16 @@ REPORT_ON_TIME_HOUR = 18
 A1_GREEN, A1_RED = 0.80, 0.50
 A3_GREEN, A3_RED = 0.70, 0.50
 
-WEEKDAYS_UZ = ("dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba")
+WEEKDAYS_UZ = ("душанба", "сешанба", "чоршанба", "пайшанба", "жума", "шанба", "якшанба")
 
 # One-tap deadline choices offered when the Director didn't state one:
 # callback code -> (button label, days from today; None = no deadline).
 DEADLINE_CHOICES: dict[str, tuple[str, int | None]] = {
-    "0": ("Bugun", 0),
-    "1": ("Ertaga", 1),
-    "3": ("3 kun", 3),
-    "7": ("1 hafta", 7),
-    "n": ("Muddatsiz", None),
+    "0": ("Бугун", 0),
+    "1": ("Эртага", 1),
+    "3": ("3 кун", 3),
+    "7": ("1 ҳафта", 7),
+    "n": ("Муддатсиз", None),
 }
 
 
@@ -113,12 +113,12 @@ def deadline_line(due: date | None, today: date) -> str:
     if due is None:
         return ""
     if due == today:
-        when = "bugun"
+        when = "бугун"
     elif due == today + timedelta(days=1):
-        when = "ertaga"
+        when = "эртага"
     else:
         when = WEEKDAYS_UZ[due.weekday()]
-    return f"⏰ <b>Muddat: {fmt_day(due)}</b> ({when})"
+    return f"⏰ <b>Муддат: {fmt_day(due)}</b> ({when})"
 
 
 def completed_on_time(task: dict[str, Any]) -> bool | None:
@@ -138,33 +138,33 @@ def completed_on_time(task: dict[str, Any]) -> bool | None:
 def reminder_text(task: dict[str, Any], today: date) -> str:
     """The morning reminder an employee gets before a deadline."""
     due = task["due_date"]
-    when = "Bugun" if due == today else "Ertaga"
+    when = "Бугун" if due == today else "Эртага"
     return (
-        f"⏰ <b>{when} muddati tugaydi</b> ({fmt_day(due)})\n"
+        f"⏰ <b>{when} муддати тугайди</b> ({fmt_day(due)})\n"
         f"{_h(_one_line(task['task_summary']))}\n\n"
-        "<i>Bajarib bo'lsangiz, topshiriqdagi «✅ Bajardim» tugmasini bosing.</i>"
+        "<i>Бажариб бўлсангиз, топшириқдаги «✅ Бажардим» тугмасини босинг.</i>"
     )
 
 
 def overdue_employee_text(task: dict[str, Any]) -> str:
     """The one message an employee gets when a deadline passes."""
     return (
-        f"⚠️ <b>Muddat o'tdi</b> ({fmt_day(task['due_date'])})\n"
+        f"⚠️ <b>Муддат ўтди</b> ({fmt_day(task['due_date'])})\n"
         f"{_h(_one_line(task['task_summary']))}\n\n"
-        "<i>Direktorga xabar berildi. Holatni shu yerga yozing.</i>"
+        "<i>Директорга хабар берилди. Ҳолатни шу ерга ёзинг.</i>"
     )
 
 
 def overdue_director_text(tasks: list[dict[str, Any]]) -> str:
     """One message to the Director listing every task that just went overdue."""
-    lines = [f"⚠️ <b>Muddati o'tgan topshiriqlar: {len(tasks)} ta</b>"]
+    lines = [f"⚠️ <b>Муддати ўтган топшириқлар: {len(tasks)} та</b>"]
     for task in tasks[:15]:
         lines.append(
             f"• {_h(task.get('display_name') or '—')} — {_h(_short(task['task_summary']))} "
             f"<i>({fmt_day(task['due_date'])})</i>"
         )
     if len(tasks) > 15:
-        lines.append(f"<i>+yana {len(tasks) - 15} ta</i>")
+        lines.append(f"<i>+яна {len(tasks) - 15} та</i>")
     return "\n".join(lines)
 
 
@@ -296,18 +296,18 @@ def weekly_text(
         permissions: Counts by status for the week's permission requests, or
             None to omit the section.
     """
-    lines = [f"📊 <b>Haftalik natija — {start.strftime('%d.%m')}–{end.strftime('%d.%m.%Y')}</b>", ""]
+    lines = [f"📊 <b>Ҳафталик натижа — {start.strftime('%d.%m')}–{end.strftime('%d.%m.%Y')}</b>", ""]
 
     if tasks.due:
         idx = tasks.index or 0.0
         lines.append(
-            f"{_mark(idx, A3_GREEN, A3_RED)} <b>Topshiriqlar:</b> {tasks.on_time}/{tasks.due} o'z vaqtida "
+            f"{_mark(idx, A3_GREEN, A3_RED)} <b>Топшириқлар:</b> {tasks.on_time}/{tasks.due} ўз вақтида "
             f"(И = {idx:.2f})"
         )
         if tasks.late:
-            lines.append(f"   Kechikib bajarilgan: {tasks.late}")
+            lines.append(f"   Кечикиб бажарилган: {tasks.late}")
         if tasks.open_overdue:
-            lines.append(f"   Bajarilmagan, muddati o'tgan: {tasks.open_overdue}")
+            lines.append(f"   Бажарилмаган, муддати ўтган: {tasks.open_overdue}")
             for task in tasks.overdue_items[:8]:
                 lines.append(
                     f"   • {_h(task.get('display_name') or '—')} — {_h(_short(task['task_summary'], 50))}"
@@ -317,23 +317,23 @@ def weekly_text(
             key=lambda item: item[2] / item[1],
         )
         if weak:
-            lines.append("   Kim ortda: " + ", ".join(f"{_h(n)} {d}/{t}" for n, t, d in weak[:6]))
+            lines.append("   Ким ортда: " + ", ".join(f"{_h(n)} {d}/{t}" for n, t, d in weak[:6]))
     else:
-        lines.append("📋 <b>Topshiriqlar:</b> bu hafta muddatli topshiriq bo'lmadi")
+        lines.append("📋 <b>Топшириқлар:</b> бу ҳафта муддатли топшириқ бўлмади")
 
     if reports is not None:
         lines.append("")
         if reports.asked:
             idx = reports.index or 0.0
             lines.append(
-                f"{_mark(idx, A1_GREEN, A1_RED)} <b>Kunlik hisobotlar:</b> {reports.reported}/{reports.asked} "
-                f"yuborildi, {reports.on_time} tasi o'z vaqtida (И = {idx:.2f})"
+                f"{_mark(idx, A1_GREEN, A1_RED)} <b>Кунлик ҳисоботлар:</b> {reports.reported}/{reports.asked} "
+                f"юборилди, {reports.on_time} таси ўз вақтида (И = {idx:.2f})"
             )
             missed = sorted(reports.missed_by_person.items(), key=lambda kv: -kv[1])
             if missed:
-                lines.append("   Yubormaganlar: " + ", ".join(f"{_h(n)} ({c} kun)" for n, c in missed[:8]))
+                lines.append("   Юбормаганлар: " + ", ".join(f"{_h(n)} ({c} кун)" for n, c in missed[:8]))
         else:
-            lines.append("📝 <b>Kunlik hisobotlar:</b> bu hafta so'ralmagan")
+            lines.append("📝 <b>Кунлик ҳисоботлар:</b> бу ҳафта сўралмаган")
 
     if permissions is not None:
         total = sum(permissions.values())
@@ -342,7 +342,7 @@ def weekly_text(
             waiting = permissions.get("submitted", 0) + permissions.get("info_needed", 0)
             approved = permissions.get("approved", 0) + permissions.get("approved_conditional", 0)
             lines.append(
-                f"📄 <b>Ёзма рухсатлар:</b> {total} ta — тасдиқланди {approved}, "
+                f"📄 <b>Ёзма рухсатлар:</b> {total} та — тасдиқланди {approved}, "
                 f"рад {permissions.get('rejected', 0)}, кутилмоқда {waiting}"
             )
         else:

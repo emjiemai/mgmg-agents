@@ -16,6 +16,7 @@ registered can trigger:
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, timedelta
 from typing import Any
@@ -27,9 +28,9 @@ from integrations.common.config import settings
 from integrations.common.db import fetch_all, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_uzs
-from integrations.common.timeutil import today_local
+from integrations.common.timeutil import now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, kpi, permission_flow, store, task_tracker
+from integrations.org_bot import admin, kpi, names, permission_flow, store, task_tracker
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -162,7 +163,7 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
     query_id = callback.get("id", "")
     parsed = parse_callback_data(data)
     if parsed is None:
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     prefix, rest = parsed
@@ -176,6 +177,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_dispatch_role(rest, callback, run_id)
     if prefix == "taskdue":
         return await _handle_task_due(rest, callback, run_id)
+    if prefix in ("relayok", "relayno"):
+        return await _handle_relay_decision(rest, prefix == "relayok", callback, run_id)
 
     # Written permission buttons (send / cancel / the four SOP decisions).
     permission_outcome = await permission_flow.handle_callback(prefix, rest, callback, run_id)
@@ -183,7 +186,7 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         await _answer(query_id, "OK")
         return permission_outcome
 
-    await _answer(query_id, "Unrecognized action")
+    await _answer(query_id, "Номаълум амал")
     return "unrecognized"
 
 
@@ -199,9 +202,9 @@ def _task_card_text(task_summary: str, raw_message: str | None = None, due_date:
     summary might have compressed away or gotten wrong — a real fallback for
     "the AI's phrasing is confusing", not just a formatting nicety.
     """
-    text = f"📋 <b>Yangi topshiriq / New task</b>\n\n{sanitize_model_html(task_summary)}"
+    text = f"📋 <b>Янги топшириқ</b>\n\n{sanitize_model_html(task_summary)}"
     if raw_message and raw_message.strip() and raw_message.strip() != task_summary.strip():
-        text += f"\n\n<i>Direktordan / From the Director:</i>\n{escape(raw_message.strip())}"
+        text += f"\n\n<i>Директордан:</i>\n{escape(raw_message.strip())}"
     deadline = task_tracker.deadline_line(due_date, today_local())
     if deadline:
         text += f"\n\n{deadline}"
@@ -212,8 +215,8 @@ def _task_keyboard(task_id: str, started: bool = False) -> dict[str, Any]:
     """The Start+Done (or just Done, once started) inline keyboard."""
     buttons = []
     if not started:
-        buttons.append({"text": "▶️ Boshladim / Start", "callback_data": f"taskstart:{task_id}"})
-    buttons.append({"text": "✅ Bajardim / Done", "callback_data": f"taskdone:{task_id}"})
+        buttons.append({"text": "▶️ Бошладим", "callback_data": f"taskstart:{task_id}"})
+    buttons.append({"text": "✅ Бажардим", "callback_data": f"taskdone:{task_id}"})
     return {"inline_keyboard": [buttons]}
 
 
@@ -256,15 +259,9 @@ async def send_role_picker(access_request: dict[str, Any], run_id: uuid.UUID, *,
     keyboard = role_picker_keyboard(str(access_request["id"]))
     if retry:
         role = ROLE_LABELS.get(access_request.get("requested_role") or "", "")
-        text = (
-            f"❌ Admin <b>{escape(role)}</b> rolini tasdiqlamadi. Boshqa rolni tanlang:\n"
-            "<i>The admin didn't approve that role. Pick another one:</i>"
-        )
+        text = f"❌ Админ <b>{escape(role)}</b> ролини тасдиқламади. Бошқа ролни танланг:"
     else:
-        text = (
-            "🎉 Tasdiqlandingiz! Rolingizni tanlang — tanlovingizni admin tasdiqlaydi.\n"
-            "<i>You're approved! Pick your role — the admin will confirm it.</i>"
-        )
+        text = "🎉 Тасдиқландингиз! Ролингизни танланг — танловингизни админ тасдиқлайди."
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
@@ -279,12 +276,13 @@ async def send_registration_confirmed(access_request: dict[str, Any], run_id: uu
         run_id: UUID grouping this webhook call's audit rows.
     """
     role = ROLE_LABELS.get(access_request["requested_role"], access_request["requested_role"])
-    await _reply(
-        access_request["telegram_user_id"],
-        run_id,
-        f"✅ Siz <b>{escape(role)}</b> sifatida ro'yxatdan o'tdingiz.\n"
-        f"<i>You're registered as {escape(role)}.</i>",
-    )
+    text = f"✅ Сиз <b>{escape(role)}</b> сифатида рўйхатдан ўтдингиз."
+    # Everyone except the Director gives their real name straight away, so
+    # the Director can address them by it (see names.py).
+    if access_request["requested_role"] != DIRECTOR_ROLE:
+        text += f"\n\n{names.ASK_TEXT}"
+        await store.mark_name_asked(access_request["telegram_user_id"])
+    await _reply(access_request["telegram_user_id"], run_id, text)
 
 
 async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -298,27 +296,27 @@ async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUI
     query_id = callback.get("id", "")
     parsed = parse_role_and_request(rest)
     if parsed is None:
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     role_slug, request_id = parsed
     if role_slug not in ROLE_SLUGS:
-        await _answer(query_id, "Unrecognized role")
+        await _answer(query_id, "Номаълум роль")
         return "unrecognized"
 
     request = await store.get_access_request(request_id)
     if request is None or request["status"] != "approved":
-        await _answer(query_id, "Request not found or not approved")
+        await _answer(query_id, "Сўров топилмади ёки тасдиқланмаган")
         return "not_found"
 
     clicker = callback.get("from", {})
     if clicker.get("id") != request["telegram_user_id"]:
-        await _answer(query_id, "This isn't your request")
+        await _answer(query_id, "Бу сизнинг сўровингиз эмас")
         return "unauthorized"
 
     updated = await store.request_role(request_id, role_slug)
     if updated is None:
-        await _answer(query_id, "Already sent to the admin")
+        await _answer(query_id, "Админга аллақачон юборилган")
         return "already_requested"
 
     async with TelegramBot(
@@ -329,15 +327,12 @@ async def _handle_set_role(rest: str, callback: dict[str, Any], run_id: uuid.UUI
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=str(message["chat"]["id"]),
                 message_id=message["message_id"],
-                text=(
-                    f"⏳ <b>{escape(ROLE_LABELS[role_slug])}</b> rolini tanladingiz. Admin tasdiqlashini kuting.\n"
-                    "<i>Waiting for the admin to confirm your role.</i>"
-                ),
+                text=f"⏳ <b>{escape(ROLE_LABELS[role_slug])}</b> ролини танладингиз. Админ тасдиқлашини кутинг.",
                 # Clear the picker: Telegram keeps the old keyboard unless
                 # told otherwise, and a second tap must not look possible.
                 reply_markup={"inline_keyboard": []},
             )
-        await bot._answer_callback(query_id, "Sent to the admin")  # noqa: SLF001
+        await bot._answer_callback(query_id, "Админга юборилди")  # noqa: SLF001
 
     await admin.request_role_approval(updated, run_id)
 
@@ -364,13 +359,13 @@ async def _actor_display_name(clicker: dict[str, Any]) -> str:
     telegram_user_id = clicker.get("id")
     if telegram_user_id is not None:
         employee = await store.get_employee_by_telegram_id(telegram_user_id)
-        if employee and employee.get("display_name"):
-            return employee["display_name"]
+        if employee:
+            return names.person_name(employee)
     username = clicker.get("username")
     if username:
         return f"@{username}"
     name = " ".join(filter(None, [clicker.get("first_name"), clicker.get("last_name")]))
-    return name or "Noma'lum xodim / Unknown employee"
+    return name or "Номаълум ходим"
 
 
 async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -381,7 +376,7 @@ async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uui
 
     task = await store.mark_task_started(task_id, started_by)
     if task is None:
-        await _answer(query_id, "Already started or done")
+        await _answer(query_id, "Аллақачон бошланган ёки бажарилган")
         return "already_started"
 
     message = callback.get("message") or {}
@@ -391,20 +386,20 @@ async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uui
         if message.get("message_id") and message.get("chat", {}).get("id"):
             text = (
                 _task_card_text(task["task_summary"], task.get("raw_message"), task.get("due_date"))
-                + "\n\n▶️ Boshlandi / Started"
+                + "\n\n▶️ Бошланди"
             )
             keyboard = _task_keyboard(str(task["id"]), started=True)
             await _edit_task_card(
                 bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text, keyboard
             )
-        await bot._answer_callback(query_id, "Started")  # noqa: SLF001
+        await bot._answer_callback(query_id, "Бошланди")  # noqa: SLF001
 
     try:
         actor = await _actor_display_name(clicker)
         await _reply(
             task["director_telegram_user_id"],
             run_id,
-            f"▶️ Boshlandi / Started: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
+            f"▶️ Бошланди: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
         )
     except TelegramError as exc:
         log.warning("Could not notify Director that a task started: {}", exc)
@@ -420,7 +415,7 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
 
     task = await store.mark_task_done(task_id, completed_by)
     if task is None:
-        await _answer(query_id, "Already marked done")
+        await _answer(query_id, "Аллақачон бажарилган")
         return "already_done"
 
     message = callback.get("message") or {}
@@ -430,20 +425,20 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         if message.get("message_id") and message.get("chat", {}).get("id"):
             text = (
                 _task_card_text(task["task_summary"], task.get("raw_message"), task.get("due_date"))
-                + "\n\n✅ Bajarildi / Done"
+                + "\n\n✅ Бажарилди"
             )
             await _edit_task_card(
                 bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text,
                 {"inline_keyboard": []},
             )
-        await bot._answer_callback(query_id, "Marked done")  # noqa: SLF001
+        await bot._answer_callback(query_id, "Бажарилди")  # noqa: SLF001
 
     try:
         actor = await _actor_display_name(clicker)
         await _reply(
             task["director_telegram_user_id"],
             run_id,
-            f"✅ Bajarildi / Done: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
+            f"✅ Бажарилди: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
         )
     except TelegramError as exc:
         log.warning("Could not notify Director of task completion: {}", exc)
@@ -474,6 +469,11 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     employee = await store.get_employee_by_telegram_id(telegram_user_id)
     if employee is None or employee["status"] != "active":
         return await _handle_unregistered_sender(telegram_user_id, sender, run_id)
+
+    # Every employee's real name first (names.py): until the bot has it,
+    # nothing they send is relayed, filed or read as a report.
+    if names.needs_name(employee):
+        return await names.collect_name(employee, message, run_id)
 
     # Written permission requests (EMJ-SOP-ADM-01) come before everything
     # else, for the Director too: an answer to the form's own question, or an
@@ -531,7 +531,7 @@ async def _try_forward_director_reply(
 
     employee_telegram_user_id = relay["employee_telegram_user_id"]
     try:
-        await _reply(employee_telegram_user_id, run_id, f"💬 Direktordan / From the Director:\n{escape(text)}")
+        await _reply(employee_telegram_user_id, run_id, f"💬 Директордан:\n{escape(text)}")
     except TelegramError as exc:
         log.warning("Could not forward the Director's reply to employee {}: {}", employee_telegram_user_id, exc)
         return True  # matched a known relay -- don't fall through to classification even on delivery failure
@@ -553,7 +553,7 @@ async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, A
         await _reply(
             telegram_user_id,
             run_id,
-            "So'rovingiz hali ko'rib chiqilmoqda.\nYour request is still pending approval.",
+            "⏳ Сўровингиз ҳали кўриб чиқилмоқда.",
         )
         return "already_pending"
 
@@ -569,7 +569,7 @@ async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, A
     await _reply(
         telegram_user_id,
         run_id,
-        "So'rovingiz adminga yuborildi.\nYour request has been sent for approval.",
+        "📨 Сўровингиз админга юборилди. Тасдиқлангандан кейин хабар берамиз.",
     )
     return outcome
 
@@ -622,7 +622,8 @@ Do not judge how much they did or how well — that is not your job. When in \
 doubt, it is NOT weak.
 
 Return ONLY JSON: {"weak": false} or {"weak": true, "follow_up": "<one short, \
-friendly question in Uzbek (Latin) asking what concretely they did today>"}."""
+friendly question in Uzbek, in Cyrillic script, asking what concretely they \
+did today>"}."""
 
 # Longer than this is never "ok"/"ishladim" — skip the AI call entirely.
 _WEAK_REPORT_MAX_LEN = 120
@@ -649,7 +650,7 @@ async def _weak_report_follow_up(text: str, run_id: uuid.UUID) -> str | None:
         return None
     if verdict.get("weak") is not True:
         return None
-    return str(verdict.get("follow_up") or "").strip() or "Bugun aniq qanday ishlarni bajardingiz? Qisqacha yozing."
+    return str(verdict.get("follow_up") or "").strip() or "Бугун аниқ қандай ишларни бажардингиз? Қисқача ёзинг."
 
 
 async def _try_daily_report(
@@ -684,7 +685,7 @@ async def _try_daily_report(
                 fresh = kpi.parse_metrics(text, metrics_def) if metrics_def else {}
                 if fresh:
                     await store.merge_report_metrics(str(followup["id"]), fresh)
-                await _reply(employee["telegram_user_id"], run_id, "✅ Rahmat, hisobotingizga qo'shildi.")
+                await _reply(employee["telegram_user_id"], run_id, "✅ Раҳмат, ҳисоботингизга қўшилди.")
                 return "daily_report_followup"
 
         # A reply to an earlier day's ask: reports close at midnight, so say
@@ -695,9 +696,8 @@ async def _try_daily_report(
                 await _reply(
                     employee["telegram_user_id"],
                     run_id,
-                    f"⏰ {expired['report_date'].strftime('%d.%m')} kungi hisobot muddati tugagan — "
-                    "hisobotlar o'sha kuni soat 24:00 gacha qabul qilinadi.\n"
-                    "<i>Reports are accepted only until midnight of the same day.</i>",
+                    f"⏰ {expired['report_date'].strftime('%d.%m')} кунги ҳисобот муддати тугаган — "
+                    "ҳисоботлар ўша куни соат 24:00 гача қабул қилинади.",
                 )
                 return "daily_report_expired"
 
@@ -747,12 +747,12 @@ async def _try_daily_report(
         await _reply(employee["telegram_user_id"], run_id, f"📝 {escape(follow_up)}")
         return "daily_report_weak"
 
-    ack = "✅ Hisobot qabul qilindi, rahmat!\n<i>Daily report received, thank you.</i>"
+    ack = "✅ Ҳисобот қабул қилинди, раҳмат!"
     missing = kpi.missing_metrics(values, metrics_def)
     if missing:
         ack += (
-            f"\n\n⚠️ Raqamlar topilmadi: {escape(', '.join(missing))}.\n"
-            "Raqamlarni shu yerga yuborsangiz, hisobotingizga qo'shaman."
+            f"\n\n⚠️ Рақамлар топилмади: {escape(', '.join(missing))}.\n"
+            "Рақамларни шу ерга юборсангиз, ҳисоботингизга қўшаман."
         )
     await _reply(employee["telegram_user_id"], run_id, ack)
     return "daily_report"
@@ -771,6 +771,11 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
     else is relayed as a general message instead of refused — being able to
     talk to the Director through this bot shouldn't require an open task to
     exist.
+
+    Nothing is relayed straight away: the employee first gets "Бу хабар
+    директорга юборилсинми?" and it goes only on "✅ Ҳа, юбориш" (2026-09-25).
+    Daily reports and permission requests have their own flows and never
+    reach this point.
     """
     telegram_user_id = employee["telegram_user_id"]
     text = (message.get("text") or message.get("caption") or "").strip()
@@ -788,44 +793,114 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
     if task is None:
         task = await store.find_open_task_for_employee(telegram_user_id)
 
+    if not await store.active_employees_by_role(DIRECTOR_ROLE):
+        await _reply(telegram_user_id, run_id, "Ҳозирча директор рўйхатдан ўтмаган — хабарингиз етказилмади.")
+        return "no_director"
+
+    # Nothing reaches the Director without the employee confirming it: one
+    # stray message to the CEO is one too many (the business's rule).
+    pending = await store.create_pending_relay(telegram_user_id, text, str(task["id"]) if task else None)
+    preview = text if len(text) <= 300 else text[:299].rstrip() + "…"
+    prompt = "📨 <b>Бу хабар директорга юборилсинми?</b>"
     if task is not None:
-        stage_label = {"sent": "boshlanmagan", "started": "davom etmoqda", "done": "bajarilgan"}.get(
+        prompt += f"\n<i>Топшириқ: {escape(_plain(task['task_summary'])[:120])}</i>"
+    prompt += f"\n\n«{escape(preview)}»"
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Ҳа, юбориш", "callback_data": f"relayok:{pending['id']}"},
+                {"text": "❌ Йўқ", "callback_data": f"relayno:{pending['id']}"},
+            ]
+        ]
+    }
+    await _reply(telegram_user_id, run_id, prompt, keyboard)
+    return "relay_confirm_asked"
+
+
+def _plain(text: str | None) -> str:
+    """AI-written text without its <b>/<i> tags, on one line — for previews."""
+    return " ".join(re.sub(r"<[^>]+>", "", text or "").split())
+
+
+# Held messages expire: a tap days later shouldn't deliver something stale.
+RELAY_CONFIRM_HOURS = 24
+
+
+async def _handle_relay_decision(relay_id: str, send: bool, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The employee confirmed (or cancelled) sending a held message to the Director."""
+    query_id = callback.get("id", "")
+    clicker_id = callback.get("from", {}).get("id")
+    relay = await store.resolve_pending_relay(relay_id, clicker_id, "sent" if send else "cancelled")
+    if relay is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "relay_already_resolved"
+
+    expired = (now_utc() - relay["created_at"]).total_seconds() > RELAY_CONFIRM_HOURS * 3600
+    if send and expired:
+        status_line = "⌛ Муддати ўтди — хабарни қайта ёзиб юборинг."
+        outcome = "relay_expired"
+    elif send:
+        employee = await store.get_employee_by_telegram_id(clicker_id)
+        task = await store.get_task(str(relay["task_id"])) if relay.get("task_id") else None
+        delivered = await _relay_to_director(employee, relay["message_text"], task, run_id) if employee else 0
+        status_line = "✅ Директорга юборилди." if delivered else "⚠️ Директорга етказиб бўлмади."
+        outcome = "relayed" if delivered else "relay_failed"
+    else:
+        status_line = "❌ Юборилмади."
+        outcome = "relay_cancelled"
+
+    message = callback.get("message") or {}
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        if message.get("message_id") and message.get("chat", {}).get("id"):
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=str(message["chat"]["id"]),
+                message_id=message["message_id"],
+                text=f"{status_line}\n\n«{escape(relay['message_text'][:300])}»",
+                reply_markup={"inline_keyboard": []},
+            )
+        await bot._answer_callback(query_id, "OK")  # noqa: SLF001
+    return outcome
+
+
+async def _relay_to_director(
+    employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID
+) -> int:
+    """Deliver an employee's confirmed message to every Director.
+
+    Returns:
+        How many Directors received it.
+    """
+    who = f"<b>{escape(names.person_name(employee))}</b> ({escape(ROLE_LABELS.get(employee['role'], employee['role']))})"
+    if task is not None:
+        stage_label = {"sent": "бошланмаган", "started": "давом этмоқда", "done": "бажарилган"}.get(
             task["status"], task["status"]
         )
         relay_text = (
-            f"💬 {escape(employee['display_name'])} ({stage_label}):\n{escape(text)}\n\n"
-            f"<i>Topshiriq / Task: {escape(task['task_summary'])}</i>"
+            f"💬 {who}, топшириқ {stage_label}:\n{escape(text)}\n\n"
+            f"<i>Топшириқ: {escape(_plain(task['task_summary']))}</i>"
         )
     else:
-        relay_text = f"💬 {escape(employee['display_name'])}:\n{escape(text)}"
+        relay_text = f"💬 {who}:\n{escape(text)}"
 
-    directors = await store.active_employees_by_role(DIRECTOR_ROLE)
-    if not directors:
-        await _reply(
-            telegram_user_id,
-            run_id,
-            "Hozircha Direktor ro'yxatdan o'tmagan — xabaringiz yetkazilmadi.\n"
-            "No Director is registered yet — your message wasn't delivered.",
-        )
-        return "no_director"
-
-    for director in directors:
+    delivered = 0
+    for director in await store.active_employees_by_role(DIRECTOR_ROLE):
         director_id = director["telegram_user_id"]
         try:
             message_ids = await _reply(director_id, run_id, relay_text)
         except TelegramError as exc:
             log.warning("Could not relay employee message to Director {}: {}", director_id, exc)
             continue
+        delivered += 1
         await store.create_task_update(
             task_id=str(task["id"]) if task else None,
-            employee_telegram_user_id=telegram_user_id,
+            employee_telegram_user_id=employee["telegram_user_id"],
             message_text=text,
             director_telegram_user_id=director_id,
             director_message_id=message_ids[0] if message_ids else None,
         )
-
-    await _reply(telegram_user_id, run_id, "👍 Qabul qildim, direktorga yubordim. / Got it, sent to the Director.")
-    return "relayed"
+    return delivered
 
 
 # ----------------------------------------------------- director task routing
@@ -851,6 +926,7 @@ async def _dispatch_director_task(
 
     try:
         history = format_history(await store.recent_conversation(director_telegram_user_id))
+        roster_lines, roster = await _roster()
         async with OpenRouterClient(
             agent=AGENT,
             run_id=run_id,
@@ -859,11 +935,17 @@ async def _dispatch_director_task(
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
             result = await ai.complete_json(
-                CLASSIFY_SYSTEM_PROMPT, build_classify_message(raw_message, history, today_local())
+                CLASSIFY_SYSTEM_PROMPT, build_classify_message(raw_message, history, today_local(), roster_lines)
             )
 
         task_summary = (result.get("task_summary") or raw_message[:200]).strip()
         due_date = task_tracker.parse_due_date(result.get("due_date"), today_local())
+        person, known = _pick_person(result, roster)
+        if not known:
+            await _reply_and_log(
+                director_telegram_user_id, run_id, "Кимга юборишни аниқлай олмадим — исмни аниқроқ ёзинг."
+            )
+            return
         validated = validate_classification(result)
 
         if validated is None:
@@ -874,7 +956,7 @@ async def _dispatch_director_task(
             await _reply_and_log(
                 director_telegram_user_id,
                 run_id,
-                "Aniq tushunmadim — iltimos, aniqroq yozing.",
+                "Аниқ тушунмадим — илтимос, аниқроқ ёзинг.",
             )
             return
 
@@ -886,7 +968,7 @@ async def _dispatch_director_task(
         if target_type == "employee":
             await _dispatch_to_role(
                 director_telegram_user_id, source_message_id, raw_message, target_role, task_summary, run_id,
-                due_date,
+                due_date, person,
             )
         elif target_type == "agent":
             await _answer_from_agent(director_telegram_user_id, target_agent, raw_message, run_id, history)
@@ -904,7 +986,7 @@ async def _dispatch_director_task(
             await _reply_and_log(
                 director_telegram_user_id,
                 run_id,
-                sanitize_model_html(task_summary) or "Buni kimga yo'naltirishni tushunmadim — aniqroq yozib bera olasizmi?",
+                sanitize_model_html(task_summary) or "Буни кимга йўналтиришни тушунмадим — аниқроқ ёзиб бера оласизми?",
             )
 
     except OpenRouterError as exc:
@@ -923,13 +1005,55 @@ async def _dispatch_director_task(
         await _safe_notify_failure(director_telegram_user_id, run_id)
 
 
+async def _roster() -> tuple[list[str], dict[str, dict[str, Any]]]:
+    """The people the Director can address by name, for the classifier.
+
+    Codes (E1, E2, ...) rather than database ids: short tokens the model
+    copies back reliably, mapped to the real rows here.
+
+    Returns:
+        ``(prompt lines, code -> employee row)``.
+    """
+    people = [e for e in await store.list_active_employees() if e["role"] != DIRECTOR_ROLE]
+    people.sort(key=lambda e: names.person_name(e).lower())
+    lines: list[str] = []
+    lookup: dict[str, dict[str, Any]] = {}
+    for index, person in enumerate(people, start=1):
+        code = f"E{index}"
+        lookup[code] = person
+        lines.append(f"{code} = {names.person_name(person)} ({person['role']})")
+    return lines, lookup
+
+
+def _pick_person(result: dict[str, Any], roster: dict[str, dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+    """Resolve the classifier's ``target_employee`` against the roster.
+
+    Also points ``target_role`` at that person's role, so a model that named
+    the right person but the wrong department still routes correctly.
+
+    Returns:
+        ``(employee or None, known)`` — known is False when the model named a
+        code that isn't on the list; the caller must then ask, not fall back
+        to a whole department.
+    """
+    code = str(result.get("target_employee") or "").strip().upper()
+    if not code or code in ("NULL", "NONE"):
+        return None, True
+    person = roster.get(code)
+    if person is None:
+        return None, False
+    if result.get("target_type") == "employee":
+        result["target_role"] = person["role"]
+    return person, True
+
+
 async def _safe_notify_failure(director_telegram_user_id: int, run_id: uuid.UUID) -> None:
     """Best-effort failure notice — itself guarded so it can't raise."""
     try:
         await _reply(
             director_telegram_user_id,
             run_id,
-            "Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.\nSomething went wrong — please try again.",
+            "Хатолик юз берди, бироздан кейин қайта уриниб кўринг.",
         )
     except Exception as exc:  # noqa: BLE001 — a second failure must not raise inside a background task
         log.error("Also failed to notify the Director of the dispatch failure: {}", exc)
@@ -943,14 +1067,18 @@ async def _dispatch_to_role(
     task_summary: str,
     run_id: uuid.UUID,
     due_date: date | None = None,
+    person: dict[str, Any] | None = None,
 ) -> None:
-    """Create + send one task card per active employee holding ``role_slug``."""
-    employees = await store.active_employees_by_role(role_slug)
+    """Create + send one task card per active employee holding ``role_slug``.
+
+    When the Director named one person, only that person gets it.
+    """
+    employees = [person] if person is not None else await store.active_employees_by_role(role_slug)
     if not employees:
         await _reply_and_log(
             director_id,
             run_id,
-            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.",
+            f"{ROLE_LABELS[role_slug]} учун ҳали ҳеч ким рўйхатдан ўтмаган.",
         )
         return
 
@@ -980,7 +1108,7 @@ async def _dispatch_to_role(
             )
             if message_ids:
                 await store.set_task_message_id(str(task["id"]), message_ids[0])
-            sent_names.append(employee["display_name"])
+            sent_names.append(names.person_name(employee))
 
     if sent_names:
         await _confirm_dispatch(director_id, source_message_id, sent_names, role_slug, due_date, run_id)
@@ -1000,8 +1128,8 @@ async def _confirm_dispatch(
     guessed: when the Director didn't state one, they get one-tap choices,
     and "Muddatsiz" (no deadline) is an answer too.
     """
-    names = ", ".join(escape(n) for n in sent_names)
-    text = f"Yuborildi: {names} ({ROLE_LABELS[role_slug]})."
+    who = ", ".join(escape(n) for n in sent_names)
+    text = f"Юборилди: {who} ({ROLE_LABELS[role_slug]})."
     if due_date is not None:
         text += f"\n{task_tracker.deadline_line(due_date, today_local())}"
         await _reply_and_log(director_id, run_id, text)
@@ -1009,7 +1137,7 @@ async def _confirm_dispatch(
     if not source_message_id:
         await _reply_and_log(director_id, run_id, text)
         return
-    text += "\n⏰ Muddat ko'rsatilmadi — qachongacha?"
+    text += "\n⏰ Муддат кўрсатилмади — қачонгача?"
     await _reply(director_id, run_id, text, task_tracker.deadline_keyboard(source_message_id))
     await store.log_conversation_turn(director_id, "bot", text)
 
@@ -1022,21 +1150,21 @@ async def _handle_task_due(rest: str, callback: dict[str, Any], run_id: uuid.UUI
     try:
         source_message_id = int(message_part)
     except ValueError:
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     recognised, due = task_tracker.due_from_choice(code, today_local())
     if not recognised:
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     director = await store.get_employee_by_telegram_id(clicker_id) if clicker_id else None
     if director is None or director["role"] != DIRECTOR_ROLE or director["status"] != "active":
-        await _answer(query_id, "Not allowed")
+        await _answer(query_id, "Рухсат йўқ")
         return "unauthorized"
 
     updated = [] if due is None else await store.set_dispatch_due_date(clicker_id, source_message_id, due)
-    label = "Muddatsiz" if due is None else task_tracker.deadline_line(due, today_local())
+    label = "Муддатсиз" if due is None else task_tracker.deadline_line(due, today_local())
 
     message = callback.get("message") or {}
     async with TelegramBot(
@@ -1095,6 +1223,7 @@ async def _dispatch_director_media(
     validated = None
     refusal_text: str | None = None
     media_due: date | None = None
+    media_person: dict[str, Any] | None = None
     if caption:
         try:
             async with OpenRouterClient(
@@ -1104,10 +1233,12 @@ async def _dispatch_director_media(
                 model_override=settings.ops_manager_bot_model,
                 fallback_override=settings.ops_manager_bot_fallback_models,
             ) as ai:
+                roster_lines, roster = await _roster()
                 result = await ai.complete_json(
-                    CLASSIFY_SYSTEM_PROMPT, build_classify_message(caption, today=today_local())
+                    CLASSIFY_SYSTEM_PROMPT, build_classify_message(caption, today=today_local(), roster=roster_lines)
                 )
-            validated = validate_classification(result)
+            media_person, known = _pick_person(result, roster)
+            validated = validate_classification(result) if known else None
             media_due = task_tracker.parse_due_date(result.get("due_date"), today_local())
             if validated is not None and validated[0] == "refused":
                 refusal_text = (result.get("task_summary") or "").strip() or None
@@ -1117,8 +1248,8 @@ async def _dispatch_director_media(
     try:
         if validated is not None and validated[0] == "employee":
             await _dispatch_media_to_role(
-                director_telegram_user_id, source_message_id, caption or "Media fayl / Media file", validated[1], run_id,
-                media_due,
+                director_telegram_user_id, source_message_id, caption or "Медиа файл", validated[1], run_id,
+                media_due, media_person,
             )
         elif validated is not None and validated[0] == "refused":
             # Guardrail path — refuse and stop, same as the text-task flow.
@@ -1127,7 +1258,7 @@ async def _dispatch_director_media(
             log.info("Media caption classification refused a message from {}", director_telegram_user_id)
             await _reply(
                 director_telegram_user_id, run_id,
-                sanitize_model_html(refusal_text) if refusal_text else "Kechirasiz, bunga yordam bera olmayman.",
+                sanitize_model_html(refusal_text) if refusal_text else "Кечирасиз, бунга ёрдам бера олмайман.",
             )
         else:
             await _ask_media_target(director_telegram_user_id, source_message_id, caption, run_id)
@@ -1152,7 +1283,7 @@ async def _ask_media_target(
             [{"text": role.label, "callback_data": f"dispatchrole:{role.slug}:{row['id']}"}] for role in ROLES
         ]
     }
-    await _reply(director_telegram_user_id, run_id, "Kimga yuborilsin? / Who should receive this?", keyboard)
+    await _reply(director_telegram_user_id, run_id, "Кимга юборилсин?", keyboard)
 
 
 async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1160,29 +1291,29 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
     query_id = callback.get("id", "")
     parsed = parse_role_and_request(rest)
     if parsed is None:
-        await _answer(query_id, "Unrecognized action")
+        await _answer(query_id, "Номаълум амал")
         return "unrecognized"
 
     role_slug, pending_id = parsed
     if role_slug not in ROLE_SLUGS:
-        await _answer(query_id, "Unrecognized role")
+        await _answer(query_id, "Номаълум роль")
         return "unrecognized"
 
     pending = await store.resolve_pending_dispatch(pending_id)
     if pending is None:
-        await _answer(query_id, "Already handled or not found")
+        await _answer(query_id, "Аллақачон ҳал қилинган ёки топилмади")
         return "not_found"
 
     clicker = callback.get("from", {})
     if clicker.get("id") != pending["director_telegram_user_id"]:
-        await _answer(query_id, "This isn't your request")
+        await _answer(query_id, "Бу сизнинг сўровингиз эмас")
         return "unauthorized"
 
     await _answer(query_id, "OK")
     await _dispatch_media_to_role(
         pending["director_telegram_user_id"],
         pending["source_message_id"],
-        pending.get("caption") or "Media fayl / Media file",
+        pending.get("caption") or "Медиа файл",
         role_slug,
         run_id,
     )
@@ -1196,20 +1327,22 @@ async def _dispatch_media_to_role(
     role_slug: str,
     run_id: uuid.UUID,
     due_date: date | None = None,
+    person: dict[str, Any] | None = None,
 ) -> None:
     """Create + copy one task card per active employee holding ``role_slug``.
 
     Mirrors ``_dispatch_to_role`` but delivers via ``copyMessage`` (which
     duplicates the Director's original media into each recipient's chat)
     instead of ``sendMessage`` — the same ``tasks`` row/Start/Done tracking
-    applies either way, distinguished only by the ``has_media`` flag.
+    applies either way, distinguished only by the ``has_media`` flag. When the
+    Director named one person, only that person gets it.
     """
-    employees = await store.active_employees_by_role(role_slug)
+    employees = [person] if person is not None else await store.active_employees_by_role(role_slug)
     if not employees:
         await _reply_and_log(
             director_id,
             run_id,
-            f"{ROLE_LABELS[role_slug]} uchun hali hech kim ro'yxatdan o'tmagan.",
+            f"{ROLE_LABELS[role_slug]} учун ҳали ҳеч ким рўйхатдан ўтмаган.",
         )
         return
 
@@ -1248,7 +1381,7 @@ async def _dispatch_media_to_role(
             )
             if result and result.get("message_id"):
                 await store.set_task_message_id(str(task["id"]), result["message_id"])
-            sent_names.append(employee["display_name"])
+            sent_names.append(names.person_name(employee))
 
     if sent_names:
         await _confirm_dispatch(director_id, source_message_id, sent_names, role_slug, due_date, run_id)
@@ -1384,7 +1517,6 @@ async def _fetch_kpi_agent_data() -> str:
         numbers = kpi.format_metrics(row["metrics"] or {}, kpi.metrics_for_role(row["role"]))
         if numbers:
             parts.append(numbers)
-        parts.append(f"tasks completed: {row['tasks_done']}")
         lines.append(" | ".join(parts))
     return "\n".join(lines)
 

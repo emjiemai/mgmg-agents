@@ -66,6 +66,20 @@ def check_true(label: str, condition: bool) -> None:
     check(label, bool(condition), True)
 
 
+def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
+    """Latin-script words left in a message that should be Uzbek Cyrillic.
+
+    Tags, brand names and codes are fine; anything else is a missed
+    translation (the business's rule since 2026-09-25).
+    """
+    import re
+
+    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Bot"}
+    allowed |= allow or set()
+    plain = re.sub(r"<[^>]+>", " ", text)
+    return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9']*", plain) if w not in allowed]
+
+
 def test_money() -> None:
     """Money conversion and Uzbek sum formatting."""
     print("money")
@@ -76,13 +90,13 @@ def test_money() -> None:
     check("to_tiyin None", to_tiyin(None), 0)
     check("to_tiyin garbage", to_tiyin("n/a"), 0)
     check("from_tiyin", str(from_tiyin(125075)), "1250.75")
-    check("format thousands", format_uzs(125000000), f"1{nbsp}250{nbsp}000{nbsp}so'm")
-    check("format negative", format_uzs(-125000000), f"-1{nbsp}250{nbsp}000{nbsp}so'm")
+    check("format thousands", format_uzs(125000000), f"1{nbsp}250{nbsp}000{nbsp}сўм")
+    check("format negative", format_uzs(-125000000), f"-1{nbsp}250{nbsp}000{nbsp}сўм")
     check("format no currency", format_uzs(125000000, with_currency=False), f"1{nbsp}250{nbsp}000")
-    check("short mlrd", format_uzs_short(int(1.25e9 * 100)), f"1,25{nbsp}mlrd{nbsp}so'm")
-    check("short mln", format_uzs_short(340_000_000 * 100), f"340{nbsp}mln{nbsp}so'm")
-    check("short small", format_uzs_short(85_000 * 100), f"85{nbsp}000{nbsp}so'm")
-    check("short negative", format_uzs_short(-int(2e9 * 100)), f"-2{nbsp}mlrd{nbsp}so'm")
+    check("short mlrd", format_uzs_short(int(1.25e9 * 100)), f"1,25{nbsp}млрд{nbsp}сўм")
+    check("short mln", format_uzs_short(340_000_000 * 100), f"340{nbsp}млн{nbsp}сўм")
+    check("short small", format_uzs_short(85_000 * 100), f"85{nbsp}000{nbsp}сўм")
+    check("short negative", format_uzs_short(-int(2e9 * 100)), f"-2{nbsp}млрд{nbsp}сўм")
     check("usd reference", str(uzs_to_usd(12_800 * 100)), "1.00")
 
     # 2026-09-07: SAP AR invoices turned out to include real USD-denominated
@@ -101,7 +115,7 @@ def test_money() -> None:
     check(
         "format_money_by_currency sums within a currency, not across",
         format_money_by_currency([(1_000_000, "UZS"), (500_000, "UZS"), (976_400, "USD")]),
-        f"15{nbsp}000{nbsp}so'm + $9,764.00",
+        f"15{nbsp}000{nbsp}сўм + $9,764.00",
     )
     check("format_money_by_currency empty", format_money_by_currency([]), format_uzs(0))
 
@@ -268,7 +282,7 @@ def test_brief_rendering() -> None:
     empty = brief.BriefData()
     empty.note_failure("sap", RuntimeError("connection refused"))
     text = brief.render(empty)
-    check_true("title and time on one line", "CEO Kunlik Hisoboti" in text.splitlines()[0] and "Toshkent" in text.splitlines()[0])
+    check_true("title and time on one line", "CEO кунлик ҳисоботи" in text.splitlines()[0] and "Тошкент" in text.splitlines()[0])
     check_true("no failure footer", "Ma'lumot yo'q" not in text)
 
     aging = ARAging(snapshot_date=date(2026, 8, 18))
@@ -307,22 +321,16 @@ def test_brief_rendering() -> None:
     text = brief.render(full)
     # 2026-09-22: the brief is reports only — cash, receivables and pipeline
     # were cut at the business's request (receivables has its own message).
-    check_true("no cash section", "Kassa" not in text and "Kapital Bank" not in text)
-    check_true("no receivables section", "qarz" not in text)
+    check_true("no cash section", "Касса" not in text and "Kapital Bank" not in text)
+    check_true("no receivables section", "қарз" not in text)
     check_true("no pipeline section", "Pipeline" not in text)
-    # 2026-09-08: previous day's employee-submitted CRM reports, added after
-    # a Director's actual submitted report never showed up anywhere the bot
-    # would surface it proactively -- only on direct question.
-    check_true("yesterday's report shown", "OPS Manager botdagi bug fixlar" in text)
-    check_true("reporting employee named", "Ulug'bek AI" in text)
+    # 2026-09-25: the CRM isn't used, so its "Reportlar" section is gone —
+    # only the bot's own daily reports are shown.
+    check_true("no CRM reports section", "Reportlar" not in text and "OPS Manager botdagi" not in text)
     # 2026-09-15: Verifix attendance and Microsoft Planner were removed from
     # the project, so their sections must not come back.
     check_true("no attendance section", "Davomat" not in text)
     check_true("no Planner tasks section", "Vazifalar" not in text)
-
-    no_reports = brief.BriefData(reports=[])
-    text = brief.render(no_reports)
-    check_true("no reports yesterday is stated plainly", "Hech kim report yozmagan" in text)
 
     # 2026-09-16: daily reports no longer reach the Director one by one; the
     # brief names only who didn't report on the last day they were asked.
@@ -338,13 +346,14 @@ def test_brief_rendering() -> None:
     everyone_in = [dict(r, status="submitted") for r in rows]
     check_true(
         "everyone reporting is stated",
-        "hammasi yubordi (2/2)" in brief.render(brief.BriefData(report_rows=everyone_in)),
+        "ҳаммаси юборди (2/2)" in brief.render(brief.BriefData(report_rows=everyone_in)),
     )
     never_asked = brief.render(brief.BriefData(report_rows=[]))
     check_true(
-        "no section before anyone was ever asked",
-        "Kunlik hisobotlar" not in never_asked and "yubormaganlar" not in never_asked,
+        "nobody asked is said plainly, not 'everyone reported'",
+        "сўралмаган" in never_asked and "ҳаммаси юборди" not in never_asked,
     )
+    check_true("the brief is Uzbek Cyrillic", latin_words(text, allow={"CEO", "Dmitriy", "B2B"}) == [])
 
     # 2026-09-18: with daily reports switched off, the brief must not keep
     # naming the last asked day's non-reporters. (Returns before any DB call.)
@@ -389,15 +398,16 @@ def test_receivables_rendering() -> None:
 
     text = receivables.render(aging, min_days=1)
     check_true("headline critical", text.startswith("🔴"))
-    check_true("age ranges folded into the headline", "90+ kun — 2" in text and "1–30 kun — 1" in text)
+    check_true("age ranges folded into the headline", "90+ кун — 2" in text and "1–30 кун — 1" in text)
     check_true("two lines only", len(text.splitlines()) == 2)
     check_true("no per-invoice detail", "Customer" not in text)
     check_true("no owner breakdown", "Mas'ul xodim" not in text)
     one_range = receivables.render(aging, min_days=100)
-    check_true("single range reads 'ichida'", "2 ta hisob-faktura, 90+ kun ichida" in one_range)
+    check_true("single range reads 'ичида'", "2 та ҳисоб-фактура, 90+ кун ичида" in one_range)
+    check_true("the alert is Uzbek Cyrillic", latin_words(text) == [])
 
     text_30 = receivables.render(aging, min_days=30)
-    check_true("min_days filters the 5-day invoice", "1–30 kun" not in text_30)
+    check_true("min_days filters the 5-day invoice", "1–30 кун" not in text_30)
 
 
 def test_daily_report_kpi() -> None:
@@ -411,11 +421,11 @@ def test_daily_report_kpi() -> None:
     check("Garmin Sotuv is not asked for numbers", kpi.metrics_for_role("garmin_sotuv"), ())
     check_true(
         "B2B Sotuv's ask has no numbers block",
-        "Qo'ng'iroqlar" not in kpi.build_request_text("Dmitriy", kpi.metrics_for_role("b2b_sotuv")),
+        "Қўнғироқлар" not in kpi.build_request_text("Dmitriy", kpi.metrics_for_role("b2b_sotuv")),
     )
     check_true(
         "reminder has no numbers block",
-        "Qo'ng'iroqlar" not in kpi.build_reminder_text(kpi.metrics_for_role("garmin_sotuv")),
+        "Қўнғироқлар" not in kpi.build_reminder_text(kpi.metrics_for_role("garmin_sotuv")),
     )
 
     # The parser and formatter stay tested against the (currently unassigned)
@@ -450,20 +460,27 @@ def test_daily_report_kpi() -> None:
     check("no metrics for this role means no parsing", kpi.parse_metrics("uchrashuv 3", ()), {})
 
     rendered = kpi.format_metrics({"meetings": 5, "calls": 10}, sales)
-    check_true("hit target marked", "Uchrashuvlar: 5/4 ✅" in rendered)
-    check_true("under target marked", "Qo'ng'iroqlar: 10/15 ⚠️" in rendered)
-    check_true("unreported metric shows a dash", "Yuborilgan KP: —" in rendered)
+    check_true("hit target marked", "Учрашувлар: 5/4 ✅" in rendered)
+    check_true("under target marked", "Қўнғироқлар: 10/15 ⚠️" in rendered)
+    check_true("unreported metric shows a dash", "Юборилган КП: —" in rendered)
     check("no metrics renders nothing", kpi.format_metrics({}, ()), "")
     check(
         "missing metrics are named",
         kpi.missing_metrics({"meetings": 5}, sales),
-        ["Qo'ng'iroqlar", "Yuborilgan KP", "Yangi lidlar"],
+        ["Қўнғироқлар", "Юборилган КП", "Янги лидлар"],
     )
 
     ask = kpi.build_request_text("Dmitriy", sales)
     check_true("ask names the person", "Dmitriy" in ask)
-    check_true("ask shows the numbers format", "Qo'ng'iroqlar" in ask)
-    check_true("text-only role gets no numbers block", "Qo'ng'iroqlar" not in kpi.build_request_text("Aziz", ()))
+    check_true("ask shows the numbers format", "Қўнғироқлар" in ask)
+    check_true("text-only role gets no numbers block", "Қўнғироқлар" not in kpi.build_request_text("Aziz", ()))
+    check(
+        "Cyrillic labels are parsed too",
+        kpi.parse_metrics("3 та учрашув, 22 та қўнғироқ", sales),
+        {"meetings": 3, "calls": 22},
+    )
+    check_true("the ask is Uzbek Cyrillic", latin_words(kpi.build_request_text("Алишер", ())) == [])
+    check_true("the reminder is Uzbek Cyrillic", latin_words(kpi.build_reminder_text(())) == [])
 
 
 def test_permissions() -> None:
@@ -570,8 +587,8 @@ def test_task_tracker() -> None:
     check("unknown button refused", tt.due_from_choice("x", today)[0], False)
     buttons = [b for row in tt.deadline_keyboard(987654321)["inline_keyboard"] for b in row]
     check_true("deadline buttons fit Telegram's 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in buttons))
-    check_true("card line names the weekday", "juma" in tt.deadline_line(date(2026, 9, 25), today))
-    check_true("card line says 'ertaga'", "ertaga" in tt.deadline_line(date(2026, 9, 24), today))
+    check_true("card line names the weekday", "жума" in tt.deadline_line(date(2026, 9, 25), today))
+    check_true("card line says 'эртага'", "эртага" in tt.deadline_line(date(2026, 9, 24), today))
 
     message = build_classify_message("ertaga hisobotni tayyorla", today=today)
     check_true("classifier is told today's date", "Wednesday, 2026-09-23" in message)
@@ -604,9 +621,14 @@ def test_task_tracker() -> None:
     check("A1 И = (2/3)*(1/2)", round(reports.index, 2), 0.33)
 
     text = tt.weekly_text(date(2026, 9, 21), today, score, reports, {"approved": 2, "submitted": 1})
-    check_true("scorecard shows the tasks И", "1/3 o'z vaqtida" in text and "И = 0.33" in text)
+    check_true("scorecard shows the tasks И", "1/3 ўз вақтида" in text and "И = 0.33" in text)
     check_true("below 0.50 is red", "🔴" in text)
-    check_true("names who didn't report", "Dilnoza (1 kun)" in text)
+    check_true("names who didn't report", "Dilnoza (1 кун)" in text)
+    check_true("scorecard is Uzbek Cyrillic", latin_words(text, allow={"Aziz", "Bobur", "Dilnoza", "C"}) == [])
+    check_true(
+        "reminder is Uzbek Cyrillic",
+        latin_words(tt.reminder_text({"due_date": today, "task_summary": "Ҳисобот"}, today)) == [],
+    )
     check_true("names the overdue task", "Dilnoza — C" in text)
     check_true("permissions counted", "тасдиқланди 2" in text and "кутилмоқда 1" in text)
     quiet = tt.weekly_text(date(2026, 9, 21), today, tt.TaskScore(), None, None)
@@ -614,6 +636,34 @@ def test_task_tracker() -> None:
     check_true("typed names are escaped", "&lt;" in tt.overdue_director_text(
         [{"display_name": "A<b>", "task_summary": "x", "due_date": today}]
     ))
+
+
+def test_names_and_routing() -> None:
+    """Every employee's typed name, and the Director addressing one person."""
+    print("names and person routing")
+    from integrations.org_bot import names
+    from integrations.org_bot.ops_manager import _pick_person, _plain
+    from integrations.org_bot.prompt import build_classify_message
+
+    worker = {"role": "it", "full_name": None, "display_name": "GMHRD"}
+    check_true("an employee without a name must give one", names.needs_name(worker))
+    check_true("the Director is never stopped for a name", not names.needs_name({"role": "operatsion_direktor"}))
+    check_true("a saved name is enough", not names.needs_name({**worker, "full_name": "Алишер Каримов"}))
+    check("Telegram name only as a fallback", names.person_name(worker), "GMHRD")
+    check("typed name wins", names.person_name({**worker, "full_name": "Алишер Каримов"}), "Алишер Каримов")
+    check_true("the name question is Uzbek Cyrillic", latin_words(names.ASK_TEXT) == [])
+
+    roster = {"E1": {"role": "it", "full_name": "Алишер Каримов"}, "E2": {"role": "ombor", "full_name": "Бобур Алиев"}}
+    result = {"target_type": "employee", "target_role": "b2b_sotuv", "target_employee": "e2"}
+    person, known = _pick_person(result, roster)
+    check_true("named person found", known and person is roster["E2"])
+    check("their own department wins over the model's guess", result["target_role"], "ombor")
+    check("no person named -> whole department", _pick_person({"target_employee": None}, roster), (None, True))
+    check("unknown person -> ask, never broadcast", _pick_person({"target_employee": "E9"}, roster), (None, False))
+
+    message = build_classify_message("Alisherga ayt", roster=["E1 = Алишер Каримов (it)"])
+    check_true("classifier sees the employee list", "E1 = Алишер Каримов (it)" in message)
+    check("preview drops the AI's tags", _plain("<b>Отчёт</b>  тайёрланг"), "Отчёт тайёрланг")
 
 
 def test_payment_gate() -> None:
@@ -716,6 +766,7 @@ def main() -> int:
         test_permission_form,
         test_task_tracker,
         test_payment_gate,
+        test_names_and_routing,
         test_daily_report_kpi,
         test_brief_rendering,
         test_receivables_rendering,

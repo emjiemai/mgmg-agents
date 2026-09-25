@@ -43,10 +43,15 @@ class Metric:
 # meetings, 75 calls, 30 proposals, 10 qualified leads) divided across a 5-day
 # week, ready if numbers are ever turned back on.
 SALES_METRICS: tuple[Metric, ...] = (
-    Metric("meetings", "Uchrashuvlar", 4, ("uchrashuv", "vstrech", "встреч", "meeting")),
-    Metric("calls", "Qo'ng'iroqlar", 15, ("qo'ng'iroq", "qongiroq", "qo'ngiroq", "zvon", "звон", "call")),
-    Metric("proposals", "Yuborilgan KP", 6, ("kp", "кп", "taklif", "предложен", "proposal", "offer")),
-    Metric("new_leads", "Yangi lidlar", 2, ("lid", "лид", "lead")),
+    Metric("meetings", "Учрашувлар", 4, ("uchrashuv", "учрашув", "vstrech", "встреч", "meeting")),
+    Metric(
+        "calls",
+        "Қўнғироқлар",
+        15,
+        ("qo'ng'iroq", "qongiroq", "qo'ngiroq", "қўнғироқ", "кўнғироқ", "zvon", "звон", "call"),
+    ),
+    Metric("proposals", "Юборилган КП", 6, ("kp", "кп", "taklif", "таклиф", "предложен", "proposal", "offer")),
+    Metric("new_leads", "Янги лидлар", 2, ("lid", "лид", "lead")),
 )
 
 # Empty on purpose: the business decided (2026-09-16) that everyone, sales
@@ -138,16 +143,15 @@ def build_request_text(display_name: str, metrics: Sequence[Metric]) -> str:
         Telegram HTML.
     """
     lines = [
-        "🕓 <b>Kunlik hisobot / Daily report</b>",
+        "🕓 <b>Кунлик ҳисобот</b>",
         "",
-        f"{display_name}, bugun nima qildingiz? Qisqacha yozib yuboring.",
-        "<i>What did you do today? Reply with a short summary.</i>",
+        f"{display_name}, бугун нима қилдингиз? Қисқача ёзиб юборинг.",
     ]
     if metrics:
         example = ", ".join(f"{metric.label} {metric.daily_target}" for metric in metrics)
         lines += [
             "",
-            "Raqamlarni ham qo'shing / include your numbers:",
+            "Рақамларни ҳам қўшинг:",
             f"<i>{example}</i>",
         ]
     return "\n".join(lines)
@@ -163,10 +167,9 @@ def build_reminder_text(metrics: Sequence[Metric]) -> str:
         Telegram HTML.
     """
     lines = [
-        "⏰ <b>Eslatma / Reminder</b>",
+        "⏰ <b>Эслатма</b>",
         "",
-        "Bugungi hisobotingiz hali kelmadi. Ish kuni tugashidan oldin yuboring.",
-        "<i>Your daily report hasn't arrived yet — please send it before the end of the day.</i>",
+        "Бугунги ҳисоботингиз ҳали келмади. Иш куни тугашидан олдин юборинг.",
     ]
     if metrics:
         example = ", ".join(f"{metric.label} {metric.daily_target}" for metric in metrics)
@@ -182,7 +185,7 @@ def format_metrics(values: dict[str, int], metrics: Sequence[Metric]) -> str:
         metrics: The role's metrics, defining order and targets.
 
     Returns:
-        e.g. ``"Uchrashuvlar: 3/4 ⚠️ · Qo'ng'iroqlar: 18/15 ✅"``, or "" when
+        e.g. ``"Учрашувлар: 3/4 ⚠️ · Қўнғироқлар: 18/15 ✅"``, or "" when
         the role reports no numbers.
     """
     if not metrics:

@@ -26,10 +26,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
 from integrations.common.logging_setup import setup_logging
-from integrations.org_bot import docx_form, permissions, store
+from integrations.org_bot import answer_check, docx_form, permissions, store
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
@@ -38,33 +37,8 @@ log = setup_logging(AGENT)
 
 CANCEL_HINT = "\n\n<i>Бекор қилиш: /bekor</i>"
 
-VALIDATE_SYSTEM = """You check ONE answer on a written permission request form \
-(EMJ-SOP-ADM-01, written in Uzbek Cyrillic) before it goes onto the company's \
-official document.
-
-You are given the form field, what a valid answer looks like, the question the \
-employee was asked, and their answer. Employees write in Uzbek (Latin or \
-Cyrillic), Russian or English.
-
-1. Decide whether the answer genuinely and clearly answers THIS question.
-   Reject greetings ("alo", "salom"), filler or test text ("test", "asd", \
-"...", "?"), an answer to a different question, and anything too vague to \
-stand on an official document. Do NOT reject for spelling, alphabet, language \
-or brevity when the meaning is clear.
-2. If it is acceptable, write it for the form:
-   - in Uzbek Cyrillic (transliterate Uzbek Latin; translate Russian or \
-English words into Uzbek, e.g. "IT Specialist" -> "IT мутахассис");
-   - with spelling and grammar corrected, and shaped to fit the form's field \
-(e.g. for "Бўлим", "IT bo'limida" -> "IT бўлими");
-   - keep abbreviations and brand names as they are (IT, AI, CRM, SAP, \
-Telegram, Render);
-   - people's names: transliterate to Cyrillic, never change them;
-   - NEVER add, remove or change any fact, number, amount, date, time or \
-name. Do not expand or embellish: same meaning, roughly the same length.
-
-Return ONLY JSON. Acceptable: {"ok": true, "value": "<the answer for the form>"}. \
-Not acceptable: {"ok": false, "follow_up": "<one short, polite question in \
-Uzbek Cyrillic that says exactly what is missing or unclear>"}."""
+# What the AI is told the answers are for (see answer_check.py).
+FORM_CONTEXT = "a written permission request form (EMJ-SOP-ADM-01)"
 
 
 def _label(role: str) -> str:
@@ -138,38 +112,8 @@ async def _may_decide(request: dict[str, Any], telegram_user_id: int) -> bool:
 async def _check_answer(
     field: permissions.Field, answer: str, run_id: uuid.UUID
 ) -> tuple[bool, str | None, str]:
-    """Ask the AI whether this answer can go onto the official form.
-
-    Returns:
-        ``(acceptable, follow-up question, text for the form)``. If the AI
-        can't be reached the answer is accepted as typed when it's more than
-        a character or two — a provider outage must not trap an employee in
-        an endless loop — and the requester still reviews the form.
-    """
-    message = (
-        f"Field: {field.label}\n"
-        f"A valid answer is: {field.rule}\n"
-        f"Question asked: {field.question}\n"
-        f"Employee's answer: {answer}"
-    )
-    try:
-        async with OpenRouterClient(
-            agent=AGENT,
-            run_id=run_id,
-            provider_override=settings.ops_manager_bot_provider,
-            model_override=settings.ops_manager_bot_model,
-            fallback_override=settings.ops_manager_bot_fallback_models,
-        ) as ai:
-            verdict = await ai.complete_json(VALIDATE_SYSTEM, message)
-    except OpenRouterError as exc:
-        log.warning("Answer check unavailable, accepting '{}' for {}: {}", answer[:60], field.key, exc)
-        return len(answer.strip()) >= 2, None, answer.strip()
-
-    if verdict.get("ok") is True:
-        value = " ".join(str(verdict.get("value") or "").split())
-        return True, None, value or answer.strip()
-    follow_up = str(verdict.get("follow_up") or "").strip()
-    return False, follow_up or None, ""
+    """The shared AI answer check, for this form (see answer_check.py)."""
+    return await answer_check.check_answer(field, answer, run_id, agent=AGENT, context=FORM_CONTEXT)
 
 
 async def _ask_next(request: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -264,6 +208,13 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     created = await store.create_permission_draft(employee)
     if created is None:  # lost a race with another message
         return None
+    # The name the employee typed for the bot (names.py) — not their Telegram
+    # profile name — so the form doesn't ask it a second time.
+    if (employee.get("full_name") or "").strip():
+        created = (
+            await store.set_permission_field(str(created["id"]), "requester_full_name", employee["full_name"])
+            or created
+        )
 
     await store.add_permission_event(
         request_id=str(created["id"]),
@@ -276,7 +227,7 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
         telegram_user_id,
         "📄 <b>Ёзма рухсат сўрови</b>\n"
         f"<i>{permissions.SOP_CODE} — оғзаки рухсат ҳисобланмайди</i>\n\n"
-        "Бир неча савол бераман. Жавобларингиз расмий шаклга айнан ёзилади.\n"
+        "Бир неча савол бераман. Жавобларингиз расмий шаклга кирилл ёзувида ёзилади.\n"
         f"Бекор қилиш: /bekor",
         run_id,
     )

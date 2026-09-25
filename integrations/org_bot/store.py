@@ -42,6 +42,59 @@ async def set_employee_full_name(telegram_user_id: int, full_name: str) -> None:
     await execute("UPDATE employees SET full_name = %s WHERE telegram_user_id = %s", (full_name, telegram_user_id))
 
 
+async def mark_name_asked(telegram_user_id: int) -> None:
+    """Record that the bot asked this employee for their name."""
+    await execute(
+        "UPDATE employees SET name_asked_at = now() WHERE telegram_user_id = %s AND name_asked_at IS NULL",
+        (telegram_user_id,),
+    )
+
+
+async def employees_to_ask_name() -> list[dict[str, Any]]:
+    """Active employees (not the Director) with no name who haven't been asked yet."""
+    return await fetch_all(
+        """
+        SELECT * FROM employees
+        WHERE status = 'active' AND role <> 'operatsion_direktor'
+          AND COALESCE(btrim(full_name), '') = '' AND name_asked_at IS NULL
+        ORDER BY created_at
+        """
+    )
+
+
+# --------------------------------------------- relays awaiting confirmation
+
+
+async def create_pending_relay(employee_telegram_user_id: int, text: str, task_id: str | None) -> dict[str, Any]:
+    """Hold an employee's message until they confirm it should reach the Director."""
+    return await fetch_one(
+        """
+        INSERT INTO pending_relays (employee_telegram_user_id, message_text, task_id)
+        VALUES (%s, %s, %s)
+        RETURNING *
+        """,
+        (employee_telegram_user_id, text, task_id),
+    )
+
+
+async def resolve_pending_relay(relay_id: str, employee_telegram_user_id: int, outcome: str) -> dict[str, Any] | None:
+    """Settle a held message, once, and only by the person who wrote it.
+
+    Returns:
+        The row if this call settled it, else None (already settled, not
+        theirs, or unknown) — a double tap can't send twice.
+    """
+    return await fetch_one(
+        """
+        UPDATE pending_relays
+        SET resolved_at = now(), outcome = %s
+        WHERE id = %s AND employee_telegram_user_id = %s AND resolved_at IS NULL
+        RETURNING *
+        """,
+        (outcome, relay_id, employee_telegram_user_id),
+    )
+
+
 async def create_employee(
     *,
     telegram_user_id: int,
@@ -379,7 +432,8 @@ async def set_dispatch_due_date(
         WHERE t.director_telegram_user_id = %s AND t.source_message_id = %s
           AND t.due_date IS NULL AND t.status IN ('sent', 'started')
           AND e.id = t.assigned_employee_id
-        RETURNING t.*, e.telegram_user_id AS employee_telegram_user_id, e.display_name
+        RETURNING t.*, e.telegram_user_id AS employee_telegram_user_id,
+                  COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         """,
         (due_date, director_telegram_user_id, source_message_id),
     )
@@ -389,7 +443,8 @@ async def tasks_needing_reminder(today: date) -> list[dict[str, Any]]:
     """Open tasks due today or tomorrow that haven't had their reminder yet."""
     return await fetch_all(
         """
-        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id, e.display_name
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
         WHERE t.status IN ('sent', 'started') AND t.reminded_at IS NULL
@@ -410,7 +465,8 @@ async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
     """Open tasks past their deadline whose overdue notice hasn't gone out."""
     return await fetch_all(
         """
-        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id, e.display_name
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
         WHERE t.status IN ('sent', 'started') AND t.overdue_notified_at IS NULL
@@ -431,7 +487,8 @@ async def tasks_due_between(start: date, end: date) -> list[dict[str, Any]]:
     return await fetch_all(
         """
         SELECT t.id, t.task_summary, t.status, t.due_date, t.completed_at, t.created_at,
-               t.director_telegram_user_id, e.display_name, e.role
+               t.director_telegram_user_id,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
         WHERE t.due_date BETWEEN %s AND %s
@@ -445,7 +502,8 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
     """Every unfinished task, oldest deadline first, for the Director's questions."""
     return await fetch_all(
         """
-        SELECT t.task_summary, t.status, t.due_date, t.created_at, e.display_name, e.role
+        SELECT t.task_summary, t.status, t.due_date, t.created_at,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
         WHERE t.status IN ('sent', 'started')
@@ -460,7 +518,8 @@ async def reports_between(start: date, end: date) -> list[dict[str, Any]]:
     """Every daily report row in ``[start, end]``, with the employee's name (A1's И)."""
     return await fetch_all(
         """
-        SELECT r.report_date, r.status, r.submitted_at, e.display_name, e.role
+        SELECT r.report_date, r.status, r.submitted_at,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date BETWEEN %s AND %s
@@ -977,7 +1036,7 @@ async def reports_awaiting_reminder(report_date: date) -> list[dict[str, Any]]:
     """
     return await fetch_all(
         """
-        SELECT r.*, e.display_name
+        SELECT r.*, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = %s AND r.status = 'asked' AND r.reminded_at IS NULL
@@ -1298,7 +1357,8 @@ async def report_results_before(day: date) -> list[dict[str, Any]]:
     """
     return await fetch_all(
         """
-        SELECT r.report_date, r.status, e.display_name, e.role
+        SELECT r.report_date, r.status,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = (SELECT max(report_date) FROM daily_reports WHERE report_date < %s)
@@ -1320,7 +1380,7 @@ async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
     return await fetch_all(
         """
         SELECT r.report_date, r.status, r.content, r.metrics, r.tasks_done,
-               r.submitted_at, e.display_name, e.role
+               r.submitted_at, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date >= %s::date - %s::int
