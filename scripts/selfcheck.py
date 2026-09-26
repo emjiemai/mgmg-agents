@@ -81,6 +81,229 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9]*(?:'[A-Za-z]+)*", plain) if w not in allowed]
 
 
+def test_references() -> None:
+    """Every settings.X and every attribute of a project module that the code uses exists.
+
+    2026-09-26: a removed setting (ops_manager_bot_provider) was still read
+    in the answer path, so every question to OPS Manager Bot failed with
+    "Хатолик юз берди" — invisible to lint and imports, because Python only
+    looks an attribute up when that line runs. This walks every file instead.
+    Scope-aware: an import inside one function applies only there, and a
+    local variable with the same name as a module hides it.
+    """
+    print("references")
+    import ast
+    import importlib
+
+    from integrations.common.config import PROJECT_ROOT, settings
+
+    scope_types = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+    def own_nodes(scope: ast.AST):
+        """Nodes of this scope, not of the functions nested inside it."""
+        stack = list(ast.iter_child_nodes(scope))
+        while stack:
+            node = stack.pop()
+            yield node
+            if not isinstance(node, scope_types):
+                stack.extend(ast.iter_child_nodes(node))
+
+    def project_modules(nodes) -> dict[str, object]:
+        found: dict[str, object] = {}
+        for node in nodes:
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("integrations"):
+                for alias in node.names:
+                    try:  # only names that are themselves modules ("from x import store")
+                        found[alias.asname or alias.name] = importlib.import_module(f"{node.module}.{alias.name}")
+                    except ImportError:
+                        pass
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("integrations") and alias.asname:
+                        found[alias.asname] = importlib.import_module(alias.name)
+        return found
+
+    missing: list[str] = []
+    files = [
+        p for folder in ("integrations", "agents", "scripts")
+        for p in (PROJECT_ROOT / folder).rglob("*.py") if "__pycache__" not in p.parts
+    ]
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module_level = project_modules(own_nodes(tree))
+        scopes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        for scope in scopes:
+            nodes = list(own_nodes(scope))
+            local_imports = project_modules(nodes) if scope is not tree else {}
+            stored = {n.id for n in nodes if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+            if scope is not tree:
+                stored |= {a.arg for a in scope.args.args + scope.args.kwonlyargs}
+            modules = {**{k: v for k, v in module_level.items() if k not in stored}, **local_imports}
+            for node in nodes:
+                if not (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)):
+                    continue
+                owner, attr = node.value.id, node.attr
+                where = f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
+                if owner == "settings" and "settings" not in stored and not hasattr(settings, attr):
+                    missing.append(f"{where} settings.{attr}")
+                elif owner in modules and not hasattr(modules[owner], attr):
+                    missing.append(f"{where} {owner}.{attr}")
+    check("no reference to a setting or function that doesn't exist", missing, [])
+
+
+def test_bot_flows() -> None:
+    """The Director's real message paths, end to end, with AI/Telegram/DB faked.
+
+    Added 2026-09-26 after every question failed with "Хатолик юз берди": the
+    answer path had never been executed by any test. This runs it — and the
+    task path, and every data agent's fetcher on an empty database — so a
+    runtime error anywhere in them fails here instead of in production.
+    """
+    print("bot flows (smoke)")
+    import asyncio
+    import sys
+    import uuid
+
+    from integrations.common import db
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import ops_manager, roles, store
+
+    load_agent("cash-calendar")  # loaded now so its database functions get faked below
+
+    async def no_rows(*_args, **_kwargs):
+        return []
+
+    async def no_row(*_args, **_kwargs):
+        return None
+
+    director = {"id": "d", "telegram_user_id": 1, "role": "operatsion_direktor", "status": "active",
+                "display_name": "Director", "full_name": "Бобур Алиев"}
+    worker = {"id": "w", "telegram_user_id": 2, "role": "it", "status": "active",
+              "display_name": "GMHRD", "full_name": "Алишер Каримов"}
+
+    async def employees_by_role(role):
+        return [director] if role == "operatsion_direktor" else [worker] if role == "it" else []
+
+    async def active_employees():
+        return [director, worker]
+
+    async def new_task(**kwargs):
+        return {"id": "t1", **kwargs}
+
+    replies: list[str] = []
+
+    async def fake_reply(_chat_id, _run_id, text, reply_markup=None):
+        replies.append(text)
+        return [100]
+
+    class FakeAI:
+        classification: dict = {}
+
+        def __init__(self, *args, **kwargs):  # accepts exactly what the real client accepts
+            import inspect
+
+            from integrations.ai.openrouter_client import OpenRouterClient
+
+            inspect.signature(OpenRouterClient.__init__).bind(self, *args, **kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def complete_json(self, system, user):
+            return dict(FakeAI.classification)
+
+        async def complete(self, system, user, **kwargs):
+            return "Жавоб"
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, **kwargs):
+            replies.append(text)
+            return [200]
+
+        async def _call(self, *args, **kwargs):
+            return {"message_id": 201}
+
+    class NoSheets:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            from integrations.google.sheets_client import SheetsError
+
+            raise SheetsError("offline")
+
+        async def __aexit__(self, *exc):
+            return None
+
+    # Fake every database helper wherever it was imported by name.
+    saved: list[tuple[object, str, object]] = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    fakes = {"fetch_all": no_rows, "fetch_one": no_row, "execute": no_row}
+    # Captured first: patching db itself mid-loop must not change what we match.
+    originals = {name: getattr(db, name) for name in fakes}
+    for module in list(sys.modules.values()):
+        module_name = getattr(module, "__name__", "")
+        if not (module_name.startswith("integrations") or module_name.startswith("mgmg_agent_")):
+            continue
+        for name, fake in fakes.items():
+            if getattr(module, name, None) is originals[name]:
+                patch(module, name, fake)
+    for name in dir(store):
+        if name.startswith("_") or not asyncio.iscoroutinefunction(getattr(store, name)):
+            continue
+        patch(store, name, no_row if name.startswith(("get_", "create_", "find_", "set_", "mark_", "log_")) else no_rows)
+    patch(store, "active_employees_by_role", employees_by_role)
+    patch(store, "list_active_employees", active_employees)
+    patch(store, "create_task", new_task)
+    patch(ops_manager, "OpenRouterClient", FakeAI)
+    patch(ops_manager, "TelegramBot", FakeBot)
+    patch(ops_manager, "SheetsClient", NoSheets)
+    patch(ops_manager, "_reply", fake_reply)
+
+    try:
+        for slug in sorted(roles.AGENT_SLUGS):
+            try:
+                data = asyncio.run(ops_manager._fetch_agent_data(slug))
+                ok = isinstance(data, str) and bool(data)
+            except Exception as exc:  # noqa: BLE001 — the point is to report it
+                ok = False
+                print(f"    {slug}: {type(exc).__name__}: {exc}")
+            check_true(f"agent '{slug}' answers from an empty database", ok)
+
+        FakeAI.classification = {"target_type": "agent", "target_agent": "xodimlar_kpi", "task_summary": "",
+                                 "target_employee": None, "due_date": None}
+        replies.clear()
+        asyncio.run(ops_manager._dispatch_director_task(1, "kechagi hisobotlarni korsat", 11, uuid.uuid4()))
+        check("a question gets the AI's answer, not the error", replies, ["Жавоб"])
+
+        FakeAI.classification = {"target_type": "employee", "target_role": "it", "target_employee": "E1",
+                                 "task_summary": "Принтерни текширинг", "due_date": None}
+        replies.clear()
+        asyncio.run(ops_manager._dispatch_director_task(1, "Alisherga ayt printerni tekshirsin", 12, uuid.uuid4()))
+        check_true("a task reaches the named person", any("Принтерни текширинг" in r for r in replies))
+        check_true("and the Director is told who got it", any(r.startswith("Юборилди: Алишер Каримов") for r in replies))
+        check_true("no error on the task path", not any("Хатолик" in r for r in replies))
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+
 def test_money() -> None:
     """Money conversion and Uzbek sum formatting."""
     print("money")
@@ -950,6 +1173,8 @@ def main() -> int:
         0 if all checks pass, 1 otherwise.
     """
     for suite in (
+        test_references,
+        test_bot_flows,
         test_money,
         test_time,
         test_aging,

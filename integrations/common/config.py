@@ -98,10 +98,8 @@ class Settings(BaseSettings):
     # it, resolved per-sender via the employees table, not a fixed destination.
     ops_manager_bot_telegram_bot_token: SecretStr = SecretStr("")
     ops_manager_bot_webhook_secret: SecretStr = SecretStr("")
-    # Runs on its OWN provider switch, independent of the global ai_provider
-    # Lead Agent uses, so the two can be moved separately. Fallback stays on
-    # the SAME provider (OpenRouterClient opens one httpx client per provider;
-    # a cross-provider fallback would need a second client entirely).
+    # Its own model chain on OpenRouter, independent of OPENROUTER_MODEL (which
+    # the Lead Agent uses), so the two can be moved separately.
     # Switched from DeepSeek to OpenRouter + Gemini 3.8 Flash on 2026-09-14,
     # verified live against this bot's real prompts first: correct routing
     # (including "kechagi reportlarni yozib ber" -> crm_agent, which DeepSeek

@@ -1101,7 +1101,7 @@ async def _dispatch_director_task(
     except OpenRouterError as exc:
         log.error("Classification failed for source_message_id={}: {}", source_message_id, exc)
         await log_action(
-            agent=AGENT, action="dispatch_task", target_system=settings.ops_manager_bot_provider,
+            agent=AGENT, action="dispatch_task", target_system="openrouter",
             status="failure", run_id=run_id, error_message=str(exc), mode="write",
         )
         await _safe_notify_failure(director_telegram_user_id, run_id)
@@ -1521,7 +1521,6 @@ async def _answer_from_agent(
     async with OpenRouterClient(
         agent=AGENT,
         run_id=run_id,
-        provider_override=settings.ops_manager_bot_provider,
         model_override=settings.ops_manager_bot_model,
         fallback_override=settings.ops_manager_bot_fallback_models,
     ) as ai:
