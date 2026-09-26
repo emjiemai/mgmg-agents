@@ -74,7 +74,7 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     """
     import re
 
-    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot"}
+    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot"}
     allowed |= allow or set()
     # Telegram commands (/ismlar, /bekor) can only be Latin.
     plain = re.sub(r"/[a-z_]+", " ", re.sub(r"<[^>]+>", " ", text))
