@@ -1082,6 +1082,127 @@ def test_plan_agents() -> None:
     check_true("an empty month says so", "на ҳисобот сўралди" in tt.monthly_text(date(2026, 9, 1), []))
 
 
+def test_employee_admin() -> None:
+    """The admin changes a name or a role; an employee asks for a name change."""
+    print("employee admin (names, roles)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, names, ops_manager, store
+
+    worker_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    worker = {"id": worker_id, "telegram_user_id": 2, "role": "it", "status": "active", "display_name": "GMHRD",
+              "full_name": "Алишер Каримов", "telegram_username": "gmhrd"}
+    director = {**worker, "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "telegram_user_id": 1,
+                "role": "operatsion_direktor", "full_name": "Бобур Алиев"}
+
+    for label, (text, keyboard) in {
+        "list": admin.employee_list_view([worker, director]),
+        "card": admin.employee_card(worker),
+        "role picker": admin.role_picker_view(worker),
+        "remove confirm": admin.confirm_remove_view(worker),
+        "name request": admin.name_request_view(worker),
+    }.items():
+        buttons = [b for row in keyboard["inline_keyboard"] for b in row]
+        check_true(f"{label}: every button fits Telegram's 64 bytes",
+                   all(len(b["callback_data"].encode()) <= 64 for b in buttons))
+        check_true(f"{label}: Uzbek Cyrillic", latin_words(text, allow={"GMHRD", "gmhrd"}) == [])
+    picker = [b["callback_data"] for row in admin.role_picker_view(worker)[1]["inline_keyboard"] for b in row]
+    check_true("the current role isn't offered", f"cr:it:{worker_id}" not in picker and f"cr:ombor:{worker_id}" in picker)
+    check_true("removal needs a second tap",
+               any(b["callback_data"] == f"removeuser:{worker_id}"
+                   for row in admin.confirm_remove_view(worker)[1]["inline_keyboard"] for b in row))
+    check_true("the Director's card explains when their name is asked",
+               "кейинги ёзма рухсат қарорида" in admin.employee_card(director)[0])
+
+    sent: list[tuple[str, str]] = []  # (chat, text)
+    edits: list[str] = []
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, **kwargs):
+            sent.append((str(chat_id), text))
+            return [1]
+
+        async def _edit_message(self, **kwargs):
+            edits.append(kwargs["text"])
+
+        async def _answer_callback(self, *args):
+            return None
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    people = {worker_id: worker, director["id"]: director}
+
+    async def get_employee(employee_id):
+        return people.get(employee_id)
+
+    async def reset_name(employee_id, by):
+        return {**people[employee_id], "full_name": None}
+
+    async def change_role(employee_id, role, by):
+        return people[employee_id], {**people[employee_id], "role": role}
+
+    requests = [worker, None]
+
+    async def request_change(telegram_user_id):
+        return requests.pop(0)
+
+    saved = []
+    for obj, name, value in (
+        (admin, "TelegramBot", FakeBot), (names, "TelegramBot", FakeBot), (ops_manager, "TelegramBot", FakeBot),
+        (admin, "log_action", nothing), (store, "get_employee", get_employee), (store, "reset_employee_name", reset_name),
+        (store, "change_employee_role", change_role), (store, "request_name_change", request_change),
+        (settings, "admin_bot_admin_user_id", 0),
+    ):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def tap(data):
+        callback = {"id": "q", "data": data, "from": {"id": 9, "username": "admin"},
+                    "message": {"message_id": 5, "chat": {"id": 9}}}
+        return asyncio.run(admin.handle_admin_callback(callback, uuid.uuid4()))
+
+    try:
+        tap(f"rename:{worker_id}")
+        check_true("rename: the worker is asked for the new name", ("2", names.ASK_CHANGE_TEXT) in sent)
+        check_true("rename: the admin sees it happened", "Исм қайта сўралди" in edits[-1])
+
+        sent.clear()
+        tap(f"rename:{director['id']}")
+        check_true("the Director is never sent the question", not any(chat == "1" for chat, _ in sent))
+
+        sent.clear()
+        tap(f"cr:ombor:{worker_id}")
+        check_true("role change: the worker is told", any(chat == "2" and "Омбор" in text for chat, text in sent))
+        check_true("role change: the card shows it", "Роль ўзгартирилди" in edits[-1])
+
+        sent.clear()
+        tap(f"nameno:{worker_id}")
+        check_true("a refused request is told to the worker", any("рад этди" in text for _, text in sent))
+
+        sent.clear()
+        asyncio.run(ops_manager._request_name_change(worker, uuid.uuid4()))
+        check_true("/ism: the admin gets the request card", any("Исм ўзгартириш сўрови" in text for _, text in sent))
+        check_true("/ism: the worker is told it went", any("админга юборилди" in text for _, text in sent))
+        sent.clear()
+        asyncio.run(ops_manager._request_name_change(worker, uuid.uuid4()))
+        check_true("/ism twice within an hour isn't sent again", any("аллақачон" in text for _, text in sent))
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+
 def test_payment_gate() -> None:
     """B1: requests route by amount to whoever holds that limit."""
     print("payment gate (B1)")
@@ -1184,6 +1305,7 @@ def main() -> int:
         test_permission_form,
         test_task_tracker,
         test_payment_gate,
+        test_employee_admin,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

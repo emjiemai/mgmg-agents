@@ -673,6 +673,25 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS full_name TEXT;
 -- When the bot asked this employee for their name (integrations/org_bot/names.py):
 -- once asked, their next message is taken as the answer.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_asked_at TIMESTAMPTZ;
+-- When the employee last asked (/ism) to change their name — one request
+-- an hour at most, so the admin isn't flooded.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS name_change_requested_at TIMESTAMPTZ;
+
+-- ---------------------------------------------------------------------------
+-- employee_changes — every change to an employee's name or role: who it
+-- was before, who changed it, when. A name on an old report or document can
+-- always be traced (documents also keep the name they were signed with).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS employee_changes (
+    id           BIGSERIAL    PRIMARY KEY,
+    employee_id  UUID         NOT NULL REFERENCES employees(id),
+    field        TEXT         NOT NULL CHECK (field IN ('full_name', 'role')),
+    old_value    TEXT,
+    new_value    TEXT,
+    changed_by   TEXT         NOT NULL,
+    changed_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_employee_changes_employee ON employee_changes (employee_id, changed_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- pending_relays — an employee's message held until they confirm it should

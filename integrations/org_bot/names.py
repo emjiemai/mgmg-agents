@@ -44,6 +44,13 @@ ASK_TEXT = (
     "(масалан: Алишер Каримов)."
 )
 NOT_SENT_NOTE = "\n\n<i>Хабарингиз ҳали юборилмади — исмингизни ёзганингиздан кейин уни қайта юборинг.</i>"
+# Sent when the admin asks someone to write their name again (a new person on
+# the account, a correction, the employee's own request).
+ASK_CHANGE_TEXT = (
+    "✏️ <b>Исмингизни янгиланг</b>\n\n"
+    "Админ исмингизни қайта ёзишни сўради. Исм ва фамилиянгизни тўлиқ ёзинг "
+    "(масалан: Алишер Каримов)."
+)
 
 
 def person_name(employee: dict[str, Any] | None) -> str:
@@ -95,11 +102,33 @@ async def collect_name(employee: dict[str, Any], message: dict[str, Any], run_id
             return "name_reasked"
 
         await store.set_employee_full_name(telegram_user_id, value)
+        if employee.get("id"):
+            await store.log_employee_change(str(employee["id"]), "full_name", None, value, "self")
         await bot.send_message(
             f"✅ Раҳмат, <b>{escape(value)}</b>! Исмингиз сақланди.", chat_id=str(telegram_user_id)
         )
     log.info("Employee {} gave their name", telegram_user_id)
     return "name_saved"
+
+
+async def ask_to_change(employee: dict[str, Any], run_id: uuid.UUID) -> bool:
+    """Ask one employee to write their name again (their name was just cleared).
+
+    The Director isn't messaged: their next message is an order, never a
+    name, so theirs is asked at their next written-permission decision.
+
+    Returns:
+        True if the question was delivered.
+    """
+    if employee.get("role") == DIRECTOR_ROLE:
+        return False
+    async with _bot(run_id) as bot:
+        try:
+            await bot.send_message(ASK_CHANGE_TEXT, chat_id=str(employee["telegram_user_id"]))
+        except TelegramError as exc:
+            log.warning("Could not ask {} to update their name: {}", employee["telegram_user_id"], exc)
+            return False
+    return True
 
 
 async def ask_missing_names(run_id: uuid.UUID) -> int:

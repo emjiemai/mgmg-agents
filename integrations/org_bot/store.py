@@ -42,6 +42,76 @@ async def set_employee_full_name(telegram_user_id: int, full_name: str) -> None:
     await execute("UPDATE employees SET full_name = %s WHERE telegram_user_id = %s", (full_name, telegram_user_id))
 
 
+async def get_employee(employee_id: str) -> dict[str, Any] | None:
+    """One employee by ``employees.id``."""
+    return await fetch_one("SELECT * FROM employees WHERE id = %s", (employee_id,))
+
+
+async def log_employee_change(
+    employee_id: str, field: str, old_value: str | None, new_value: str | None, changed_by: str
+) -> None:
+    """Record a name or role change in ``employee_changes``."""
+    await execute(
+        "INSERT INTO employee_changes (employee_id, field, old_value, new_value, changed_by) VALUES (%s, %s, %s, %s, %s)",
+        (employee_id, field, old_value, new_value, changed_by),
+    )
+
+
+async def reset_employee_name(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Clear an employee's name so the bot asks for it again.
+
+    The old name goes to ``employee_changes`` first. ``name_asked_at`` is set,
+    so their next message is taken as the new name (names.py).
+
+    Returns:
+        The updated row, or None if there's no such active employee.
+    """
+    before = await fetch_one("SELECT * FROM employees WHERE id = %s AND status = 'active'", (employee_id,))
+    if before is None:
+        return None
+    await log_employee_change(employee_id, "full_name", before.get("full_name"), None, changed_by)
+    return await fetch_one(
+        """
+        UPDATE employees SET full_name = NULL, name_asked_at = now(), name_change_requested_at = NULL
+        WHERE id = %s AND status = 'active'
+        RETURNING *
+        """,
+        (employee_id,),
+    )
+
+
+async def change_employee_role(employee_id: str, role: str, changed_by: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Move an employee to another role (a new position), logged.
+
+    Returns:
+        ``(before, after)``, or None if there's no such active employee or
+        the role is unchanged.
+    """
+    before = await fetch_one("SELECT * FROM employees WHERE id = %s AND status = 'active'", (employee_id,))
+    if before is None or before["role"] == role:
+        return None
+    after = await fetch_one("UPDATE employees SET role = %s WHERE id = %s RETURNING *", (role, employee_id))
+    await log_employee_change(employee_id, "role", before["role"], role, changed_by)
+    return before, after
+
+
+async def request_name_change(telegram_user_id: int) -> dict[str, Any] | None:
+    """Record an employee's own request to change their name (/ism).
+
+    Returns:
+        The employee row, or None if they already asked within the last hour.
+    """
+    return await fetch_one(
+        """
+        UPDATE employees SET name_change_requested_at = now()
+        WHERE telegram_user_id = %s AND status = 'active'
+          AND (name_change_requested_at IS NULL OR name_change_requested_at < now() - interval '1 hour')
+        RETURNING *
+        """,
+        (telegram_user_id,),
+    )
+
+
 async def mark_name_asked(telegram_user_id: int) -> None:
     """Record that the bot asked this employee for their name."""
     await execute(

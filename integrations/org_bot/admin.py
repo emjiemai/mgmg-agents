@@ -24,8 +24,8 @@ from integrations.common.config import settings
 from integrations.common.db import log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import store
-from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
-from integrations.telegram.bot import TelegramBot, escape
+from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS, ROLE_SLUGS, ROLES
+from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
 AGENT = "admin-bot"
 log = setup_logging(AGENT)
@@ -198,33 +198,239 @@ async def _ask_names(run_id: uuid.UUID) -> str:
     return "names_asked"
 
 
+def employee_list_view(employees: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    """The /xodimlar list: every active employee, one button each to open their card."""
+    if not employees:
+        return "Рўйхатдан ўтган ходимлар йўқ.", {"inline_keyboard": []}
+    lines = ["<b>Рўйхатдан ўтган ходимлар</b>\n"]
+    buttons = []
+    for emp in employees:
+        label = ROLE_LABELS.get(emp["role"], emp["role"])
+        username = f" (@{escape(emp['telegram_username'])})" if emp.get("telegram_username") else ""
+        full_name = (emp.get("full_name") or "").strip()
+        name = escape(full_name) if full_name else f"{escape(emp['display_name'])} <i>(исм ёзилмаган)</i>"
+        lines.append(f"• {name}{username} — {label}")
+        buttons.append([{"text": f"👤 {full_name or emp['display_name']} ({label})", "callback_data": f"emp:{emp['id']}"}])
+    lines.append(
+        "\n<i>Ходимни танланг: исм, роль ёки ўчириш. "
+        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat</i>"
+    )
+    return "\n".join(lines), {"inline_keyboard": buttons}
+
+
+def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, Any]]:
+    """One employee's card: who they are, and what the admin can change."""
+    full_name = (emp.get("full_name") or "").strip()
+    role = ROLE_LABELS.get(emp["role"], emp["role"])
+    username = f" (@{escape(emp['telegram_username'])})" if emp.get("telegram_username") else ""
+    lines = [
+        f"👤 <b>{escape(full_name)}</b>" if full_name else "👤 <i>исм ёзилмаган</i>",
+        f"Роль: {escape(role)}",
+        f"Телеграм: {escape(emp['display_name'])}{username}",
+    ]
+    if emp["role"] == DIRECTOR_ROLE:
+        lines.append("<i>Директорга савол юборилмайди: исми кейинги ёзма рухсат қарорида сўралади.</i>")
+    if note:
+        lines += ["", note]
+    employee_id = emp["id"]
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "✏️ Исмни қайта сўраш", "callback_data": f"rename:{employee_id}"}],
+            [{"text": "🔁 Ролни ўзгартириш", "callback_data": f"rerole:{employee_id}"}],
+            [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
+            [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
+        ]
+    }
+    return "\n".join(lines), keyboard
+
+
+def role_picker_view(emp: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Pick someone's new role (their current one isn't offered)."""
+    name = (emp.get("full_name") or "").strip() or emp["display_name"]
+    text = (
+        f"🔁 <b>{escape(name)}</b> учун янги роль:\n"
+        "<i>Операцион директор роли — топшириқ беради, ҳисобот юбормаганлар ва ёзма рухсатларни олади.</i>"
+    )
+    rows = [
+        [{"text": role.label, "callback_data": f"cr:{role.slug}:{emp['id']}"}]
+        for role in ROLES
+        if role.slug != emp["role"]
+    ]
+    rows.append([{"text": "← Орқага", "callback_data": f"emp:{emp['id']}"}])
+    return text, {"inline_keyboard": rows}
+
+
+def confirm_remove_view(emp: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """One more tap before someone is removed."""
+    name = (emp.get("full_name") or "").strip() or emp["display_name"]
+    text = f"🗑 <b>{escape(name)}</b> ўчирилсинми?\n<i>Кейин ботдан фойдаланиш учун қайта рўйхатдан ўтиши керак бўлади.</i>"
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "🗑 Ҳа, ўчириш", "callback_data": f"removeuser:{emp['id']}"},
+                {"text": "← Бекор", "callback_data": f"emp:{emp['id']}"},
+            ]
+        ]
+    }
+    return text, keyboard
+
+
+def name_request_view(emp: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """The card the admin gets when an employee asks (/ism) to change their name."""
+    name = (emp.get("full_name") or "").strip() or emp["display_name"]
+    role = ROLE_LABELS.get(emp["role"], emp["role"])
+    text = f"✏️ <b>Исм ўзгартириш сўрови</b>\n\n{escape(name)} ({escape(role)}) исмини ўзгартирмоқчи."
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Рухсат бериш", "callback_data": f"nameok:{emp['id']}"},
+                {"text": "❌ Рад этиш", "callback_data": f"nameno:{emp['id']}"},
+            ]
+        ]
+    }
+    return text, keyboard
+
+
 async def _list_employees(run_id: uuid.UUID) -> str:
-    """Send the admin every active employee, one Remove button each."""
-    employees = await store.list_active_employees()
+    """Send the admin every active employee, each opening their own card."""
+    text, keyboard = employee_list_view(await store.list_active_employees())
     async with TelegramBot(
         agent=AGENT,
         run_id=run_id,
         bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
         default_chat_id=settings.admin_bot_telegram_chat_id,
     ) as bot:
-        if not employees:
-            await bot.send_message("Рўйхатдан ўтган ходимлар йўқ.")
-            return "empty"
-
-        lines = ["<b>Рўйхатдан ўтган ходимлар</b>\n"]
-        buttons = []
-        for emp in employees:
-            label = ROLE_LABELS.get(emp["role"], emp["role"])
-            username = f" (@{escape(emp['telegram_username'])})" if emp.get("telegram_username") else ""
-            full_name = (emp.get("full_name") or "").strip()
-            name = escape(full_name) if full_name else f"{escape(emp['display_name'])} <i>(исм ёзилмаган)</i>"
-            lines.append(f"• {name}{username} — {label}")
-            buttons.append(
-                [{"text": f"🗑 {full_name or emp['display_name']} ({label})", "callback_data": f"removeuser:{emp['id']}"}]
-            )
-        lines.append("\n<i>Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat</i>")
-        await bot.send_message("\n".join(lines), reply_markup={"inline_keyboard": buttons})
+        await bot.send_message(text, reply_markup=keyboard)
     return "listed"
+
+
+async def request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> None:
+    """Send the admin an employee's own request (/ism) to change their name."""
+    text, keyboard = name_request_view(employee)
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text, reply_markup=keyboard)
+
+
+async def _edit(callback: dict[str, Any], text: str, keyboard: dict[str, Any], run_id: uuid.UUID) -> None:
+    """Replace the tapped Admin Bot message with a new view."""
+    message = callback.get("message") or {}
+    if not (message.get("message_id") and message.get("chat", {}).get("id")):
+        return
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+            chat_id=str(message["chat"]["id"]), message_id=message["message_id"], text=text, reply_markup=keyboard
+        )
+
+
+async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) -> None:
+    """Message an employee on OPS Manager Bot — the chat they already use."""
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        try:
+            await bot.send_message(text, chat_id=str(telegram_user_id))
+        except TelegramError as exc:
+            log.warning("Could not message employee {}: {}", telegram_user_id, exc)
+
+
+EMPLOYEE_ACTIONS = ("emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno")
+
+
+async def _handle_employee_action(
+    action: str, target: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID
+) -> str:
+    """The /xodimlar card buttons and the answer to an employee's /ism request.
+
+    A new person on an account, a corrected name, or a move to another
+    department: the admin re-asks the name or changes the role here, and each
+    change is logged in ``employee_changes``.
+    """
+    if action == "emplist":
+        text, keyboard = employee_list_view(await store.list_active_employees())
+        await _edit(callback, text, keyboard, run_id)
+        await _answer(query_id, "OK")
+        return "employee_list"
+
+    role_slug = None
+    employee_id = target
+    if action == "cr":
+        role_slug, _, employee_id = target.partition(":")
+        if role_slug not in ROLE_SLUGS:
+            await _answer(query_id, "Номаълум роль")
+            return "unrecognized"
+
+    employee = await store.get_employee(employee_id)
+    if employee is None or employee["status"] != "active":
+        await _answer(query_id, "Ходим топилмади")
+        return "not_found"
+
+    if action == "emp":
+        text, keyboard = employee_card(employee)
+        await _edit(callback, text, keyboard, run_id)
+    elif action == "rerole":
+        text, keyboard = role_picker_view(employee)
+        await _edit(callback, text, keyboard, run_id)
+    elif action == "rmask":
+        text, keyboard = confirm_remove_view(employee)
+        await _edit(callback, text, keyboard, run_id)
+    elif action in ("rename", "nameok"):
+        updated = await store.reset_employee_name(employee_id, decided_by)
+        if updated is None:
+            await _answer(query_id, "Ходим топилмади")
+            return "not_found"
+        from integrations.org_bot import names  # local import keeps admin light
+
+        delivered = await names.ask_to_change(updated, run_id)
+        if updated["role"] == DIRECTOR_ROLE:
+            note = "✏️ Исм ўчирилди — кейинги ёзма рухсат қарорида сўралади."
+        elif delivered:
+            note = "✏️ Исм қайта сўралди — ходим жавоб бергунча бошқа хабарлари қабул қилинмайди."
+        else:
+            note = "⚠️ Исм ўчирилди, лекин саволни етказиб бўлмади — ходимнинг кейинги хабарида сўралади."
+        if action == "nameok":
+            old = (employee.get("full_name") or "").strip() or employee["display_name"]
+            await _edit(callback, f"✅ Рухсат берилди — {escape(old)} исмини янгилайди.\n\n<i>{escape(note)}</i>",
+                        {"inline_keyboard": []}, run_id)
+        else:
+            text, keyboard = employee_card(updated, note)
+            await _edit(callback, text, keyboard, run_id)
+        await log_action(
+            agent=AGENT, action="employee_name_reset", target_system="postgres", status="success", run_id=run_id,
+            target_ref=employee_id, mode="write", payload={"by": decided_by, "on_request": action == "nameok"},
+        )
+    elif action == "nameno":
+        name = (employee.get("full_name") or "").strip() or employee["display_name"]
+        await _tell_employee(employee["telegram_user_id"], "❌ Админ исм ўзгартириш сўровингизни рад этди.", run_id)
+        await _edit(callback, f"❌ Рад этилди — {escape(name)}", {"inline_keyboard": []}, run_id)
+    elif action == "cr":
+        changed = await store.change_employee_role(employee_id, role_slug, decided_by)
+        if changed is None:
+            await _answer(query_id, "Роль ўзгармади")
+            return "role_unchanged"
+        before, after = changed
+        old_label = ROLE_LABELS.get(before["role"], before["role"])
+        new_label = ROLE_LABELS.get(after["role"], after["role"])
+        await _tell_employee(
+            after["telegram_user_id"],
+            f"🔁 Ролингиз ўзгартирилди: <b>{escape(old_label)}</b> → <b>{escape(new_label)}</b>.",
+            run_id,
+        )
+        text, keyboard = employee_card(after, f"🔁 Роль ўзгартирилди: {escape(old_label)} → {escape(new_label)}")
+        await _edit(callback, text, keyboard, run_id)
+        await log_action(
+            agent=AGENT, action="employee_role_changed", target_system="postgres", status="success", run_id=run_id,
+            target_ref=employee_id, mode="write", payload={"by": decided_by, "from": before["role"], "to": after["role"]},
+        )
+
+    await _answer(query_id, "OK")
+    return f"employee_{action}"
 
 
 async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -258,6 +464,9 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action == "removeuser":
         return await _handle_remove_user(target_id, query_id, decided_by, callback, run_id)
+
+    if action in EMPLOYEE_ACTIONS:
+        return await _handle_employee_action(action, target_id, query_id, decided_by, callback, run_id)
 
     if action in ("role_approve", "role_reject"):
         return await _handle_role_decision(target_id, action == "role_approve", query_id, decided_by, run_id)

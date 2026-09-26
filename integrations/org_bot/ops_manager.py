@@ -60,6 +60,9 @@ log = setup_logging(AGENT)
 # (editMessageCaption) relies on -- keeping this list to types that do.
 MEDIA_FIELDS = ("photo", "video", "audio", "voice", "document", "animation")
 
+# An employee asking to change their own name; the admin decides (admin.py).
+NAME_CHANGE_COMMANDS = ("/ism", "/исм", "/name")
+
 
 # ------------------------------------------------------------------ pure logic
 # No DB/network here — kept separate and side-effect-free so scripts/selfcheck.py
@@ -508,6 +511,9 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     if names.needs_name(employee):
         return await names.collect_name(employee, message, run_id)
 
+    if (message.get("text") or "").strip().lower() in NAME_CHANGE_COMMANDS:
+        return await _request_name_change(employee, run_id)
+
     # Written permission requests (EMJ-SOP-ADM-01) come before everything
     # else, for the Director too: an answer to the form's own question, or an
     # approver's conditions, must not be re-read as a task or a task update.
@@ -537,6 +543,22 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     else:
         background.add_task(_dispatch_director_task, telegram_user_id, text, message.get("message_id"), run_id)
     return "queued"
+
+
+async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Pass an employee's /ism to the admin — a name on documents isn't self-service."""
+    telegram_user_id = employee["telegram_user_id"]
+    requested = await store.request_name_change(telegram_user_id)
+    if requested is None:
+        await _reply(telegram_user_id, run_id, "⏳ Исм ўзгартириш сўровингиз аллақачон админга юборилган.")
+        return "name_change_pending"
+    await admin.request_name_change(requested, run_id)
+    await _reply(
+        telegram_user_id,
+        run_id,
+        "📨 Исм ўзгартириш сўровингиз админга юборилди. Рухсат берилса, бот исмингизни сўрайди.",
+    )
+    return "name_change_requested"
 
 
 async def _try_forward_director_reply(

@@ -156,6 +156,27 @@ once — `integrations/org_bot/names.py`:
   `employees.full_name`. It's used everywhere a person is named: relays,
   task confirmations, the brief, the weekly scorecard, the permission form.
 
+**When a name or position changes** (2026-09-26) — a correction, a move to
+another department, or a new person taking over an account:
+
+- **Admin Bot → `/xodimlar` → tap the person** opens their card:
+  **✏️ Исмни қайта сўраш** (clears the name; the bot asks them again, and
+  nothing else they send is processed until they answer),
+  **🔁 Ролни ўзгартириш** (a role picker; the person is told their new role),
+  **🗑 Ўчириш** (with a confirmation tap).
+- **An employee can ask** with **`/ism`** in OPS Manager Bot; the admin gets
+  "Исм ўзгартириш сўрови" with **✅ Рухсат бериш / ❌ Рад этиш**. Names go on
+  official documents and are how the Director addresses people, so changing
+  one is never self-service. One request an hour at most.
+- The Director is never sent the question (their next message is an order,
+  not a name); a cleared Director name is asked at their next written
+  permission decision.
+- Every change is logged in `employee_changes` (old value, new value, who,
+  when). Documents keep the name they were signed with. A different person
+  on the same Telegram account keeps the account's history (reports, tasks)
+  — for a clean history, a new person should register with their own account
+  and the old one be removed.
+
 **The Director can address one person.** The classifier gets the employee
 list (`E1 = Алишер Каримов (it)`, ...) and returns `target_employee` when
 the Director names someone: only that person gets the task. A name matching
