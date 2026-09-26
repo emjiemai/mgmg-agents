@@ -1595,6 +1595,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "xodimlar_kpi": _fetch_kpi_agent_data,
         "ruxsatlar": permission_flow.registry_data,
         "pul_kalendari": _fetch_cash_calendar_data,
+        "mijoz_fikrlari": _fetch_client_feedback_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1664,6 +1665,13 @@ async def _fetch_kpi_agent_data() -> str:
             tasks = f"tasks {person.tasks.on_time}/{person.tasks.due} on time" if person.tasks.due else "tasks: none due"
             lines.append(f"- {person.mark} {person.name}: {reports}; {tasks}")
     return "\n".join(lines)
+
+
+async def _fetch_client_feedback_data() -> str:
+    """What clients wrote through the QR codes, last 60 days."""
+    from integrations.org_bot import feedback
+
+    return feedback.describe(await store.recent_client_feedback(days=60))
 
 
 async def _fetch_cash_calendar_data() -> str:

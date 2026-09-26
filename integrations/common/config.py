@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     # scripts/sap-gateway-push/ and integrations/sap/push_handler.py) ---
     sap_push_webhook_secret: SecretStr = SecretStr("")
 
+    # --- Public address of mgmg-api, for links printed on QR codes ---
+    # Set PUBLIC_BASE_URL to the address clients should see (ideally a domain
+    # of the company's own, so printed codes survive a change of hosting).
+    # Render sets RENDER_EXTERNAL_URL on web services; it's the fallback.
+    public_base_url: str = ""
+    render_external_url: str = ""
+
+    # --- Client feedback page at /f (QR codes) ---
+    feedback_enabled: bool = True
+
     # --- Read-only database viewer at /db (integrations/api/db_viewer.py) ---
     # Empty = the page doesn't exist (404). Set a long random password in
     # Render's mgmg-shared group to switch it on; log in with any name.
@@ -240,6 +250,11 @@ class Settings(BaseSettings):
             if part.lstrip("-").isdigit():
                 ids.append(int(part))
         return ids
+
+    @property
+    def public_url(self) -> str:
+        """The address printed on QR codes ("" when neither setting is known)."""
+        return (self.public_base_url or self.render_external_url).strip().rstrip("/")
 
     def missing_placeholders(self) -> list[str]:
         """Return names of settings still holding a ``[PLACEHOLDER]`` value.

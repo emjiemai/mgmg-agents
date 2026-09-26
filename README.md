@@ -62,6 +62,14 @@ asks for a login (any name, that password). It can't change anything: every
 query runs in a read-only transaction. For heavier work, any Postgres client
 (DBeaver, TablePlus) connects with Render's External Database URL.
 
+## Client feedback (QR codes)
+
+Clients scan a red card at a location and leave an opinion or a complaint,
+with or without a name and phone; it reaches the Director through OPS
+Manager Bot. Admin Bot `/qr <place>` makes the card. See
+`docs/agent-specs/10-client-feedback.md` — set `PUBLIC_BASE_URL` and move
+`mgmg-api` off the free plan before printing.
+
 ## Security model
 
 | Rule | How it is enforced |

@@ -35,6 +35,8 @@ EMPLOYEE_LIST_COMMANDS = ("/employees", "/users", "/list", "/xodimlar")
 ASK_NAMES_COMMANDS = ("/ismlar", "/names")
 # Runs the weekly data-quality report (B4) now.
 DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
+# "/qr garmin" -> the printable feedback QR card for that place.
+QR_COMMAND = "/qr"
 
 
 def _person_line(request: dict[str, Any]) -> str:
@@ -172,12 +174,45 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await _list_employees(run_id)
     if text in ASK_NAMES_COMMANDS:
         return await _ask_names(run_id)
+    if text.split()[:1] == [QR_COMMAND]:
+        return await _send_qr(text.split()[1] if len(text.split()) > 1 else "", run_id)
     if text in DATA_QUALITY_COMMANDS:
         from integrations.common.agent_loader import load_agent  # the agent lives in a hyphenated folder
 
         return await load_agent("data-quality").check_now(run_id)
 
     return "ignored"
+
+
+async def _send_qr(place: str, run_id: uuid.UUID) -> str:
+    """Send the admin the printable feedback QR card for one place."""
+    import tempfile
+    from pathlib import Path
+
+    from integrations.org_bot import feedback, qr_card  # local import: Pillow only when needed
+
+    place = place or "umumiy"
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        if not feedback.place_ok(place):
+            await bot.send_message(
+                "Жой номи фақат лотин кичик ҳарфлар, рақамлар ва «-» бўлсин. Масалан: <code>/qr garmin</code>"
+            )
+            return "qr_bad_place"
+        if not settings.public_url:
+            await bot.send_message("Сервер манзили номаълум — Render'да PUBLIC_BASE_URL ни белгиланг.")
+            return "qr_no_url"
+        url = f"{settings.public_url}/f/{place}"
+        path = Path(tempfile.mkdtemp(prefix="mgmg-qr-")) / f"qr-{place}.png"
+        path.write_bytes(qr_card.card_png(url, place))
+        await bot.send_document(
+            str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=f"📍 {escape(place)}\n{escape(url)}"
+        )
+    return "qr_sent"
 
 
 async def _ask_names(run_id: uuid.UUID) -> str:
@@ -213,7 +248,7 @@ def employee_list_view(employees: list[dict[str, Any]]) -> tuple[str, dict[str, 
         buttons.append([{"text": f"👤 {full_name or emp['display_name']} ({label})", "callback_data": f"emp:{emp['id']}"}])
     lines.append(
         "\n<i>Ходимни танланг: исм, роль ёки ўчириш. "
-        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat</i>"
+        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat · QR код: /qr жой</i>"
     )
     return "\n".join(lines), {"inline_keyboard": buttons}
 

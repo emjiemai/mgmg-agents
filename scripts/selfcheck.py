@@ -1203,6 +1203,94 @@ def test_employee_admin() -> None:
             setattr(obj, name, value)
 
 
+def test_client_feedback() -> None:
+    """QR feedback: validation, the page, what reaches the Director, the printed card."""
+    print("client feedback (QR)")
+    import io
+
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from integrations.api import app as api_app
+    from integrations.api import feedback_page
+    from integrations.org_bot import feedback, qr_card
+
+    # ---- validation
+    sub, err = feedback.clean({"kind": "complaint", "message": "  Навбат  узун  ", "phone": "90 123-45-67"}, "garmin")
+    check("message tidied, phone normalised", (sub.message, sub.phone, sub.kind), ("Навбат узун", "901234567", "complaint"))
+    check("empty message refused", feedback.clean({"message": " "}, "garmin")[1], "Фикрингизни ёзинг.")
+    check_true("a bad phone is refused, not kept", feedback.clean({"message": "яхши", "phone": "abc"}, "x")[0] is None)
+    check("unknown kind falls back to feedback", feedback.clean({"message": "яхши", "kind": "zzz"}, "x")[0].kind, "feedback")
+    anon = feedback.clean({"message": "яхши"}, "x")[0]
+    check_true("no name, no phone = anonymous", anon.anonymous and "👤 Аноним" in feedback.director_text(anon))
+    risky = feedback.clean({"message": "<b>x</b> & y", "name": "<i>"}, "garmin")[0]
+    text = feedback.director_text(risky)
+    check_true("what the client typed is escaped", "&lt;b&gt;x&lt;/b&gt; &amp; y" in text and "<i>" not in text)
+    check_true("place labels: safe slugs only", feedback.place_ok("ondry-1") and not feedback.place_ok("../x"))
+
+    # ---- the page
+    submitted = []
+
+    async def fake_submit(submission):
+        submitted.append(submission)
+        return 1
+
+    original_submit = feedback.submit
+    feedback.submit = fake_submit
+    feedback_page._recent.clear()
+    client = TestClient(api_app.app)
+    try:
+        page = client.get("/f/garmin")
+        check_true("the form opens", page.status_code == 200 and "Юбориш" in page.text and "action='/f/garmin'" in page.text)
+        check_true("the page is Uzbek Cyrillic", latin_words(page.text.split("<body>")[1]) == [])
+        check("a bad place label is 404", client.get("/f/..%2Fx").status_code, 404)
+        check("the general QR works", client.get("/f").status_code, 200)
+
+        ok = client.post("/f/garmin", data={"kind": "complaint", "message": "Кассада навбат узун", "phone": "+998901234567"})
+        check_true("a submission is thanked", ok.status_code == 200 and "Раҳмат" in ok.text)
+        check("...and goes on to the Director", [(s.place, s.kind) for s in submitted], [("garmin", "complaint")])
+
+        bad = client.post("/f/garmin", data={"message": "Яхши", "phone": "12"})
+        check_true("an error keeps what was typed", bad.status_code == 400 and "Яхши" in bad.text and "нотўғри" in bad.text)
+
+        submitted.clear()
+        bot = client.post("/f/garmin", data={"message": "spam", "website": "http://x"})
+        check_true("the hidden field drops bots quietly", bot.status_code == 200 and not submitted)
+
+        for _ in range(4):
+            client.post("/f/garmin", data={"message": "Раҳмат"})
+        limited = client.post("/f/garmin", data={"message": "Раҳмат"})
+        check("the 6th message in 10 minutes waits", limited.status_code, 429)
+
+        async def broken_submit(submission):
+            raise RuntimeError("db down")
+
+        feedback.submit = broken_submit
+        feedback_page._recent.clear()
+        down = client.post("/f/garmin", data={"message": "Яхши хизмат"})
+        check_true("a failure says so and keeps the text", down.status_code == 503 and "Яхши хизмат" in down.text)
+    finally:
+        feedback.submit = original_submit
+        feedback_page._recent.clear()
+
+    # ---- the printed card: red, white square, and exactly the right code
+    url = "https://example.uz/f/garmin"
+    card = Image.open(io.BytesIO(qr_card.card_png(url, "garmin"))).convert("RGB")
+    check("card size (10×12.7 cm at 300 dpi)", card.size, (1200, 1500))
+    check("red background", card.getpixel((10, 10)), qr_card.RED)
+    x0, y0, module, modules = qr_card.card_geometry(url)
+    matrix = qr_card.qr_matrix(url)
+    margin = qr_card.QUIET_MODULES
+    read = [
+        [card.getpixel((x0 + (margin + c) * module + module // 2, y0 + (margin + r) * module + module // 2)) == qr_card.BLACK
+         for c in range(len(matrix))]
+        for r in range(len(matrix))
+    ]
+    check_true("the printed modules are exactly the QR code for the URL", read == matrix)
+    quiet = [card.getpixel((x0 + module // 2, y0 + i * module + module // 2)) for i in range(modules)]
+    check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
+
+
 def test_payment_gate() -> None:
     """B1: requests route by amount to whoever holds that limit."""
     print("payment gate (B1)")
@@ -1305,6 +1393,7 @@ def main() -> int:
         test_permission_form,
         test_task_tracker,
         test_payment_gate,
+        test_client_feedback,
         test_employee_admin,
         test_plan_agents,
         test_db_viewer,

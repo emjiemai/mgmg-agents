@@ -713,3 +713,20 @@ ALTER TABLE pending_relays DROP CONSTRAINT IF EXISTS pending_relays_outcome_chec
 ALTER TABLE pending_relays ADD CONSTRAINT pending_relays_outcome_check
     CHECK (outcome IN ('sent', 'cancelled', 'report'));
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;
+
+-- ---------------------------------------------------------------------------
+-- client_feedback — opinions and complaints clients leave through the QR
+-- codes (integrations/api/feedback_page.py). Name and phone are optional;
+-- both empty = anonymous. No IP address or device data is stored.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS client_feedback (
+    id                   BIGSERIAL    PRIMARY KEY,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    place                TEXT         NOT NULL,   -- the QR code's label, e.g. 'garmin'
+    kind                 TEXT         NOT NULL CHECK (kind IN ('feedback', 'complaint')),
+    message              TEXT         NOT NULL,
+    contact_name         TEXT,
+    phone                TEXT,
+    director_message_id  BIGINT                   -- set once it reached the Director
+);
+CREATE INDEX IF NOT EXISTS idx_client_feedback_created ON client_feedback (created_at DESC);

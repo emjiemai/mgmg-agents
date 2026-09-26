@@ -1406,6 +1406,33 @@ async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
     )
 
 
+async def save_client_feedback(
+    *, place: str, kind: str, message: str, contact_name: str | None, phone: str | None
+) -> dict[str, Any] | None:
+    """Store one client opinion or complaint from a QR code."""
+    return await fetch_one(
+        """
+        INSERT INTO client_feedback (place, kind, message, contact_name, phone)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (place, kind, message, contact_name, phone),
+    )
+
+
+async def mark_client_feedback_sent(feedback_id: int, message_id: int) -> None:
+    """Record that a client message reached the Director."""
+    await execute("UPDATE client_feedback SET director_message_id = %s WHERE id = %s", (message_id, feedback_id))
+
+
+async def recent_client_feedback(days: int = 60) -> list[dict[str, Any]]:
+    """Client opinions and complaints of the last ``days`` days, newest first."""
+    return await fetch_all(
+        "SELECT * FROM client_feedback WHERE created_at >= now() - make_interval(days => %s) ORDER BY created_at DESC",
+        (days,),
+    )
+
+
 async def approved_payment_requests(days: int = 120) -> list[dict[str, Any]]:
     """Approved written requests that carry an amount, decided in the last ``days`` days.
 

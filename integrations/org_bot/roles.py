@@ -88,6 +88,12 @@ AGENTS: list[Agent] = [
         "already overdue and unpaid), and approved written payment requests going out by their date; "
         "there is no cash balance (not connected)",
     ),
+    Agent(
+        "mijoz_fikrlari",
+        "Мижозлар фикри",
+        "opinions and complaints clients left through the QR codes (which place, what they wrote, "
+        "their phone if they gave one, or anonymous), last 60 days",
+    ),
     Agent("all_systems", "Барча тизимлар", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin каталоги", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's
