@@ -18,6 +18,7 @@ Garmin watch retail.
 | A2 | Morning brief — five numbers + who didn't report | `docs/agent-specs/01-ceo-daily-brief.md` |
 | A3 | Task tracker: deadlines, reminders, overdue notices, Friday scorecard | `docs/agent-specs/08-task-tracker.md` |
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | `docs/agent-specs/07-permissions.md` |
+| A4 | Attendance from Verifix: who was late, who didn't come — in the brief and on question | `docs/agent-specs/11-attendance.md` |
 | — | Receivables alert (overdue debt by age) | `docs/agent-specs/03-receivables.md` |
 | — | OPS Manager Bot: routes the Director's tasks (to a department or one named person), answers questions from data | `docs/agent-specs/05-org-bot.md` |
 | — | Lead Agent — paused by the business (`LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
@@ -68,8 +69,14 @@ query runs in a read-only transaction. For heavier work, any Postgres client
 Clients scan the company's one red QR card and leave an opinion or a
 complaint, with or without a name and phone; it reaches the Director through
 OPS Manager Bot. Admin Bot `/qr` makes the card. See
-`docs/agent-specs/10-client-feedback.md` — set `PUBLIC_BASE_URL` and move
-`mgmg-api` off the free plan before printing.
+`docs/agent-specs/10-client-feedback.md`.
+
+## Attendance (Verifix)
+
+Read-only from Verifix's public API: yesterday's late arrivals and absences
+in the 08:00 brief, and "bugun kim kechikdi?" in OPS Manager Bot. Off until
+`VERIFIX_CLIENT_ID` / `VERIFIX_CLIENT_SECRET` are set; Admin Bot `/verifix`
+checks the connection. See `docs/agent-specs/11-attendance.md`.
 
 ## Security model
 

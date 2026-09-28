@@ -85,7 +85,21 @@ class Settings(BaseSettings):
     # Render's mgmg-shared group to switch it on; log in with any name.
     db_viewer_password: SecretStr = SecretStr("")
 
-    # --- MGMG's own sales CRM ---
+    # --- Verifix (face-ID attendance, A4; integrations/verifix/) ---
+    # Read-only. Client id + secret come from Verifix: Администрирование ->
+    # Настройки -> Внешние системы -> Клиенты OAuth2 для сервера для компании
+    # (client credentials, a role with read access to the attendance report
+    # and time kinds). Empty = attendance stays out of the brief and the bot.
+    # The address is fixed in integrations/verifix/client.py on purpose: old
+    # VERIFIX_BASE_URL values from the removed 2026-09 integration may still
+    # sit in env groups and must not redirect the credentials anywhere else.
+    verifix_enabled: bool = True
+    verifix_client_id: str = ""
+    verifix_client_secret: SecretStr = SecretStr("")
+    # Only needed if Verifix says so: client credentials already name the organisation.
+    verifix_filial_id: str = ""
+    # Arriving up to this many minutes after the schedule's start is on time.
+    verifix_late_grace_minutes: int = 5
 
     # --- Telegram ---
     # Every scheduled agent (CEO Daily Brief, Receivables, Lead Agent) sends
@@ -255,6 +269,13 @@ class Settings(BaseSettings):
     def public_url(self) -> str:
         """The address printed on QR codes ("" when neither setting is known)."""
         return (self.public_base_url or self.render_external_url).strip().rstrip("/")
+
+    @property
+    def verifix_configured(self) -> bool:
+        """Verifix is switched on and has its client credentials."""
+        return bool(
+            self.verifix_enabled and self.verifix_client_id.strip() and self.verifix_client_secret.get_secret_value()
+        )
 
     def missing_placeholders(self) -> list[str]:
         """Return names of settings still holding a ``[PLACEHOLDER]`` value.

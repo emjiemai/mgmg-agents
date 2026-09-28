@@ -74,7 +74,7 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     """
     import re
 
-    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot"}
+    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot", "Verifix"}
     allowed |= allow or set()
     # Telegram commands (/ismlar, /bekor) can only be Latin.
     plain = re.sub(r"/[a-z_]+", " ", re.sub(r"<[^>]+>", " ", text))
@@ -1516,6 +1516,251 @@ def test_permission_form() -> None:
     check_true("only form lines changed", all(i > title_at for i in changed))
 
 
+def test_verifix() -> None:
+    """A4 attendance: the Verifix client, late/absent/excused rules, brief, bot, /verifix."""
+    print("verifix attendance (A4)")
+    import asyncio
+    import contextlib
+    import json
+    import uuid
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.common.translit import name_to_cyrillic
+    from integrations.org_bot import admin, ops_manager
+    from integrations.verifix import attendance
+    from integrations.verifix import client as vx
+
+    # ---- names arrive in Latin; every message is Cyrillic
+    for latin, cyrillic in (
+        ("Salimov Mumin", "Салимов Мумин"), ("G'ofurov Sherzod", "Ғофуров Шерзод"),
+        ("Yo'ldosheva O'g'iloy", "Йўлдошева Ўғилой"), ("Akhmedov Sanjar", "Ахмедов Санжар"),
+        ("Ergashev Yusuf", "Эргашев Юсуф"), ("Ma'rufjon Xolmatov", "Маъруфжон Холматов"),
+        ("Qodirova Shaxnoza", "Қодирова Шахноза"), ("Tsoy Yelena", "Цой Елена"),
+        ("Oʻrinboyev Gʻayrat", "Ўринбоев Ғайрат"), ("SHERZOD", "ШЕРЗОД"), ("Салимов Мумин", "Салимов Мумин"),
+    ):
+        check(f"name {latin!r}", name_to_cyrillic(latin), cyrillic)
+
+    # ---- time kinds exactly as Verifix documents them
+    documented = [
+        {"name": "Явка", "time_kind_id": "81", "letter_code": "Я"},
+        {"name": "Опоздание", "time_kind_id": "82", "letter_code": "ОП"},
+        {"name": "Ранний Уход", "time_kind_id": "83", "letter_code": "РУ"},
+        {"name": "Отсутствие", "time_kind_id": "84", "letter_code": "ОТС"},
+        {"name": "Свободное Время", "time_kind_id": "85", "letter_code": "СВ"},
+        {"name": "Почасовой Отгул", "time_kind_id": "86", "letter_code": "ПО"},
+        {"name": "Выходной", "time_kind_id": "87", "letter_code": "В"},
+        {"name": "Больничный", "time_kind_id": "88", "letter_code": "Б"},
+        {"name": "Отгул", "time_kind_id": "89", "letter_code": "О"},
+        {"name": "Командировка", "time_kind_id": "90", "letter_code": "К"},
+        {"name": "Отпуск", "time_kind_id": "91", "letter_code": "ОТ"},
+        {"name": "Неоплачиваемый отпуск", "time_kind_id": "92", "letter_code": "НО"},
+        {"name": "Сверхурочныe", "time_kind_id": "93", "letter_code": "СУ"},
+        {"name": "Kechikish", "time_kind_id": "200", "letter_code": "ОП"},  # renamed: the letter code decides
+    ]
+    kinds = attendance.classify_kinds(documented)
+    check("time kinds classified", kinds, {
+        "81": "other", "82": "late", "83": "early", "84": "absent", "85": "other", "86": "hourly_off",
+        "87": "other", "88": "sick", "89": "day_off", "90": "trip", "91": "vacation", "92": "unpaid",
+        "93": "other", "200": "late",
+    })
+
+    # ---- one employee's days, in Verifix's own shape (numbers as strings)
+    def day(d, kind="W", start="09:00", end="18:00", came=None, left=None, facts=()):
+        return {
+            "date": d, "day_kind": kind, "plan_time": "480",
+            "begin_time": f"{d} {start}:00" if kind == "W" and start else None,
+            "end_time": f"{d} {end}:00" if kind == "W" and end else None,
+            "input_time": f"{d} {came}:00" if came else None,
+            "output_time": f"{d} {left}:00" if left else None,
+            "facts": [{"time_kind_id": k, "fact_value": v} for k, v in facts],
+        }
+
+    rows = [
+        {"employee_id": "641", "employee_name": "Salimov Mumin", "job_name": "Кассир", "days": [
+            day("01.02.2025", kind="R", came="10:46", left="18:57", facts=[(85, 491)]),
+            day("03.02.2025", came="08:00", left="19:21"),
+            day("04.02.2025", came="09:35", left="18:05", facts=[(82, "35")]),
+            day("05.02.2025", came="09:04", left="18:00"),
+            day("06.02.2025", facts=[(84, 480)]),
+            day("07.02.2025", facts=[(88, "480")]),
+            day("10.02.2025", came="10:00", left="18:00", facts=[(86, 60)]),
+            day("11.02.2025", came="08:55", left="17:00"),
+        ]},
+        {"employee_id": "642", "employee_name": "Qodirova Shaxnoza", "job_name": "", "days": [
+            day("11.02.2025"),
+            day("12.02.2025"),
+        ]},
+    ]
+    recs = attendance.records(rows, kinds, grace=5, now=datetime(2025, 2, 12, 10, 0))
+    status = {(r.name, r.day.day): (r.status, r.late_minutes, r.early_minutes, r.excuse) for r in recs}
+    check("a day off is never absent, even if they came", status[("Салимов Мумин", 1)][0], "off")
+    check("came before the start: on time", status[("Салимов Мумин", 3)][:2], ("on_time", 0))
+    check("35 minutes late, from the times themselves", status[("Салимов Мумин", 4)][:2], ("late", 35))
+    check("4 minutes late is within the 5-minute grace", status[("Салимов Мумин", 5)][0], "on_time")
+    check("a working day with no arrival: absent", status[("Салимов Мумин", 6)][0], "absent")
+    check("sick leave excuses the day", status[("Салимов Мумин", 7)], ("excused", 0, 0, "касаллик варақаси"))
+    check("an hourly leave excuses coming late", status[("Салимов Мумин", 10)][::3], ("excused", "соатбай жавоб"))
+    check("left an hour early is noted", status[("Салимов Мумин", 11)][::2], ("on_time", 60))
+    check("a past day with no arrival is absent even when 'now' is given", status[("Қодирова Шахноза", 11)][0], "absent")
+    check("today, no arrival yet at 10:00: not yet, not absent", status[("Қодирова Шахноза", 12)][0], "not_yet")
+    early_morning = attendance.records(rows[1:], kinds, grace=5, now=datetime(2025, 2, 12, 8, 30))
+    check("before the shift starts nobody is missing", early_morning[-1].status, "before_start")
+
+    # ---- the brief's block
+    def text_for(d):
+        return attendance.render_day(attendance.summarize(recs, d))
+
+    late_day = text_for(date(2025, 2, 4))
+    check_true("late day: yellow, who and by how much",
+               late_day.startswith("🟡") and "Салимов Мумин — 35 дақиқа кечикди (09:35)" in late_day)
+    absent_day = text_for(date(2025, 2, 6))
+    check_true("absent day: red", absent_day.startswith("🔴") and "келмади" in absent_day)
+    check_true("all on time: green", text_for(date(2025, 2, 3)).startswith("🟢"))
+    check_true("sick is shown as excused, not absent", "касаллик варақаси" in text_for(date(2025, 2, 7)))
+    check("no working day: no block", text_for(date(2025, 2, 1)), None)
+    check_true("the block is Uzbek Cyrillic",
+               all(latin_words(t) == [] for t in (late_day, absent_day, text_for(date(2025, 2, 12)))))
+    data = attendance.describe(recs, date(2025, 2, 12), datetime(2025, 2, 12, 10, 0))
+    check_true("the bot's data lists each late arrival",
+               "[2025-02-04] Салимов Мумин: late 35 min (arrived 09:35, start 09:00)" in data)
+    check_true("...and today's not-yet-arrived", "Not arrived yet: Қодирова Шахноза" in data)
+
+    brief = load_agent("ceo-daily-brief")
+    with_att = brief.render(brief.BriefData(report_rows=[], attendance=attendance.summarize(recs, date(2025, 2, 4))))
+    check_true("the brief shows attendance once Verifix is set up", "Давомат" in with_att and "35 дақиқа" in with_att)
+    check_true("no Verifix, no attendance block", "Давомат" not in brief.render(brief.BriefData(report_rows=[])))
+    check_true("a Verifix failure is said plainly",
+               "Verifix'дан маълумот олиб бўлмади" in brief.render(brief.BriefData(report_rows=[], attendance_failed=True)))
+
+    # ---- the client against a fake Verifix
+    calls: list[httpx.Request] = []
+    state = {"tokens": 0, "fail_once": False, "forbidden": False}
+
+    def handler(request):
+        calls.append(request)
+        if request.url.path == "/security/oauth/token":
+            state["tokens"] += 1
+            body = json.loads(request.content)
+            ok = body == {"grant_type": "client_credentials", "client_id": "cid", "client_secret": "sec", "scope": "read"}
+            return httpx.Response(200 if ok else 400, json={"access_token": f"T{state['tokens']}", "expires_in": 10800})
+        if state["forbidden"]:
+            return httpx.Response(403, text="access denied")
+        if state["fail_once"]:
+            state["fail_once"] = False
+            return httpx.Response(401, text="expired")
+        assert request.headers["project_code"] == "vhr"
+        page_two = request.headers.get("cursor") == "77"
+        payload = {"data": [rows[1] if page_two else rows[0]], "meta": {"count": "1", "next_cursor": "-1" if page_two else "77"}}
+        # Verifix labels JSON as text/plain
+        return httpx.Response(200, text=json.dumps(payload), headers={"content-type": "text/plain;charset=UTF-8"})
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    saved = [(vx, "audited", vx.audited), (settings, "verifix_client_id", settings.verifix_client_id),
+             (settings, "verifix_client_secret", settings.verifix_client_secret),
+             (settings, "verifix_enabled", settings.verifix_enabled)]
+    vx.audited = no_audit
+    settings.verifix_client_id, settings.verifix_client_secret, settings.verifix_enabled = "cid", SecretStr("sec"), True
+
+    async def read(**flags):
+        state.update(flags)
+        async with vx.VerifixClient(agent="test", transport=httpx.MockTransport(handler)) as c:
+            return await c.timesheet(date(2025, 2, 4), date(2025, 2, 4))
+
+    try:
+        got = asyncio.run(read())
+        check("both pages read, cursor followed", [r["employee_id"] for r in got], ["641", "642"])
+        lists = [r for r in calls if r.url.path.endswith("timesheet$export")]
+        check("second page asked with the cursor", [r.headers.get("cursor") for r in lists], [None, "77"])
+        check_true("bearer token and page size sent",
+                   lists[0].headers["authorization"] == "Bearer T1" and lists[0].headers["limit"] == "100")
+        check("dates in Verifix's format", json.loads(lists[0].content)["period_begin_date"], "04.02.2025")
+        check("one token for the whole run", state["tokens"], 1)
+
+        calls.clear()
+        state["tokens"] = 0
+        got = asyncio.run(read(fail_once=True))
+        check_true("an expired token is renewed once and the read goes on", len(got) == 2 and state["tokens"] == 2)
+
+        try:
+            asyncio.run(read(forbidden=True))
+            check_true("a refusal raises", False)
+        except vx.VerifixError as exc:
+            check_true("a refusal says what happened, without the secret", "HTTP 403" in str(exc) and "sec" not in str(exc))
+        state["forbidden"] = False
+
+        settings.verifix_client_id = ""
+        try:
+            asyncio.run(read())
+            check_true("not configured raises", False)
+        except vx.VerifixError:
+            check_true("not configured: refuses before any call", True)
+        check_true("the bot says Verifix isn't connected",
+                   "not connected" in asyncio.run(ops_manager._fetch_attendance_data()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("davomat is a data source the Director can ask", "davomat" in AGENT_SLUGS)
+
+    # ---- Admin Bot /verifix
+    sent: list[str] = []
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, **kwargs):
+            sent.append(text)
+            return [1]
+
+    class FakeVerifix:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def time_kinds(self):
+            return documented
+
+        async def timesheet(self, begin, end):
+            d = begin.strftime("%d.%m.%Y")
+            return [{"employee_id": "1", "employee_name": "Salimov Mumin", "days": [day(d, came="09:40")]},
+                    {"employee_id": "2", "employee_name": "Ergashev Yusuf", "days": [day(d, came="08:50")]}]
+
+    saved = [(admin, "TelegramBot", admin.TelegramBot), (vx, "VerifixClient", vx.VerifixClient),
+             (settings, "admin_bot_admin_user_id", settings.admin_bot_admin_user_id),
+             (settings, "verifix_client_id", settings.verifix_client_id),
+             (settings, "verifix_client_secret", settings.verifix_client_secret)]
+    admin.TelegramBot, vx.VerifixClient, settings.admin_bot_admin_user_id = FakeBot, FakeVerifix, 0
+    message = {"from": {"id": 9}, "text": "/verifix"}
+    try:
+        settings.verifix_client_id = ""
+        check("/verifix before setup", asyncio.run(admin.handle_admin_message(message, uuid.uuid4())), "verifix_not_configured")
+        check_true("...tells the admin where the keys are", "VERIFIX_CLIENT_ID" in sent[-1] and "OAuth2" in sent[-1])
+        settings.verifix_client_id, settings.verifix_client_secret = "cid", SecretStr("sec")
+        check("/verifix once set up", asyncio.run(admin.handle_admin_message(message, uuid.uuid4())), "verifix_ok")
+        check_true("...shows today's picture", "Verifix уланди" in sent[-1] and "Табелда: 2 ходим" in sent[-1])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -1536,6 +1781,7 @@ def main() -> int:
         test_payment_gate,
         test_report_accuracy,
         test_client_feedback,
+        test_verifix,
         test_employee_admin,
         test_plan_agents,
         test_db_viewer,

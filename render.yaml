@@ -7,8 +7,10 @@
 #                        is changed to a paid plan (adding a payment method to
 #                        the account does not change the plan by itself).
 #   mgmg-api             FastAPI webhook receiver (Admin Bot, OPS Manager Bot,
-#                        SAP gateway pushes), free plan — sleeps after 15 min
-#                        idle, ~30-50s cold start on the next webhook
+#                        SAP gateway pushes, the /f feedback page), starter plan
+#                        (0.5 CPU, 512 MB, always on — switched from free on
+#                        2026-09-28 so a QR scan or a bot message never waits
+#                        for a cold start)
 #   mgmg-morning-agents  cron: CEO daily brief + Lead Agent + receivables alert,
 #                        run back to back (starter, ~$1/mo) — see
 #                        scripts/run_morning_agents.py. One service rather
@@ -46,7 +48,7 @@ services:
     name: mgmg-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free
+    plan: starter  # matches the dashboard (2026-09-28); "free" here would downgrade it on the next sync
     healthCheckPath: /health
     envVars:
       # Every secret lives in exactly one place: the mgmg-shared environment
@@ -185,6 +187,14 @@ envVarGroups:
       - key: OPENROUTER_FALLBACK_MODELS
         sync: false  # code default: google/gemini-3.7-flash; comma-separated, end the chain on cheap PAID capacity
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      # Verifix attendance (A4), read-only: client credentials made in Verifix
+      # (Администрирование -> Настройки -> Внешние системы -> Клиенты OAuth2
+      # для сервера для компании). Empty = no attendance anywhere. See
+      # docs/agent-specs/11-attendance.md.
+      - key: VERIFIX_CLIENT_ID
+        sync: false
+      - key: VERIFIX_CLIENT_SECRET
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID
         sync: false

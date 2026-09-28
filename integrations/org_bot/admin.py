@@ -23,6 +23,7 @@ from typing import Any, Literal
 from integrations.common.config import settings
 from integrations.common.db import log_action
 from integrations.common.logging_setup import setup_logging
+from integrations.common.timeutil import now_local, today_local
 from integrations.org_bot import store
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS, ROLE_SLUGS, ROLES
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
@@ -37,6 +38,8 @@ ASK_NAMES_COMMANDS = ("/ismlar", "/names")
 DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
 # "/qr" -> the printable feedback QR card (one for the whole company).
 QR_COMMAND = "/qr"
+# "/verifix" -> is Verifix connected, and what does today look like there?
+VERIFIX_COMMAND = "/verifix"
 
 
 def _person_line(request: dict[str, Any]) -> str:
@@ -180,6 +183,8 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         from integrations.common.agent_loader import load_agent  # the agent lives in a hyphenated folder
 
         return await load_agent("data-quality").check_now(run_id)
+    if text == VERIFIX_COMMAND:
+        return await _check_verifix(run_id)
 
     return "ignored"
 
@@ -205,6 +210,62 @@ async def _send_qr(run_id: uuid.UUID) -> str:
         path.write_bytes(qr_card.card_png(url))
         await bot.send_document(str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=escape(url))
     return "qr_sent"
+
+
+async def _check_verifix(run_id: uuid.UUID) -> str:
+    """Admin Bot /verifix: can we read Verifix, and what does today look like?"""
+    from integrations.verifix import attendance
+    from integrations.verifix.client import VerifixClient
+
+    if not settings.verifix_configured:
+        text, outcome = (
+            "🕘 <b>Verifix уланмаган.</b>\n"
+            "Render → mgmg-shared: VERIFIX_CLIENT_ID ва VERIFIX_CLIENT_SECRET ни киритинг.\n"
+            "Улар Verifix'да: Администрирование → Настройки → Внешние системы → "
+            "«Клиенты OAuth2 для сервера для компании» (тури: client credentials).",
+            "verifix_not_configured",
+        )
+    else:
+        today = today_local()
+        try:
+            async with VerifixClient(agent=AGENT, run_id=run_id) as client:
+                raw_kinds = await client.time_kinds()
+                rows = await client.timesheet(today, today)
+        except Exception as exc:  # noqa: BLE001 — the admin needs the reason, not a stack trace
+            log.error("Verifix check failed: {}", exc)
+            text, outcome = f"❌ <b>Verifix'га уланиб бўлмади.</b>\n{escape(str(exc)[:300])}{_verifix_hint(exc)}", "verifix_failed"
+        else:
+            grace = settings.verifix_late_grace_minutes
+            recs = attendance.records(
+                rows, attendance.classify_kinds(raw_kinds), grace=grace, now=now_local().replace(tzinfo=None)
+            )
+            day = attendance.summarize(recs, today)
+            text, outcome = (
+                "✅ <b>Verifix уланди.</b>\n"
+                f"Табелда: {len(rows)} ходим. Бугун иш куни: {day.scheduled} киши, келди: {day.arrived}, "
+                f"кечикди: {len(day.late)}.\n"
+                f"Кечикиш чегараси: {grace} дақиқа. Давомат эртанги 08:00 ҳисоботида чиқади.",
+                "verifix_ok",
+            )
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text)
+    return outcome
+
+
+def _verifix_hint(exc: Exception) -> str:
+    """What to fix, for the errors people actually hit."""
+    message = str(exc)
+    if "HTTP 401" in message or "invalid_client" in message or ("HTTP 400" in message and "token" in message):
+        return "\n\nclient_id ёки client_secret нотўғри — Verifix'даги қийматларни қайта нусхаланг."
+    if "HTTP 403" in message:
+        return ("\n\nРолда рухсат етишмайди: «Отчет по посещениям» ва «Виды времени» "
+                "формаларини ролга бириктиринг.")
+    return ""
 
 
 async def _ask_names(run_id: uuid.UUID) -> str:
@@ -241,7 +302,7 @@ def employee_list_view(employees: list[dict[str, Any]]) -> tuple[str, dict[str, 
         buttons.append([{"text": f"👤 {full_name or emp['display_name']} ({label})", "callback_data": f"emp:{emp['id']}"}])
     lines.append(
         "\n<i>Ходимни танланг: исм, роль ёки ўчириш. "
-        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat · QR код: /qr</i>"
+        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat · QR код: /qr · Давомат: /verifix</i>"
     )
     return "\n".join(lines), {"inline_keyboard": buttons}
 

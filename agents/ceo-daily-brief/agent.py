@@ -1,4 +1,4 @@
-"""Agent — CEO Daily Brief: the five numbers (A2) and who didn't report.
+"""Agent — CEO Daily Brief: the five numbers (A2), who didn't report, attendance (A4).
 
 Runs every morning at 08:00 Tashkent time. One short Telegram message, in
 Uzbek Cyrillic like every bot message:
@@ -15,6 +15,9 @@ Uzbek Cyrillic like every bot message:
     🔴 Ҳисобот юбормаганлар (25.09.2026): 1 / 5
        • Алишер Каримов (IT)
 
+    🟡 Давомат (25.09.2026): 1 киши кечикди — 14 кишидан
+       • Ширин Умматова — 35 дақиқа кечикди (09:35)
+
 The five numbers are A2 from the owner's plan (ЭМЖИЕМ AI Агентлар Тизими):
 cash, yesterday's sales, stock value, customer debt, today's payments — with
 the change since the previous brief where the two days are comparable.
@@ -27,6 +30,9 @@ Honesty rules, because a wrong number here is worse than none:
     form the single channel for spending). A request whose date can't be read
     is counted as "sana aniq emas", never put on a guessed day.
   * A feed that failed or never arrived reads "маълумот йўқ".
+  * Attendance is yesterday's, from Verifix, only once VERIFIX_CLIENT_ID and
+    VERIFIX_CLIENT_SECRET are set (integrations/verifix/attendance.py has the
+    rules for late / absent / excused).
 
 Run:
     python agents/ceo-daily-brief/agent.py            # send
@@ -62,6 +68,7 @@ from integrations.sap import figures
 from integrations.sap.figures import Figure
 from integrations.sap.models import ARAging, ARInvoice
 from integrations.telegram.bot import escape
+from integrations.verifix import attendance
 
 AGENT = "ceo-daily-brief"
 log = setup_logging(AGENT)
@@ -100,6 +107,9 @@ class BriefData:
     report_rows: list[dict[str, Any]] | None = None
     # The previous brief's five numbers, for the "since yesterday" change.
     previous: dict[str, Any] = field(default_factory=dict)
+    # Yesterday from Verifix; None when Verifix isn't set up (section hidden).
+    attendance: attendance.DaySummary | None = None
+    attendance_failed: bool = False
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def note_failure(self, source: str, error: BaseException) -> None:
@@ -115,7 +125,10 @@ async def collect() -> BriefData:
     """Fetch every part of the brief, tolerating individual source failures."""
     data = BriefData()
     today = today_local()
-    names = ["sap_aging", "sap_invoice_cap", "sap_orders", "sap_inventory", "payments", "daily_reports", "previous"]
+    names = [
+        "sap_aging", "sap_invoice_cap", "sap_orders", "sap_inventory", "payments", "daily_reports", "previous",
+        "attendance",
+    ]
     results = await asyncio.gather(
         _fetch_aging(),
         _fetch_rows_received("ar_aging_push"),
@@ -124,6 +137,7 @@ async def collect() -> BriefData:
         _fetch_payments_due(today),
         _fetch_report_results(),
         _fetch_previous(today),
+        _fetch_attendance(today),
         return_exceptions=True,
     )
     by_name = dict(zip(names, results))
@@ -148,7 +162,20 @@ async def collect() -> BriefData:
         data.report_rows = by_name["daily_reports"]
     if not isinstance(by_name["previous"], BaseException):
         data.previous = by_name["previous"]
+    if isinstance(by_name["attendance"], BaseException):
+        data.attendance_failed = True
+    else:
+        data.attendance = by_name["attendance"]
     return data
+
+
+async def _fetch_attendance(today: date) -> attendance.DaySummary | None:
+    """Yesterday's late arrivals and absences, or None when Verifix isn't set up."""
+    if not settings.verifix_configured:
+        return None
+    yesterday = today - timedelta(days=1)
+    recs = await attendance.load(yesterday, yesterday, run_id=None, agent=AGENT)
+    return attendance.summarize(recs, yesterday)
 
 
 def _dated(figure: Figure) -> Figure:
@@ -285,6 +312,7 @@ def render(data: BriefData) -> str:
         "",
         render_five(data),
         _render_missed_reports(data),
+        _render_attendance(data),
     ]
     return "\n".join(p for p in parts if p is not None).rstrip()
 
@@ -404,6 +432,15 @@ def _render_missed_reports(data: BriefData) -> str | None:
     return "\n".join(lines) + "\n"
 
 
+def _render_attendance(data: BriefData) -> str | None:
+    """Yesterday's late arrivals and absences (hidden until Verifix is set up)."""
+    if data.attendance_failed:
+        return "🕘 <b>Давомат</b>\n   ⚠️ Verifix'дан маълумот олиб бўлмади\n"
+    if data.attendance is None:
+        return None
+    return attendance.render_day(data.attendance, MAX_LINES)
+
+
 # ----------------------------------------------------------------------- store
 
 
@@ -448,6 +485,14 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
             r["display_name"] for r in (data.report_rows or []) if r["status"] != "submitted"
         ],
     }
+    if data.attendance is not None:
+        sections["attendance"] = {
+            "day": data.attendance.day.isoformat(),
+            "scheduled": data.attendance.scheduled,
+            "late": {r.name: r.late_minutes for r in data.attendance.late},
+            "absent": [r.name for r in data.attendance.absent],
+            "excused": {r.name: r.excuse for r in data.attendance.excused},
+        }
     status = "dry_run" if settings.dry_run else ("sent" if message_id else "failed")
     sent_at = now_utc() if message_id else None
 

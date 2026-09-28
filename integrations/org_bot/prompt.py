@@ -308,6 +308,12 @@ to justify repeating a past conclusion.
 - Questions about what CLIENTS said through the QR codes — complaints,
   opinions ("mijozlar nima deyapti", "shikoyatlar bormi", "отзывы клиентов")
   — go to mijoz_fikrlari.
+- Questions about ATTENDANCE — who came to WORK late, who didn't come, who
+  is on sick leave or vacation, when someone arrived or left ("bugun kim
+  kechikdi", "ishga kim kelmadi", "Alisher soat nechada keldi", "davomat",
+  "Verifix", "кто опоздал на работу", "кто не пришёл") — go to davomat.
+  Late with a TASK or deadline stays with topshiriqlar; late to work is
+  davomat. A bare "kim kechikdi" with no task in sight means work: davomat.
 - Questions about UPCOMING money — what comes in or goes out and when
   ("keyingi haftada qancha pul tushadi", "qachon to'lov bor", "pul
   kalendari", "кассовый план", "какие платежи на этой неделе") — go to
@@ -316,7 +322,7 @@ to justify repeating a past conclusion.
 - Questions about the STATUS of tasks you already assigned go to
   topshiriqlar: what is still open, what is overdue, who is late, who
   finishes on time ("qaysi topshiriqlar bajarilmadi", "muddati o'tganlar",
-  "kim kechikyapti", "какие задачи просрочены"). This is about tracking work
+  "kim topshiriqni kechiktiryapti", "какие задачи просрочены"). This is about tracking work
   already handed out — a NEW instruction is still an employee task.
 - Watch for "yoz"/"write"/"написать" used loosely to mean "list it out for
   me" or "give me a report" — a very common way to ask for a report in

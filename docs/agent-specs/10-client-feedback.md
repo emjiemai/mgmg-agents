@@ -62,20 +62,15 @@ The address is inside the code, so clients never type it; they only see it
 in the browser bar after scanning. It is also baked into every printed card
 and can't be changed afterwards.
 
-The Render address (`mgmg-api-eeky.onrender.com`) can't be made nicer: Render
-chose it when the service was created. The only way to a clean address is a
-domain the company already owns (or buys): add a subdomain such as
-`fikr.<company-domain>` in Render (service → Settings → Custom Domains), add
-the CNAME record Render shows at the domain's DNS provider, wait for Render's
-free HTTPS certificate, then set `PUBLIC_BASE_URL=https://fikr.<company-domain>`
-and make the card with `/qr`. Print only after that — then a future move of
-hosting only means re-pointing the domain, not reprinting cards.
+The cards use Render's address (`mgmg-api-eeky.onrender.com`) — decided
+2026-09-28: no company domain for now. Render chose that name when the
+service was created and it can't be changed; it only changes if the service
+is recreated, and then the cards must be reprinted. (A company domain, if
+one is ever wanted: Render → service → Settings → Custom Domains, the CNAME
+at the domain's DNS, `PUBLIC_BASE_URL`, then `/qr` and reprint.)
 
-**Speed:** `mgmg-api` is on Render's free plan, which sleeps after 15 minutes
-without traffic; the first scan after that waits about a minute for it to
-wake. A client at the counter won't wait that long — move `mgmg-api` to the
-Starter plan (~$7/month; it also makes the bots answer instantly) before the
-cards go out.
+**Speed:** `mgmg-api` is on Render's Starter plan since 2026-09-28 (0.5 CPU,
+512 MB, always on), so a scan opens the page at once — no cold start.
 
 ## Protection (the page is public)
 

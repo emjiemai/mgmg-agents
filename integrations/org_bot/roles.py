@@ -94,6 +94,13 @@ AGENTS: list[Agent] = [
         "opinions and complaints clients left through the company's QR code (what they wrote, "
         "their phone if they gave one, or anonymous), last 60 days",
     ),
+    Agent(
+        "davomat",
+        "Давомат (Verifix)",
+        "attendance from the Verifix face-ID terminals: who came to work late and by how many minutes, "
+        "who didn't come, who is on sick leave / vacation / a business trip, arrival and leaving times — "
+        "today so far, yesterday, and each employee's last 30 days",
+    ),
     Agent("all_systems", "Барча тизимлар", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin каталоги", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's

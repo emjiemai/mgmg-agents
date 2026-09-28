@@ -28,7 +28,7 @@ from integrations.common.config import settings
 from integrations.common.db import fetch_all, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
-from integrations.common.timeutil import now_utc, today_local
+from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import admin, kpi, names, permission_flow, store, task_tracker
 from integrations.org_bot.prompt import (
@@ -1610,6 +1610,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "ruxsatlar": permission_flow.registry_data,
         "pul_kalendari": _fetch_cash_calendar_data,
         "mijoz_fikrlari": _fetch_client_feedback_data,
+        "davomat": _fetch_attendance_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1680,6 +1681,25 @@ async def _fetch_kpi_agent_data() -> str:
             tasks = f"tasks {person.tasks.on_time}/{person.tasks.due} on time" if person.tasks.due else "tasks: none due"
             lines.append(f"- {person.mark} {person.name}: {reports}; {tasks}")
     return "\n".join(lines)
+
+
+async def _fetch_attendance_data() -> str:
+    """Verifix attendance (A4): today so far, yesterday, each person's last 30 days."""
+    from integrations.verifix import attendance
+
+    if not settings.verifix_configured:
+        return (
+            "Verifix (face-ID attendance) is not connected yet: VERIFIX_CLIENT_ID and VERIFIX_CLIENT_SECRET "
+            "are not set, so there is no attendance data at all. Say so plainly; do not guess."
+        )
+    today = today_local()
+    now = now_local().replace(tzinfo=None)  # Verifix times are Tashkent wall time
+    try:
+        recs = await attendance.load(today - timedelta(days=30), today, run_id=None, agent=AGENT, now=now)
+    except Exception as exc:  # noqa: BLE001 — the Director gets "unavailable", not an error
+        log.error("Verifix read failed: {}", exc)
+        return f"Verifix could not be read right now ({exc}). Say attendance data is unavailable; do not guess."
+    return attendance.describe(recs, today, now)
 
 
 async def _fetch_client_feedback_data() -> str:
