@@ -74,7 +74,7 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     """
     import re
 
-    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "Laundry", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot", "Verifix"}
+    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "Londry", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot", "Verifix"}
     allowed |= allow or set()
     # Telegram commands (/ismlar, /bekor) can only be Latin.
     plain = re.sub(r"/[a-z_]+", " ", re.sub(r"<[^>]+>", " ", text))
@@ -1268,7 +1268,7 @@ def test_client_feedback() -> None:
     anon_text = feedback.director_text(anon)
     check_true("no name, no phone = anonymous", anon.anonymous and "👤 Аноним" in anon_text)
     check_true("🔴 and the business head the Director's message",
-               anon_text.startswith("🔴 <b>Мижоз шикояти — Laundry</b>"))
+               anon_text.startswith("🔴 <b>Мижоз шикояти — Londry</b>"))
     check_true("no opinion wording left", "фикр" not in anon_text.lower())
     check_true("the Director's message is Uzbek Cyrillic", latin_words(anon_text) == [])
     risky = feedback.clean({"place": "garmin", "message": "<b>x</b> & y", "name": "<i>"})[0]
@@ -1333,13 +1333,13 @@ def test_client_feedback() -> None:
     client = TestClient(api_app.app)
     try:
         page = client.get("/f")
-        check_true("/f (on the printed Laundry card) is Laundry's form",
+        check_true("/f (on the printed Londry card) is Londry's form",
                    page.status_code == 200 and "Шикоятни юбориш" in page.text and "action='/f'" in page.text
-                   and ">Laundry<" in page.text and "Garmin" not in page.text)
+                   and ">Londry<" in page.text and "Garmin" not in page.text)
         garmin = client.get("/f/garmin")
         check_true("/f/garmin is Garmin's form, posting back to itself",
                    garmin.status_code == 200 and "action='/f/garmin'" in garmin.text and ">Garmin<" in garmin.text
-                   and "Laundry" not in garmin.text)
+                   and "Londry" not in garmin.text)
         check_true("the page is Uzbek Cyrillic by default (the language links aside)",
                    latin_words(outside_nav(page.text)) == [] and "lang='uz-Cyrl'" in page.text)
         check_true("the language links are on the page, Latin Uzbek gone",
@@ -1355,7 +1355,7 @@ def test_client_feedback() -> None:
         check_true("an Uzbek phone gets Cyrillic", "Шикоятни юбориш" in uz.text)
         for other in ("/f/laundry", "/f/cafe"):
             moved = client.get(other, follow_redirects=False)
-            check_true(f"{other} goes to Laundry's page", moved.status_code == 301 and moved.headers["location"] == "/f")
+            check_true(f"{other} goes to Londry's page", moved.status_code == 301 and moved.headers["location"] == "/f")
 
         ok = client.post("/f", data={"message": "Машина ишламаяпти", "phone": "+998901234567"})
         check_true("a complaint is thanked", ok.status_code == 200 and "Раҳмат" in ok.text)
@@ -1398,8 +1398,10 @@ def test_client_feedback() -> None:
 
     # ---- the printed card: red, white square, and exactly the right code
     url = "https://example.uz/f/garmin"
-    card = Image.open(io.BytesIO(qr_card.card_png(url, "Garmin"))).convert("RGB")
-    check("card size (10×12.7 cm at 300 dpi)", card.size, (1200, 1500))
+    card = Image.open(io.BytesIO(qr_card.card_png(url))).convert("RGB")
+    check("card size (10×10 cm at 300 dpi)", card.size, (1200, 1200))
+    check_true("only red, white and black — no text on the card",
+               {c for _, c in card.getcolors(1 << 20)} <= {qr_card.RED, qr_card.WHITE, qr_card.BLACK})
     check("red background", card.getpixel((10, 10)), qr_card.RED)
     x0, y0, module, modules = qr_card.card_geometry(url)
     matrix = qr_card.qr_matrix(url)

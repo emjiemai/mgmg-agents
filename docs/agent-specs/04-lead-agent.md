@@ -1,4 +1,4 @@
-# Agent 4 — Lead Agent (Primus Laundry + EMJIEM sports-tech)
+# Agent 4 — Lead Agent (Primus Londry + EMJIEM sports-tech)
 
 **Code:** `agents/lead-agent/agent.py` + `agents/lead-agent/prompt.py`
 **Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily

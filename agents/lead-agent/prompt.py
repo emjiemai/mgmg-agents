@@ -34,7 +34,7 @@ professional line, and Tacx. Treat this line with the same "explicit, not
 inferred" rigor as laundry despite the lighter grounding.
 """
 
-COMPANY_NAME = "Primus Laundry (EMJIEM)"
+COMPANY_NAME = "Primus Londry (EMJIEM)"
 
 SYSTEM_PROMPT = f"""\
 # ROLE

@@ -1,4 +1,4 @@
-"""Lead Agent — daily B2B lead sourcing for Primus Laundry Uzbekistan.
+"""Lead Agent — daily B2B lead sourcing for Primus Londry Uzbekistan.
 
 Replaces the n8n "Lead Agent" workflow with a native Python cron job, so it
 runs on Render without paying for an n8n web service + persistent disk.

@@ -9,7 +9,7 @@
 
 ## Who I am and how I want you to work
 
-I am the IT specialist / AI agent builder at Primus Laundry (MGMG). I am the
+I am the IT specialist / AI agent builder at Primus Londry (MGMG). I am the
 only developer on this project. You are my engineering partner, not an
 order-taker.
 

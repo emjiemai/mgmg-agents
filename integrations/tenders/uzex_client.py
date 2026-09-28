@@ -61,7 +61,7 @@ LOT_URL_TEMPLATE = "https://etender.uzex.uz/lot/{id}"
 # Only these two carry live volume — see the module docstring.
 TRADE_TYPES: dict[int, str] = {1: "competitive", 2: "tender"}
 
-# Keywords aimed at Primus Laundry's two tracks. The API matches these against
+# Keywords aimed at Primus Londry's two tracks. The API matches these against
 # the lot name, so they must be short substrings, not natural-language queries.
 # Uzbek, Russian and transliterated forms are all included because the portal's
 # lot titles mix all three in practice.

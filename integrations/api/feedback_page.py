@@ -9,7 +9,7 @@ the Director by ``integrations/org_bot/feedback.py``.
 Two pages, one per business, each behind its own printed QR code — the
 address decides the business, the client never chooses:
 
-    /f          Laundry — the address on the first printed card; keep it
+    /f          Londry — the address on the first printed card; keep it
     /f/garmin   Garmin
 
 Three languages: Uzbek Cyrillic (the default), Russian and English (Uzbek
@@ -46,7 +46,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import feedback
 from integrations.org_bot.feedback import DEFAULT_LANG, PLACES
 
-# Each business's page. "/f" is printed on Laundry's cards and can't move.
+# Each business's page. "/f" is printed on Londry's cards and can't move.
 PAGES: dict[str, str] = {"laundry": "/f", "garmin": "/f/garmin"}
 assert set(PAGES) == set(PLACES)
 
@@ -359,7 +359,7 @@ def _show_form(request: Request, place: str, lang: str | None) -> Response:
 
 @router.get("", response_class=HTMLResponse)
 async def laundry_form(request: Request, lang: str | None = None) -> Response:
-    """Laundry's page — the address on the printed Laundry card."""
+    """Londry's page — the address on the printed Londry card."""
     return _show_form(request, "laundry", lang)
 
 
@@ -371,7 +371,7 @@ async def garmin_form(request: Request, lang: str | None = None) -> Response:
 
 @router.get("/{other}", include_in_schema=False)
 async def other_link(other: str) -> Response:
-    """Anything else under /f (early test codes, /f/laundry) goes to Laundry's page."""
+    """Anything else under /f (early test codes, /f/laundry) goes to Londry's page."""
     return RedirectResponse("/f", status_code=301)
 
 

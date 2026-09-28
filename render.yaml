@@ -39,7 +39,7 @@ databases:
   - name: mgmg-db
     databaseName: mgmg
     user: mgmg
-    plan: free  # expires 30 days after creation — see note above
+    plan: basic-256mb  # paid (0.1 CPU, 256 MB), matches the dashboard — "free" here would downgrade it on sync
     postgresMajorVersion: 16
 
 services:

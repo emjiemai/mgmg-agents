@@ -1,6 +1,6 @@
 """Client complaints from one QR code — to the Director via OPS Manager Bot.
 
-A client scans a business's QR code — Laundry's leads to ``/f``, Garmin's
+A client scans a business's QR code — Londry's leads to ``/f``, Garmin's
 to ``/f/garmin`` (pages in ``integrations/api/feedback_page.py``) — writes
 the complaint and, if they want, a name and phone number. Leaving both empty
 is anonymous. The complaint is stored in ``client_feedback`` with its
@@ -38,7 +38,7 @@ log = setup_logging(AGENT)
 KIND = "complaint"
 # Where a complaint can be about: URL key -> the brand, as clients know it.
 PLACES: dict[str, str] = {
-    "laundry": "Laundry",
+    "laundry": "Londry",
     "garmin": "Garmin",
 }
 # The page's languages, as named to the Director.

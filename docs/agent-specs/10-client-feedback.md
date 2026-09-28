@@ -1,4 +1,4 @@
-# Client complaints via QR codes — Laundry and Garmin
+# Client complaints via QR codes — Londry and Garmin
 
 **Code:** `integrations/api/feedback_page.py` (the page), `integrations/org_bot/feedback.py`
 (validation, delivery), `integrations/org_bot/qr_card.py` (the printable card),
@@ -14,10 +14,10 @@
 
    | Business | Page | |
    | -------- | ---- | - |
-   | Laundry | `/f` | the first printed card ("SHIKOYAT / COMPLAINT / ЖАЛОБА") points here — **never move it** |
+   | Londry | `/f` | the first printed card ("SHIKOYAT / COMPLAINT / ЖАЛОБА") points here — **never move it** |
    | Garmin | `/f/garmin` | |
 
-   Anything else after `/f/` (early test codes, `/f/laundry`) opens Laundry's page.
+   Anything else after `/f/` (early test codes, `/f/laundry`) opens Londry's page.
 2. Gets one screen, complaints only (2026-09-28 — the "Фикр" choice is
    gone; this is the company's complaints channel). The business's name sits
    at the top left, then:
@@ -63,9 +63,9 @@ before 2026-09-28 may be opinions and are marked so).
 
 ## Making the card
 
-- **Admin Bot:** `/qr` → two print-ready PNGs, Laundry's and Garmin's
-  (1200×1500 px, 300 dpi, about 10×12.7 cm), each with the business's name
-  under the code so they can't be mixed up.
+- **Admin Bot:** `/qr` → two print-ready PNGs, Londry's and Garmin's
+  (1200×1200 px, 300 dpi, 10×10 cm) — only the code, no text (2026-09-28);
+  the file name and the Telegram caption say which business each one is.
 - **On your computer:** `python scripts/make_feedback_qr.py --base https://<address>`
 
 The white square behind the code is deliberate: phone scanners read

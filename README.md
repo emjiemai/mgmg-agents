@@ -6,7 +6,7 @@ matters and employees are asked, reminded and recorded without anyone doing
 it by hand. The roadmap is the owner's plan, *ЭМЖИЕМ AI Агентлар Тизими*
 (21 agents; agent codes like A2/B1 below refer to it).
 
-**Business lines:** Primus Laundry (ONDRY — industrial laundry equipment) ·
+**Business lines:** Primus Londry (ONDRY — industrial laundry equipment) ·
 Garmin watch retail.
 
 ## What runs
@@ -66,7 +66,7 @@ query runs in a read-only transaction. For heavier work, any Postgres client
 
 ## Client complaints (QR codes)
 
-Clients scan a red QR card — Laundry's opens `/f`, Garmin's `/f/garmin` —
+Clients scan a red QR card — Londry's opens `/f`, Garmin's `/f/garmin` —
 and leave a complaint, with or without a name and phone; it reaches the
 Director through OPS Manager Bot, marked 🔴 with the business. Admin Bot
 `/qr` makes both cards. See

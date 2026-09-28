@@ -38,7 +38,7 @@ def main() -> int:
     for place, business in PLACES.items():
         url = f"{base}{PAGES[place]}"
         out = Path(args.out) / f"qr-shikoyat-{place}.png"
-        out.write_bytes(qr_card.card_png(url, business))
+        out.write_bytes(qr_card.card_png(url))
         print(f"{out}  ->  {url}")
     return 0
 

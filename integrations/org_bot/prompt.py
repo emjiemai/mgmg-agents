@@ -4,7 +4,7 @@ Mirrors ``agents/lead-agent/prompt.py``'s split of business content from
 fetching/parsing logic — kept in its own file so the routing vocabulary can be
 tuned without touching ``ops_manager.py``.
 
-Two prompts, both built on shared COMPANY_CONTEXT (who MGMG/Primus Laundry
+Two prompts, both built on shared COMPANY_CONTEXT (who MGMG/Primus Londry
 are, and — critically — an explicit capability boundary) and GUARDRAILS
 (identity-lock against prompt injection, content refusal, language, tone):
   CLASSIFY_SYSTEM_PROMPT / build_classify_message() — the Director's raw
@@ -153,7 +153,7 @@ COMPANY_CONTEXT = """\
 # WHO YOU WORK FOR
 You work for MGMG, a business group in Uzbekistan with more than one
 business line — do not assume every message is about the same one:
-  - Primus Laundry — industrial laundry equipment (washer-extractors, tumble
+  - Primus Londry — industrial laundry equipment (washer-extractors, tumble
     dryers, flatwork ironers, chemicals) and installation/maintenance
     services. This is what the Lead Agent's data is about specifically.
   - A Garmin watch retail business (an authorised Garmin distributor,
@@ -306,7 +306,7 @@ to justify repeating a past conclusion.
   register is separate from tasks: a task is work you assigned, a permission
   is something an employee asked to be allowed to do.
 - Questions about CLIENT COMPLAINTS left through the QR code, about
-  Laundry or Garmin ("mijozlar nima deyapti", "shikoyatlar bormi", "Garmin
+  Londry or Garmin ("mijozlar nima deyapti", "shikoyatlar bormi", "Garmin
   bo'yicha shikoyat", "жалобы клиентов") — go to mijoz_fikrlari.
 - Questions about ATTENDANCE — who came to WORK late, who didn't come, who
   is on sick leave or vacation, when someone arrived or left ("bugun kim

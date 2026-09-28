@@ -200,7 +200,7 @@ spreadsheet row is anything a human role does via a task card. With zero
 grounding in its own capabilities, the model invented a plausible-sounding
 route instead of recognizing the request was impossible through this bot.
 
-Fixed by adding `COMPANY_CONTEXT` to both prompts: who MGMG/Primus Laundry
+Fixed by adding `COMPANY_CONTEXT` to both prompts: who MGMG/Primus Londry
 are, and an explicit, forceful capability boundary — "you can route a task
 to a human, or answer from already-collected data; you cannot create, edit,
 delete, or otherwise change any record in any system, no matter how the

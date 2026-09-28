@@ -190,7 +190,7 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
 
 
 async def _send_qr(run_id: uuid.UUID) -> str:
-    """Send the admin the printable complaints QR cards — Laundry's and Garmin's."""
+    """Send the admin the printable complaints QR cards — Londry's and Garmin's."""
     import tempfile
     from pathlib import Path
 
@@ -211,7 +211,7 @@ async def _send_qr(run_id: uuid.UUID) -> str:
         for place, business in PLACES.items():
             url = f"{settings.public_url}{PAGES[place]}"
             path = folder / f"qr-shikoyat-{place}.png"
-            path.write_bytes(qr_card.card_png(url, business))
+            path.write_bytes(qr_card.card_png(url))
             await bot.send_document(
                 str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=f"{business}: {escape(url)}"
             )
