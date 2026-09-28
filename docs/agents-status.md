@@ -22,7 +22,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-26.
 | — | Tasks to a department or to one named person, relays with confirmation | on message | employees, Director | — |
 | — | Names and roles — every employee's typed name; admin re-asks a name or changes a role | on registration · `/xodimlar` · `/ism` | admin, employees | — |
 | — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
-| — | Client feedback via one QR code (opinion or complaint, anonymous allowed) | when a client scans · `/qr` makes the card | Director | `FEEDBACK_ENABLED` |
+| — | Client feedback via one QR code (opinion or complaint, anonymous allowed; page in Uzbek Cyrillic/Latin, Russian, English) | when a client scans · `/qr` makes the card | Director | `FEEDBACK_ENABLED` |
 
 **8 of the plan's 21** are built (H0, A1, A2, A3, B1, B2, B4, E1). Of these,
 only H0 has been running long enough to call proven; the rest are in their

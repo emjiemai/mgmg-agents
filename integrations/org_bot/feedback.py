@@ -10,6 +10,11 @@ One code for the whole company (2026-09-28: the business isn't split into
 separate services for clients), so there is no place label. The QR image
 itself is drawn by ``qr_card.py``.
 
+The page speaks four languages (Uzbek Cyrillic and Latin, Russian, English);
+this module returns error *keys* the page translates. What the Director gets
+is always Uzbek Cyrillic, with the client's language noted when it isn't the
+default one.
+
 Pure validation and message text here (tested offline); the page, storage
 and delivery call into it.
 """
@@ -34,6 +39,14 @@ KINDS: dict[str, tuple[str, str]] = {
     "feedback": ("💬", "Фикр"),
     "complaint": ("⚠️", "Шикоят"),
 }
+# The page's languages, as named to the Director.
+LANGS: dict[str, str] = {
+    "uz_cyrl": "ўзбекча (кирилл)",
+    "uz_latn": "ўзбекча (лотин)",
+    "ru": "русча",
+    "en": "инглизча",
+}
+DEFAULT_LANG = "uz_cyrl"
 MESSAGE_MIN, MESSAGE_MAX = 3, 2000
 NAME_MAX = 60
 _PHONE_CHARS = re.compile(r"^[0-9+()\-\s]{7,25}$")
@@ -47,6 +60,7 @@ class Submission:
     message: str
     name: str
     phone: str
+    lang: str = DEFAULT_LANG
 
     @property
     def anonymous(self) -> bool:
@@ -75,21 +89,23 @@ def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
 
     Returns:
         ``(submission, None)`` when it's acceptable, else ``(None, error)``
-        with the error in Uzbek Cyrillic for the page to show.
+        with an error key — "empty", "too_long" or "phone" — that the page
+        shows in the client's language.
     """
     kind = form.get("kind", "feedback")
     if kind not in KINDS:
         kind = "feedback"
+    lang = form.get("lang") if form.get("lang") in LANGS else DEFAULT_LANG
     message = " ".join((form.get("message") or "").split())
     if len(message) < MESSAGE_MIN:
-        return None, "Фикрингизни ёзинг."
+        return None, "empty"
     if len(message) > MESSAGE_MAX:
-        return None, f"Хабар жуда узун — {MESSAGE_MAX} белгигача ёзинг."
+        return None, "too_long"
     name = " ".join((form.get("name") or "").split())[:NAME_MAX]
     phone = normalize_phone(form.get("phone") or "")
     if phone is None:
-        return None, "Телефон рақами нотўғри. Масалан: +998 90 123 45 67 — ёки бўш қолдиринг."
-    return Submission(kind=kind, message=message, name=name, phone=phone), None
+        return None, "phone"
+    return Submission(kind=kind, message=message, name=name, phone=phone, lang=lang), None
 
 
 def director_text(sub: Submission) -> str:
@@ -101,6 +117,8 @@ def director_text(sub: Submission) -> str:
     else:
         contact = " · ".join(part for part in (escape(sub.phone) if sub.phone else "", escape(sub.name)) if part)
         lines.append(f"📞 {contact}")
+    if sub.lang != DEFAULT_LANG:
+        lines.append(f"🌐 Мижоз тили: {LANGS[sub.lang]}")
     return "\n".join(lines)
 
 

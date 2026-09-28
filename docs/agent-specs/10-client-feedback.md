@@ -16,6 +16,21 @@
    optional name and phone. Leaving both empty sends it anonymously.
 3. Presses **Юбориш** → "✅ Раҳмат! Хабарингиз раҳбариятга юборилди."
 
+## Languages
+
+The page speaks **Uzbek Cyrillic, Uzbek Latin, Russian and English**
+(2026-09-28). Links at the top — "Ўзбекча · Oʻzbekcha · Русский · English" —
+switch it at any time (`/f?lang=uz_cyrl|uz_latn|ru|en`). Without a choice
+it opens in the phone's language: Russian → Russian, English → English,
+Uzbek → Latin (phones write Uzbek in Latin unless set to Cyrillic), anything
+else → Uzbek Cyrillic. Errors and the thank-you page stay in the chosen
+language. The printed card stays "ФИКР ВА ШИКОЯТЛАР" — one card for
+everyone.
+
+The Director's message is always Uzbek Cyrillic; the client's text is
+passed on as written, and a non-default language is noted:
+`🌐 Мижоз тили: русча`.
+
 The Director immediately gets, through OPS Manager Bot:
 
     ⚠️ Мижоз: шикоят
@@ -70,8 +85,8 @@ cards go out.
   address is stored** or sent anywhere — anonymous means anonymous).
 - Message 3–2000 characters, name up to 60, phone checked as a phone number.
 - Everything the client typed is escaped before it reaches Telegram.
-- If saving fails, the client sees "Хатолик юз берди…" with their text kept,
-  never a lost message dressed as success.
+- If saving fails, the client sees "Хатолик юз берди…" (in their language)
+  with their text kept, never a lost message dressed as success.
 
 ## Switch
 
