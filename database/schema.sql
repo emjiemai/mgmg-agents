@@ -724,14 +724,14 @@ ALTER TABLE pending_relays ADD CONSTRAINT pending_relays_outcome_check
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;
 
 -- ---------------------------------------------------------------------------
--- client_feedback — opinions and complaints clients leave through the QR
--- codes (integrations/api/feedback_page.py). Name and phone are optional;
+-- client_feedback — complaints clients leave through the QR code (opinions
+-- too, before 2026-09-28) (integrations/api/feedback_page.py). Name and phone are optional;
 -- both empty = anonymous. No IP address or device data is stored.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS client_feedback (
     id                   BIGSERIAL    PRIMARY KEY,
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    place                TEXT         NOT NULL,   -- the QR code's label, e.g. 'garmin'
+    place                TEXT         NOT NULL,   -- 'laundry' | 'garmin', chosen on the page
     kind                 TEXT         NOT NULL CHECK (kind IN ('feedback', 'complaint')),
     message              TEXT         NOT NULL,
     contact_name         TEXT,
@@ -739,5 +739,6 @@ CREATE TABLE IF NOT EXISTS client_feedback (
     director_message_id  BIGINT                   -- set once it reached the Director
 );
 CREATE INDEX IF NOT EXISTS idx_client_feedback_created ON client_feedback (created_at DESC);
--- One QR code for the whole company since 2026-09-28: new rows have no place.
+-- 2026-09-28: one QR code for the whole company; rows from that day until the
+-- place picker came back (same day) have no place.
 ALTER TABLE client_feedback ALTER COLUMN place DROP NOT NULL;

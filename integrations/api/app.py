@@ -10,7 +10,7 @@ Endpoints:
     POST /webhooks/sap-push/{secret}                  AR-aging snapshot pushed from the SAP gateway's machine
     POST /webhooks/sap-gateway-push/{tool}/{secret}   every other SAP gateway tool's raw snapshot
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
-    GET  /f/{place}, POST /f/{place}                  client feedback page behind the QR codes (feedback_page.py)
+    GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
 
 Security:
     * Every webhook path carries a shared secret compared in constant time.

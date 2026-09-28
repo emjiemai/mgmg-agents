@@ -1,19 +1,21 @@
-"""Client feedback and complaints from one QR code — to the Director via OPS Manager Bot.
+"""Client complaints from one QR code — to the Director via OPS Manager Bot.
 
 A client scans the company's QR code, gets a one-screen page (served by
-``integrations/api/feedback_page.py`` at ``/f``), writes an opinion or a
-complaint and, if they want, a name and phone number. Leaving both empty is
-anonymous. The message is stored in ``client_feedback`` and sent to the
-Director(s).
+``integrations/api/feedback_page.py`` at ``/f``), picks which business the
+complaint is about — Laundry or Garmin — writes it and, if they want,
+a name and phone number. Leaving both empty is anonymous. The complaint is
+stored in ``client_feedback`` and sent to the Director(s).
 
-One code for the whole company (2026-09-28: the business isn't split into
-separate services for clients), so there is no place label. The QR image
-itself is drawn by ``qr_card.py``.
+Complaints only since 2026-09-28: the page is the company's complaints
+channel, so the "opinion" choice is gone (older rows may still say
+'feedback'). One printed code serves both businesses; the client chooses on
+the page, and ``/f/garmin`` or ``/f/laundry`` opens with the choice made.
+The QR image itself is drawn by ``qr_card.py``.
 
-The page speaks four languages (Uzbek Cyrillic and Latin, Russian, English);
-this module returns error *keys* the page translates. What the Director gets
-is always Uzbek Cyrillic, with the client's language noted when it isn't the
-default one.
+The page speaks three languages (Uzbek Cyrillic, Russian, English); this
+module returns error *keys* the page translates. What the Director gets is
+always Uzbek Cyrillic, marked 🔴 so it stands out in OPS Manager Bot, with the
+client's language noted when it isn't the default one.
 
 Pure validation and message text here (tested offline); the page, storage
 and delivery call into it.
@@ -35,14 +37,15 @@ from integrations.telegram.bot import escape
 AGENT = "client-feedback"
 log = setup_logging(AGENT)
 
-KINDS: dict[str, tuple[str, str]] = {
-    "feedback": ("💬", "Фикр"),
-    "complaint": ("⚠️", "Шикоят"),
+KIND = "complaint"
+# Where a complaint can be about: URL key -> the brand, as clients know it.
+PLACES: dict[str, str] = {
+    "laundry": "Laundry",
+    "garmin": "Garmin",
 }
 # The page's languages, as named to the Director.
 LANGS: dict[str, str] = {
-    "uz_cyrl": "ўзбекча (кирилл)",
-    "uz_latn": "ўзбекча (лотин)",
+    "uz_cyrl": "ўзбекча",
     "ru": "русча",
     "en": "инглизча",
 }
@@ -56,11 +59,12 @@ _PHONE_CHARS = re.compile(r"^[0-9+()\-\s]{7,25}$")
 class Submission:
     """One validated form: what the client wrote, and how to reach them (if at all)."""
 
-    kind: str
+    place: str
     message: str
     name: str
     phone: str
     lang: str = DEFAULT_LANG
+    kind: str = KIND
 
     @property
     def anonymous(self) -> bool:
@@ -89,12 +93,12 @@ def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
 
     Returns:
         ``(submission, None)`` when it's acceptable, else ``(None, error)``
-        with an error key — "empty", "too_long" or "phone" — that the page
-        shows in the client's language.
+        with an error key — "place", "empty", "too_long" or "phone" — that
+        the page shows in the client's language.
     """
-    kind = form.get("kind", "feedback")
-    if kind not in KINDS:
-        kind = "feedback"
+    place = form.get("place", "")
+    if place not in PLACES:
+        return None, "place"
     lang = form.get("lang") if form.get("lang") in LANGS else DEFAULT_LANG
     message = " ".join((form.get("message") or "").split())
     if len(message) < MESSAGE_MIN:
@@ -105,13 +109,12 @@ def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
     phone = normalize_phone(form.get("phone") or "")
     if phone is None:
         return None, "phone"
-    return Submission(kind=kind, message=message, name=name, phone=phone, lang=lang), None
+    return Submission(place=place, message=message, name=name, phone=phone, lang=lang), None
 
 
 def director_text(sub: Submission) -> str:
     """The message the Director gets (everything the client typed is escaped)."""
-    emoji, label = KINDS[sub.kind]
-    lines = [f"{emoji} <b>Мижоз: {label.lower()}</b>", "", f"«{escape(sub.message)}»", ""]
+    lines = [f"🔴 <b>Мижоз шикояти — {PLACES[sub.place]}</b>", "", f"«{escape(sub.message)}»", ""]
     if sub.anonymous:
         lines.append("👤 Аноним")
     else:
@@ -129,22 +132,25 @@ async def submit(sub: Submission) -> int:
         How many Directors received it (it's stored either way).
     """
     row = await store.save_client_feedback(
-        kind=sub.kind, message=sub.message, contact_name=sub.name or None, phone=sub.phone or None
+        place=sub.place, kind=sub.kind, message=sub.message,
+        contact_name=sub.name or None, phone=sub.phone or None,
     )
     delivered = await notify_directors(director_text(sub), agent=AGENT, run_id=uuid.uuid4())
     if row is not None and delivered:
         await store.mark_client_feedback_sent(row["id"], delivered[0])
-    log.info("Client {} stored and sent to {} director(s)", sub.kind, len(delivered))
+    log.info("Client complaint ({}) stored and sent to {} director(s)", sub.place, len(delivered))
     return len(delivered)
 
 
 def describe(rows: list[dict[str, Any]]) -> str:
     """Plain-text data for OPS Manager Bot's answers ("mijozlar fikri")."""
     if not rows:
-        return "No client feedback or complaints received through the QR code in the last 60 days."
-    complaints = sum(1 for r in rows if r["kind"] == "complaint")
-    lines = [f"Client feedback via the QR code, last 60 days: {len(rows)} ({complaints} complaint(s)), newest first:"]
+        return "No client complaints received through the QR code in the last 60 days."
+    lines = [f"Client complaints via the QR code, last 60 days: {len(rows)}, newest first:"]
     for r in rows:
         contact = r.get("phone") or r.get("contact_name") or "anonymous"
-        lines.append(f"- [{to_local(r['created_at']):%Y-%m-%d %H:%M}] {r['kind']} | {r['message']} | contact: {contact}")
+        place = PLACES.get(r.get("place") or "", "not stated")
+        # Rows from before 2026-09-28 may be opinions rather than complaints.
+        kind = "" if r["kind"] == KIND else f" ({r['kind']})"
+        lines.append(f"- [{to_local(r['created_at']):%Y-%m-%d %H:%M}] {place}{kind} | {r['message']} | contact: {contact}")
     return "\n".join(lines)

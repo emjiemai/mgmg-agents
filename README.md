@@ -64,11 +64,11 @@ asks for a login (any name, that password). It can't change anything: every
 query runs in a read-only transaction. For heavier work, any Postgres client
 (DBeaver, TablePlus) connects with Render's External Database URL.
 
-## Client feedback (QR codes)
+## Client complaints (QR code)
 
-Clients scan the company's one red QR card and leave an opinion or a
-complaint, with or without a name and phone; it reaches the Director through
-OPS Manager Bot. Admin Bot `/qr` makes the card. See
+Clients scan the company's one red QR card, choose Laundry or Garmin and
+leave a complaint, with or without a name and phone; it reaches the Director
+through OPS Manager Bot, marked 🔴. Admin Bot `/qr` makes the card. See
 `docs/agent-specs/10-client-feedback.md`.
 
 ## Attendance (Verifix)

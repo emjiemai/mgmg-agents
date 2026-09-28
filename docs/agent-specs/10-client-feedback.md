@@ -1,48 +1,62 @@
-# Client feedback via one QR code
+# Client complaints via one QR code
 
 **Code:** `integrations/api/feedback_page.py` (the page), `integrations/org_bot/feedback.py`
 (validation, delivery), `integrations/org_bot/qr_card.py` (the printable card),
 `scripts/make_feedback_qr.py` (the card on your own computer)
 **Runs inside:** `mgmg-api` — no new service
-**Stored in:** `client_feedback`
+**Stored in:** `client_feedback` (`place` = `laundry` | `garmin`, `kind` = `complaint`)
 
 ## What a client does
 
 1. Scans the company's QR card — red card, black code on a white square in
-   the centre, "ФИКР ВА ШИКОЯТЛАР" on top. **One code for the whole company**
-   (2026-09-28): clients don't see separate services, so there are no
-   per-location codes.
-2. Gets one screen (`/f`): **💬 Фикр** or **⚠️ Шикоят**, a text box, and an
-   optional name and phone. Leaving both empty sends it anonymously.
-3. Presses **Юбориш** → "✅ Раҳмат! Хабарингиз раҳбариятга юборилди."
+   the centre, "ШИКОЯТ ҚОЛДИРИНГ" on top. **One code for both businesses.**
+2. Gets one screen (`/f`), complaints only (2026-09-28 — the "Фикр" choice
+   is gone; this is the company's complaints channel):
+   - **Қайси бўлим бўйича?** — two large tiles, **Laundry** and **Garmin**
+     (required);
+   - **Нима бўлди?** — the complaint;
+   - **Сиз билан боғланайликми?** — optional name and phone; both empty =
+     anonymous.
+3. Presses **Шикоятни юбориш** → "Раҳмат! Шикоятингиз раҳбариятга юборилди."
+
+`/f/garmin` and `/f/laundry` open the form with that business already
+chosen — for a code placed at one of them, if ever wanted. Anything else
+after `/f/` goes to the plain form.
+
+## Design
+
+Made for a phone, read by someone who is already annoyed: 18 px body text,
+30–38 px title, 60 px send button, large tiles; drawn icons, no emoji. An
+error sits next to the field it is about (with the field outlined in red),
+and everything typed is kept. Light and dark themes follow the phone; every
+text meets WCAG AA contrast and input borders 3:1. No JavaScript — the whole
+page is a few kilobytes and works on any phone.
 
 ## Languages
 
-The page speaks **Uzbek Cyrillic, Uzbek Latin, Russian and English**
-(2026-09-28). Links at the top — "Ўзбекча · Oʻzbekcha · Русский · English" —
-switch it at any time (`/f?lang=uz_cyrl|uz_latn|ru|en`). Without a choice
-it opens in the phone's language: Russian → Russian, English → English,
-Uzbek → Latin (phones write Uzbek in Latin unless set to Cyrillic), anything
-else → Uzbek Cyrillic. Errors and the thank-you page stay in the chosen
-language. The printed card stays "ФИКР ВА ШИКОЯТЛАР" — one card for
-everyone.
+**Uzbek Cyrillic, Russian and English** (Uzbek Latin removed 2026-09-28).
+The switcher at the top — "Ўзбекча · Русский · English" — changes it at
+any time (`/f?lang=uz_cyrl|ru|en`) and keeps the chosen business. Without a
+choice the page opens in the phone's language: Russian → Russian, English →
+English, Uzbek (either script) and anything else → Uzbek Cyrillic. Errors
+and the thank-you page stay in the chosen language.
 
 The Director's message is always Uzbek Cyrillic; the client's text is
 passed on as written, and a non-default language is noted:
 `🌐 Мижоз тили: русча`.
 
-The Director immediately gets, through OPS Manager Bot:
+The Director immediately gets, through OPS Manager Bot — the 🔴 makes it
+stand out in the chat:
 
-    ⚠️ Мижоз: шикоят
+    🔴 Мижоз шикояти — Garmin
 
-    «Кассада навбат жуда узун эди»
+    «Соат экрани бир ҳафтада синиб қолди»
 
     📞 +998901234567 · Алишер
 
-and can ask the bot any time: "mijozlar nima deyapti?", "shikoyatlar bormi?"
-(the `mijoz_fikrlari` agent, last 60 days).
-
-Links from early test cards (`/f/garmin`) redirect to `/f`.
+and can ask the bot any time: "shikoyatlar bormi?", "Garmin bo'yicha
+shikoyat bormi?" (the `mijoz_fikrlari` agent, last 60 days; rows from
+before 2026-09-28 may be opinions and are marked so).
 
 ## Making the card
 
@@ -80,8 +94,8 @@ at the domain's DNS, `PUBLIC_BASE_URL`, then `/qr` and reprint.)
   address is stored** or sent anywhere — anonymous means anonymous).
 - Message 3–2000 characters, name up to 60, phone checked as a phone number.
 - Everything the client typed is escaped before it reaches Telegram.
-- If saving fails, the client sees "Хатолик юз берди…" (in their language)
-  with their text kept, never a lost message dressed as success.
+- If saving fails, the client sees "Хатолик юз берди, шикоят юборилмади…" (in
+  their language) with their text kept, never a lost message dressed as success.
 
 ## Switch
 

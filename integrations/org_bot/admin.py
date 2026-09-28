@@ -190,7 +190,7 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
 
 
 async def _send_qr(run_id: uuid.UUID) -> str:
-    """Send the admin the printable feedback QR card."""
+    """Send the admin the printable complaints QR card."""
     import tempfile
     from pathlib import Path
 
@@ -206,7 +206,7 @@ async def _send_qr(run_id: uuid.UUID) -> str:
             await bot.send_message("Сервер манзили номаълум — Render'да PUBLIC_BASE_URL ни белгиланг.")
             return "qr_no_url"
         url = f"{settings.public_url}/f"
-        path = Path(tempfile.mkdtemp(prefix="mgmg-qr-")) / "qr-fikr.png"
+        path = Path(tempfile.mkdtemp(prefix="mgmg-qr-")) / "qr-shikoyat.png"
         path.write_bytes(qr_card.card_png(url))
         await bot.send_document(str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=escape(url))
     return "qr_sent"

@@ -1428,16 +1428,16 @@ async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
 
 
 async def save_client_feedback(
-    *, kind: str, message: str, contact_name: str | None, phone: str | None
+    *, place: str, kind: str, message: str, contact_name: str | None, phone: str | None
 ) -> dict[str, Any] | None:
-    """Store one client opinion or complaint from the QR code."""
+    """Store one client complaint from the QR code."""
     return await fetch_one(
         """
-        INSERT INTO client_feedback (kind, message, contact_name, phone)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO client_feedback (place, kind, message, contact_name, phone)
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING *
         """,
-        (kind, message, contact_name, phone),
+        (place, kind, message, contact_name, phone),
     )
 
 
@@ -1447,7 +1447,7 @@ async def mark_client_feedback_sent(feedback_id: int, message_id: int) -> None:
 
 
 async def recent_client_feedback(days: int = 60) -> list[dict[str, Any]]:
-    """Client opinions and complaints of the last ``days`` days, newest first."""
+    """Client complaints (and older opinions) of the last ``days`` days, newest first."""
     return await fetch_all(
         "SELECT * FROM client_feedback WHERE created_at >= now() - make_interval(days => %s) ORDER BY created_at DESC",
         (days,),

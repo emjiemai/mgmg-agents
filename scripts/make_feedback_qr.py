@@ -1,10 +1,10 @@
-"""Make the printable feedback QR card on your own computer.
+"""Make the printable complaints QR card on your own computer.
 
-The same card Admin Bot sends for "/qr" — one code for the whole company:
+The same card Admin Bot sends for "/qr" — one code for both businesses (the client picks Laundry or Garmin):
 
-    python scripts/make_feedback_qr.py --base https://fikr.example.uz
+    python scripts/make_feedback_qr.py --base https://shikoyat.example.uz
 
-writes qr-fikr.png (1200×1500 px, 300 dpi — about 10×12.7 cm). Without
+writes qr-shikoyat.png (1200×1500 px, 300 dpi — about 10×12.7 cm). Without
 --base it uses PUBLIC_BASE_URL.
 
 Print it only once the address is final: a printed code can't be changed,
@@ -24,9 +24,9 @@ from integrations.org_bot import qr_card  # noqa: E402
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Printable feedback QR card.")
+    parser = argparse.ArgumentParser(description="Printable complaints QR card.")
     parser.add_argument("--base", default=settings.public_url, help="public address of mgmg-api")
-    parser.add_argument("--out", default="qr-fikr.png", help="output file")
+    parser.add_argument("--out", default="qr-shikoyat.png", help="output file")
     args = parser.parse_args()
 
     base = (args.base or "").rstrip("/")

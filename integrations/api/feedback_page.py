@@ -1,16 +1,26 @@
-"""The page a client sees after scanning the company's feedback QR code — ``/f``.
+"""The page a client sees after scanning the company's QR code — ``/f``.
 
-One screen, no JavaScript, a few kilobytes: a choice between an opinion and
-a complaint, a text box, and an optional name and phone. Empty name and
-phone = anonymous. The form posts back here; the message is stored and sent
-to the Director by ``integrations/org_bot/feedback.py``.
+The company's complaints channel (2026-09-28: complaints only, no
+"opinion" choice). One screen, no JavaScript, a few kilobytes: which
+business it is about (Laundry or Garmin), what happened, and an optional
+name and phone. Empty name and phone = anonymous. The form posts back here;
+the complaint is stored and sent to the Director by
+``integrations/org_bot/feedback.py``.
 
-Four languages (2026-09-28): Uzbek Cyrillic (the default), Uzbek Latin,
-Russian and English. The page opens in the phone's language when it is one
-of these — ``?lang=`` (the switcher links) wins over the browser's
-Accept-Language header. A phone set to plain "uz" gets Latin: that is how
-phones write Uzbek (the CLDR default script). The choice rides along in a
-hidden field, so errors and the thank-you page stay in the same language.
+One printed code serves both businesses, so the client picks on the page;
+``/f/garmin`` and ``/f/laundry`` open with that choice already made, for a
+code placed at one of them.
+
+Three languages: Uzbek Cyrillic (the default), Russian and English (Uzbek
+Latin dropped 2026-09-28). The page opens in the phone's language when it
+is one of these — ``?lang=`` (the switcher links) wins over the browser's
+Accept-Language header, and any Uzbek phone gets Cyrillic. The choice rides
+along in a hidden field, so errors and the thank-you page stay in the same
+language.
+
+Read on a phone, often by someone who is already annoyed: large type
+(18 px body), large tap targets, errors next to the field they are about,
+and nothing but the form on the page.
 
 Public, so it defends itself:
   * a hidden "website" field that people never fill and bots do — such a
@@ -25,7 +35,7 @@ from __future__ import annotations
 import html
 import time
 from collections import defaultdict, deque
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -33,7 +43,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from integrations.common.config import settings
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import feedback
-from integrations.org_bot.feedback import DEFAULT_LANG
+from integrations.org_bot.feedback import DEFAULT_LANG, PLACES
 
 log = setup_logging("feedback-page")
 router = APIRouter(prefix="/f", include_in_schema=False)
@@ -55,128 +65,180 @@ TEXTS: dict[str, dict[str, str]] = {
     "uz_cyrl": {
         "html_lang": "uz-Cyrl",
         "switch": "Ўзбекча",
-        "title": "Фикр ва шикоятлар",
-        "intro": "Ҳар бир хабарни раҳбарият ўқийди",
-        "feedback": "Фикр",
-        "complaint": "Шикоят",
-        "message": "Хабарингиз",
-        "placeholder": "Фикрингизни шу ерга ёзинг…",
-        "name": "Исмингиз (ихтиёрий)",
-        "phone": "Телефон рақамингиз (ихтиёрий)",
-        "note": "Исм ва телефонни ёзмасангиз — хабар аноним юборилади.",
-        "send": "Юбориш",
+        "title": "Шикоят қолдириш",
+        "intro": "Ҳар бир шикоятни раҳбарият ўқийди.",
+        "place": "Қайси бўлим бўйича?",
+        "message": "Нима бўлди?",
+        "placeholder": "Қачон, қаерда ва нима бўлганини ёзинг",
+        "contact": "Сиз билан боғланайликми?",
+        "contact_hint": "Ихтиёрий. Исм ва телефонни ёзмасангиз, шикоят аноним юборилади.",
+        "name": "Исмингиз",
+        "phone": "Телефон рақамингиз",
+        "send": "Шикоятни юбориш",
         "thanks": "Раҳмат!",
-        "sent": "Хабарингиз раҳбариятга юборилди.",
-        "contact": "Керак бўлса, сиз билан боғланамиз.",
-        "again": "Яна ёзиш",
-        "err_empty": "Фикрингизни ёзинг.",
-        "err_too_long": "Хабар жуда узун — {n} белгигача ёзинг.",
+        "sent": "Шикоятингиз раҳбариятга юборилди.",
+        "follow_up": "Керак бўлса, сиз билан боғланамиз.",
+        "again": "Яна шикоят ёзиш",
+        "err_place": "Шикоят қайси бўлим бўйича эканини танланг.",
+        "err_empty": "Нима бўлганини ёзинг.",
+        "err_too_long": "Шикоят жуда узун — {n} белгигача ёзинг.",
         "err_phone": "Телефон рақами нотўғри. Масалан: +998 90 123 45 67 — ёки бўш қолдиринг.",
-        "err_rate": "Кўп хабар юборилди. Бир оздан кейин қайта уриниб кўринг.",
-        "err_failed": "Хатолик юз берди. Бир оздан кейин қайта юборинг.",
-    },
-    "uz_latn": {
-        "html_lang": "uz-Latn",
-        "switch": "Oʻzbekcha",
-        "title": "Fikr va shikoyatlar",
-        "intro": "Har bir xabarni rahbariyat oʻqiydi",
-        "feedback": "Fikr",
-        "complaint": "Shikoyat",
-        "message": "Xabaringiz",
-        "placeholder": "Fikringizni shu yerga yozing…",
-        "name": "Ismingiz (ixtiyoriy)",
-        "phone": "Telefon raqamingiz (ixtiyoriy)",
-        "note": "Ism va telefonni yozmasangiz — xabar anonim yuboriladi.",
-        "send": "Yuborish",
-        "thanks": "Rahmat!",
-        "sent": "Xabaringiz rahbariyatga yuborildi.",
-        "contact": "Kerak boʻlsa, siz bilan bogʻlanamiz.",
-        "again": "Yana yozish",
-        "err_empty": "Fikringizni yozing.",
-        "err_too_long": "Xabar juda uzun — {n} belgigacha yozing.",
-        "err_phone": "Telefon raqami notoʻgʻri. Masalan: +998 90 123 45 67 — yoki boʻsh qoldiring.",
-        "err_rate": "Koʻp xabar yuborildi. Birozdan keyin qayta urinib koʻring.",
-        "err_failed": "Xatolik yuz berdi. Birozdan keyin qayta yuboring.",
+        "err_rate": "Кўп шикоят юборилди. Бир оздан кейин қайта уриниб кўринг.",
+        "err_failed": "Хатолик юз берди, шикоят юборилмади. Бир оздан кейин қайта юборинг.",
     },
     "ru": {
         "html_lang": "ru",
         "switch": "Русский",
-        "title": "Отзывы и жалобы",
-        "intro": "Каждое сообщение читает руководство",
-        "feedback": "Отзыв",
-        "complaint": "Жалоба",
-        "message": "Ваше сообщение",
-        "placeholder": "Напишите ваш отзыв здесь…",
-        "name": "Ваше имя (необязательно)",
-        "phone": "Ваш телефон (необязательно)",
-        "note": "Если не указать имя и телефон — сообщение будет анонимным.",
-        "send": "Отправить",
+        "title": "Оставить жалобу",
+        "intro": "Каждую жалобу читает руководство.",
+        "place": "К чему относится жалоба?",
+        "message": "Что случилось?",
+        "placeholder": "Напишите, когда, где и что произошло",
+        "contact": "Связаться с вами?",
+        "contact_hint": "Необязательно. Без имени и телефона жалоба будет анонимной.",
+        "name": "Ваше имя",
+        "phone": "Ваш телефон",
+        "send": "Отправить жалобу",
         "thanks": "Спасибо!",
-        "sent": "Ваше сообщение отправлено руководству.",
-        "contact": "При необходимости мы с вами свяжемся.",
-        "again": "Написать ещё",
-        "err_empty": "Напишите ваше сообщение.",
-        "err_too_long": "Сообщение слишком длинное — не больше {n} символов.",
+        "sent": "Ваша жалоба отправлена руководству.",
+        "follow_up": "При необходимости мы с вами свяжемся.",
+        "again": "Написать ещё одну",
+        "err_place": "Выберите, к чему относится жалоба.",
+        "err_empty": "Опишите, что случилось.",
+        "err_too_long": "Жалоба слишком длинная — не больше {n} символов.",
         "err_phone": "Неверный номер телефона. Например: +998 90 123 45 67 — или оставьте поле пустым.",
-        "err_rate": "Слишком много сообщений. Попробуйте чуть позже.",
-        "err_failed": "Произошла ошибка. Попробуйте отправить ещё раз чуть позже.",
+        "err_rate": "Слишком много жалоб. Попробуйте чуть позже.",
+        "err_failed": "Произошла ошибка, жалоба не отправлена. Попробуйте ещё раз чуть позже.",
     },
     "en": {
         "html_lang": "en",
         "switch": "English",
-        "title": "Feedback and complaints",
-        "intro": "Every message is read by management",
-        "feedback": "Feedback",
-        "complaint": "Complaint",
-        "message": "Your message",
-        "placeholder": "Write your feedback here…",
-        "name": "Your name (optional)",
-        "phone": "Your phone number (optional)",
-        "note": "Leave the name and phone empty to send it anonymously.",
-        "send": "Send",
+        "title": "Make a complaint",
+        "intro": "Every complaint is read by management.",
+        "place": "What is it about?",
+        "message": "What happened?",
+        "placeholder": "Tell us when, where and what happened",
+        "contact": "Should we contact you?",
+        "contact_hint": "Optional. Leave both empty to stay anonymous.",
+        "name": "Your name",
+        "phone": "Your phone number",
+        "send": "Send complaint",
         "thanks": "Thank you!",
-        "sent": "Your message has been sent to management.",
-        "contact": "We will contact you if needed.",
-        "again": "Write another",
-        "err_empty": "Please write your message.",
-        "err_too_long": "The message is too long — up to {n} characters.",
+        "sent": "Your complaint has been sent to management.",
+        "follow_up": "We will contact you if needed.",
+        "again": "Make another complaint",
+        "err_place": "Please choose what the complaint is about.",
+        "err_empty": "Please tell us what happened.",
+        "err_too_long": "The complaint is too long — up to {n} characters.",
         "err_phone": "Invalid phone number. Example: +998 90 123 45 67 — or leave it empty.",
-        "err_rate": "Too many messages. Please try again a little later.",
-        "err_failed": "Something went wrong. Please try again shortly.",
+        "err_rate": "Too many complaints. Please try again a little later.",
+        "err_failed": "Something went wrong and the complaint was not sent. Please try again shortly.",
     },
 }
 
+# Which field each error belongs next to; the rest go above the button.
+_ERROR_FIELD = {"place": "place", "empty": "message", "too_long": "message", "phone": "phone"}
+
+# Drawn icons, one 24-unit grid and one stroke weight; colour comes from CSS.
+_SVG = "<svg viewBox='0 0 24 24' aria-hidden='true' focusable='false'>{}</svg>"
+_ICONS = {
+    "laundry": _SVG.format(
+        "<rect x='4' y='2.5' width='16' height='19' rx='2.5'/><path d='M4 7h16'/>"
+        "<circle cx='12' cy='14' r='4.5'/><path d='M9.5 14.5c1-.9 2-.9 3 0s2 .9 3 0'/>"
+        "<path d='M7 4.75h.01M9.5 4.75h.01'/>"
+    ),
+    "garmin": _SVG.format(
+        "<circle cx='12' cy='12' r='6'/><path d='M8.5 7.1 9.3 3h5.4l.8 4.1M8.5 16.9l.8 4.1h5.4l.8-4.1'/>"
+        "<path d='M12 9.5V12l1.6 1.6'/>"
+    ),
+    "alert": _SVG.format("<circle cx='12' cy='12' r='9'/><path d='M12 7.5v5.5M12 16.5h.01'/>"),
+    "check": _SVG.format("<path class='tick' d='M5 12.5l4.5 4.5L19 7.5'/>"),
+}
+
 _CSS = """
-:root{--red:#d71920;--fg:#1d1d1f;--muted:#6e6e73;--line:#d9d9de;--bg:#f5f5f7;--card:#fff}
-@media (prefers-color-scheme:dark){:root{--fg:#ececec;--muted:#a1a1a6;--line:#3a3a3c;--bg:#111;--card:#1c1c1e}}
+:root{color-scheme:light dark;
+ --red:#d71920;--red-press:#b3141a;--head:#d71920;--head-ink:#fff;--head-soft:#fff1f1;
+ --bg:#f4f1f0;--surface:#fff;--fg:#1c1718;--muted:#5d5455;--line:#958a8b;--line-strong:#6b6162;
+ --tint:#fdecec;--ring:#d71920;--err:#b3141a;--err-bg:#fdecec;--err-line:#f0b9bb;
+ --shadow:0 1px 2px rgba(60,20,20,.06),0 8px 24px rgba(60,20,20,.08)}
+@media (prefers-color-scheme:dark){:root{
+ --red:#cc2129;--red-press:#b01a21;--head:#8f1117;--head-ink:#fff;--head-soft:#f6d3d5;
+ --bg:#141011;--surface:#1f1a1b;--fg:#f4eeee;--muted:#b9aeaf;--line:#75696a;--line-strong:#a09495;
+ --tint:#3a1a1c;--ring:#ff6b72;--err:#ff8f94;--err-bg:#351719;--err-line:#6b2a2e;
+ --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35)}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-header{background:var(--red);color:#fff;padding:12px 16px 26px;text-align:center}
-header h1{margin:0;font-size:21px;letter-spacing:.3px}
-header p{margin:6px 0 0;font-size:14px;opacity:.9}
-nav{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;font-size:13px;margin-bottom:14px}
-nav a{color:#fff;opacity:.8;text-decoration:none;padding:4px 0}
-nav b{border-bottom:2px solid #fff;padding:4px 0}
-main{max-width:520px;margin:-14px auto 32px;padding:0 16px}
-form,.done{background:var(--card);border-radius:14px;padding:18px 16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.kinds{display:flex;gap:8px;margin-bottom:14px}
-.kinds label{flex:1;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;font-size:15px}
-.kinds input{margin-right:6px;accent-color:var(--red)}
-label.f{display:block;font-size:14px;color:var(--muted);margin:12px 0 5px}
-textarea,input[type=text],input[type=tel]{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;
- font:inherit;background:var(--card);color:var(--fg)}
-textarea{min-height:130px;resize:vertical}
-.note{font-size:13px;color:var(--muted);margin:10px 0 0}
-.err{background:#fdecec;color:#a4161a;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:14px}
-button{width:100%;margin-top:16px;padding:13px;border:0;border-radius:10px;background:var(--red);color:#fff;
- font:600 16px system-ui,sans-serif}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);caret-color:var(--red);
+ font:18px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+::selection{background:var(--red);color:#fff}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--ring);outline-offset:3px}
+header{background:var(--head);color:var(--head-ink);padding:14px 20px 56px}
+.wrap{max-width:560px;margin:0 auto}
+nav{display:flex;gap:4px;width:max-content;margin:0 0 28px auto;padding:4px;border-radius:999px;background:rgba(0,0,0,.2)}
+nav a,nav span{display:block;padding:8px 14px;border-radius:999px;font-size:16px;line-height:24px;text-decoration:none;color:var(--head-soft)}
+nav span{background:#fff;color:#b3141a;font-weight:600}
+nav a:focus-visible{outline-color:#fff;outline-offset:1px}
+h1{margin:0;font-size:clamp(30px,8vw,38px);line-height:1.15;letter-spacing:-.01em;font-weight:750;text-wrap:balance}
+header p{margin:10px 0 0;font-size:18px;color:var(--head-soft)}
+main{padding:0 12px 40px}
+.sheet{max-width:560px;margin:-32px auto 0;background:var(--surface);border-radius:20px;box-shadow:var(--shadow);padding:28px 20px 24px}
+fieldset{border:0;margin:0;padding:0;min-width:0}
+legend,.label{display:block;padding:0;margin:0 0 12px;font-size:20px;line-height:1.3;font-weight:650}
+.group+.group{margin-top:32px}
+.places{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.place{position:relative;display:block;cursor:pointer}
+.place input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.tile{display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 12px 18px;border:1.5px solid var(--line);
+ border-radius:16px;background:var(--surface);font-size:20px;font-weight:650;text-align:center;
+ transition:border-color .15s,background-color .15s,box-shadow .15s}
+.tile svg{width:44px;height:44px;fill:none;stroke:var(--muted);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:stroke .15s}
+.place:hover .tile{border-color:var(--line-strong)}
+.place input:checked+.tile{border-color:var(--red);background:var(--tint);box-shadow:inset 0 0 0 1.5px var(--red)}
+.place input:checked+.tile svg{stroke:var(--red)}
+.place input:focus-visible+.tile{outline:3px solid var(--ring);outline-offset:3px}
+textarea,input[type=text],input[type=tel]{display:block;width:100%;padding:14px 16px;border:1.5px solid var(--line);border-radius:14px;
+ background:var(--surface);color:var(--fg);font:inherit;font-size:18px;line-height:1.45;transition:border-color .15s}
+textarea{min-height:168px;resize:vertical}
+textarea:hover,input[type=text]:hover,input[type=tel]:hover{border-color:var(--line-strong)}
+textarea:focus-visible,input[type=text]:focus-visible,input[type=tel]:focus-visible{border-color:var(--red);outline-offset:1px}
+::placeholder{color:var(--muted);opacity:1}
+.hint{margin:-6px 0 16px;font-size:16px;color:var(--muted)}
+.field+.field{margin-top:16px}
+.field label{display:block;margin:0 0 6px;font-size:17px;font-weight:550}
+textarea[aria-invalid=true],input[aria-invalid=true],.invalid .tile{border-color:var(--err)}
+.err{display:flex;gap:10px;align-items:flex-start;margin:10px 0 0;color:var(--err);font-size:17px;font-weight:550}
+.err svg{flex:none;width:22px;height:22px;margin-top:2px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.err.box{margin:24px 0 0;padding:12px 14px;border:1px solid var(--err-line);border-radius:12px;background:var(--err-bg)}
+button{display:block;width:100%;margin-top:28px;min-height:60px;padding:16px;border:0;border-radius:16px;background:var(--red);color:#fff;
+ font:inherit;font-size:20px;font-weight:700;cursor:pointer;transition:background-color .15s,transform .1s}
+button:hover{background:var(--red-press)}
+button:active{transform:scale(.99)}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
-.done{text-align:center}.done h2{margin:6px 0 8px;font-size:20px}.done a{color:var(--red)}
+.done{text-align:center;padding:40px 20px 32px}
+.done .mark{display:grid;place-items:center;width:84px;height:84px;margin:0 auto 20px;border-radius:50%;background:var(--tint)}
+.done .mark svg{width:52px;height:52px;fill:none;stroke:var(--red);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.tick{stroke-dasharray:24;stroke-dashoffset:0;animation:draw .5s cubic-bezier(.16,1,.3,1) .1s backwards}
+@keyframes draw{from{stroke-dashoffset:24}}
+@media (prefers-reduced-motion:reduce){.tick{animation:none}*{transition:none!important}}
+.done h2{margin:0 0 8px;font-size:30px;line-height:1.2;font-weight:750}
+.done p{margin:0 auto;max-width:34ch;font-size:18px;color:var(--muted)}
+.done p+p{margin-top:6px}
+.again{display:flex;align-items:center;justify-content:center;min-height:56px;margin-top:28px;padding:12px 16px;border:1.5px solid var(--line-strong);
+ border-radius:16px;font-size:18px;font-weight:600;text-decoration:none}
+.again:hover{border-color:var(--red);color:var(--red)}
+@media (min-width:600px){header{padding:18px 24px 64px}.sheet{padding:36px 36px 32px}main{padding:0 24px 56px}}
 """
 
 
 def _e(value: str) -> str:
     return html.escape(value or "", quote=True)
+
+
+def _link(lang: str, place: str | None = None) -> str:
+    """The page's own address with the language (and a chosen place) kept."""
+    query = {"lang": lang, **({"place": place} if place in PLACES else {})}
+    return "/f?" + urlencode(query)
 
 
 def lang_from(requested: str | None, accept_language: str | None) -> str:
@@ -200,24 +262,28 @@ def lang_from(requested: str | None, accept_language: str | None) -> str:
         ranked.append((-quality, position, tag.replace("_", "-")))
     for _, _, tag in sorted(ranked):
         if tag.startswith("uz"):
-            return "uz_cyrl" if "cyrl" in tag else "uz_latn"
+            return "uz_cyrl"
         if tag.split("-")[0] in ("ru", "en"):
             return tag.split("-")[0]
     return DEFAULT_LANG
 
 
-def _page(body: str, lang: str, status: int = 200) -> HTMLResponse:
+def _page(body: str, lang: str, place: str | None = None, status: int = 200) -> HTMLResponse:
     t = TEXTS[lang]
-    switcher = " ".join(
-        f"<b>{_e(TEXTS[code]['switch'])}</b>" if code == lang else f"<a href='/f?lang={code}'>{_e(TEXTS[code]['switch'])}</a>"
+    switcher = "".join(
+        f"<span aria-current='true'>{_e(TEXTS[code]['switch'])}</span>" if code == lang
+        else f"<a href='{_e(_link(code, place))}' hreflang='{TEXTS[code]['html_lang']}' lang='{TEXTS[code]['html_lang']}'>"
+             f"{_e(TEXTS[code]['switch'])}</a>"
         for code in TEXTS
     )
     return HTMLResponse(
         f"<!doctype html><html lang='{t['html_lang']}'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='theme-color' content='#d71920'>"
         f"<title>{_e(t['title'])}</title><style>{_CSS}</style></head><body>"
-        f"<header><nav>{switcher}</nav><h1>{_e(t['title'])}</h1><p>{_e(t['intro'])}</p></header>"
-        f"<main>{body}</main></body></html>",
+        f"<header><div class='wrap'><nav>{switcher}</nav>"
+        f"<h1>{_e(t['title'])}</h1><p>{_e(t['intro'])}</p></div></header>"
+        f"<main><div class='sheet'>{body}</div></main></body></html>",
         status_code=status,
         headers={**_HEADERS, "Content-Language": t["html_lang"]},
     )
@@ -228,40 +294,67 @@ def error_text(key: str, lang: str) -> str:
     return TEXTS[lang][f"err_{key}"].format(n=feedback.MESSAGE_MAX)
 
 
-def form_html(values: dict[str, str] | None = None, error: str | None = None, lang: str = DEFAULT_LANG) -> str:
-    """The form, keeping what was typed when something needs fixing."""
-    t = TEXTS[lang]
-    values = values or {}
-    kind = values.get("kind", "feedback")
-    checked = {k: " checked" if kind == k else "" for k in feedback.KINDS}
+def _error(key: str, lang: str, box: bool = False) -> str:
     return (
-        "<form method='post' action='/f'>"
-        + (f"<div class='err'>{_e(error)}</div>" if error else "")
-        + f"<input type='hidden' name='lang' value='{lang}'>"
-        "<div class='kinds'>"
-        f"<label><input type='radio' name='kind' value='feedback'{checked['feedback']}>💬 {_e(t['feedback'])}</label>"
-        f"<label><input type='radio' name='kind' value='complaint'{checked['complaint']}>⚠️ {_e(t['complaint'])}</label>"
-        "</div>"
-        f"<label class='f' for='m'>{_e(t['message'])}</label>"
-        f"<textarea id='m' name='message' maxlength='{feedback.MESSAGE_MAX}' required "
-        f"placeholder='{_e(t['placeholder'])}'>{_e(values.get('message', ''))}</textarea>"
-        f"<label class='f' for='n'>{_e(t['name'])}</label>"
-        f"<input id='n' type='text' name='name' maxlength='{feedback.NAME_MAX}' value='{_e(values.get('name', ''))}'>"
-        f"<label class='f' for='p'>{_e(t['phone'])}</label>"
-        f"<input id='p' type='tel' name='phone' inputmode='tel' maxlength='25' placeholder='+998 90 123 45 67' "
-        f"value='{_e(values.get('phone', ''))}'>"
-        "<div class='hp' aria-hidden='true'><input type='text' name='website' tabindex='-1' autocomplete='off'></div>"
-        f"<p class='note'>{_e(t['note'])}</p>"
-        f"<button type='submit'>{_e(t['send'])}</button></form>"
+        f"<p class='err{' box' if box else ''}' id='err' role='alert'>"
+        f"{_ICONS['alert']}<span>{_e(error_text(key, lang))}</span></p>"
     )
 
 
-def thanks_html(contact_given: bool, lang: str = DEFAULT_LANG) -> str:
+def form_html(values: dict[str, str] | None = None, error: str | None = None, lang: str = DEFAULT_LANG) -> str:
+    """The form, keeping what was typed when something needs fixing.
+
+    Args:
+        values: What the client sent (or ``{"place": ...}`` from the link).
+        error: An error key; its text is shown next to the field it is about.
+        lang: The page's language.
+    """
     t = TEXTS[lang]
-    follow_up = f"<p>{_e(t['contact'])}</p>" if contact_given else ""
+    values = values or {}
+    field = _ERROR_FIELD.get(error or "", "form" if error else "")
+
+    def err(name: str) -> str:
+        return _error(error, lang, box=name == "form") if field == name else ""
+
+    def invalid(name: str) -> str:
+        return " aria-invalid='true' aria-describedby='err'" if field == name else ""
+
+    tiles = "".join(
+        f"<label class='place'><input type='radio' name='place' value='{key}' required"
+        f"{' checked' if values.get('place') == key else ''}>"
+        f"<span class='tile'>{_ICONS[key]}{_e(label)}</span></label>"
+        for key, label in PLACES.items()
+    )
     return (
-        f"<div class='done'><h2>✅ {_e(t['thanks'])}</h2><p>{_e(t['sent'])}</p>"
-        f"{follow_up}<p><a href='/f?lang={lang}'>{_e(t['again'])}</a></p></div>"
+        "<form method='post' action='/f' novalidate>"
+        f"<input type='hidden' name='lang' value='{lang}'>"
+        f"<fieldset class='group{' invalid' if field == 'place' else ''}'{invalid('place')}>"
+        f"<legend>{_e(t['place'])}</legend><div class='places'>{tiles}</div>{err('place')}</fieldset>"
+        "<div class='group'>"
+        f"<label class='label' for='m'>{_e(t['message'])}</label>"
+        f"<textarea id='m' name='message' maxlength='{feedback.MESSAGE_MAX}' required{invalid('message')} "
+        f"placeholder='{_e(t['placeholder'])}'>{_e(values.get('message', ''))}</textarea>{err('message')}</div>"
+        "<fieldset class='group'>"
+        f"<legend>{_e(t['contact'])}</legend><p class='hint'>{_e(t['contact_hint'])}</p>"
+        f"<div class='field'><label for='n'>{_e(t['name'])}</label>"
+        f"<input id='n' type='text' name='name' autocomplete='name' maxlength='{feedback.NAME_MAX}' "
+        f"value='{_e(values.get('name', ''))}'></div>"
+        f"<div class='field'><label for='p'>{_e(t['phone'])}</label>"
+        f"<input id='p' type='tel' name='phone' inputmode='tel' autocomplete='tel' maxlength='25' "
+        f"placeholder='+998 90 123 45 67'{invalid('phone')} value='{_e(values.get('phone', ''))}'>{err('phone')}</div>"
+        "</fieldset>"
+        "<div class='hp' aria-hidden='true'><input type='text' name='website' tabindex='-1' autocomplete='off'></div>"
+        f"{err('form')}<button type='submit'>{_e(t['send'])}</button></form>"
+    )
+
+
+def thanks_html(contact_given: bool, lang: str = DEFAULT_LANG, place: str | None = None) -> str:
+    t = TEXTS[lang]
+    follow_up = f"<p>{_e(t['follow_up'])}</p>" if contact_given else ""
+    return (
+        f"<div class='done' role='status'><div class='mark'>{_ICONS['check']}</div>"
+        f"<h2>{_e(t['thanks'])}</h2><p>{_e(t['sent'])}</p>{follow_up}"
+        f"<a class='again' href='{_e(_link(lang, place))}'>{_e(t['again'])}</a></div>"
     )
 
 
@@ -283,17 +376,20 @@ def _allowed(address: str) -> bool:
 
 
 @router.get("", response_class=HTMLResponse)
-async def feedback_form(request: Request, lang: str | None = None) -> Response:
-    """The form behind the company's QR code."""
+async def feedback_form(request: Request, lang: str | None = None, place: str | None = None) -> Response:
+    """The form behind the company's QR code; ``?place=`` pre-selects the business."""
     if not settings.feedback_enabled:
         return Response(status_code=404)
     chosen = lang_from(lang, request.headers.get("accept-language"))
-    return _page(form_html(lang=chosen), chosen)
+    place = place if place in PLACES else None
+    return _page(form_html({"place": place or ""}, lang=chosen), chosen, place)
 
 
-@router.get("/{old}", include_in_schema=False)
-async def old_place_link(old: str) -> Response:
-    """Early test codes carried a place ("/f/garmin"); send them to the one form."""
+@router.get("/{place}", include_in_schema=False)
+async def place_link(place: str) -> Response:
+    """``/f/garmin``, ``/f/laundry``: the form with the business chosen; anything else: the form."""
+    if place in PLACES:
+        return RedirectResponse(f"/f?place={place}", status_code=302)
     return RedirectResponse("/f", status_code=301)
 
 
@@ -306,21 +402,22 @@ async def submit(request: Request) -> Response:
     body = (await request.body())[:20_000].decode("utf-8", errors="replace")
     form = {key: values[0] for key, values in parse_qs(body, keep_blank_values=True).items()}
     lang = lang_from(form.get("lang"), request.headers.get("accept-language"))
+    place = form.get("place") if form.get("place") in PLACES else None
 
     if form.get("website"):  # the hidden field: only bots fill it
         log.info("Feedback honeypot hit — dropped")
-        return _page(thanks_html(contact_given=False, lang=lang), lang)
+        return _page(thanks_html(contact_given=False, lang=lang, place=place), lang, place)
 
     submission, error = feedback.clean({**form, "lang": lang})
     if error:
-        return _page(form_html(form, error_text(error, lang), lang), lang, status=400)
+        return _page(form_html(form, error, lang), lang, place, status=400)
 
     if not _allowed(_client_address(request)):
-        return _page(form_html(form, error_text("rate", lang), lang), lang, status=429)
+        return _page(form_html(form, "rate", lang), lang, place, status=429)
 
     try:
         await feedback.submit(submission)
     except Exception as exc:  # noqa: BLE001 — the client must see a clear page, not a stack trace
-        log.error("Could not store client feedback: {}", exc)
-        return _page(form_html(form, error_text("failed", lang), lang), lang, status=503)
-    return _page(thanks_html(contact_given=not submission.anonymous, lang=lang), lang)
+        log.error("Could not store client complaint: {}", exc)
+        return _page(form_html(form, "failed", lang), lang, place, status=503)
+    return _page(thanks_html(contact_given=not submission.anonymous, lang=lang, place=place), lang, place)

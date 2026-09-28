@@ -26,7 +26,7 @@ CARD_W, CARD_H = 1200, 1500
 QR_BOX = 820  # the white square
 QUIET_MODULES = 4  # the light margin the QR standard requires
 
-TITLE = "ФИКР ВА ШИКОЯТЛАР"
+TITLE = "ШИКОЯТ ҚОЛДИРИНГ"
 SUBTITLE = "Сканерланг · исмсиз юбориш ҳам мумкин"
 
 _FONTS = (

@@ -23,7 +23,7 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 (`render.yaml`, env group `mgmg-shared`, secrets `sync: false`).
 - **mgmg-api** (Starter plan, always on): Admin Bot (admin) + OPS Manager Bot
   (employees + Director) webhooks, SAP gateway push receiver, `/db` read-only
-  viewer, `/f` client feedback page (4 languages).
+  viewer, `/f` client complaints page (Uzbek Cyrillic, Russian, English).
 - **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, receivables, task
   tracker, data quality Mon, cash calendar Mon, monthly KPI 1st);
   16:00 daily-reports ask; 17:00 reminder + Friday scorecard. Daily; weekends
@@ -37,7 +37,9 @@ A2, A3, A4, B1, B2, B4, E1). Goal: ~10–15 working agents, not all at once.
 
 ## Decisions already made (don't re-suggest)
 - No company domain for the QR page — Render's `mgmg-api-eeky.onrender.com` stays.
-- One universal feedback QR code (no locations). Mobile app: not now.
+- One universal QR code, **complaints only** (no "fikr"); the client picks
+  Laundry or Garmin on the page. Complaints reach OPS Manager Bot marked 🔴.
+  No Uzbek Latin on the page. Mobile app: not now.
 - Daily reports accepted only until midnight of that day; one follow-up
   question max for vague reports; employee → Director messages need confirmation.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.

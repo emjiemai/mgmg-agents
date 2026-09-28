@@ -305,9 +305,9 @@ to justify repeating a past conclusion.
   "рухсат сўровлари", "кутилаётган рухсатлар", "кто просил разрешение". That
   register is separate from tasks: a task is work you assigned, a permission
   is something an employee asked to be allowed to do.
-- Questions about what CLIENTS said through the QR codes — complaints,
-  opinions ("mijozlar nima deyapti", "shikoyatlar bormi", "отзывы клиентов")
-  — go to mijoz_fikrlari.
+- Questions about CLIENT COMPLAINTS left through the QR code, about
+  Laundry or Garmin ("mijozlar nima deyapti", "shikoyatlar bormi", "Garmin
+  bo'yicha shikoyat", "жалобы клиентов") — go to mijoz_fikrlari.
 - Questions about ATTENDANCE — who came to WORK late, who didn't come, who
   is on sick leave or vacation, when someone arrived or left ("bugun kim
   kechikdi", "ishga kim kelmadi", "Alisher soat nechada keldi", "davomat",
