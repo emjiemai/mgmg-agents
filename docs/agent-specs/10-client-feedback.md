@@ -1,4 +1,4 @@
-# Client complaints via one QR code
+# Client complaints via QR codes — Laundry and Garmin
 
 **Code:** `integrations/api/feedback_page.py` (the page), `integrations/org_bot/feedback.py`
 (validation, delivery), `integrations/org_bot/qr_card.py` (the printable card),
@@ -8,25 +8,28 @@
 
 ## What a client does
 
-1. Scans the company's QR card — red card, black code on a white square in
-   the centre, "ШИКОЯТ ҚОЛДИРИНГ" on top. **One code for both businesses.**
-2. Gets one screen (`/f`), complaints only (2026-09-28 — the "Фикр" choice
-   is gone; this is the company's complaints channel):
-   - **Қайси бўлим бўйича?** — two large tiles, **Laundry** and **Garmin**
-     (required);
+1. Scans the business's QR card — red card, black code on a white square.
+   **Each business has its own code and page**; the address decides the
+   business, the client never chooses:
+
+   | Business | Page | |
+   | -------- | ---- | - |
+   | Laundry | `/f` | the first printed card ("SHIKOYAT / COMPLAINT / ЖАЛОБА") points here — **never move it** |
+   | Garmin | `/f/garmin` | |
+
+   Anything else after `/f/` (early test codes, `/f/laundry`) opens Laundry's page.
+2. Gets one screen, complaints only (2026-09-28 — the "Фикр" choice is
+   gone; this is the company's complaints channel). The business's name sits
+   at the top left, then:
    - **Нима бўлди?** — the complaint;
    - **Сиз билан боғланайликми?** — optional name and phone; both empty =
      anonymous.
 3. Presses **Шикоятни юбориш** → "Раҳмат! Шикоятингиз раҳбариятга юборилди."
 
-`/f/garmin` and `/f/laundry` open the form with that business already
-chosen — for a code placed at one of them, if ever wanted. Anything else
-after `/f/` goes to the plain form.
-
 ## Design
 
 Made for a phone, read by someone who is already annoyed: 18 px body text,
-30–38 px title, 60 px send button, large tiles; drawn icons, no emoji. An
+30–38 px title, 60 px send button; drawn icons, no emoji. An
 error sits next to the field it is about (with the field outlined in red),
 and everything typed is kept. Light and dark themes follow the phone; every
 text meets WCAG AA contrast and input borders 3:1. No JavaScript — the whole
@@ -36,7 +39,7 @@ page is a few kilobytes and works on any phone.
 
 **Uzbek Cyrillic, Russian and English** (Uzbek Latin removed 2026-09-28).
 The switcher at the top — "Ўзбекча · Русский · English" — changes it at
-any time (`/f?lang=uz_cyrl|ru|en`) and keeps the chosen business. Without a
+any time (`?lang=uz_cyrl|ru|en`) and stays on the same business's page. Without a
 choice the page opens in the phone's language: Russian → Russian, English →
 English, Uzbek (either script) and anything else → Uzbek Cyrillic. Errors
 and the thank-you page stay in the chosen language.
@@ -60,8 +63,9 @@ before 2026-09-28 may be opinions and are marked so).
 
 ## Making the card
 
-- **Admin Bot:** `/qr` → a print-ready PNG (1200×1500 px, 300 dpi, about
-  10×12.7 cm).
+- **Admin Bot:** `/qr` → two print-ready PNGs, Laundry's and Garmin's
+  (1200×1500 px, 300 dpi, about 10×12.7 cm), each with the business's name
+  under the code so they can't be mixed up.
 - **On your computer:** `python scripts/make_feedback_qr.py --base https://<address>`
 
 The white square behind the code is deliberate: phone scanners read

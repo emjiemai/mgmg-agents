@@ -1,15 +1,16 @@
 """The page a client sees after scanning the company's QR code — ``/f``.
 
 The company's complaints channel (2026-09-28: complaints only, no
-"opinion" choice). One screen, no JavaScript, a few kilobytes: which
-business it is about (Laundry or Garmin), what happened, and an optional
-name and phone. Empty name and phone = anonymous. The form posts back here;
-the complaint is stored and sent to the Director by
-``integrations/org_bot/feedback.py``.
+"opinion" choice). One screen, no JavaScript, a few kilobytes: what
+happened, and an optional name and phone. Empty name and phone = anonymous.
+The form posts back to its own address; the complaint is stored and sent to
+the Director by ``integrations/org_bot/feedback.py``.
 
-One printed code serves both businesses, so the client picks on the page;
-``/f/garmin`` and ``/f/laundry`` open with that choice already made, for a
-code placed at one of them.
+Two pages, one per business, each behind its own printed QR code — the
+address decides the business, the client never chooses:
+
+    /f          Laundry — the address on the first printed card; keep it
+    /f/garmin   Garmin
 
 Three languages: Uzbek Cyrillic (the default), Russian and English (Uzbek
 Latin dropped 2026-09-28). The page opens in the phone's language when it
@@ -35,7 +36,7 @@ from __future__ import annotations
 import html
 import time
 from collections import defaultdict, deque
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -44,6 +45,10 @@ from integrations.common.config import settings
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import feedback
 from integrations.org_bot.feedback import DEFAULT_LANG, PLACES
+
+# Each business's page. "/f" is printed on Laundry's cards and can't move.
+PAGES: dict[str, str] = {"laundry": "/f", "garmin": "/f/garmin"}
+assert set(PAGES) == set(PLACES)
 
 log = setup_logging("feedback-page")
 router = APIRouter(prefix="/f", include_in_schema=False)
@@ -67,7 +72,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "switch": "Ўзбекча",
         "title": "Шикоят қолдириш",
         "intro": "Ҳар бир шикоятни раҳбарият ўқийди.",
-        "place": "Қайси бўлим бўйича?",
         "message": "Нима бўлди?",
         "placeholder": "Қачон, қаерда ва нима бўлганини ёзинг",
         "contact": "Сиз билан боғланайликми?",
@@ -79,7 +83,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "sent": "Шикоятингиз раҳбариятга юборилди.",
         "follow_up": "Керак бўлса, сиз билан боғланамиз.",
         "again": "Яна шикоят ёзиш",
-        "err_place": "Шикоят қайси бўлим бўйича эканини танланг.",
         "err_empty": "Нима бўлганини ёзинг.",
         "err_too_long": "Шикоят жуда узун — {n} белгигача ёзинг.",
         "err_phone": "Телефон рақами нотўғри. Масалан: +998 90 123 45 67 — ёки бўш қолдиринг.",
@@ -91,7 +94,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "switch": "Русский",
         "title": "Оставить жалобу",
         "intro": "Каждую жалобу читает руководство.",
-        "place": "К чему относится жалоба?",
         "message": "Что случилось?",
         "placeholder": "Напишите, когда, где и что произошло",
         "contact": "Связаться с вами?",
@@ -103,7 +105,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "sent": "Ваша жалоба отправлена руководству.",
         "follow_up": "При необходимости мы с вами свяжемся.",
         "again": "Написать ещё одну",
-        "err_place": "Выберите, к чему относится жалоба.",
         "err_empty": "Опишите, что случилось.",
         "err_too_long": "Жалоба слишком длинная — не больше {n} символов.",
         "err_phone": "Неверный номер телефона. Например: +998 90 123 45 67 — или оставьте поле пустым.",
@@ -115,7 +116,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "switch": "English",
         "title": "Make a complaint",
         "intro": "Every complaint is read by management.",
-        "place": "What is it about?",
         "message": "What happened?",
         "placeholder": "Tell us when, where and what happened",
         "contact": "Should we contact you?",
@@ -127,7 +127,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "sent": "Your complaint has been sent to management.",
         "follow_up": "We will contact you if needed.",
         "again": "Make another complaint",
-        "err_place": "Please choose what the complaint is about.",
         "err_empty": "Please tell us what happened.",
         "err_too_long": "The complaint is too long — up to {n} characters.",
         "err_phone": "Invalid phone number. Example: +998 90 123 45 67 — or leave it empty.",
@@ -137,20 +136,11 @@ TEXTS: dict[str, dict[str, str]] = {
 }
 
 # Which field each error belongs next to; the rest go above the button.
-_ERROR_FIELD = {"place": "place", "empty": "message", "too_long": "message", "phone": "phone"}
+_ERROR_FIELD = {"empty": "message", "too_long": "message", "phone": "phone"}
 
-# Drawn icons, one 24-unit grid and one stroke weight; colour comes from CSS.
+# Drawn icons, one 24-unit grid; colour comes from CSS.
 _SVG = "<svg viewBox='0 0 24 24' aria-hidden='true' focusable='false'>{}</svg>"
 _ICONS = {
-    "laundry": _SVG.format(
-        "<rect x='4' y='2.5' width='16' height='19' rx='2.5'/><path d='M4 7h16'/>"
-        "<circle cx='12' cy='14' r='4.5'/><path d='M9.5 14.5c1-.9 2-.9 3 0s2 .9 3 0'/>"
-        "<path d='M7 4.75h.01M9.5 4.75h.01'/>"
-    ),
-    "garmin": _SVG.format(
-        "<circle cx='12' cy='12' r='6'/><path d='M8.5 7.1 9.3 3h5.4l.8 4.1M8.5 16.9l.8 4.1h5.4l.8-4.1'/>"
-        "<path d='M12 9.5V12l1.6 1.6'/>"
-    ),
     "alert": _SVG.format("<circle cx='12' cy='12' r='9'/><path d='M12 7.5v5.5M12 16.5h.01'/>"),
     "check": _SVG.format("<path class='tick' d='M5 12.5l4.5 4.5L19 7.5'/>"),
 }
@@ -175,7 +165,9 @@ a{color:inherit}
 :focus-visible{outline:3px solid var(--ring);outline-offset:3px}
 header{background:var(--head);color:var(--head-ink);padding:14px 20px 56px}
 .wrap{max-width:560px;margin:0 auto}
-nav{display:flex;gap:4px;width:max-content;margin:0 0 28px auto;padding:4px;border-radius:999px;background:rgba(0,0,0,.2)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 28px}
+.brand{font-size:19px;font-weight:700;letter-spacing:.01em}
+nav{display:flex;gap:4px;width:max-content;padding:4px;border-radius:999px;background:rgba(0,0,0,.2)}
 nav a,nav span{display:block;padding:8px 14px;border-radius:999px;font-size:16px;line-height:24px;text-decoration:none;color:var(--head-soft)}
 nav span{background:#fff;color:#b3141a;font-weight:600}
 nav a:focus-visible{outline-color:#fff;outline-offset:1px}
@@ -186,17 +178,6 @@ main{padding:0 12px 40px}
 fieldset{border:0;margin:0;padding:0;min-width:0}
 legend,.label{display:block;padding:0;margin:0 0 12px;font-size:20px;line-height:1.3;font-weight:650}
 .group+.group{margin-top:32px}
-.places{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.place{position:relative;display:block;cursor:pointer}
-.place input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
-.tile{display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 12px 18px;border:1.5px solid var(--line);
- border-radius:16px;background:var(--surface);font-size:20px;font-weight:650;text-align:center;
- transition:border-color .15s,background-color .15s,box-shadow .15s}
-.tile svg{width:44px;height:44px;fill:none;stroke:var(--muted);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;transition:stroke .15s}
-.place:hover .tile{border-color:var(--line-strong)}
-.place input:checked+.tile{border-color:var(--red);background:var(--tint);box-shadow:inset 0 0 0 1.5px var(--red)}
-.place input:checked+.tile svg{stroke:var(--red)}
-.place input:focus-visible+.tile{outline:3px solid var(--ring);outline-offset:3px}
 textarea,input[type=text],input[type=tel]{display:block;width:100%;padding:14px 16px;border:1.5px solid var(--line);border-radius:14px;
  background:var(--surface);color:var(--fg);font:inherit;font-size:18px;line-height:1.45;transition:border-color .15s}
 textarea{min-height:168px;resize:vertical}
@@ -206,7 +187,7 @@ textarea:focus-visible,input[type=text]:focus-visible,input[type=tel]:focus-visi
 .hint{margin:-6px 0 16px;font-size:16px;color:var(--muted)}
 .field+.field{margin-top:16px}
 .field label{display:block;margin:0 0 6px;font-size:17px;font-weight:550}
-textarea[aria-invalid=true],input[aria-invalid=true],.invalid .tile{border-color:var(--err)}
+textarea[aria-invalid=true],input[aria-invalid=true]{border-color:var(--err)}
 .err{display:flex;gap:10px;align-items:flex-start;margin:10px 0 0;color:var(--err);font-size:17px;font-weight:550}
 .err svg{flex:none;width:22px;height:22px;margin-top:2px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
 .err.box{margin:24px 0 0;padding:12px 14px;border:1px solid var(--err-line);border-radius:12px;background:var(--err-bg)}
@@ -235,10 +216,9 @@ def _e(value: str) -> str:
     return html.escape(value or "", quote=True)
 
 
-def _link(lang: str, place: str | None = None) -> str:
-    """The page's own address with the language (and a chosen place) kept."""
-    query = {"lang": lang, **({"place": place} if place in PLACES else {})}
-    return "/f?" + urlencode(query)
+def _link(place: str, lang: str) -> str:
+    """A business's page in a given language."""
+    return f"{PAGES[place]}?lang={lang}"
 
 
 def lang_from(requested: str | None, accept_language: str | None) -> str:
@@ -268,11 +248,11 @@ def lang_from(requested: str | None, accept_language: str | None) -> str:
     return DEFAULT_LANG
 
 
-def _page(body: str, lang: str, place: str | None = None, status: int = 200) -> HTMLResponse:
+def _page(body: str, lang: str, place: str, status: int = 200) -> HTMLResponse:
     t = TEXTS[lang]
     switcher = "".join(
         f"<span aria-current='true'>{_e(TEXTS[code]['switch'])}</span>" if code == lang
-        else f"<a href='{_e(_link(code, place))}' hreflang='{TEXTS[code]['html_lang']}' lang='{TEXTS[code]['html_lang']}'>"
+        else f"<a href='{_e(_link(place, code))}' hreflang='{TEXTS[code]['html_lang']}' lang='{TEXTS[code]['html_lang']}'>"
              f"{_e(TEXTS[code]['switch'])}</a>"
         for code in TEXTS
     )
@@ -280,9 +260,9 @@ def _page(body: str, lang: str, place: str | None = None, status: int = 200) -> 
         f"<!doctype html><html lang='{t['html_lang']}'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<meta name='theme-color' content='#d71920'>"
-        f"<title>{_e(t['title'])}</title><style>{_CSS}</style></head><body>"
-        f"<header><div class='wrap'><nav>{switcher}</nav>"
-        f"<h1>{_e(t['title'])}</h1><p>{_e(t['intro'])}</p></div></header>"
+        f"<title>{_e(t['title'])} · {_e(PLACES[place])}</title><style>{_CSS}</style></head><body>"
+        f"<header><div class='wrap'><div class='top'><span class='brand' lang='en'>{_e(PLACES[place])}</span>"
+        f"<nav>{switcher}</nav></div><h1>{_e(t['title'])}</h1><p>{_e(t['intro'])}</p></div></header>"
         f"<main><div class='sheet'>{body}</div></main></body></html>",
         status_code=status,
         headers={**_HEADERS, "Content-Language": t["html_lang"]},
@@ -301,13 +281,16 @@ def _error(key: str, lang: str, box: bool = False) -> str:
     )
 
 
-def form_html(values: dict[str, str] | None = None, error: str | None = None, lang: str = DEFAULT_LANG) -> str:
+def form_html(
+    values: dict[str, str] | None = None, error: str | None = None, lang: str = DEFAULT_LANG, place: str = "laundry"
+) -> str:
     """The form, keeping what was typed when something needs fixing.
 
     Args:
-        values: What the client sent (or ``{"place": ...}`` from the link).
+        values: What the client sent.
         error: An error key; its text is shown next to the field it is about.
         lang: The page's language.
+        place: Whose page this is; the form posts back to it.
     """
     t = TEXTS[lang]
     values = values or {}
@@ -319,17 +302,9 @@ def form_html(values: dict[str, str] | None = None, error: str | None = None, la
     def invalid(name: str) -> str:
         return " aria-invalid='true' aria-describedby='err'" if field == name else ""
 
-    tiles = "".join(
-        f"<label class='place'><input type='radio' name='place' value='{key}' required"
-        f"{' checked' if values.get('place') == key else ''}>"
-        f"<span class='tile'>{_ICONS[key]}{_e(label)}</span></label>"
-        for key, label in PLACES.items()
-    )
     return (
-        "<form method='post' action='/f' novalidate>"
+        f"<form method='post' action='{PAGES[place]}' novalidate>"
         f"<input type='hidden' name='lang' value='{lang}'>"
-        f"<fieldset class='group{' invalid' if field == 'place' else ''}'{invalid('place')}>"
-        f"<legend>{_e(t['place'])}</legend><div class='places'>{tiles}</div>{err('place')}</fieldset>"
         "<div class='group'>"
         f"<label class='label' for='m'>{_e(t['message'])}</label>"
         f"<textarea id='m' name='message' maxlength='{feedback.MESSAGE_MAX}' required{invalid('message')} "
@@ -348,13 +323,13 @@ def form_html(values: dict[str, str] | None = None, error: str | None = None, la
     )
 
 
-def thanks_html(contact_given: bool, lang: str = DEFAULT_LANG, place: str | None = None) -> str:
+def thanks_html(contact_given: bool, lang: str = DEFAULT_LANG, place: str = "laundry") -> str:
     t = TEXTS[lang]
     follow_up = f"<p>{_e(t['follow_up'])}</p>" if contact_given else ""
     return (
         f"<div class='done' role='status'><div class='mark'>{_ICONS['check']}</div>"
         f"<h2>{_e(t['thanks'])}</h2><p>{_e(t['sent'])}</p>{follow_up}"
-        f"<a class='again' href='{_e(_link(lang, place))}'>{_e(t['again'])}</a></div>"
+        f"<a class='again' href='{_e(_link(place, lang))}'>{_e(t['again'])}</a></div>"
     )
 
 
@@ -375,49 +350,64 @@ def _allowed(address: str) -> bool:
     return True
 
 
-@router.get("", response_class=HTMLResponse)
-async def feedback_form(request: Request, lang: str | None = None, place: str | None = None) -> Response:
-    """The form behind the company's QR code; ``?place=`` pre-selects the business."""
+def _show_form(request: Request, place: str, lang: str | None) -> Response:
     if not settings.feedback_enabled:
         return Response(status_code=404)
     chosen = lang_from(lang, request.headers.get("accept-language"))
-    place = place if place in PLACES else None
-    return _page(form_html({"place": place or ""}, lang=chosen), chosen, place)
+    return _page(form_html(lang=chosen, place=place), chosen, place)
 
 
-@router.get("/{place}", include_in_schema=False)
-async def place_link(place: str) -> Response:
-    """``/f/garmin``, ``/f/laundry``: the form with the business chosen; anything else: the form."""
-    if place in PLACES:
-        return RedirectResponse(f"/f?place={place}", status_code=302)
+@router.get("", response_class=HTMLResponse)
+async def laundry_form(request: Request, lang: str | None = None) -> Response:
+    """Laundry's page — the address on the printed Laundry card."""
+    return _show_form(request, "laundry", lang)
+
+
+@router.get("/garmin", response_class=HTMLResponse)
+async def garmin_form(request: Request, lang: str | None = None) -> Response:
+    """Garmin's page."""
+    return _show_form(request, "garmin", lang)
+
+
+@router.get("/{other}", include_in_schema=False)
+async def other_link(other: str) -> Response:
+    """Anything else under /f (early test codes, /f/laundry) goes to Laundry's page."""
     return RedirectResponse("/f", status_code=301)
 
 
 @router.post("", response_class=HTMLResponse)
-async def submit(request: Request) -> Response:
-    """Take one submission: validate, store, send to the Director, say thanks."""
+async def laundry_submit(request: Request) -> Response:
+    return await _submit(request, "laundry")
+
+
+@router.post("/garmin", response_class=HTMLResponse)
+async def garmin_submit(request: Request) -> Response:
+    return await _submit(request, "garmin")
+
+
+async def _submit(request: Request, place: str) -> Response:
+    """Take one complaint for ``place``: validate, store, send to the Director, say thanks."""
     if not settings.feedback_enabled:
         return Response(status_code=404)
 
     body = (await request.body())[:20_000].decode("utf-8", errors="replace")
     form = {key: values[0] for key, values in parse_qs(body, keep_blank_values=True).items()}
     lang = lang_from(form.get("lang"), request.headers.get("accept-language"))
-    place = form.get("place") if form.get("place") in PLACES else None
 
     if form.get("website"):  # the hidden field: only bots fill it
         log.info("Feedback honeypot hit — dropped")
         return _page(thanks_html(contact_given=False, lang=lang, place=place), lang, place)
 
-    submission, error = feedback.clean({**form, "lang": lang})
+    submission, error = feedback.clean({**form, "lang": lang, "place": place})
     if error:
-        return _page(form_html(form, error, lang), lang, place, status=400)
+        return _page(form_html(form, error, lang, place), lang, place, status=400)
 
     if not _allowed(_client_address(request)):
-        return _page(form_html(form, "rate", lang), lang, place, status=429)
+        return _page(form_html(form, "rate", lang, place), lang, place, status=429)
 
     try:
         await feedback.submit(submission)
     except Exception as exc:  # noqa: BLE001 — the client must see a clear page, not a stack trace
         log.error("Could not store client complaint: {}", exc)
-        return _page(form_html(form, "failed", lang), lang, place, status=503)
+        return _page(form_html(form, "failed", lang, place), lang, place, status=503)
     return _page(thanks_html(contact_given=not submission.anonymous, lang=lang, place=place), lang, place)

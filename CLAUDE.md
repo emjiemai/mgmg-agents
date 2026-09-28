@@ -37,9 +37,10 @@ A2, A3, A4, B1, B2, B4, E1). Goal: ~10–15 working agents, not all at once.
 
 ## Decisions already made (don't re-suggest)
 - No company domain for the QR page — Render's `mgmg-api-eeky.onrender.com` stays.
-- One universal QR code, **complaints only** (no "fikr"); the client picks
-  Laundry or Garmin on the page. Complaints reach OPS Manager Bot marked 🔴.
-  No Uzbek Latin on the page. Mobile app: not now.
+- Complaints only (no "fikr"), **two pages, two QR codes**: `/f` = Laundry
+  (already printed — never move it), `/f/garmin` = Garmin. No choice buttons
+  on the page. Complaints reach OPS Manager Bot marked 🔴. No Uzbek Latin.
+  Mobile app: not now.
 - Daily reports accepted only until midnight of that day; one follow-up
   question max for vague reports; employee → Director messages need confirmation.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.

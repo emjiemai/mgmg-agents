@@ -1,16 +1,14 @@
 """Client complaints from one QR code — to the Director via OPS Manager Bot.
 
-A client scans the company's QR code, gets a one-screen page (served by
-``integrations/api/feedback_page.py`` at ``/f``), picks which business the
-complaint is about — Laundry or Garmin — writes it and, if they want,
-a name and phone number. Leaving both empty is anonymous. The complaint is
-stored in ``client_feedback`` and sent to the Director(s).
+A client scans a business's QR code — Laundry's leads to ``/f``, Garmin's
+to ``/f/garmin`` (pages in ``integrations/api/feedback_page.py``) — writes
+the complaint and, if they want, a name and phone number. Leaving both empty
+is anonymous. The complaint is stored in ``client_feedback`` with its
+business and sent to the Director(s).
 
 Complaints only since 2026-09-28: the page is the company's complaints
 channel, so the "opinion" choice is gone (older rows may still say
-'feedback'). One printed code serves both businesses; the client chooses on
-the page, and ``/f/garmin`` or ``/f/laundry`` opens with the choice made.
-The QR image itself is drawn by ``qr_card.py``.
+'feedback'). The QR image itself is drawn by ``qr_card.py``.
 
 The page speaks three languages (Uzbek Cyrillic, Russian, English); this
 module returns error *keys* the page translates. What the Director gets is
@@ -93,8 +91,9 @@ def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
 
     Returns:
         ``(submission, None)`` when it's acceptable, else ``(None, error)``
-        with an error key — "place", "empty", "too_long" or "phone" — that
-        the page shows in the client's language.
+        with an error key — "empty", "too_long" or "phone" — that the page
+        shows in the client's language ("place" means the caller passed no
+        valid business: a bug, not the client's mistake).
     """
     place = form.get("place", "")
     if place not in PLACES:

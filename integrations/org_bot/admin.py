@@ -190,11 +190,13 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
 
 
 async def _send_qr(run_id: uuid.UUID) -> str:
-    """Send the admin the printable complaints QR card."""
+    """Send the admin the printable complaints QR cards — Laundry's and Garmin's."""
     import tempfile
     from pathlib import Path
 
+    from integrations.api.feedback_page import PAGES
     from integrations.org_bot import qr_card  # local import: Pillow only when needed
+    from integrations.org_bot.feedback import PLACES
 
     async with TelegramBot(
         agent=AGENT,
@@ -205,10 +207,14 @@ async def _send_qr(run_id: uuid.UUID) -> str:
         if not settings.public_url:
             await bot.send_message("Сервер манзили номаълум — Render'да PUBLIC_BASE_URL ни белгиланг.")
             return "qr_no_url"
-        url = f"{settings.public_url}/f"
-        path = Path(tempfile.mkdtemp(prefix="mgmg-qr-")) / "qr-shikoyat.png"
-        path.write_bytes(qr_card.card_png(url))
-        await bot.send_document(str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=escape(url))
+        folder = Path(tempfile.mkdtemp(prefix="mgmg-qr-"))
+        for place, business in PLACES.items():
+            url = f"{settings.public_url}{PAGES[place]}"
+            path = folder / f"qr-shikoyat-{place}.png"
+            path.write_bytes(qr_card.card_png(url, business))
+            await bot.send_document(
+                str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=f"{business}: {escape(url)}"
+            )
     return "qr_sent"
 
 

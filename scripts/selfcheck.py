@@ -1298,7 +1298,7 @@ def test_client_feedback() -> None:
     check_true("every language has every text",
                all(set(t) == keys for t in feedback_page.TEXTS.values()) and set(feedback_page.TEXTS) == set(feedback.LANGS))
     check_true("every error has a translation in every language",
-               all(feedback_page.error_text(k, lang) for k in ("place", "empty", "too_long", "phone", "rate", "failed")
+               all(feedback_page.error_text(k, lang) for k in ("empty", "too_long", "phone", "rate", "failed")
                    for lang in feedback.LANGS))
 
     def outside_nav(page_text):
@@ -1316,8 +1316,9 @@ def test_client_feedback() -> None:
           feedback.clean({"place": "garmin", "message": "Ёмон", "lang": "zz"})[0].lang, "uz_cyrl")
     for lang in feedback.LANGS:
         page_text = feedback_page.form_html(lang=lang) + feedback_page.thanks_html(True, lang)
-        check_true(f"{lang}: no opinion choice, no emoji icons",
-                   "name='kind'" not in page_text and not re.search("[\U0001F300-\U0001FAFF☀-➿]", page_text))
+        check_true(f"{lang}: no opinion or business choice, no emoji icons",
+                   "name='kind'" not in page_text and "name='place'" not in page_text
+                   and not re.search("[\U0001F300-\U0001FAFF\u2600-\u27BF]", page_text))
 
     # ---- the page
     submitted = []
@@ -1332,55 +1333,56 @@ def test_client_feedback() -> None:
     client = TestClient(api_app.app)
     try:
         page = client.get("/f")
-        check_true("the form opens", page.status_code == 200 and "Шикоятни юбориш" in page.text and "action='/f'" in page.text)
-        check_true("both businesses to choose from, neither chosen",
-                   "value='laundry'" in page.text and "value='garmin'" in page.text and " checked" not in page.text)
+        check_true("/f (on the printed Laundry card) is Laundry's form",
+                   page.status_code == 200 and "Шикоятни юбориш" in page.text and "action='/f'" in page.text
+                   and ">Laundry<" in page.text and "Garmin" not in page.text)
+        garmin = client.get("/f/garmin")
+        check_true("/f/garmin is Garmin's form, posting back to itself",
+                   garmin.status_code == 200 and "action='/f/garmin'" in garmin.text and ">Garmin<" in garmin.text
+                   and "Laundry" not in garmin.text)
         check_true("the page is Uzbek Cyrillic by default (the language links aside)",
                    latin_words(outside_nav(page.text)) == [] and "lang='uz-Cyrl'" in page.text)
         check_true("the language links are on the page, Latin Uzbek gone",
                    all(f"/f?lang={code}" in page.text for code in ("ru", "en")) and "uz_latn" not in page.text)
+        check_true("Garmin's language links stay on Garmin's page",
+                   all(f"/f/garmin?lang={code}" in garmin.text for code in ("ru", "en")))
         ru = client.get("/f?lang=ru")
         check_true("?lang=ru: Russian page", "lang='ru'" in ru.text and "Отправить жалобу" in ru.text
                    and "name='lang' value='ru'" in ru.text)
-        en = client.get("/f", headers={"Accept-Language": "en-GB,en;q=0.9"})
+        en = client.get("/f/garmin", headers={"Accept-Language": "en-GB,en;q=0.9"})
         check_true("an English phone gets English", "lang='en'" in en.text and ">Send complaint<" in en.text)
         uz = client.get("/f", headers={"Accept-Language": "uz-Latn-UZ"})
         check_true("an Uzbek phone gets Cyrillic", "Шикоятни юбориш" in uz.text)
-        short = client.get("/f/garmin", follow_redirects=False)
-        check_true("/f/garmin opens with Garmin chosen", short.status_code == 302
-                   and short.headers["location"] == "/f?place=garmin")
-        chosen = client.get("/f?place=garmin&lang=en")
-        check_true("...Garmin is ticked, and the language links keep it",
-                   "value='garmin' required checked" in chosen.text and "/f?lang=ru&amp;place=garmin" in chosen.text)
-        check_true("an unknown place link goes to the plain form",
-                   client.get("/f/cafe", follow_redirects=False).headers["location"] == "/f")
+        for other in ("/f/laundry", "/f/cafe"):
+            moved = client.get(other, follow_redirects=False)
+            check_true(f"{other} goes to Laundry's page", moved.status_code == 301 and moved.headers["location"] == "/f")
 
-        ok = client.post("/f", data={"place": "laundry", "message": "Машина ишламаяпти", "phone": "+998901234567"})
+        ok = client.post("/f", data={"message": "Машина ишламаяпти", "phone": "+998901234567"})
         check_true("a complaint is thanked", ok.status_code == 200 and "Раҳмат" in ok.text)
-        check("...and goes on to the Director with its business", [s.place for s in submitted], ["laundry"])
+        ok_garmin = client.post("/f/garmin", data={"message": "Соат синди", "place": "laundry"})
+        check_true("...on Garmin's page too", ok_garmin.status_code == 200 and "Раҳмат" in ok_garmin.text)
+        check("each goes to the Director with its page's business (a posted place is ignored)",
+              [s.place for s in submitted], ["laundry", "garmin"])
 
-        no_place = client.post("/f", data={"message": "Машина ишламаяпти"})
-        check_true("no business chosen: asked for it, text kept", no_place.status_code == 400
-                   and "қайси бўлим" in no_place.text and "Машина ишламаяпти" in no_place.text)
-        bad = client.post("/f", data={"place": "garmin", "message": "Ёмон", "phone": "12"})
-        check_true("an error keeps what was typed, beside the phone field",
-                   bad.status_code == 400 and "Ёмон" in bad.text and "value='garmin' required checked" in bad.text
+        bad = client.post("/f/garmin", data={"message": "Ёмон", "phone": "12"})
+        check_true("an error keeps what was typed, beside the phone field, on the same page",
+                   bad.status_code == 400 and "Ёмон" in bad.text and "action='/f/garmin'" in bad.text
                    and re.search(r"id='p'[^>]*aria-invalid='true'.*нотўғри", bad.text) is not None)
-        bad_ru = client.post("/f", data={"place": "garmin", "message": "Плохо", "phone": "12", "lang": "ru"})
+        bad_ru = client.post("/f", data={"message": "Плохо", "phone": "12", "lang": "ru"})
         check_true("the error is in the client's language", bad_ru.status_code == 400
                    and "Неверный номер" in bad_ru.text and "lang='ru'" in bad_ru.text)
-        en_ok = client.post("/f", data={"place": "garmin", "message": "Broken watch", "lang": "en"})
-        check_true("thanks in English", "Thank you!" in en_ok.text and "/f?lang=en&amp;place=garmin" in en_ok.text)
+        en_ok = client.post("/f/garmin", data={"message": "Broken watch", "lang": "en"})
+        check_true("thanks in English, back to the same page", "Thank you!" in en_ok.text and "/f/garmin?lang=en" in en_ok.text)
         check("...and the language reaches the Director", submitted[-1].lang, "en")
         feedback_page._recent.clear()
 
         submitted.clear()
-        bot = client.post("/f", data={"place": "garmin", "message": "spam", "website": "http://x"})
+        bot = client.post("/f", data={"message": "spam", "website": "http://x"})
         check_true("the hidden field drops bots quietly", bot.status_code == 200 and not submitted)
 
         for _ in range(5):  # counter cleared above, so five allowed, the sixth waits
-            client.post("/f", data={"place": "garmin", "message": "Ёмон"})
-        limited = client.post("/f", data={"place": "garmin", "message": "Ёмон"})
+            client.post("/f", data={"message": "Ёмон"})
+        limited = client.post("/f", data={"message": "Ёмон"})
         check("the 6th message in 10 minutes waits", limited.status_code, 429)
 
         async def broken_submit(submission):
@@ -1388,15 +1390,15 @@ def test_client_feedback() -> None:
 
         feedback.submit = broken_submit
         feedback_page._recent.clear()
-        down = client.post("/f", data={"place": "laundry", "message": "Ёмон хизмат"})
+        down = client.post("/f", data={"message": "Ёмон хизмат"})
         check_true("a failure says so and keeps the text", down.status_code == 503 and "Ёмон хизмат" in down.text)
     finally:
         feedback.submit = original_submit
         feedback_page._recent.clear()
 
     # ---- the printed card: red, white square, and exactly the right code
-    url = "https://example.uz/f"
-    card = Image.open(io.BytesIO(qr_card.card_png(url))).convert("RGB")
+    url = "https://example.uz/f/garmin"
+    card = Image.open(io.BytesIO(qr_card.card_png(url, "Garmin"))).convert("RGB")
     check("card size (10×12.7 cm at 300 dpi)", card.size, (1200, 1500))
     check("red background", card.getpixel((10, 10)), qr_card.RED)
     x0, y0, module, modules = qr_card.card_geometry(url)

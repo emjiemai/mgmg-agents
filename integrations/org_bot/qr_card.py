@@ -69,8 +69,13 @@ def _centered(draw: ImageDraw.ImageDraw, text: str, y: int, font: ImageFont.Free
     draw.text(((CARD_W - (right - left)) // 2, y), text, fill=WHITE, font=font)
 
 
-def card_png(url: str) -> bytes:
-    """Draw the card for ``url`` (the feedback page) and return it as PNG bytes."""
+def card_png(url: str, business: str = "") -> bytes:
+    """Draw the card for ``url`` (a complaints page) and return it as PNG bytes.
+
+    Args:
+        url: The page the code opens.
+        business: Printed under the code, so the two cards can't be mixed up.
+    """
     matrix = qr_matrix(url)
     modules = len(matrix) + 2 * QUIET_MODULES
     module_px = QR_BOX // modules
@@ -91,10 +96,14 @@ def card_png(url: str) -> bytes:
                 top = y0 + offset + row * module_px
                 draw.rectangle((left, top, left + module_px - 1, top + module_px - 1), fill=BLACK)
 
-    title_font, small_font = _font(72), _font(40)
-    if title_font and small_font:
+    title_font, name_font, small_font = _font(72), _font(60), _font(40)
+    if title_font and name_font and small_font:
         _centered(draw, TITLE, y0 - radius - 150, title_font)
-        _centered(draw, SUBTITLE, y0 + box + radius + 60, small_font)
+        below = y0 + box + radius + 50
+        if business:
+            _centered(draw, business, below, name_font)
+            below += 95
+        _centered(draw, SUBTITLE, below, small_font)
 
     out = io.BytesIO()
     card.save(out, format="PNG", dpi=(300, 300))
