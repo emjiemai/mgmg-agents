@@ -4,11 +4,11 @@ The same cards Admin Bot sends for "/qr" — one per business:
 
     python scripts/make_feedback_qr.py --base https://shikoyat.example.uz
 
-writes qr-shikoyat-laundry.png and qr-shikoyat-garmin.png (1200×1500 px,
-300 dpi — about 10×12.7 cm). Without --base it uses PUBLIC_BASE_URL.
+writes qr-shikoyat-londry.png and qr-shikoyat-garmin.png (1200×1450 px,
+300 dpi — about 10×12.3 cm: the business's logo on top, the code below, no
+text). Without --base it uses PUBLIC_BASE_URL.
 
-Print it only once the address is final: a printed code can't be changed,
-so point it at a domain the company controls.
+A printed code can't be changed, so print once the address is final.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ def main() -> int:
         return 2
     for place, business in PLACES.items():
         url = f"{base}{PAGES[place]}"
-        out = Path(args.out) / f"qr-shikoyat-{place}.png"
-        out.write_bytes(qr_card.card_png(url))
+        out = Path(args.out) / f"qr-shikoyat-{business.lower()}.png"
+        out.write_bytes(qr_card.card_png(url, place))
         print(f"{out}  ->  {url}")
     return 0
 

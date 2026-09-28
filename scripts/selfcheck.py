@@ -1398,12 +1398,22 @@ def test_client_feedback() -> None:
 
     # ---- the printed card: red, white square, and exactly the right code
     url = "https://example.uz/f/garmin"
-    card = Image.open(io.BytesIO(qr_card.card_png(url))).convert("RGB")
-    check("card size (10×10 cm at 300 dpi)", card.size, (1200, 1200))
+    plain = Image.open(io.BytesIO(qr_card.card_png(url))).convert("RGB")
+    check("card without a logo: 10×10 cm at 300 dpi", plain.size, (1200, 1200))
     check_true("only red, white and black — no text on the card",
-               {c for _, c in card.getcolors(1 << 20)} <= {qr_card.RED, qr_card.WHITE, qr_card.BLACK})
+               {c for _, c in plain.getcolors(1 << 20)} <= {qr_card.RED, qr_card.WHITE, qr_card.BLACK})
+    for place in feedback.PLACES:
+        check_true(f"{place}: its logo file is there (background cut out)",
+                   Image.open(qr_card.LOGO_DIR / qr_card.LOGOS[place]).mode == "RGBA")
+    card = Image.open(io.BytesIO(qr_card.card_png(url, "garmin"))).convert("RGB")
+    check("card with the logo: 10×12.3 cm", card.size, (1200, 1450))
     check("red background", card.getpixel((10, 10)), qr_card.RED)
-    x0, y0, module, modules = qr_card.card_geometry(url)
+    x0, y0, module, modules = qr_card.card_geometry(url, with_logo=True)
+    band = card.crop((0, 0, 1200, y0 - 2 * module))
+    white = [p for p in band.getdata() if p == qr_card.WHITE]
+    check_true("the logo is drawn in white on the red band above the code", len(white) > 2000)
+    lbox = band.convert("L").point(lambda v: 255 if v > 200 else 0).getbbox()
+    check_true("...centred", lbox is not None and abs((lbox[0] + lbox[2]) / 2 - 600) <= 6)
     matrix = qr_card.qr_matrix(url)
     margin = qr_card.QUIET_MODULES
     read = [

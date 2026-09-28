@@ -39,7 +39,8 @@ A2, A3, A4, B1, B2, B4, E1). Goal: ~10–15 working agents, not all at once.
 - Business name is **Londry** (Primus Londry), not "Laundry".
 - Render plans are paid and settled: mgmg-api starter (0.5c-512mb), mgmg-db
   basic-256mb (0.1c). Never raise plans, cold starts or DB expiry again.
-- QR cards: only the code (red background, white square, black code), no text.
+- QR cards: red background, the business's logo in white on top, the code on
+  a white square — no text. Logos: `integrations/org_bot/logos/`.
 - No company domain for the QR page — Render's `mgmg-api-eeky.onrender.com` stays.
 - Complaints only (no "fikr"), **two pages, two QR codes**: `/f` = Londry
   (already printed — never move it), `/f/garmin` = Garmin. No choice buttons

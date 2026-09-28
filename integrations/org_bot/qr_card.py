@@ -1,14 +1,21 @@
-"""The printable QR card: red background, the black QR code on white, no text.
+"""The printable QR card: red background, the business's logo, the QR code.
 
 The code sits on a white square: black modules straight on red are hard for
 phone scanners (they read brightness, and red is dark), and the QR standard
-requires a light margin around the code. Red card, white square, black code
-— nothing written on it (asked 2026-09-28).
+requires a light margin around the code. No text on the card (asked
+2026-09-28) — only the business's logo above the code, in white, so the
+Londry and Garmin cards can't be mixed up.
+
+Logos live in ``logos/`` with their background cut out (transparent PNG, the
+brand's own colour). They are small files, so they're enlarged here with
+smoothing and redrawn in white; a larger or vector logo would print sharper
+— drop it in with the same name.
 """
 
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import qrcode
 from PIL import Image, ImageDraw
@@ -18,9 +25,17 @@ RED = (215, 25, 32)
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
-CARD_W, CARD_H = 1200, 1200  # 10×10 cm at 300 dpi
-QR_BOX = 820  # the white square
+CARD_W = 1200
+CARD_H = 1200  # 10×10 cm at 300 dpi — the code alone
+CARD_H_LOGO = 1450  # 10×12.3 cm — logo band on top
+LOGO_BAND = 390  # red band above the white square that holds the logo
+LOGO_MAX_W, LOGO_MAX_H = 560, 150
+QR_BOX = 820  # the code with its margin
 QUIET_MODULES = 4  # the light margin the QR standard requires
+
+LOGO_DIR = Path(__file__).resolve().parent / "logos"
+# URL key (feedback.PLACES) -> logo file.
+LOGOS = {"laundry": "londry.png", "garmin": "garmin.png"}
 
 
 def qr_matrix(url: str) -> list[list[bool]]:
@@ -31,13 +46,34 @@ def qr_matrix(url: str) -> list[list[bool]]:
     return code.get_matrix()
 
 
-def card_png(url: str) -> bytes:
-    """Draw the card for ``url`` (the feedback page) and return it as PNG bytes."""
+def _white_logo(place: str) -> Image.Image | None:
+    """The place's logo, enlarged to fit the band and redrawn in white (None if missing)."""
+    name = LOGOS.get(place)
+    if not name or not (LOGO_DIR / name).exists():
+        return None
+    alpha = Image.open(LOGO_DIR / name).convert("RGBA").getchannel("A")
+    scale = min(LOGO_MAX_W / alpha.width, LOGO_MAX_H / alpha.height)
+    size = (round(alpha.width * scale), round(alpha.height * scale))
+    # Smooth enlargement, then firm the edges back up so the letters stay crisp.
+    alpha = alpha.resize(size, Image.Resampling.LANCZOS).point(lambda v: max(0, min(255, (v - 128) * 2 + 128)))
+    logo = Image.new("RGBA", size, WHITE + (0,))
+    logo.putalpha(alpha)
+    return logo
+
+
+def card_png(url: str, place: str | None = None) -> bytes:
+    """Draw the card for ``url`` and return it as PNG bytes.
+
+    Args:
+        url: The page the code opens.
+        place: ``feedback.PLACES`` key — puts that business's logo on top.
+    """
+    logo = _white_logo(place) if place else None
     matrix = qr_matrix(url)
-    x0, y0, module_px, modules = card_geometry(url)
+    x0, y0, module_px, modules = card_geometry(url, with_logo=logo is not None)
     box = module_px * modules
 
-    card = Image.new("RGB", (CARD_W, CARD_H), RED)
+    card = Image.new("RGB", (CARD_W, CARD_H_LOGO if logo else CARD_H), RED)
     draw = ImageDraw.Draw(card)
     radius = module_px * 2
     draw.rounded_rectangle((x0 - radius, y0 - radius, x0 + box + radius, y0 + box + radius), radius=radius * 2, fill=WHITE)
@@ -50,14 +86,25 @@ def card_png(url: str) -> bytes:
                 top = y0 + offset + row * module_px
                 draw.rectangle((left, top, left + module_px - 1, top + module_px - 1), fill=BLACK)
 
+    if logo is not None:
+        # Centre what the eye sees (the solid letters), not faint edge pixels like "®".
+        left, top, right, bottom = logo.getchannel("A").point(lambda v: 255 if v > 200 else 0).getbbox()
+        band_bottom = y0 - radius
+        x = (CARD_W - (right - left)) // 2 - left
+        y = (band_bottom - (bottom - top)) // 2 - top
+        card.paste(logo, (x, y), logo)
+
     out = io.BytesIO()
     card.save(out, format="PNG", dpi=(300, 300))
     return out.getvalue()
 
 
-def card_geometry(url: str) -> tuple[int, int, int, int]:
+def card_geometry(url: str, with_logo: bool = False) -> tuple[int, int, int, int]:
     """(x0, y0, module_px, modules incl. margin) — where the code sits, for tests."""
     modules = len(qr_matrix(url)) + 2 * QUIET_MODULES
     module_px = QR_BOX // modules
     box = module_px * modules
-    return (CARD_W - box) // 2, (CARD_H - box) // 2, module_px, modules
+    x0 = (CARD_W - box) // 2
+    if with_logo:
+        return x0, LOGO_BAND + module_px * 2, module_px, modules
+    return x0, (CARD_H - box) // 2, module_px, modules

@@ -64,8 +64,11 @@ before 2026-09-28 may be opinions and are marked so).
 ## Making the card
 
 - **Admin Bot:** `/qr` → two print-ready PNGs, Londry's and Garmin's
-  (1200×1200 px, 300 dpi, 10×10 cm) — only the code, no text (2026-09-28);
-  the file name and the Telegram caption say which business each one is.
+  (`qr-shikoyat-londry.png`, `qr-shikoyat-garmin.png`; 1200×1450 px, 300 dpi,
+  about 10×12.3 cm): red card, the business's logo in white on top, the code
+  on a white square below — no text (2026-09-28). The logos are in
+  `integrations/org_bot/logos/` with their background cut out; they came as
+  small images, so a larger or vector logo with the same file name prints sharper.
 - **On your computer:** `python scripts/make_feedback_qr.py --base https://<address>`
 
 The white square behind the code is deliberate: phone scanners read

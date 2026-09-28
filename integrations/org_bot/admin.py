@@ -210,8 +210,8 @@ async def _send_qr(run_id: uuid.UUID) -> str:
         folder = Path(tempfile.mkdtemp(prefix="mgmg-qr-"))
         for place, business in PLACES.items():
             url = f"{settings.public_url}{PAGES[place]}"
-            path = folder / f"qr-shikoyat-{place}.png"
-            path.write_bytes(qr_card.card_png(url))
+            path = folder / f"qr-shikoyat-{business.lower()}.png"
+            path.write_bytes(qr_card.card_png(url, place))
             await bot.send_document(
                 str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=f"{business}: {escape(url)}"
             )
