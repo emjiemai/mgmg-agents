@@ -2,7 +2,8 @@
 
 **Code:** `agents/daily-reports/agent.py`, `integrations/org_bot/kpi.py`, the
 reply half in `integrations/org_bot/ops_manager.py`
-**Schedule:** 16:00 Asia/Tashkent ask, 17:00 reminder, Mon-Fri — **only when
+**Schedule:** 16:00 Asia/Tashkent ask, 17:00 reminder, every day: Monday–Friday
+everyone, Saturday/Sunday only the weekend workers (see below) — **only when
 `DAILY_REPORTS_ENABLED=true`** (off by default; paused 2026-09-18 while not in
 use). Off means nothing is sent, no rows open, and the morning brief hides its
 "didn't report" section.
@@ -112,7 +113,19 @@ DELETE FROM daily_reports WHERE report_date = CURRENT_DATE;
 
 - Weekly Monday scorecard per employee (reports submitted out of working
   days, tasks completed) — the data is already there.
-- Saturday schedule, if the working week changes (currently Mon-Fri).
+
+## Weekend workers
+
+Everyone is asked Monday–Friday. Some people also work on Saturday or Sunday:
+the admin opens **Admin Bot → /xodimlar → the person** and taps **☐ Шанба** /
+**☐ Якшанба** (✅ = on; tap again to switch off). The card then shows
+"Иш кунлари: Душанба–Жума + шанба" and the list marks them "(+ шанба)".
+
+On Saturday and Sunday the crons still run, but only those people are asked
+and reminded, so nobody else shows up as "didn't report" in the morning
+brief. Stored as `employees.works_saturday` / `works_sunday`; every switch is
+logged in `employee_changes` (field `workdays`). The Friday scorecard covers
+Monday–Friday; weekend reports count in the monthly KPI.
 
 ## Vague reports — one question for a little accuracy
 

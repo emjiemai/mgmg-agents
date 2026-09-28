@@ -10,7 +10,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-26.
 | Plan | Agent | When it acts | Who gets it | Switch |
 | ---- | ----- | ------------ | ----------- | ------ |
 | H0 | Hub — API, database, both bots, SAP push receiver | always on | — | — |
-| A1 | Daily reports: ask, remind, one follow-up on a vague report | 16:00 ask · 17:00 reminder (Mon–Fri) | employees; non-reporters in the 08:00 brief | `DAILY_REPORTS_ENABLED` (**must be `true`**) |
+| A1 | Daily reports: ask, remind, one follow-up on a vague report | 16:00 ask · 17:00 reminder (Mon–Fri; Sat/Sun only weekend workers — Admin Bot `/xodimlar`) | employees; non-reporters in the 08:00 brief | `DAILY_REPORTS_ENABLED` (**must be `true`**) |
 | A2 | Morning brief — five numbers + who didn't report | 08:00 daily | Director | — |
 | A3 | Task tracker: deadlines, reminders, overdue notices, weekly scorecard | on each task · 08:00 · Friday 17:00 | employees, Director | `TASK_TRACKER_ENABLED` |
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | on request ("ruxsat") | requester, approvers | `PERMISSIONS_ENABLED`, limits in `PERMISSION_APPROVAL_TIERS` (**not set yet**) |

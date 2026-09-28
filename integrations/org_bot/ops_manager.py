@@ -1635,7 +1635,8 @@ async def _fetch_kpi_agent_data() -> str:
     if not rows:
         return (
             "No daily reports collected yet. agents/daily-reports asks every active employee "
-            "(except the Director) at 16:00 Asia/Tashkent, Mon-Fri, and rows appear from that "
+            "(except the Director) at 16:00 Asia/Tashkent, Mon-Fri, and on Saturday/Sunday only those "
+            "marked as weekend workers; rows appear from that "
             "run onward. Nobody has been asked yet, which is NOT the same as nobody reporting."
         )
 

@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Sequence
+from datetime import date
+from typing import Any, Sequence
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,16 @@ def parse_metrics(text: str, metrics: Sequence[Metric]) -> dict[str, int]:
         if len(numbers) == len(metrics):
             return {metric.key: int(value) for metric, value in zip(metrics, numbers)}
     return {}
+
+
+def works_on(employee: dict[str, Any], day: date) -> bool:
+    """Whether an employee works on ``day``: Mon–Fri everyone, weekends if switched on."""
+    weekday = day.weekday()
+    if weekday == 5:
+        return bool(employee.get("works_saturday"))
+    if weekday == 6:
+        return bool(employee.get("works_sunday"))
+    return True
 
 
 def build_request_text(display_name: str, metrics: Sequence[Metric]) -> str:

@@ -236,7 +236,8 @@ def employee_list_view(employees: list[dict[str, Any]]) -> tuple[str, dict[str, 
         username = f" (@{escape(emp['telegram_username'])})" if emp.get("telegram_username") else ""
         full_name = (emp.get("full_name") or "").strip()
         name = escape(full_name) if full_name else f"{escape(emp['display_name'])} <i>(исм ёзилмаган)</i>"
-        lines.append(f"• {name}{username} — {label}")
+        weekend = [d for d, on in (("шанба", emp.get("works_saturday")), ("якшанба", emp.get("works_sunday"))) if on]
+        lines.append(f"• {name}{username} — {label}" + (f" <i>(+ {', '.join(weekend)})</i>" if weekend else ""))
         buttons.append([{"text": f"👤 {full_name or emp['display_name']} ({label})", "callback_data": f"emp:{emp['id']}"}])
     lines.append(
         "\n<i>Ходимни танланг: исм, роль ёки ўчириш. "
@@ -257,18 +258,33 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
     ]
     if emp["role"] == DIRECTOR_ROLE:
         lines.append("<i>Директорга савол юборилмайди: исми кейинги ёзма рухсат қарорида сўралади.</i>")
+    else:
+        lines.append(f"Иш кунлари: {workdays_text(emp)}")
     if note:
         lines += ["", note]
     employee_id = emp["id"]
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "✏️ Исмни қайта сўраш", "callback_data": f"rename:{employee_id}"}],
-            [{"text": "🔁 Ролни ўзгартириш", "callback_data": f"rerole:{employee_id}"}],
-            [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
-            [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
-        ]
-    }
-    return "\n".join(lines), keyboard
+    rows = [
+        [{"text": "✏️ Исмни қайта сўраш", "callback_data": f"rename:{employee_id}"}],
+        [{"text": "🔁 Ролни ўзгартириш", "callback_data": f"rerole:{employee_id}"}],
+    ]
+    if emp["role"] != DIRECTOR_ROLE:  # the Director isn't asked for daily reports
+        rows.append(
+            [
+                {"text": f"{'✅' if emp.get('works_saturday') else '☐'} Шанба", "callback_data": f"wsat:{employee_id}"},
+                {"text": f"{'✅' if emp.get('works_sunday') else '☐'} Якшанба", "callback_data": f"wsun:{employee_id}"},
+            ]
+        )
+    rows += [
+        [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
+        [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
+    ]
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def workdays_text(emp: dict[str, Any]) -> str:
+    """"Душанба–Жума + шанба" — the days this employee is asked for a report."""
+    extra = [day for day, on in (("шанба", emp.get("works_saturday")), ("якшанба", emp.get("works_sunday"))) if on]
+    return "Душанба–Жума" + (" + " + ", ".join(extra) if extra else "")
 
 
 def role_picker_view(emp: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -367,7 +383,7 @@ async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) ->
             log.warning("Could not message employee {}: {}", telegram_user_id, exc)
 
 
-EMPLOYEE_ACTIONS = ("emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno")
+EMPLOYEE_ACTIONS = ("emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun")
 
 
 async def _handle_employee_action(
@@ -432,6 +448,13 @@ async def _handle_employee_action(
             agent=AGENT, action="employee_name_reset", target_system="postgres", status="success", run_id=run_id,
             target_ref=employee_id, mode="write", payload={"by": decided_by, "on_request": action == "nameok"},
         )
+    elif action in ("wsat", "wsun"):
+        updated = await store.toggle_weekend_day(employee_id, "saturday" if action == "wsat" else "sunday", decided_by)
+        if updated is None:
+            await _answer(query_id, "Ходим топилмади")
+            return "not_found"
+        text, keyboard = employee_card(updated, f"📅 Иш кунлари: {workdays_text(updated)}")
+        await _edit(callback, text, keyboard, run_id)
     elif action == "nameno":
         name = (employee.get("full_name") or "").strip() or employee["display_name"]
         await _tell_employee(employee["telegram_user_id"], "❌ Админ исм ўзгартириш сўровингизни рад этди.", run_id)

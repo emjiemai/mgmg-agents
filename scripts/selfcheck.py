@@ -1116,6 +1116,28 @@ def test_employee_admin() -> None:
     check_true("the Director's card explains when their name is asked",
                "кейинги ёзма рухсат қарорида" in admin.employee_card(director)[0])
 
+    # Weekend workers (2026-09-28): everyone Mon–Fri, Sat/Sun only if switched on.
+    from datetime import date
+
+    from integrations.org_bot import kpi
+
+    friday, saturday, sunday = date(2026, 9, 25), date(2026, 9, 26), date(2026, 9, 27)
+    check_true("everyone works on a weekday", kpi.works_on(worker, friday))
+    check_true("nobody is asked on a weekend by default",
+               not kpi.works_on(worker, saturday) and not kpi.works_on(worker, sunday))
+    saturday_worker = {**worker, "works_saturday": True}
+    check_true("a Saturday worker is asked on Saturday, not Sunday",
+               kpi.works_on(saturday_worker, saturday) and not kpi.works_on(saturday_worker, sunday))
+    card_buttons = [b["callback_data"] for row in admin.employee_card(worker)[1]["inline_keyboard"] for b in row]
+    check_true("the card has Saturday and Sunday switches",
+               f"wsat:{worker_id}" in card_buttons and f"wsun:{worker_id}" in card_buttons)
+    director_buttons = [b["callback_data"] for row in admin.employee_card(director)[1]["inline_keyboard"] for b in row]
+    check_true("no weekend switches for the Director (never asked for reports)",
+               not any(b.startswith(("wsat:", "wsun:")) for b in director_buttons))
+    check("workdays line", admin.workdays_text({**worker, "works_saturday": True, "works_sunday": True}),
+          "Душанба–Жума + шанба, якшанба")
+    check_true("the list marks weekend workers", "(+ шанба)" in admin.employee_list_view([saturday_worker])[0])
+
     sent: list[tuple[str, str]] = []  # (chat, text)
     edits: list[str] = []
 
@@ -1153,6 +1175,13 @@ def test_employee_admin() -> None:
     async def change_role(employee_id, role, by):
         return people[employee_id], {**people[employee_id], "role": role}
 
+    toggled: list[tuple[str, str]] = []
+
+    async def toggle_weekend(employee_id, day, by):
+        toggled.append((employee_id, day))
+        people[employee_id] = {**people[employee_id], f"works_{day}": not people[employee_id].get(f"works_{day}")}
+        return people[employee_id]
+
     requests = [worker, None]
 
     async def request_change(telegram_user_id):
@@ -1163,7 +1192,7 @@ def test_employee_admin() -> None:
         (admin, "TelegramBot", FakeBot), (names, "TelegramBot", FakeBot), (ops_manager, "TelegramBot", FakeBot),
         (admin, "log_action", nothing), (store, "get_employee", get_employee), (store, "reset_employee_name", reset_name),
         (store, "change_employee_role", change_role), (store, "request_name_change", request_change),
-        (settings, "admin_bot_admin_user_id", 0),
+        (store, "toggle_weekend_day", toggle_weekend), (settings, "admin_bot_admin_user_id", 0),
     ):
         saved.append((obj, name, getattr(obj, name)))
         setattr(obj, name, value)
@@ -1186,6 +1215,14 @@ def test_employee_admin() -> None:
         tap(f"cr:ombor:{worker_id}")
         check_true("role change: the worker is told", any(chat == "2" and "Омбор" in text for chat, text in sent))
         check_true("role change: the card shows it", "Роль ўзгартирилди" in edits[-1])
+
+        sent.clear()
+        tap(f"wsat:{worker_id}")
+        check("Saturday switch toggles that employee's Saturday", toggled[-1], (worker_id, "saturday"))
+        check_true("the card shows the new work days", "Душанба–Жума + шанба" in edits[-1])
+        tap(f"wsun:{worker_id}")
+        check("Sunday switch toggles Sunday", toggled[-1], (worker_id, "sunday"))
+        check_true("both weekend days shown", "Душанба–Жума + шанба, якшанба" in edits[-1])
 
         sent.clear()
         tap(f"nameno:{worker_id}")

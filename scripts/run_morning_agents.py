@@ -42,8 +42,8 @@ AGENTS = [
     "agents/task-tracker/agent.py --monthly",  # sends only on the 1st
 ]
 
-# 17:00 Mon-Fri. The scorecard checks for Friday itself, so this list can run
-# every weekday.
+# 17:00 every day (the reminder only goes to people asked today, so on a
+# weekend just the weekend workers). The scorecard checks for Friday itself.
 EVENING_AGENTS = [
     "agents/daily-reports/agent.py --remind",
     "agents/task-tracker/agent.py --weekly",

@@ -692,6 +692,15 @@ CREATE TABLE IF NOT EXISTS employee_changes (
     changed_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_employee_changes_employee ON employee_changes (employee_id, changed_at DESC);
+ALTER TABLE employee_changes DROP CONSTRAINT IF EXISTS employee_changes_field_check;
+ALTER TABLE employee_changes ADD CONSTRAINT employee_changes_field_check
+    CHECK (field IN ('full_name', 'role', 'workdays'));
+
+-- Who also works at the weekend (set by the admin on the /xodimlar card).
+-- Everyone works Monday–Friday; on Saturday/Sunday only these are asked for
+-- a daily report, so nobody else is counted as "didn't report".
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS works_saturday BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS works_sunday BOOLEAN NOT NULL DEFAULT false;
 
 -- ---------------------------------------------------------------------------
 -- pending_relays — an employee's message held until they confirm it should

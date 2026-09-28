@@ -40,8 +40,9 @@ Telegram ◀──▶ mgmg-api (FastAPI) ──▶ PostgreSQL ◀── cron: 08
   and the read-only database viewer.
 - **mgmg-morning-agents** (08:00) — brief, Lead Agent, receivables, task
   reminders, name requests — `scripts/run_morning_agents.py`.
-- **mgmg-daily-reports** (16:00 Mon–Fri) and **mgmg-report-reminder**
-  (17:00 Mon–Fri, also the Friday scorecard).
+- **mgmg-daily-reports** (16:00) and **mgmg-report-reminder** (17:00, also
+  the Friday scorecard) — every day; on Saturday/Sunday only the employees
+  the admin marked as weekend workers (`/xodimlar` → the person's card).
 
 SAP data arrives **only by push** from the gateway's own machine
 (`scripts/sap-gateway-push/`); nothing reaches into SAP. Each tool is pushed

@@ -95,6 +95,27 @@ async def change_employee_role(employee_id: str, role: str, changed_by: str) -> 
     return before, after
 
 
+async def toggle_weekend_day(employee_id: str, day: str, changed_by: str) -> dict[str, Any] | None:
+    """Switch whether an employee works on Saturday or Sunday, logged.
+
+    Args:
+        employee_id: ``employees.id``.
+        day: "saturday" or "sunday".
+        changed_by: Who switched it.
+
+    Returns:
+        The updated row, or None if there's no such active employee.
+    """
+    column = {"saturday": "works_saturday", "sunday": "works_sunday"}[day]
+    after = await fetch_one(
+        f"UPDATE employees SET {column} = NOT {column} WHERE id = %s AND status = 'active' RETURNING *",
+        (employee_id,),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "workdays", None, f"{day}={'on' if after[column] else 'off'}", changed_by)
+    return after
+
+
 async def request_name_change(telegram_user_id: int) -> dict[str, Any] | None:
     """Record an employee's own request to change their name (/ism).
 
