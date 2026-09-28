@@ -1,13 +1,14 @@
-"""Client feedback and complaints from a QR code — to the Director via OPS Manager Bot.
+"""Client feedback and complaints from one QR code — to the Director via OPS Manager Bot.
 
-A client scans the QR code at a location, gets a one-screen page (served by
-``integrations/api/feedback_page.py``), writes an opinion or a complaint and,
-if they want, a name and phone number. Leaving both empty is anonymous. The
-message is stored in ``client_feedback`` and sent to the Director(s).
+A client scans the company's QR code, gets a one-screen page (served by
+``integrations/api/feedback_page.py`` at ``/f``), writes an opinion or a
+complaint and, if they want, a name and phone number. Leaving both empty is
+anonymous. The message is stored in ``client_feedback`` and sent to the
+Director(s).
 
-Each QR code carries a place label (``/f/garmin``, ``/f/ondry-chilonzor``)
-so a complaint says where it came from. The QR image itself is drawn by
-``qr_card.py``.
+One code for the whole company (2026-09-28: the business isn't split into
+separate services for clients), so there is no place label. The QR image
+itself is drawn by ``qr_card.py``.
 
 Pure validation and message text here (tested offline); the page, storage
 and delivery call into it.
@@ -35,7 +36,6 @@ KINDS: dict[str, tuple[str, str]] = {
 }
 MESSAGE_MIN, MESSAGE_MAX = 3, 2000
 NAME_MAX = 60
-PLACE = re.compile(r"^[a-z0-9-]{1,32}$")
 _PHONE_CHARS = re.compile(r"^[0-9+()\-\s]{7,25}$")
 
 
@@ -43,7 +43,6 @@ _PHONE_CHARS = re.compile(r"^[0-9+()\-\s]{7,25}$")
 class Submission:
     """One validated form: what the client wrote, and how to reach them (if at all)."""
 
-    place: str
     kind: str
     message: str
     name: str
@@ -52,11 +51,6 @@ class Submission:
     @property
     def anonymous(self) -> bool:
         return not self.name and not self.phone
-
-
-def place_ok(place: str) -> bool:
-    """A place label from the URL: lowercase letters, digits and dashes."""
-    return bool(PLACE.match(place or ""))
 
 
 def normalize_phone(raw: str) -> str | None:
@@ -76,7 +70,7 @@ def normalize_phone(raw: str) -> str | None:
     return ("+" if raw.startswith("+") else "") + digits
 
 
-def clean(form: dict[str, str], place: str) -> tuple[Submission | None, str | None]:
+def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
     """Validate a submitted form.
 
     Returns:
@@ -95,13 +89,13 @@ def clean(form: dict[str, str], place: str) -> tuple[Submission | None, str | No
     phone = normalize_phone(form.get("phone") or "")
     if phone is None:
         return None, "Телефон рақами нотўғри. Масалан: +998 90 123 45 67 — ёки бўш қолдиринг."
-    return Submission(place=place, kind=kind, message=message, name=name, phone=phone), None
+    return Submission(kind=kind, message=message, name=name, phone=phone), None
 
 
 def director_text(sub: Submission) -> str:
     """The message the Director gets (everything the client typed is escaped)."""
     emoji, label = KINDS[sub.kind]
-    lines = [f"{emoji} <b>Мижоз: {label.lower()}</b> — 📍 {escape(sub.place)}", "", f"«{escape(sub.message)}»", ""]
+    lines = [f"{emoji} <b>Мижоз: {label.lower()}</b>", "", f"«{escape(sub.message)}»", ""]
     if sub.anonymous:
         lines.append("👤 Аноним")
     else:
@@ -117,24 +111,22 @@ async def submit(sub: Submission) -> int:
         How many Directors received it (it's stored either way).
     """
     row = await store.save_client_feedback(
-        place=sub.place, kind=sub.kind, message=sub.message, contact_name=sub.name or None, phone=sub.phone or None
+        kind=sub.kind, message=sub.message, contact_name=sub.name or None, phone=sub.phone or None
     )
     delivered = await notify_directors(director_text(sub), agent=AGENT, run_id=uuid.uuid4())
     if row is not None and delivered:
         await store.mark_client_feedback_sent(row["id"], delivered[0])
-    log.info("Client {} from '{}' stored and sent to {} director(s)", sub.kind, sub.place, len(delivered))
+    log.info("Client {} stored and sent to {} director(s)", sub.kind, len(delivered))
     return len(delivered)
 
 
 def describe(rows: list[dict[str, Any]]) -> str:
     """Plain-text data for OPS Manager Bot's answers ("mijozlar fikri")."""
     if not rows:
-        return "No client feedback or complaints received through the QR codes in the last 60 days."
+        return "No client feedback or complaints received through the QR code in the last 60 days."
     complaints = sum(1 for r in rows if r["kind"] == "complaint")
-    lines = [f"Client feedback via QR codes, last 60 days: {len(rows)} ({complaints} complaint(s)), newest first:"]
+    lines = [f"Client feedback via the QR code, last 60 days: {len(rows)} ({complaints} complaint(s)), newest first:"]
     for r in rows:
         contact = r.get("phone") or r.get("contact_name") or "anonymous"
-        lines.append(
-            f"- [{to_local(r['created_at']):%Y-%m-%d %H:%M}] place={r['place']} | {r['kind']} | {r['message']} | contact: {contact}"
-        )
+        lines.append(f"- [{to_local(r['created_at']):%Y-%m-%d %H:%M}] {r['kind']} | {r['message']} | contact: {contact}")
     return "\n".join(lines)

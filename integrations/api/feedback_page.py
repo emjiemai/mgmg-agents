@@ -1,4 +1,4 @@
-"""The page a client sees after scanning the feedback QR code — ``/f/{place}``.
+"""The page a client sees after scanning the company's feedback QR code — ``/f``.
 
 One screen, no JavaScript, a few kilobytes: a choice between an opinion and
 a complaint, a text box, and an optional name and phone. Empty name and
@@ -21,7 +21,7 @@ from collections import defaultdict, deque
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from integrations.common.config import settings
 from integrations.common.logging_setup import setup_logging
@@ -30,7 +30,6 @@ from integrations.org_bot import feedback
 log = setup_logging("feedback-page")
 router = APIRouter(prefix="/f", include_in_schema=False)
 
-GENERAL_PLACE = "umumiy"
 RATE_LIMIT = 5
 RATE_WINDOW_SECONDS = 600
 _recent: dict[str, deque[float]] = defaultdict(deque)
@@ -84,13 +83,13 @@ def _page(body: str, status: int = 200) -> HTMLResponse:
     )
 
 
-def form_html(place: str, values: dict[str, str] | None = None, error: str | None = None) -> str:
+def form_html(values: dict[str, str] | None = None, error: str | None = None) -> str:
     """The form, keeping what was typed when something needs fixing."""
     values = values or {}
     kind = values.get("kind", "feedback")
     checked = {k: " checked" if kind == k else "" for k in feedback.KINDS}
     return (
-        f"<form method='post' action='/f/{_e(place)}'>"
+        "<form method='post' action='/f'>"
         + (f"<div class='err'>{_e(error)}</div>" if error else "")
         + "<div class='kinds'>"
         f"<label><input type='radio' name='kind' value='feedback'{checked['feedback']}>💬 Фикр</label>"
@@ -110,11 +109,11 @@ def form_html(place: str, values: dict[str, str] | None = None, error: str | Non
     )
 
 
-def thanks_html(place: str, contact_given: bool) -> str:
+def thanks_html(contact_given: bool) -> str:
     follow_up = "<p>Керак бўлса, сиз билан боғланамиз.</p>" if contact_given else ""
     return (
         "<div class='done'><h2>✅ Раҳмат!</h2><p>Хабарингиз раҳбариятга юборилди.</p>"
-        f"{follow_up}<p><a href='/f/{_e(place)}'>Яна ёзиш</a></p></div>"
+        f"{follow_up}<p><a href='/f'>Яна ёзиш</a></p></div>"
     )
 
 
@@ -136,44 +135,42 @@ def _allowed(address: str) -> bool:
 
 
 @router.get("", response_class=HTMLResponse)
-async def general_form() -> Response:
-    """The form without a place label (a QR code made for no one location)."""
-    return await place_form(GENERAL_PLACE)
-
-
-@router.get("/{place}", response_class=HTMLResponse)
-async def place_form(place: str) -> Response:
-    """The form for one place's QR code."""
-    if not settings.feedback_enabled or not feedback.place_ok(place):
+async def feedback_form() -> Response:
+    """The form behind the company's QR code."""
+    if not settings.feedback_enabled:
         return Response(status_code=404)
-    return _page(form_html(place))
+    return _page(form_html())
 
 
-@router.post("/{place}", response_class=HTMLResponse)
-async def submit(place: str, request: Request) -> Response:
+@router.get("/{old}", include_in_schema=False)
+async def old_place_link(old: str) -> Response:
+    """Early test codes carried a place ("/f/garmin"); send them to the one form."""
+    return RedirectResponse("/f", status_code=301)
+
+
+@router.post("", response_class=HTMLResponse)
+async def submit(request: Request) -> Response:
     """Take one submission: validate, store, send to the Director, say thanks."""
-    if not settings.feedback_enabled or not feedback.place_ok(place):
+    if not settings.feedback_enabled:
         return Response(status_code=404)
 
     body = (await request.body())[:20_000].decode("utf-8", errors="replace")
     form = {key: values[0] for key, values in parse_qs(body, keep_blank_values=True).items()}
 
     if form.get("website"):  # the hidden field: only bots fill it
-        log.info("Feedback honeypot hit on '{}' — dropped", place)
-        return _page(thanks_html(place, contact_given=False))
+        log.info("Feedback honeypot hit — dropped")
+        return _page(thanks_html(contact_given=False))
 
-    submission, error = feedback.clean(form, place)
+    submission, error = feedback.clean(form)
     if error:
-        return _page(form_html(place, form, error), status=400)
+        return _page(form_html(form, error), status=400)
 
     if not _allowed(_client_address(request)):
-        return _page(
-            form_html(place, form, "Кўп хабар юборилди. Бир оздан кейин қайта уриниб кўринг."), status=429
-        )
+        return _page(form_html(form, "Кўп хабар юборилди. Бир оздан кейин қайта уриниб кўринг."), status=429)
 
     try:
         await feedback.submit(submission)
     except Exception as exc:  # noqa: BLE001 — the client must see a clear page, not a stack trace
-        log.error("Could not store client feedback from '{}': {}", place, exc)
-        return _page(form_html(place, form, "Хатолик юз берди. Бир оздан кейин қайта юборинг."), status=503)
-    return _page(thanks_html(place, contact_given=not submission.anonymous))
+        log.error("Could not store client feedback: {}", exc)
+        return _page(form_html(form, "Хатолик юз берди. Бир оздан кейин қайта юборинг."), status=503)
+    return _page(thanks_html(contact_given=not submission.anonymous))

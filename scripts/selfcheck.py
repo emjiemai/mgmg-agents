@@ -1204,7 +1204,7 @@ def test_employee_admin() -> None:
 
 
 def test_client_feedback() -> None:
-    """QR feedback: validation, the page, what reaches the Director, the printed card."""
+    """QR feedback: validation, the one page, what reaches the Director, the printed card."""
     print("client feedback (QR)")
     import io
 
@@ -1216,17 +1216,17 @@ def test_client_feedback() -> None:
     from integrations.org_bot import feedback, qr_card
 
     # ---- validation
-    sub, err = feedback.clean({"kind": "complaint", "message": "  Навбат  узун  ", "phone": "90 123-45-67"}, "garmin")
+    sub, err = feedback.clean({"kind": "complaint", "message": "  Навбат  узун  ", "phone": "90 123-45-67"})
     check("message tidied, phone normalised", (sub.message, sub.phone, sub.kind), ("Навбат узун", "901234567", "complaint"))
-    check("empty message refused", feedback.clean({"message": " "}, "garmin")[1], "Фикрингизни ёзинг.")
-    check_true("a bad phone is refused, not kept", feedback.clean({"message": "яхши", "phone": "abc"}, "x")[0] is None)
-    check("unknown kind falls back to feedback", feedback.clean({"message": "яхши", "kind": "zzz"}, "x")[0].kind, "feedback")
-    anon = feedback.clean({"message": "яхши"}, "x")[0]
+    check("empty message refused", feedback.clean({"message": " "})[1], "Фикрингизни ёзинг.")
+    check_true("a bad phone is refused, not kept", feedback.clean({"message": "яхши", "phone": "abc"})[0] is None)
+    check("unknown kind falls back to feedback", feedback.clean({"message": "яхши", "kind": "zzz"})[0].kind, "feedback")
+    anon = feedback.clean({"message": "яхши"})[0]
     check_true("no name, no phone = anonymous", anon.anonymous and "👤 Аноним" in feedback.director_text(anon))
-    risky = feedback.clean({"message": "<b>x</b> & y", "name": "<i>"}, "garmin")[0]
+    check_true("one code for the company: no place in the message", "📍" not in feedback.director_text(anon))
+    risky = feedback.clean({"message": "<b>x</b> & y", "name": "<i>"})[0]
     text = feedback.director_text(risky)
     check_true("what the client typed is escaped", "&lt;b&gt;x&lt;/b&gt; &amp; y" in text and "<i>" not in text)
-    check_true("place labels: safe slugs only", feedback.place_ok("ondry-1") and not feedback.place_ok("../x"))
 
     # ---- the page
     submitted = []
@@ -1240,26 +1240,26 @@ def test_client_feedback() -> None:
     feedback_page._recent.clear()
     client = TestClient(api_app.app)
     try:
-        page = client.get("/f/garmin")
-        check_true("the form opens", page.status_code == 200 and "Юбориш" in page.text and "action='/f/garmin'" in page.text)
+        page = client.get("/f")
+        check_true("the form opens", page.status_code == 200 and "Юбориш" in page.text and "action='/f'" in page.text)
         check_true("the page is Uzbek Cyrillic", latin_words(page.text.split("<body>")[1]) == [])
-        check("a bad place label is 404", client.get("/f/..%2Fx").status_code, 404)
-        check("the general QR works", client.get("/f").status_code, 200)
+        old = client.get("/f/garmin", follow_redirects=False)
+        check_true("an early test link goes to the one form", old.status_code == 301 and old.headers["location"] == "/f")
 
-        ok = client.post("/f/garmin", data={"kind": "complaint", "message": "Кассада навбат узун", "phone": "+998901234567"})
+        ok = client.post("/f", data={"kind": "complaint", "message": "Кассада навбат узун", "phone": "+998901234567"})
         check_true("a submission is thanked", ok.status_code == 200 and "Раҳмат" in ok.text)
-        check("...and goes on to the Director", [(s.place, s.kind) for s in submitted], [("garmin", "complaint")])
+        check("...and goes on to the Director", [s.kind for s in submitted], ["complaint"])
 
-        bad = client.post("/f/garmin", data={"message": "Яхши", "phone": "12"})
+        bad = client.post("/f", data={"message": "Яхши", "phone": "12"})
         check_true("an error keeps what was typed", bad.status_code == 400 and "Яхши" in bad.text and "нотўғри" in bad.text)
 
         submitted.clear()
-        bot = client.post("/f/garmin", data={"message": "spam", "website": "http://x"})
+        bot = client.post("/f", data={"message": "spam", "website": "http://x"})
         check_true("the hidden field drops bots quietly", bot.status_code == 200 and not submitted)
 
         for _ in range(4):
-            client.post("/f/garmin", data={"message": "Раҳмат"})
-        limited = client.post("/f/garmin", data={"message": "Раҳмат"})
+            client.post("/f", data={"message": "Раҳмат"})
+        limited = client.post("/f", data={"message": "Раҳмат"})
         check("the 6th message in 10 minutes waits", limited.status_code, 429)
 
         async def broken_submit(submission):
@@ -1267,15 +1267,15 @@ def test_client_feedback() -> None:
 
         feedback.submit = broken_submit
         feedback_page._recent.clear()
-        down = client.post("/f/garmin", data={"message": "Яхши хизмат"})
+        down = client.post("/f", data={"message": "Яхши хизмат"})
         check_true("a failure says so and keeps the text", down.status_code == 503 and "Яхши хизмат" in down.text)
     finally:
         feedback.submit = original_submit
         feedback_page._recent.clear()
 
     # ---- the printed card: red, white square, and exactly the right code
-    url = "https://example.uz/f/garmin"
-    card = Image.open(io.BytesIO(qr_card.card_png(url, "garmin"))).convert("RGB")
+    url = "https://example.uz/f"
+    card = Image.open(io.BytesIO(qr_card.card_png(url))).convert("RGB")
     check("card size (10×12.7 cm at 300 dpi)", card.size, (1200, 1500))
     check("red background", card.getpixel((10, 10)), qr_card.RED)
     x0, y0, module, modules = qr_card.card_geometry(url)
@@ -1289,6 +1289,60 @@ def test_client_feedback() -> None:
     check_true("the printed modules are exactly the QR code for the URL", read == matrix)
     quiet = [card.getpixel((x0 + module // 2, y0 + i * module + module // 2)) for i in range(modules)]
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
+
+
+def test_report_accuracy() -> None:
+    """The one follow-up on a report: asked only when the AI finds nothing checkable."""
+    print("report accuracy follow-up")
+    import asyncio
+    import uuid
+
+    from integrations.ai.openrouter_client import OpenRouterError
+    from integrations.org_bot import ops_manager
+
+    seen: list[str] = []
+    verdicts: list[object] = []
+
+    class FakeAI:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def complete_json(self, system, user):
+            seen.append(user)
+            verdict = verdicts.pop(0)
+            if isinstance(verdict, Exception):
+                raise verdict
+            return verdict
+
+    original = ops_manager.OpenRouterClient
+    ops_manager.OpenRouterClient = FakeAI
+    shirin = ("Убралась,привела в порядок витрины,отвечала на звонки callcenter,отвечала клиентам в "
+              "телеграмм и Инстаграмм, консультировала клиентов,продажи,")
+    try:
+        verdicts.append({"ask": True, "follow_up": "Нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди?"})
+        question = asyncio.run(ops_manager._report_follow_up(shirin, "garmin_sotuv", uuid.uuid4()))
+        check("a list without results gets one question", question, "Нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди?")
+        check_true("the AI is told the role, in Uzbek", seen[-1].startswith("Role: Garmin сотув"))
+        check_true("her real report (over 120 characters) is checked — the old cap skipped it", len(shirin) > 120 and len(seen) == 1)
+
+        verdicts.append({"ask": False})
+        check("a checkable report is left alone",
+              asyncio.run(ops_manager._report_follow_up("3 ta KP yubordim, Rich Home bilan uchrashuv", "b2b_sotuv", uuid.uuid4())), None)
+
+        verdicts.append(OpenRouterError("down"))
+        check("an AI outage never blocks the report", asyncio.run(ops_manager._report_follow_up("ok", "it", uuid.uuid4())), None)
+
+        calls = len(seen)
+        check("a very long report skips the check", asyncio.run(ops_manager._report_follow_up("x" * 3001, "it", uuid.uuid4())), None)
+        check("...without spending an AI call", len(seen), calls)
+    finally:
+        ops_manager.OpenRouterClient = original
 
 
 def test_payment_gate() -> None:
@@ -1393,6 +1447,7 @@ def main() -> int:
         test_permission_form,
         test_task_tracker,
         test_payment_gate,
+        test_report_accuracy,
         test_client_feedback,
         test_employee_admin,
         test_plan_agents,

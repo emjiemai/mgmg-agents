@@ -114,13 +114,21 @@ DELETE FROM daily_reports WHERE report_date = CURRENT_DATE;
   days, tasks completed) — the data is already there.
 - Saturday schedule, if the working week changes (currently Mon-Fri).
 
-## Vague reports
+## Vague reports — one question for a little accuracy
 
-If a report says nothing concrete ("ok", "ishladim", "hammasi yaxshi"), the AI
-asks **one** short follow-up question. The first answer is already saved, so
-the employee counts as reported either way; whatever they send next is added to
-the report and nothing more is asked. Reports longer than 120 characters are
-never checked, and if the AI is unavailable the report simply stands.
+The AI asks **one** short follow-up question when a report says nothing
+concrete ("ok", "ishladim"), or lists general activities with nothing
+checkable for the ones that matter — e.g. "отвечала на звонки, консультировала
+клиентов, продажи" gets "Нечта қўнғироққа жавоб бердингиз, нечта мижозга
+маслаҳат бердингиз ва бугун қанча сотув бўлди?". It is not asked when the main
+activities already carry a number, a client or company name, a document or a
+result, and never about chores (cleaning, tidying displays). It sees the
+employee's role, so the question fits the job. When in doubt, it doesn't ask.
+
+The first answer is already saved, so the employee counts as reported either
+way; whatever they send next is added to the report and nothing more is asked
+("a little accuracy is enough", 2026-09-28). Reports over 3000 characters and
+AI outages skip the check.
 
 ## Late replies
 

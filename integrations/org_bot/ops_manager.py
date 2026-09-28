@@ -665,31 +665,41 @@ async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text
 
 # ---------------------------------------------------------------- daily reports
 
-WEAK_REPORT_SYSTEM = """You read an employee's end-of-day work report and \
-decide ONLY whether it is too weak to be a report.
+REPORT_CHECK_SYSTEM = """You read an employee's end-of-day work report. The \
+Director wants reports he can check — a little accuracy, not an essay. Decide \
+whether it needs ONE short follow-up question.
 
-WEAK means it says nothing concrete about what they did today: "ok", "ishladim", \
-"hammasi yaxshi", "bajarildi", "normal", "ish qildim", an emoji, a single vague \
-word or phrase.
-NOT weak: anything that names at least one concrete piece of work, however \
-short ("mijozlarga qo'ng'iroq qildim", "omborni sanadim", "3 ta KP yubordim"). \
-Do not judge how much they did or how well — that is not your job. When in \
-doubt, it is NOT weak.
+Ask when:
+- it says nothing concrete ("ok", "ishladim", "hammasi yaxshi", an emoji); or
+- it only lists general activities and the ones that matter have no result — \
+e.g. "answered calls, consulted clients, sales" with no count, amount, client \
+or outcome.
+Do NOT ask when the main activities already have something checkable: a number \
+(calls, clients, orders, an amount), a client or company name, a document or \
+task name, or a result ("3 ta KP yubordim", "Rich Home bilan shartnoma \
+imzolandi", "омборни санадим, 12 та камчилик").
+Routine chores (cleaning, tidying shelves or displays) never need numbers — \
+ignore them. When in doubt, do not ask.
 
-Return ONLY JSON: {"weak": false} or {"weak": true, "follow_up": "<one short, \
-friendly question in Uzbek, in Cyrillic script, asking what concretely they \
-did today>"}."""
+If you ask: ONE short, friendly sentence in Uzbek, in Cyrillic script, about \
+the 1–2 most important vague items from THEIR report, asking for a number or \
+a result — fitted to their role. Example for a sales person who wrote "answered \
+calls, consulted clients, sales": "Нечта қўнғироққа жавоб бердингиз, нечта \
+мижозга маслаҳат бердингиз ва бугун қанча сотув бўлди?". Never scold, never \
+ask about chores, never more than one question.
 
-# Longer than this is never "ok"/"ishladim" — skip the AI call entirely.
-_WEAK_REPORT_MAX_LEN = 120
+Return ONLY JSON: {"ask": false} or {"ask": true, "follow_up": "<the question>"}."""
+
+# A report this long is detailed by any measure — don't spend an AI call on it.
+_REPORT_CHECK_MAX_LEN = 3000
 
 
-async def _weak_report_follow_up(text: str, run_id: uuid.UUID) -> str | None:
-    """A short follow-up question if the report is vague, else None.
+async def _report_follow_up(text: str, role: str, run_id: uuid.UUID) -> str | None:
+    """One short question when a report is vague or has no checkable result, else None.
 
     Never blocks the report: on any AI failure the report simply stands.
     """
-    if len(text) > _WEAK_REPORT_MAX_LEN:
+    if len(text) > _REPORT_CHECK_MAX_LEN:
         return None
     try:
         async with OpenRouterClient(
@@ -698,13 +708,15 @@ async def _weak_report_follow_up(text: str, run_id: uuid.UUID) -> str | None:
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
-            verdict = await ai.complete_json(WEAK_REPORT_SYSTEM, text)
+            verdict = await ai.complete_json(
+                REPORT_CHECK_SYSTEM, f"Role: {ROLE_LABELS.get(role, role)}\nReport:\n{text}"
+            )
     except OpenRouterError as exc:
-        log.warning("Weak-report check unavailable, accepting as is: {}", exc)
+        log.warning("Report check unavailable, accepting as is: {}", exc)
         return None
-    if verdict.get("weak") is not True:
+    if verdict.get("ask") is not True:
         return None
-    return str(verdict.get("follow_up") or "").strip() or "Бугун аниқ қандай ишларни бажардингиз? Қисқача ёзинг."
+    return str(verdict.get("follow_up") or "").strip() or "Бугун аниқ нималарни бажардингиз? Натижасини қисқача ёзинг."
 
 
 async def _try_daily_report(
@@ -816,10 +828,12 @@ async def _save_daily_report(
     # the Director only hears who didn't report, in the next 08:00 brief.
     # The report stays stored and queryable through the xodimlar_kpi agent.
 
-    # A vague report ("ok", "ishladim") is already saved — the employee has
-    # reported — but gets ONE short question. Whatever comes back is added to
-    # the report and nothing more is asked.
-    follow_up = await _weak_report_follow_up(text, run_id)
+    # A vague report ("ok", "ishladim") or one without any checkable result
+    # ("answered calls, consulted clients, sales") is already saved — the
+    # employee has reported — but gets ONE short question asking for a number
+    # or result. Whatever comes back is added to the report; nothing more is
+    # asked (2026-09-28: "a little accuracy is enough").
+    follow_up = await _report_follow_up(text, employee["role"], run_id)
     if follow_up:
         await store.mark_report_followup(str(saved["id"]))
         await _reply(employee["telegram_user_id"], run_id, f"📝 {escape(follow_up)}")

@@ -69,13 +69,8 @@ def _centered(draw: ImageDraw.ImageDraw, text: str, y: int, font: ImageFont.Free
     draw.text(((CARD_W - (right - left)) // 2, y), text, fill=WHITE, font=font)
 
 
-def card_png(url: str, place_label: str = "") -> bytes:
-    """Draw the card for ``url`` and return it as PNG bytes.
-
-    Args:
-        url: What the QR code opens (the feedback page for one place).
-        place_label: Shown small under the code, so printed cards aren't mixed up.
-    """
+def card_png(url: str) -> bytes:
+    """Draw the card for ``url`` (the feedback page) and return it as PNG bytes."""
     matrix = qr_matrix(url)
     modules = len(matrix) + 2 * QUIET_MODULES
     module_px = QR_BOX // modules
@@ -100,8 +95,6 @@ def card_png(url: str, place_label: str = "") -> bytes:
     if title_font and small_font:
         _centered(draw, TITLE, y0 - radius - 150, title_font)
         _centered(draw, SUBTITLE, y0 + box + radius + 60, small_font)
-        if place_label:
-            _centered(draw, place_label, y0 + box + radius + 130, small_font)
 
     out = io.BytesIO()
     card.save(out, format="PNG", dpi=(300, 300))

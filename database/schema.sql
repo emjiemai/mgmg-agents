@@ -730,3 +730,5 @@ CREATE TABLE IF NOT EXISTS client_feedback (
     director_message_id  BIGINT                   -- set once it reached the Director
 );
 CREATE INDEX IF NOT EXISTS idx_client_feedback_created ON client_feedback (created_at DESC);
+-- One QR code for the whole company since 2026-09-28: new rows have no place.
+ALTER TABLE client_feedback ALTER COLUMN place DROP NOT NULL;

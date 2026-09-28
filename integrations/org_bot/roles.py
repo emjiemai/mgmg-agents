@@ -91,7 +91,7 @@ AGENTS: list[Agent] = [
     Agent(
         "mijoz_fikrlari",
         "Мижозлар фикри",
-        "opinions and complaints clients left through the QR codes (which place, what they wrote, "
+        "opinions and complaints clients left through the company's QR code (what they wrote, "
         "their phone if they gave one, or anonymous), last 60 days",
     ),
     Agent("all_systems", "Барча тизимлар", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
