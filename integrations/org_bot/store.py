@@ -1539,3 +1539,70 @@ async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
         # hours late, so current_date was "yesterday" until 05:00 local time.
         (today_local(), days),
     )
+
+
+# --------------------------------------------------------------- team cheer
+
+
+async def claim_cheer(day: date, slot: str) -> dict[str, Any] | None:
+    """Take today's ``slot``; None if a run already took it (so nothing is sent twice)."""
+    return await fetch_one(
+        "INSERT INTO cheer_messages (day, slot) VALUES (%s, %s) ON CONFLICT (day, slot) DO NOTHING RETURNING *",
+        (day, slot),
+    )
+
+
+async def set_cheer_content(
+    cheer_id: str, *, text: str, question: str | None, options: list[dict[str, str]], source: str
+) -> None:
+    """Record what a claimed slot says, and whether the AI or the built-in list wrote it."""
+    await execute(
+        "UPDATE cheer_messages SET text = %s, question = %s, options = %s::jsonb, source = %s WHERE id = %s",
+        (text, question, json.dumps(options, ensure_ascii=False), source, cheer_id),
+    )
+
+
+async def recent_cheer_texts(limit: int = 30) -> list[str]:
+    """The latest cheer texts and questions, newest first — so the AI doesn't repeat itself."""
+    rows = await fetch_all(
+        "SELECT text, question FROM cheer_messages WHERE text IS NOT NULL ORDER BY created_at DESC LIMIT %s",
+        (limit,),
+    )
+    return [" ".join(part for part in (r["text"], r["question"]) if part) for r in rows]
+
+
+async def save_cheer_delivery(cheer_id: str, telegram_user_id: int, message_id: int | None, text: str) -> None:
+    """Remember one sent cheer, so a tap or a reply to it can be recognised."""
+    await execute(
+        """
+        INSERT INTO cheer_deliveries (cheer_id, telegram_user_id, message_id, text)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (cheer_id, telegram_user_id) DO NOTHING
+        """,
+        (cheer_id, telegram_user_id, message_id, text),
+    )
+
+
+async def answer_cheer(cheer_id: str, telegram_user_id: int, answer_index: int) -> dict[str, Any] | None:
+    """Record a tapped answer, once per person; None if already answered or not theirs.
+
+    Returns:
+        The delivery joined with its cheer (``text``, ``question``, ``options``).
+    """
+    return await fetch_one(
+        """
+        UPDATE cheer_deliveries d SET answer_index = %s, answered_at = now()
+        FROM cheer_messages c
+        WHERE d.cheer_id = c.id AND d.cheer_id = %s AND d.telegram_user_id = %s AND d.answer_index IS NULL
+        RETURNING d.id, d.message_id, d.text, c.question, c.options
+        """,
+        (answer_index, cheer_id, telegram_user_id),
+    )
+
+
+async def cheer_delivery_for_message(telegram_user_id: int, message_id: int) -> dict[str, Any] | None:
+    """The cheer this user's message replies to, if it replies to one."""
+    return await fetch_one(
+        "SELECT id FROM cheer_deliveries WHERE telegram_user_id = %s AND message_id = %s",
+        (telegram_user_id, message_id),
+    )

@@ -26,8 +26,10 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   viewer, `/f` client complaints page (Uzbek Cyrillic, Russian, English).
 - **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, receivables, task
   tracker, data quality Mon, cash calendar Mon, monthly KPI 1st);
-  16:00 daily-reports ask; 17:00 reminder + Friday scorecard. Daily; weekends
-  only for employees marked as weekend workers.
+  16:00 daily-reports ask; 17:00 reminder + Friday scorecard; team cheer
+  10:00 / 14:00 / 17:35 (`agents/team-cheer`, answers by button only, never
+  shown to the Director). Daily; weekends only for employees marked as
+  weekend workers.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
 - SAP data arrives only by push (row-capped → "камида" lower bounds).
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).

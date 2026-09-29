@@ -30,7 +30,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, kpi, names, permission_flow, store, task_tracker
+from integrations.org_bot import admin, cheer, kpi, names, permission_flow, store, task_tracker
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -215,6 +215,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_relay_decision(rest, prefix == "relayok", callback, run_id)
     if prefix == "asrep":
         return await _handle_save_as_report(rest, callback, run_id)
+    if prefix == "cheer":
+        return await _handle_cheer_answer(rest, callback, run_id)
 
     # Written permission buttons (send / cancel / the four SOP decisions).
     permission_outcome = await permission_flow.handle_callback(prefix, rest, callback, run_id)
@@ -480,6 +482,37 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         log.warning("Could not notify Director of task completion: {}", exc)
 
     return "done"
+
+
+async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """A tap on a team-cheer answer: show the answer and its warm reply in place of the buttons.
+
+    One answer per person per message; the tap is not reported to anyone
+    (see ``cheer.py``).
+    """
+    query_id = callback.get("id", "")
+    parsed = cheer.parse_callback(rest)
+    clicker_id = (callback.get("from") or {}).get("id")
+    if parsed is None or clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    cheer_id, index = parsed
+    row = await store.answer_cheer(cheer_id, clicker_id, index)
+    options = (row or {}).get("options") or []
+    if row is None or not 0 <= index < len(options):
+        await _answer(query_id, "Жавобингиз аллақачон қабул қилинган 😊")
+        return "cheer_already_answered"
+    await _answer(query_id, "😊")
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+            chat_id=str(clicker_id),
+            message_id=row["message_id"],
+            text=cheer.answered_text(row["text"], options[index]),
+            reply_markup={"inline_keyboard": []},
+        )
+    return "cheer_answered"
 
 
 async def _answer(query_id: str, text: str) -> None:
@@ -929,6 +962,12 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
         return "ignored"
 
     reply_to = message.get("reply_to_message") or {}
+    # A typed answer to a team-cheer message ("how was your day?") is chat,
+    # not a report and not a message for the Director (cheer.py).
+    if reply_to.get("message_id") and await store.cheer_delivery_for_message(telegram_user_id, reply_to["message_id"]):
+        await _reply(telegram_user_id, run_id, cheer.text_reply(reply_to["message_id"]))
+        return "cheer_reply"
+
     outcome = await _try_daily_report(employee, text, reply_to.get("message_id"), run_id)
     if outcome is not None:
         return outcome

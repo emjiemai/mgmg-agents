@@ -20,6 +20,7 @@ Garmin watch retail.
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | `docs/agent-specs/07-permissions.md` |
 | A4 | Attendance from Verifix: who was late, who didn't come — in the brief and on question | `docs/agent-specs/11-attendance.md` |
 | — | Receivables alert (overdue debt by age) | `docs/agent-specs/03-receivables.md` |
+| — | Team cheer — 10:00 encouragement, 14:00 joke, 17:35 thanks | `docs/agent-specs/12-team-cheer.md` |
 | — | OPS Manager Bot: routes the Director's tasks (to a department or one named person), answers questions from data | `docs/agent-specs/05-org-bot.md` |
 | — | Lead Agent — paused by the business (`LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
 
@@ -35,6 +36,7 @@ SAP gateway (its own Windows machine) ──push──┐
 Telegram ◀──▶ mgmg-api (FastAPI) ──▶ PostgreSQL ◀── cron: 08:00 morning agents
              Admin Bot, OPS Manager Bot,             16:00 report ask
              SAP push webhooks, /db viewer           17:00 reminder + Friday scorecard
+                                                     10:00 · 14:00 · 17:35 team cheer
 ```
 
 - **mgmg-api** — always-on web service: both bots' webhooks, the SAP pushes,
@@ -126,6 +128,7 @@ agents/                      scheduled agents (one process per run, then exit)
   receivables/               overdue debt alert
   daily-reports/             16:00 ask + 17:00 reminder (A1)
   task-tracker/              reminders, overdue notices, Friday scorecard (A3)
+  team-cheer/                10:00 / 14:00 / 17:35 friendly messages
   lead-agent/                B2B lead sourcing (paused)
 integrations/
   api/                       FastAPI app: webhooks + /db viewer

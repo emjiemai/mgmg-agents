@@ -742,3 +742,36 @@ CREATE INDEX IF NOT EXISTS idx_client_feedback_created ON client_feedback (creat
 -- 2026-09-28: one QR code for the whole company; rows from that day until the
 -- place picker came back (same day) have no place.
 ALTER TABLE client_feedback ALTER COLUMN place DROP NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- cheer_messages / cheer_deliveries — the three friendly messages a day
+-- (10:00 encouragement, 14:00 joke or fun question, 17:35 thanks + "how was
+-- your day"), agents/team-cheer/agent.py. One row per day and slot: the
+-- UNIQUE is what stops a retried or doubled cron run from sending twice.
+-- A tapped answer is kept only so the same person can't answer twice; it is
+-- not reported to anyone.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cheer_messages (
+    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    day         DATE         NOT NULL,
+    slot        TEXT         NOT NULL CHECK (slot IN ('morning', 'midday', 'evening')),
+    text        TEXT,
+    question    TEXT,
+    options     JSONB        NOT NULL DEFAULT '[]'::jsonb,  -- [{"label": ..., "reply": ...}]
+    source      TEXT         CHECK (source IN ('ai', 'fallback')),
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (day, slot)
+);
+
+CREATE TABLE IF NOT EXISTS cheer_deliveries (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    cheer_id          UUID         NOT NULL REFERENCES cheer_messages (id) ON DELETE CASCADE,
+    telegram_user_id  BIGINT       NOT NULL,
+    message_id        BIGINT,
+    text              TEXT         NOT NULL,   -- as sent, so a tapped answer can be shown under it
+    answer_index      INT,
+    answered_at       TIMESTAMPTZ,
+    sent_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (cheer_id, telegram_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cheer_deliveries_message ON cheer_deliveries (telegram_user_id, message_id);

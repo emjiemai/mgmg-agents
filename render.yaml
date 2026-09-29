@@ -122,6 +122,27 @@ services:
           name: mgmg-db
           property: connectionString
 
+  # ------------------------------------------ team cheer: 10:00, 14:00, 17:35
+  # Encouragement, a joke/fun question, thanks for the day (agents/team-cheer,
+  # integrations/org_bot/cheer.py). One service (~$1/month minimum) instead of
+  # three: a cron expression can't list three different minutes, so it runs
+  # at :00 and :35 of 10, 14 and 17 o'clock Tashkent — six short runs — and
+  # each sends only the slot that is due (10:00, 14:00, 17:35); the other
+  # three exit at once. TEAM_CHEER_ENABLED=false pauses it.
+  - type: cron
+    name: mgmg-team-cheer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    schedule: "0,35 5,9,12 * * *"  # 10:00/10:35, 14:00/14:35, 17:00/17:35 Asia/Tashkent
+    dockerCommand: python agents/team-cheer/agent.py
+    envVars:
+      - fromGroup: mgmg-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mgmg-db
+          property: connectionString
+
 # ----------------------------------------------------------------------------
 # Shared settings for every service. Render prompts for each `sync: false`
 # value once, at blueprint creation, and reuses it across every service in
