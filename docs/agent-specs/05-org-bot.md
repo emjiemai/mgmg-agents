@@ -16,6 +16,14 @@ business lines, most recently a Garmin watch retail business). **Admin Bot**
 is a separate, admin-only bot that turns an
 unregistered user's first message into an Accept/Reject decision.
 
+**Adding a role** (the latest: `moliya` — Молия, finance, 2026-09-29, a
+department separate from `buxgalteriya`): `roles.py`, both `CHECK (role IN
+…)` lists in `database/schema.sql` (the schema re-applies them on startup),
+and the SOP form's name in `permissions.ROLE_LABELS_CYR`. `selfcheck.py`
+fails if the three disagree. If the name could be confused with another
+department, add a line to the classifier's department rules in `prompt.py`,
+as was done for moliya vs buxgalteriya.
+
 ## Why two bots, and why employees never talk to Admin Bot
 
 Telegram cannot be cold-messaged: a bot may only DM a user who has already

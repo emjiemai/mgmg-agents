@@ -352,7 +352,7 @@ CREATE TABLE IF NOT EXISTS employees (
     telegram_username TEXT,
     display_name      TEXT         NOT NULL,
     role              TEXT         NOT NULL
-                          CHECK (role IN ('b2b_sotuv','it','buxgalteriya','hr','ombor',
+                          CHECK (role IN ('b2b_sotuv','it','buxgalteriya','moliya','hr','ombor',
                                            'operatsion_direktor','mobilograf','aloqa_markazi',
                                            'garmin_sotuv')),
     status            TEXT         NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
@@ -369,7 +369,7 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS revoked_by TEXT;
 ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_role_check;
 ALTER TABLE employees ADD CONSTRAINT employees_role_check
-    CHECK (role IN ('b2b_sotuv','it','buxgalteriya','hr','ombor',
+    CHECK (role IN ('b2b_sotuv','it','buxgalteriya','moliya','hr','ombor',
                      'operatsion_direktor','mobilograf','aloqa_markazi',
                      'garmin_sotuv'));
 

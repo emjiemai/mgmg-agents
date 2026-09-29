@@ -146,6 +146,7 @@ ROLE_LABELS_CYR: dict[str, str] = {
     "b2b_sotuv": "B2B сотув бўлими",
     "it": "IT бўлими",
     "buxgalteriya": "Бухгалтерия",
+    "moliya": "Молия бўлими",
     "hr": "Кадрлар бўлими (HR)",
     "ombor": "Омбор",
     "operatsion_direktor": "Операцион директор",

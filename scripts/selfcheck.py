@@ -409,6 +409,30 @@ def test_org_bot() -> None:
     check_true("every role slug is a known role", all(r in ROLE_SLUGS for r in ("it", "hr", "ombor")))
     check_true("bogus role slug is rejected", "not_a_role" not in ROLE_SLUGS)
 
+    # A role must exist in three places kept by hand; a miss is only found
+    # when someone picks the role live (the INSERT fails the CHECK).
+    import re
+
+    from integrations.org_bot import roles
+    from integrations.org_bot.permissions import ROLE_LABELS_CYR
+
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    checks = [set(re.findall(r"'([a-z_0-9]+)'", c)) for c in re.findall(r"CHECK \(role IN \(([^)]*)\)", schema)]
+    checks = [c for c in checks if "operatsion_direktor" in c]  # employees'; chat history has its own 'role'
+    check_true("schema.sql: both role CHECKs list exactly roles.py's roles",
+               len(checks) == 2 and all(c == ROLE_SLUGS for c in checks))
+    check_true("every role has a name for the SOP form", set(ROLE_LABELS_CYR) == ROLE_SLUGS)
+    check("Finance is a role of its own (2026-09-29)", roles.ROLE_LABELS.get("moliya"), "Молия")
+    check_true("...next to accounting, not instead of it", "buxgalteriya" in ROLE_SLUGS)
+    check_true("...a task can be routed to it", "moliya" in roles.ROUTABLE_ROLE_SLUGS)
+    check_true("...and new employees can pick it",
+               any(b[0]["callback_data"].startswith("setrole:moliya:")
+                   for b in roles.role_picker_keyboard("req-1")["inline_keyboard"]))
+    from integrations.org_bot.prompt import CLASSIFY_SYSTEM_PROMPT
+
+    check_true("the classifier knows moliya and tells it from buxgalteriya",
+               "- moliya: Молия" in CLASSIFY_SYSTEM_PROMPT and "Never swap one for the other" in CLASSIFY_SYSTEM_PROMPT)
+
     # 2026-09-16: a picked role now needs the admin's second Accept.
     from integrations.org_bot.admin import role_decision_keyboard
 

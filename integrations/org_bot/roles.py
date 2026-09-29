@@ -1,5 +1,5 @@
-"""Single source of truth for the org-chart vocabulary: the 8 human roles and
-4 AI agents OPS Manager Bot can route a task to.
+"""Single source of truth for the org-chart vocabulary: the human roles and
+the AI agents OPS Manager Bot can route a task to.
 
 Consumed by ``admin.py`` (role-picker buttons), ``ops_manager.py`` (dispatch +
 output validation), and ``prompt.py`` (the classification enum) so this
@@ -35,6 +35,7 @@ ROLES: list[Role] = [
     Role("b2b_sotuv", "B2B сотув"),
     Role("it", "IT"),
     Role("buxgalteriya", "Бухгалтерия"),
+    Role("moliya", "Молия"),  # finance — a department of its own, not accounting (2026-09-29)
     Role("hr", "HR (кадрлар)"),
     Role("ombor", "Омбор"),
     Role("operatsion_direktor", "Операцион директор"),
@@ -143,8 +144,8 @@ def role_picker_keyboard(request_id: str) -> dict:
         request_id: The ``access_requests.id`` this pick will resolve.
 
     Returns:
-        A Telegram ``reply_markup`` dict, one role per row (8 rows) so labels
-        never truncate on a narrow phone screen.
+        A Telegram ``reply_markup`` dict, one role per row so labels never
+        truncate on a narrow phone screen.
     """
     return {
         "inline_keyboard": [
