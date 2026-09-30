@@ -4,6 +4,8 @@
 **Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily
 **Mode:** read-only from every source; writes to Google Sheets + Telegram, both gated
 **Owner:** sales / business development
+**Status:** running — paused 2026-09-16, resumed 2026-09-30
+(`LEAD_AGENT_ENABLED=true` in Render's `mgmg-shared`; `false` pauses it again)
 
 ## Purpose
 

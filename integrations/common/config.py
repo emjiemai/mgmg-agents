@@ -135,9 +135,9 @@ class Settings(BaseSettings):
 
     # --- Lead Agent on/off ---
     # Off unless explicitly turned on: every run spends SerpAPI, Tavily and
-    # OpenRouter credits, and the business paused it on 2026-09-16. Set
-    # LEAD_AGENT_ENABLED=true in Render's mgmg-shared group to resume; it takes
-    # effect on the next 08:00 run.
+    # OpenRouter credits. Paused 2026-09-16, resumed 2026-09-30 — production
+    # has LEAD_AGENT_ENABLED=true in Render's mgmg-shared group (the dashboard
+    # owns it); false pauses it from the next 08:00 run.
     lead_agent_enabled: bool = False
 
     # --- Daily reports on/off ---

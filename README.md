@@ -23,7 +23,7 @@ Garmin watch retail.
 | — | Receivables alert (overdue debt by age) | `docs/agent-specs/03-receivables.md` |
 | — | Team cheer — 10:00 encouragement, 14:00 joke, 17:35 thanks | `docs/agent-specs/12-team-cheer.md` |
 | — | OPS Manager Bot: routes the Director's tasks (to a department or one named person), answers questions from data | `docs/agent-specs/05-org-bot.md` |
-| — | Lead Agent — paused by the business (`LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
+| F2 | Lead Agent — tender/lead search, 08:00 daily (resumed 2026-09-30, `LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
 
 Every message the bots send is Uzbek Cyrillic. Nothing reaches the Director
 from an employee without the employee confirming it. Every employee gives
@@ -130,7 +130,7 @@ agents/                      scheduled agents (one process per run, then exit)
   daily-reports/             16:00 ask + 17:00 reminder (A1)
   task-tracker/              reminders, overdue notices, Friday scorecard (A3)
   team-cheer/                10:00 / 14:00 / 17:35 friendly messages
-  lead-agent/                B2B lead sourcing (paused)
+  lead-agent/                B2B lead and tender sourcing (F2)
 integrations/
   api/                       FastAPI app: webhooks + /db viewer
   common/                    config, logging, DB + audit, HTTP retry, money, time, dates

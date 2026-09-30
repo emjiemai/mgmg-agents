@@ -36,8 +36,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - SAP data arrives only by push (row-capped → "камида" lower bounds).
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).
 
-Status of the owner's 21-agent plan: `docs/agents-status.md` (built: H0, A1,
-A2, A3, A4, B1, B2, B4, E1). Goal: ~10–15 working agents, not all at once.
+Status of the owner's 21-agent plan: `docs/agents-status.md` (running: H0, A1,
+A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
+~10–15 working agents, not all at once.
 
 ## Decisions already made (don't re-suggest)
 - Business name is **Londry** (Primus Londry), not "Laundry".

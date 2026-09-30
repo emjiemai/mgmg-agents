@@ -19,6 +19,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-28.
 | B4 | Data quality check | Monday 08:00 · `/sifat` | admin (IT) | `DATA_QUALITY_ENABLED` |
 | E1 | KPI per employee — the Director's 15 criteria as 6 parts (goals/OKR, tasks, rating, volume, process, commitment) | `/maqsad` `/kpi` `/natija` `/baho` · 1st: ratings · final by the 5th | Director, HR, each employee (own card) | `MONTHLY_KPI_ENABLED` |
 | — | Receivables alert (overdue debt by age) | 08:00 daily | Director | — |
+| F2 | Lead Agent: tender and lead search (Londry, Garmin/Tanita), to the leads sheet | 08:00 daily (resumed 2026-09-30) | Director (summary) + Google leads sheet | `LEAD_AGENT_ENABLED` (**true**) |
 | — | Q&A — the Director asks about reports, tasks, KPI, permissions, debt, cash plan, SAP data | on question | Director | — |
 | — | Tasks to a department or to one named person, relays with confirmation | on message | employees, Director | — |
 | — | Names and roles — every employee's typed name; admin re-asks a name or changes a role | on registration · `/xodimlar` · `/ism` | admin, employees | — |
@@ -26,16 +27,15 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-28.
 | — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
 
-**9 of the plan's 21** are built (H0, A1, A2, A3, A4, B1, B2, B4, E1). Of these,
+**10 of the plan's 21** are running (H0, A1, A2, A3, A4, B1, B2, B4, E1, F2). Of these,
 only H0 has been running long enough to call proven; the rest are in their
 first weeks — the plan asks for each one's И to be measured before the next
 is started (A1 and A3 are measured automatically every Friday).
 
 ## Stopped by the business
 
-| Plan | Agent | Why |
-| ---- | ----- | --- |
-| F2 | Tender/lead search (Lead Agent) | built; paused 2026-09-16 (`LEAD_AGENT_ENABLED=false`) |
+None. The Lead Agent (F2), paused on 2026-09-16, was switched back on on
+2026-09-30 and is listed under Working.
 
 ## Left — and what each is waiting for
 
