@@ -1,10 +1,10 @@
-"""Agent — team cheer: encouragement, a joke, thanks — three times a working day.
+"""Agent — team cheer: one friendly line, three times a working day.
 
-10:00 encouragement, 14:00 a joke or fun fact with a fun question, 17:35
-thanks for the day with "how was it?" — to every employee except the
-Director (Saturday/Sunday only the weekend workers). What each slot says and
-why is in ``integrations/org_bot/cheer.py``; taps and replies are handled by
-OPS Manager Bot (``ops_manager.py``).
+10:00 a warm wish, 14:00 a light one-liner or playful question, 17:35 "how
+was your day?" — one short lowercase sentence each, sent silently, to every
+employee except the Director (Saturday/Sunday only the weekend workers).
+What each slot says and why is in ``integrations/org_bot/cheer.py``; taps
+and replies are handled by OPS Manager Bot (``ops_manager.py``).
 
 One Render cron service runs this at :00 and :35 of 10, 14 and 17 o'clock;
 each run sends the slot that is due and exits quietly otherwise.
@@ -79,7 +79,7 @@ async def send_slot(slot: str, run_id: uuid.UUID) -> int:
     if settings.dry_run:
         # Before any write: a dry run must not take the slot a real run needs.
         message = await write(slot, day, run_id)
-        log.info("[dry run] {} ({}):\n{}", slot, message.source, cheer.message_text(slot, message, "Исм"))
+        log.info("[dry run] {} ({}): {}", slot, message.source, cheer.message_text(message, "Исм"))
         for option in message.options:
             log.info("[dry run]   [{}] -> {}", option["label"], option["reply"])
         log.info("[dry run] would go to {} employee(s)", len(employees))
@@ -92,7 +92,7 @@ async def send_slot(slot: str, run_id: uuid.UUID) -> int:
     cheer_id = str(claimed["id"])
     message = await write(slot, day, run_id)
     await store.set_cheer_content(
-        cheer_id, text=message.text, question=message.question, options=message.options, source=message.source
+        cheer_id, text=message.text, question=None, options=message.options, source=message.source
     )
 
     sent = 0
@@ -101,10 +101,12 @@ async def send_slot(slot: str, run_id: uuid.UUID) -> int:
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         for employee in employees:
-            text = cheer.message_text(slot, message, names.person_name(employee))
+            text = cheer.message_text(message, names.call_name(employee))
             try:
+                # Silent: it's a friendly line, not something to drop work for.
                 ids = await bot.send_message(
-                    text, chat_id=str(employee["telegram_user_id"]), reply_markup=reply_markup
+                    text, chat_id=str(employee["telegram_user_id"]), reply_markup=reply_markup,
+                    disable_notification=True,
                 )
             except TelegramError as exc:
                 log.error("Could not send the {} message to {}: {}", slot, employee["display_name"], exc)

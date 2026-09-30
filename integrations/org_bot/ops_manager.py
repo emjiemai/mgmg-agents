@@ -31,6 +31,7 @@ from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import admin, cheer, kpi, kpi_flow, kpi_score, names, permission_flow, store, task_tracker
+from integrations.org_bot.tone import casual
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -123,10 +124,10 @@ def report_or_relay_keyboard(relay_id: str) -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
-                {"text": "📝 Ҳа, ҳисобот", "callback_data": f"asrep:{relay_id}"},
-                {"text": "📨 Директорга хабар", "callback_data": f"relayok:{relay_id}"},
+                {"text": "ҳа, ҳисобот", "callback_data": f"asrep:{relay_id}"},
+                {"text": "директорга хабар", "callback_data": f"relayok:{relay_id}"},
             ],
-            [{"text": "❌ Бекор қилиш", "callback_data": f"relayno:{relay_id}"}],
+            [{"text": "бекор қилиш", "callback_data": f"relayno:{relay_id}"}],
         ]
     }
 
@@ -490,10 +491,11 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
 
 
 async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """A tap on a team-cheer answer: show the answer and its warm reply in place of the buttons.
+    """A tap on a team-cheer answer: its warm reply as a brief pop-up, and the buttons go.
 
-    One answer per person per message; the tap is not reported to anyone
-    (see ``cheer.py``).
+    No new message — the reply is the tap's own pop-up, so answering never
+    adds to the chat. One answer per person per message; the tap is not
+    reported to anyone (see ``cheer.py``).
     """
     query_id = callback.get("id", "")
     parsed = cheer.parse_callback(rest)
@@ -505,16 +507,16 @@ async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid
     row = await store.answer_cheer(cheer_id, clicker_id, index)
     options = (row or {}).get("options") or []
     if row is None or not 0 <= index < len(options):
-        await _answer(query_id, "Жавобингиз аллақачон қабул қилинган 😊")
+        await _answer(query_id, "раҳмат, жавобингизни олдим")
         return "cheer_already_answered"
-    await _answer(query_id, "😊")
+    await _answer(query_id, options[index]["reply"])
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
             chat_id=str(clicker_id),
             message_id=row["message_id"],
-            text=cheer.answered_text(row["text"], options[index]),
+            text=row["text"],
             reply_markup={"inline_keyboard": []},
         )
     return "cheer_answered"
@@ -725,12 +727,12 @@ imzolandi", "омборни санадим, 12 та камчилик").
 Routine chores (cleaning, tidying shelves or displays) never need numbers — \
 ignore them. When in doubt, do not ask.
 
-If you ask: ONE short, friendly sentence in Uzbek, in Cyrillic script, about \
-the 1–2 most important vague items from THEIR report, asking for a number or \
-a result — fitted to their role. Example for a sales person who wrote "answered \
-calls, consulted clients, sales": "Нечта қўнғироққа жавоб бердингиз, нечта \
-мижозга маслаҳат бердингиз ва бугун қанча сотув бўлди?". Never scold, never \
-ask about chores, never more than one question.
+If you ask: ONE short, warm question in Uzbek, in Cyrillic script, all \
+lowercase, no emoji, like a colleague asking — about the 1–2 most important \
+vague items from THEIR report, asking for a number or a result, fitted to their \
+role. Example for a sales person who wrote "answered calls, consulted clients, \
+sales": "нечта қўнғироққа жавоб бердингиз ва бугун қанча сотув бўлди?". Never \
+scold, never ask about chores, never more than one question.
 
 Return ONLY JSON: {"ask": false} or {"ask": true, "follow_up": "<the question>"}."""
 
@@ -760,7 +762,8 @@ async def _report_follow_up(text: str, role: str, run_id: uuid.UUID) -> str | No
         return None
     if verdict.get("ask") is not True:
         return None
-    return str(verdict.get("follow_up") or "").strip() or "Бугун аниқ нималарни бажардингиз? Натижасини қисқача ёзинг."
+    question = str(verdict.get("follow_up") or "").strip() or "бугун аниқ нималарни бажардингиз, натижасини ёзиб берасизми?"
+    return casual(question)
 
 
 async def _try_daily_report(
@@ -795,7 +798,7 @@ async def _try_daily_report(
                 fresh = kpi.parse_metrics(text, metrics_def) if metrics_def else {}
                 if fresh:
                     await store.merge_report_metrics(str(followup["id"]), fresh)
-                await _reply(employee["telegram_user_id"], run_id, "✅ Раҳмат, ҳисоботингизга қўшилди.")
+                await _reply(employee["telegram_user_id"], run_id, casual("раҳмат каттакон, ҳисоботингизга қўшиб қўйдим", "😊"))
                 return "daily_report_followup"
 
         # A reply to an earlier day's ask: reports close at midnight, so say
@@ -806,8 +809,11 @@ async def _try_daily_report(
                 await _reply(
                     employee["telegram_user_id"],
                     run_id,
-                    f"⏰ {expired['report_date'].strftime('%d.%m')} кунги ҳисобот муддати тугаган — "
-                    "ҳисоботлар ўша куни соат 24:00 гача қабул қилинади.",
+                    casual(
+                        f"{expired['report_date'].strftime('%d.%m')} кунги ҳисоботнинг вақти ўтиб кетибди, "
+                        "ҳисоботлар шу куннинг ўзида соат 24:00 гача олинади",
+                        "🙂",
+                    ),
                 )
                 return "daily_report_expired"
 
@@ -880,15 +886,15 @@ async def _save_daily_report(
     follow_up = await _report_follow_up(text, employee["role"], run_id)
     if follow_up:
         await store.mark_report_followup(str(saved["id"]))
-        await _reply(employee["telegram_user_id"], run_id, f"📝 {escape(follow_up)}")
+        await _reply(employee["telegram_user_id"], run_id, casual(escape(follow_up), "🙂"))
         return "daily_report_weak"
 
-    ack = "✅ Ҳисобот қабул қилинди, раҳмат!"
+    ack = casual("раҳмат каттакон, ҳисоботингиз қабул қилинди, чарчаманг", "😊")
     missing = kpi.missing_metrics(values, metrics_def)
     if missing:
-        ack += (
-            f"\n\n⚠️ Рақамлар топилмади: {escape(', '.join(missing))}.\n"
-            "Рақамларни шу ерга юборсангиз, ҳисоботингизга қўшаман."
+        ack = casual(
+            f"раҳмат, ҳисоботингиз қабул қилинди, {escape(', '.join(missing))} рақамларини ҳам ёзсангиз қўшиб қўяман",
+            "🙏",
         )
     await _reply(employee["telegram_user_id"], run_id, ack)
     return "daily_report"
@@ -899,11 +905,10 @@ async def _ask_report_or_relay(
 ) -> str:
     """Ask whether a message is today's report or a message for the Director."""
     pending = await store.create_pending_relay(employee["telegram_user_id"], text, str(task["id"]) if task else None)
-    preview = text if len(text) <= 300 else text[:299].rstrip() + "…"
     await _reply(
         employee["telegram_user_id"],
         run_id,
-        f"📝 <b>Бу хабар — бугунги ҳисоботингизми?</b>\n\n«{escape(preview)}»",
+        casual("бу бугунги ҳисоботингизми?", "🙂"),
         report_or_relay_keyboard(str(pending["id"])),
     )
     return "report_or_relay_asked"
@@ -925,12 +930,12 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
     if employee is not None and pending is not None:
         outcome = await _save_daily_report(employee, pending, relay["message_text"], run_id)
     if outcome is not None:
-        status_line = "📝 Кунлик ҳисобот сифатида сақланди."
+        status_line = casual("ҳисобот сифатида сақладим, раҳмат каттакон", "😊")
     elif await store.submitted_report_today(clicker_id, day) is not None:
-        status_line = "✅ Бугунги ҳисоботингиз аллақачон қабул қилинган."
+        status_line = casual("бугунги ҳисоботингиз аллақачон қабул қилинган", "🙂")
         outcome = "report_already_submitted"
     else:
-        status_line = "⏰ Ҳисобот қабул қилинмади — ҳисоботлар ўша куни соат 24:00 гача қабул қилинади."
+        status_line = casual("ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида олинади", "🙂")
         outcome = "report_window_closed"
 
     message = callback.get("message") or {}
@@ -941,7 +946,7 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=str(message["chat"]["id"]),
                 message_id=message["message_id"],
-                text=f"{status_line}\n\n«{escape(relay['message_text'][:300])}»",
+                text=status_line,
                 reply_markup={"inline_keyboard": []},
             )
         await bot._answer_callback(query_id, "OK")  # noqa: SLF001

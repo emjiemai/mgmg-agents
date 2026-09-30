@@ -14,38 +14,48 @@ at the end of it — something that makes them happy.
 
 ## What goes out
 
-| Time | Message | Answer |
-| ---- | ------- | ------ |
-| 10:00 | ☀️ Хайрли кун, *name*! — a short encouragement for the day | — |
-| 14:00 | 😄 *name*, бир дақиқалик танаффус! — a clean joke or a true fun fact, then a fun question (tea or coffee, favourite season…) | 2–4 buttons |
-| 17:35 | 🌇 *name*, иш куни якунланяпти! — thanks for the day, then "how was your day / what made you happy / evening plans" | 2–4 buttons |
+One friendly line each — the person's first name (with ака/опа when the admin
+set it on the `/xodimlar` card), one short sentence, lowercase, one emoji at
+the very end, **sent silently** (no sound). Changed 2026-09-30: the first
+version (bold header, emoji, two paragraphs) felt like one more alarm.
 
-14:00 is the middle of the day that fits: right after the usual 13:00–14:00
-lunch, when a smile helps most. A tap replaces the buttons with the answer
-and a warm one-line reply ("😴 Чарчадим" → "Яхшилаб дам олинг — сиз бунга
-лойиқсиз! 🌙"); every answer, tired ones included, gets a kind reply.
+| Time | Example | Answer |
+| ---- | ------- | ------ |
+| 10:00 | алишер ака, бугун ҳам зўр кун бўлсин ☀️ | — |
+| 14:00 | алишер ака, қисқаси, афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда қоронғи, бу ер ёруғ-да» дебди 😄 | — |
+| 17:35 | алишер ака, ишларингиз билан чарчамадингизми? 🌙 | 2–4 buttons |
+
+14:00 is right after the usual 13:00–14:00 lunch; its joke is Uzbek
+traditional humour — a classic Afandi latifa told in one sentence ("қисқаси,
+афанди бир куни … дебди"). A tap on an evening answer shows its warm reply
+as a brief pop-up (no new message) and the buttons go away; every answer,
+tired ones included, gets a kind reply ("жуда" → "раҳмат каттакон, бугун кўп
+ишладингиз, яхши дам олинг").
 
 **Who:** every active employee except the Director — the same people the
 daily reports ask. Saturday/Sunday: only those marked as weekend workers
-(Admin Bot `/xodimlar`). Everyone gets the same text that day, with their
-own name in front.
+(Admin Bot `/xodimlar`). Everyone gets the same sentence that day, with
+their own name in front.
 
 ## Who writes it
 
 The AI (OpenRouter, the usual model chain) writes each time slot once a day,
 given a theme idea and the last 30 messages so it doesn't repeat itself.
-Its answer is checked, and **thrown away** if it:
+Emoji, capitals and a closing full stop are simply removed and one emoji is
+put at the end; the answer is **thrown away** if it:
 
 - has any Latin letter (Uzbek Cyrillic only — the business's rule),
-- is too long (text 400, question 110, button 28, reply 160 characters),
-- has markup, a question without 2–4 answers, an answer without a reply, or
-  two identical buttons, or isn't JSON at all.
+- is more than one sentence, or too long (80 characters; the Afandi story
+  230; a button 20; a tap reply 70),
+- at 14:00, isn't an Afandi latifa ("қисқаси, афанди…" with his words in «»),
+- has markup, an evening question without 2–4 answers, an answer without a
+  reply, two identical buttons, or isn't JSON at all.
 
 The prompt also forbids politics, religion, ethnicity, gender, appearance,
 age, health, alcohol, money, promises and anything that mocks anyone.
 
 When the AI fails or its answer is thrown away, a **hand-written** message
-from `cheer.py` goes out instead (10 mornings, 6 middays, 6 evenings × 3
+from `cheer.py` goes out instead (10 mornings, 6 Afandi latifas, 4 evening
 questions, rotating by date). Nobody ever gets nothing, and nobody gets
 something odd. `cheer_messages.source` says which it was (`ai`/`fallback`).
 
@@ -55,7 +65,8 @@ At 17:35 most people still have today's report open (asked at 16:00). A
 typed "бугун зўр ўтди" would be saved as their daily report, or offered to
 the Director as a message. A tap can't be mistaken. A typed reply *to* one of
 these messages (Telegram's Reply) is caught before the report and relay flows
-and gets a friendly "😊 Раҳмат!" — never filed, never forwarded.
+and gets a friendly line back ("раҳмат, ёзганингиз учун хурсандман 😊") —
+never filed, never forwarded.
 
 ## Privacy
 

@@ -81,6 +81,28 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9]*(?:'[A-Za-z]+)*", plain) if w not in allowed]
 
 
+def friendly_problems(text: str) -> list[str]:
+    """What breaks the friendly voice (tone.py, 2026-09-30) in a message, if anything.
+
+    One line, lowercase, no markup, and at most one emoji — at the very end.
+    """
+    from integrations.org_bot import tone
+
+    problems = []
+    if "\n" in text:
+        problems.append("line break")
+    if text != text.lower():
+        problems.append("capital letters")
+    if "<" in text:
+        problems.append("markup")
+    emoji_at = [i for i, char in enumerate(text) if tone._EMOJI.match(char) and char not in "\ufe0f\u200d"]
+    if len(emoji_at) > 1:
+        problems.append("more than one emoji")
+    if emoji_at and text[emoji_at[0]:].strip("\ufe0f\u200d ") != text[emoji_at[0]]:
+        problems.append("emoji not at the end")
+    return problems
+
+
 def test_references() -> None:
     """Every settings.X and every attribute of a project module that the code uses exists.
 
@@ -702,7 +724,7 @@ def test_daily_report_kpi() -> None:
     )
     check_true(
         "reminder has no numbers block",
-        "Қўнғироқлар" not in kpi.build_reminder_text(kpi.metrics_for_role("garmin_sotuv")),
+        "қўнғироқлар" not in kpi.build_reminder_text("Шерзод", kpi.metrics_for_role("garmin_sotuv")),
     )
 
     # The parser and formatter stay tested against the (currently unassigned)
@@ -748,8 +770,8 @@ def test_daily_report_kpi() -> None:
     )
 
     ask = kpi.build_request_text("Dmitriy", sales)
-    check_true("ask names the person", "Dmitriy" in ask)
-    check_true("ask shows the numbers format", "Қўнғироқлар" in ask)
+    check_true("ask names the person", "dmitriy" in ask)
+    check_true("ask shows the numbers format", "қўнғироқлар" in ask)
     check_true("text-only role gets no numbers block", "Қўнғироқлар" not in kpi.build_request_text("Aziz", ()))
     check(
         "Cyrillic labels are parsed too",
@@ -757,7 +779,27 @@ def test_daily_report_kpi() -> None:
         {"meetings": 3, "calls": 22},
     )
     check_true("the ask is Uzbek Cyrillic", latin_words(kpi.build_request_text("Алишер", ())) == [])
-    check_true("the reminder is Uzbek Cyrillic", latin_words(kpi.build_reminder_text(())) == [])
+    check_true("the reminder is Uzbek Cyrillic", latin_words(kpi.build_reminder_text("Алишер", ())) == [])
+
+    # 2026-09-30: the ask and reminder read like a colleague, not an alarm.
+    ask_text, reminder_text = kpi.build_request_text("Алишер ака", ()), kpi.build_reminder_text("Дилноза опа", ())
+    check("the ask: one friendly line", friendly_problems(ask_text), [])
+    check("the reminder: one friendly line", friendly_problems(reminder_text), [])
+    check_true("...addressed with ака/опа, asking kindly",
+               ask_text.startswith("алишер ака, ишларингиз билан чарчамаяпсизми") and "раҳмат каттакон" in ask_text
+               and reminder_text.startswith("дилноза опа,"))
+    check_true("...with the numbers in the same line when a role has them",
+               friendly_problems(kpi.build_request_text("Алишер", sales)) == [] and "қўнғироқлар" in kpi.build_request_text("Алишер", sales))
+
+    from integrations.org_bot import names
+
+    for employee, expected in (
+        ({"full_name": "Алишер Каримов"}, "Алишер"),
+        ({"full_name": "Каримова Дилноза", "address_form": "opa"}, "Дилноза опа"),
+        ({"full_name": "Alisher Karimov", "address_form": "aka"}, "Алишер ака"),
+        ({"full_name": "", "display_name": "Шерзод"}, "Шерзод"),
+    ):
+        check(f"called {expected!r}", names.call_name(employee), expected)
 
 
 def test_permissions() -> None:
@@ -1430,7 +1472,7 @@ def test_client_feedback() -> None:
 
 
 def test_team_cheer() -> None:
-    """Team cheer: when each slot goes out, what the AI may say, the fallback, the send, taps and replies."""
+    """Team cheer: when each slot goes out, the friendly voice, the AI's limits, the send, taps and replies."""
     print("team cheer (10:00 / 14:00 / 17:35)")
     import asyncio
     import json
@@ -1438,7 +1480,7 @@ def test_team_cheer() -> None:
     import uuid
 
     from integrations.common.agent_loader import load_agent
-    from integrations.org_bot import cheer, ops_manager, store
+    from integrations.org_bot import cheer, ops_manager, store, tone
 
     # ---- when
     for hm, expected in (("09:00", None), ("10:00", "morning"), ("10:24", "morning"), ("10:35", None),
@@ -1454,48 +1496,67 @@ def test_team_cheer() -> None:
     check("render.yaml's runs send each slot once, the rest nothing",
           sorted(f for f in fired if f), ["evening", "midday", "morning"])
 
-    # ---- the built-in messages: every day of two months is valid
+    # ---- the voice
+    check("casual: one line, lowercase, no emoji inside, no full stop",
+          tone.casual("Бугун 😀 ҳам\n<b>ЗЎР</b> кун бўлсин.", "☀️"), "бугун ҳам зўр кун бўлсин ☀️")
+    check("casual: a second emoji is not added", tone.casual("салом", "☀️☀️"), "салом")
+    check_true("two sentences are not one", not tone.is_one_short_sentence("бугун зўр. эртага ҳам зўр"))
+
+    # ---- the built-in messages: every day of two months, in the friendly voice
     ok = True
     for offset in range(60):
         day = date(2026, 10, 1) + timedelta(days=offset)
         for slot in cheer.SLOTS:
             fb = cheer.fallback(slot, day)
-            again = cheer.parse_ai(json.dumps({"text": fb.text, "question": fb.question, "options": fb.options}), slot)
-            wants_question = slot != "morning"
-            if again is None or bool(fb.options) != wants_question or latin_words(cheer.message_text(slot, fb, "Дилноза")):
+            again = cheer.parse_ai(json.dumps({"text": fb.text, "emoji": fb.emoji, "options": fb.options}), slot)
+            line = cheer.message_text(fb, "Дилноза опа")
+            problems = friendly_problems(line) + latin_words(line)
+            if again is None or bool(fb.options) != (slot == "evening") or problems or not fb.emoji:
                 ok = False
-                print(f"    bad fallback: {slot} {day}")
-    check_true("every built-in message passes the AI's own rules, Cyrillic, question where due", ok)
+                print(f"    bad fallback: {slot} {day} {problems}")
+    check_true("every built-in message: one friendly line, one emoji at the end, passes the AI's own rules", ok)
+    check_true("the midday one is an Afandi story",
+               all(t.startswith("қисқаси, афанди бир куни") and "«" in t for t in cheer._MIDDAY))
     check_true("consecutive days differ",
                cheer.fallback("morning", date(2026, 10, 1)).text != cheer.fallback("morning", date(2026, 10, 2)).text)
 
     # ---- what the AI may say
-    good = {"text": "Бугун ҳам зўр кун бўлади! ☀️", "question": "Чой ёки қаҳва?",
-            "options": [{"label": "🍵 Чой", "reply": "Зўр танлов!"}, {"label": "☕ Қаҳва", "reply": "Қаҳва жамоаси! ☕"}]}
-    parsed = cheer.parse_ai(json.dumps(good), "midday")
-    check_true("a good answer is used as is", parsed is not None and parsed.source == "ai" and len(parsed.options) == 2)
-    morning = cheer.parse_ai(json.dumps(good), "morning")
-    check_true("morning drops any question", morning is not None and morning.question is None and not morning.options)
+    good = {"text": "Бугун кунингиз қандай ўтди? 😊", "emoji": "🌙",
+            "options": [{"label": "Зўр", "reply": "Ажойиб, раҳмат!"}, {"label": "чарчадим", "reply": "яхшилаб дам олинг"}]}
+    parsed = cheer.parse_ai(json.dumps(good), "evening")
+    check_true("a good answer is used, made casual",
+               parsed is not None and parsed.source == "ai" and parsed.text == "бугун кунингиз қандай ўтди?"
+               and parsed.options[0]["label"] == "зўр" and parsed.emoji == "🌙")
+    morning = cheer.parse_ai(json.dumps({**good, "text": "бугун ҳам зўр кун бўлсин"}), "morning")
+    check_true("morning drops any answers", morning is not None and not morning.options)
+    check("a missing emoji gets the slot's own",
+          cheer.parse_ai(json.dumps({**good, "emoji": "зўр"}), "evening").emoji, "🌙")
+    joke = {"text": "қисқаси, афанди бир куни эшагини излаб «топилмаса ўзим эшак бўламан» дебди", "emoji": "😄",
+            "options": []}
+    check_true("midday takes an Afandi story", cheer.parse_ai(json.dumps(joke), "midday") is not None)
 
-    def bad(**change):
-        return cheer.parse_ai(json.dumps({**good, **change}), "midday") is None
+    def bad(slot="evening", **change):
+        return cheer.parse_ai(json.dumps({**good, **change}), slot) is None
 
-    check_true("Latin letters are refused", bad(text="Good morning, jamoa!"))
-    check_true("too long is refused", bad(text="Зўр " * 200))
-    check_true("markup is refused", bad(text="<b>Зўр</b>"))
-    check_true("a question without answers is refused", bad(options=[]))
-    check_true("five answers are too many", bad(options=[{"label": f"Жавоб {i}", "reply": "Раҳмат"} for i in range(5)]))
+    check_true("midday refuses anything that isn't an Afandi latifa", bad("midday", text="чой ёки қаҳва?", options=[]))
+    check_true("midday refuses buttons under the story", cheer.parse_ai(json.dumps({**joke, "options": good["options"]}), "midday") is None)
+    check_true("Latin letters are refused", bad(text="good kun"))
+    check_true("two sentences are refused", bad(text="бугун зўр ўтди. эртага ҳам шундай бўлсин"))
+    check_true("too long is refused", bad(text="зўр " * 40))
+    check_true("markup is refused", bad(text="<b>зўр</b>"))
+    check_true("evening needs answers to tap", bad(options=[]))
+    check_true("five answers are too many", bad(options=[{"label": f"жавоб {i}", "reply": "раҳмат"} for i in "абвгд"]))
     check_true("a button label too long for a phone is refused",
-               bad(options=[{"label": "Жуда жуда жуда узун жавоб матни", "reply": "Р"}, good["options"][1]]))
+               bad(options=[{"label": "жуда жуда жуда узун жавоб", "reply": "р"}, good["options"][1]]))
     check_true("two identical buttons are refused", bad(options=[good["options"][0], good["options"][0]]))
-    check_true("an answer without its reply is refused", bad(options=[{"label": "Чой"}, good["options"][1]]))
-    check_true("not JSON is refused", cheer.parse_ai("Мана хабар", "midday") is None)
-    prompt = cheer.user_prompt("evening", date(2026, 9, 28), ["Эски хабар"])
-    check_true("the AI is shown recent messages so it won't repeat them", "- Эски хабар" in prompt)
+    check_true("an answer without its reply is refused", bad(options=[{"label": "чой"}, good["options"][1]]))
+    check_true("not JSON is refused", cheer.parse_ai("Мана хабар", "evening") is None)
+    prompt = cheer.user_prompt("evening", date(2026, 9, 28), ["эски хабар"])
+    check_true("the AI is shown recent messages so it won't repeat them", "- эски хабар" in prompt)
 
     # ---- what people see
-    text = cheer.message_text("evening", parsed, "<Дилноза>")
-    check_true("the name is escaped and greets them", "&lt;Дилноза&gt;, иш куни якунланяпти!" in text)
+    text = cheer.message_text(parsed, "<Дилноза> опа")
+    check("one line: the name, the sentence, one emoji", text, "&lt;дилноза&gt; опа, бугун кунингиз қандай ўтди? 🌙")
     kb = cheer.keyboard(str(uuid.uuid4()), parsed)
     datas = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
     check_true("buttons fit Telegram's 64-byte limit", all(len(d.encode()) <= 64 for d in datas))
@@ -1503,11 +1564,13 @@ def test_team_cheer() -> None:
     check("no buttons without a question", cheer.keyboard("c1", morning), None)
     check("a button's data reads back", cheer.parse_callback(datas[1].split(":", 1)[1])[1], 1)
     check("a broken one doesn't", cheer.parse_callback("abc"), None)
+    check("a typed reply gets a friendly line back", friendly_problems(cheer.text_reply(7)), [])
 
     # ---- the send, with a fake database, AI and Telegram
     agent = load_agent("team-cheer")
     director = {"role": "operatsion_direktor", "telegram_user_id": 1, "display_name": "Д", "full_name": "Директор"}
-    worker = {"role": "it", "telegram_user_id": 2, "display_name": "a", "full_name": "Алишер"}
+    worker = {"role": "it", "telegram_user_id": 2, "display_name": "a", "full_name": "Алишер Каримов",
+              "address_form": "aka"}
     weekend_off = {"role": "ombor", "telegram_user_id": 3, "display_name": "b", "full_name": "Бобур"}
     sent, deliveries, stored, claims = [], [], [], []
 
@@ -1521,8 +1584,8 @@ def test_team_cheer() -> None:
         async def __aexit__(self, *exc):
             return None
 
-        async def send_message(self, text, chat_id=None, reply_markup=None, **kwargs):
-            sent.append((chat_id, text, reply_markup))
+        async def send_message(self, text, chat_id=None, reply_markup=None, disable_notification=False, **kwargs):
+            sent.append((chat_id, text, reply_markup, disable_notification))
             return [500 + len(sent)]
 
     class FakeAI:
@@ -1573,9 +1636,10 @@ def test_team_cheer() -> None:
     weekend_off["works_saturday"], worker["works_saturday"] = False, True
     try:
         asyncio.run(agent.send_slot("evening", uuid.uuid4()))
-        check("not the Director, not someone off today", [c for c, _, _ in sent], ["2"])
-        check_true("their name, the question and the buttons",
-                   "Алишер" in sent[0][1] and "Чой ёки қаҳва?" in sent[0][1] and sent[0][2] is not None)
+        check("not the Director, not someone off today", [c for c, _, _, _ in sent], ["2"])
+        check("one friendly line, first name and ака, with buttons", (sent[0][1], sent[0][2] is not None),
+              ("алишер ака, бугун кунингиз қандай ўтди? 🌙", True))
+        check_true("...sent silently", sent[0][3] is True)
         check("the message is remembered for taps and replies", deliveries[0][:3], ("c1", 2, 501))
         check("the AI wrote it", stored[0]["source"], "ai")
         sent.clear()
@@ -1587,7 +1651,7 @@ def test_team_cheer() -> None:
         FakeAI.answer = json.dumps({**good, "text": "Hello team"})
         asyncio.run(agent.send_slot("evening", uuid.uuid4()))
         check("an AI answer that breaks a rule is replaced by the built-in one", stored[0]["source"], "fallback")
-        check_true("...and it still goes out, in Cyrillic", latin_words(sent[-1][1]) == [])
+        check("...and it still goes out, friendly and Cyrillic", friendly_problems(sent[-1][1]) + latin_words(sent[-1][1]), [])
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
@@ -1599,8 +1663,8 @@ def test_team_cheer() -> None:
         async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
             edits.append((chat_id, message_id, text, reply_markup))
 
-    answers = {"row": {"id": "d1", "message_id": 501, "text": "🌇 <b>Алишер</b>\n\nСавол",
-                       "question": "Савол", "options": good["options"]}}
+    answers = {"row": {"id": "d1", "message_id": 501, "text": "алишер ака, бугун кунингиз қандай ўтди? 🌙",
+                       "question": None, "options": parsed.options}}
 
     async def answer_cheer(cheer_id, user_id, index):
         row, answers["row"] = answers["row"], None
@@ -1628,20 +1692,20 @@ def test_team_cheer() -> None:
     try:
         tap = {"id": "q1", "data": "cheer:c1:1", "from": {"id": 2}}
         check("a tap is taken", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "cheer_answered")
-        check_true("the buttons give way to the answer and its reply",
-                   edits and edits[0][3] == {"inline_keyboard": []} and "☕ Қаҳва" in edits[0][2]
-                   and "Қаҳва жамоаси!" in edits[0][2])
+        check("its reply is a pop-up, not a new message", (toasts[-1], replies), ("яхшилаб дам олинг", []))
+        check_true("the buttons go, the line stays as it was",
+                   edits and edits[0][3] == {"inline_keyboard": []} and edits[0][2] == "алишер ака, бугун кунингиз қандай ўтди? 🌙")
         check("a second tap is thanked, not recorded", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())),
               "cheer_already_answered")
 
         message = {"text": "Бугун зўр ўтди!", "reply_to_message": {"message_id": 501}}
         outcome = asyncio.run(ops_manager._handle_employee_message(worker, message, uuid.uuid4()))
         check("a typed reply to it is chat — not a report, not for the Director", outcome, "cheer_reply")
-        check_true("...and gets a friendly word back", replies and "Раҳмат" in replies[0])
+        check_true("...and gets a friendly line back", replies and "раҳмат" in replies[0] and friendly_problems(replies[0]) == [])
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
-    check_true("nothing in the tap flow is Latin", not re.search(r"[A-Za-z]{3,}", "".join(toasts)))
+    check_true("no Latin in the pop-ups", not re.search(r"[A-Za-z]{3,}", "".join(toasts)))
 
 
 def test_report_accuracy() -> None:
@@ -1680,7 +1744,8 @@ def test_report_accuracy() -> None:
     try:
         verdicts.append({"ask": True, "follow_up": "Нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди?"})
         question = asyncio.run(ops_manager._report_follow_up(shirin, "garmin_sotuv", uuid.uuid4()))
-        check("a list without results gets one question", question, "Нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди?")
+        check("a list without results gets one question, in the friendly voice", question,
+              "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди?")
         check_true("the AI is told the role, in Uzbek", seen[-1].startswith("Role: Garmin сотув"))
         check_true("her real report (over 120 characters) is checked — the old cap skipped it", len(shirin) > 120 and len(seen) == 1)
 

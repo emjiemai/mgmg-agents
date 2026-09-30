@@ -16,10 +16,12 @@ The Director is never gated: their messages are orders to route, and a
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
 from integrations.common.config import settings
+from integrations.common.translit import name_to_cyrillic
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import answer_check, store
 from integrations.org_bot.permissions import Field
@@ -58,6 +60,26 @@ def person_name(employee: dict[str, Any] | None) -> str:
     if not employee:
         return "—"
     return (employee.get("full_name") or "").strip() or employee.get("display_name") or "—"
+
+
+# Uzbek/Russian surname endings — "Каримов Алишер" is addressed as "алишер".
+_SURNAME = re.compile(r"(ов|ова|ев|ева|ёв|ёва|ий|ая|зода|заде|ович|овна|евич|евна)$")
+ADDRESS_FORMS = {"aka": "ака", "opa": "опа"}
+
+
+def call_name(employee: dict[str, Any] | None) -> str:
+    """How friendly messages address someone: the first name, then ака/опа if the admin set it.
+
+    The surname is left out (a word with a surname ending, else the second
+    word); a Latin name is written in Cyrillic. Ака/опа is never guessed from
+    the name — only the admin sets it (/xodimlar).
+    """
+    if not employee:
+        return ""
+    words = name_to_cyrillic(person_name(employee)).split()
+    first = next((w for w in words if not _SURNAME.search(w.lower())), words[0] if words else "")
+    form = ADDRESS_FORMS.get(employee.get("address_form") or "", "")
+    return " ".join(part for part in (first, form) if part and part != "—")
 
 
 def needs_name(employee: dict[str, Any]) -> bool:

@@ -23,7 +23,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-28.
 | — | Q&A — the Director asks about reports, tasks, KPI, permissions, debt, cash plan, SAP data | on question | Director | — |
 | — | Tasks to a department or to one named person, relays with confirmation | on message | employees, Director | — |
 | — | Names and roles — every employee's typed name; admin re-asks a name or changes a role | on registration · `/xodimlar` · `/ism` | admin, employees | — |
-| — | Team cheer: encouragement, a joke/fun question, thanks + "how was your day" (tap answers, not shown to anyone) | 10:00 · 14:00 · 17:35 (weekends: weekend workers) | employees (not the Director) | `TEAM_CHEER_ENABLED` |
+| — | Team cheer: one friendly line, sent silently — a wish, an Afandi joke, "how was your day" (tap answers, not shown to anyone) | 10:00 · 14:00 · 17:35 (weekends: weekend workers) | employees (not the Director) | `TEAM_CHEER_ENABLED` |
 | — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
 

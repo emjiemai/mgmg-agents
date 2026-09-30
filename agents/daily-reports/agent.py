@@ -89,7 +89,7 @@ async def ask_everyone(run_id: uuid.UUID) -> int:
                 continue
 
             metrics = kpi.metrics_for_role(employee["role"])
-            text = kpi.build_request_text(names.person_name(employee), metrics)
+            text = kpi.build_request_text(names.call_name(employee), metrics)
             try:
                 message_ids = await bot.send_message(text, chat_id=str(employee["telegram_user_id"]))
             except TelegramError as exc:
@@ -129,7 +129,7 @@ async def remind_silent(run_id: uuid.UUID) -> int:
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         for report in pending:
-            text = kpi.build_reminder_text(kpi.metrics_for_role(report["role"]))
+            text = kpi.build_reminder_text(names.call_name(report), kpi.metrics_for_role(report["role"]))
             try:
                 message_ids = await bot.send_message(text, chat_id=str(report["telegram_user_id"]))
             except TelegramError as exc:

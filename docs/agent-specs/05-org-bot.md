@@ -171,6 +171,8 @@ another department, or a new person taking over an account:
   **✏️ Исмни қайта сўраш** (clears the name; the bot asks them again, and
   nothing else they send is processed until they answer),
   **🔁 Ролни ўзгартириш** (a role picker; the person is told their new role),
+  **🗣 Мурожаат** (how friendly messages address them: first name → name ака
+  → name опа → back; never guessed from the name, 2026-09-30),
   **🗑 Ўчириш** (with a confirmation tap).
 - **An employee can ask** with **`/ism`** in OPS Manager Bot; the admin gets
   "Исм ўзгартириш сўрови" with **✅ Рухсат бериш / ❌ Рад этиш**. Names go on

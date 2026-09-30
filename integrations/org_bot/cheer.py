@@ -3,26 +3,32 @@
 Work runs 09:00–18:00 Tashkent. The owner asked (2026-09-29) for a little
 encouragement or a joke at the start, in the middle and at the end of it:
 
-    10:00  morning  encouragement for the day
-    14:00  midday   a clean joke or a fun fact, with a fun question to tap
-    17:35  evening  thanks for the day, with "how was it?" to tap
+    10:00  morning  a warm wish for the day
+    14:00  midday   an Afandi story in one sentence ("қисқаси, афанди бир куни…")
+    17:35  evening  a question about their day, to tap
 
 Everyone gets it except the Director — the same people the daily reports ask
 (Saturday/Sunday only the weekend workers).
 
-The AI writes each slot once a day (the same text for everyone, the
-person's name added in front); anything that breaks the rules below — not
-Uzbek Cyrillic, too long, badly formed — is thrown away and a hand-written
-message from this file goes out instead. Nobody ever gets nothing, and
-nobody gets something odd.
+The voice (2026-09-30, ``tone.py``): employees felt the first version — bold
+header, emoji, two paragraphs — as one more notification to deal with. Each
+message is now one short sentence after the person's name (with ака/опа when
+the admin set it), lowercase, one emoji at the very end, sent silently (no
+sound): "алишер ака, бугун ҳам зўр кун бўлсин ☀️". The midday joke is Uzbek
+traditional humour — a classic Afandi latifa told in one sentence.
+
+The AI writes each slot once a day (the same sentence for everyone); anything
+that isn't one short Uzbek Cyrillic sentence is thrown away and a
+hand-written one from this file goes out instead. Nobody ever gets nothing,
+and nobody gets something odd.
 
 Questions are answered with buttons, not by typing. At 17:35 most people
 still have today's report open, and a typed "my day was great" would be
-filed as their report or offered to the Director; a tap can't be. A typed
-reply to one of these messages is caught too (``ops_manager``) and gets a
-friendly word back instead. Taps are stored only to allow one per person;
-they are not reported to anyone — a mood question the boss reads is no
-longer a friendly question.
+filed as their report or offered to the Director; a tap can't be. The warm
+reply to a tap shows as a brief pop-up, not another message. A typed reply
+to one of these messages is caught too (``ops_manager``). Taps are stored
+only to allow one per person; they are not reported to anyone — a mood
+question the boss reads is no longer a friendly question.
 
 Pure logic here (tested offline); ``agents/team-cheer/agent.py`` sends.
 """
@@ -35,6 +41,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Any
 
+from integrations.org_bot.tone import casual, is_emoji, is_one_short_sentence
 from integrations.telegram.bot import escape
 
 AGENT = "team-cheer"
@@ -51,19 +58,20 @@ SLOTS: dict[str, time] = {
 # shorter than the 35 minutes to the next run, so that run can't pick it up.
 SLOT_WINDOW_MINUTES = 25
 
-TEXT_MAX = 400
-QUESTION_MAX = 110
-LABEL_MAX = 28  # a Telegram button shows about this much on a phone
-REPLY_MAX = 160
+TEXT_MAX = 80  # the sentence after "<name>, "
+JOKE_MAX = 230  # an Afandi latifa needs its punchline, still one sentence
+LABEL_MAX = 20  # a button
+REPLY_MAX = 70  # the pop-up after a tap
+OPTIONS_MAX = 4
 
 
 @dataclass
 class Cheer:
-    """One slot's message: the text, and (midday/evening) a question with tap answers."""
+    """One slot's sentence, and tap answers when it asks something."""
 
     text: str
-    question: str | None = None
     options: list[dict[str, str]] = field(default_factory=list)  # [{"label", "reply"}]
+    emoji: str = ""  # the one emoji at the end
     source: str = "fallback"
 
 
@@ -85,58 +93,56 @@ def due_slot(now_local: datetime) -> str | None:
 
 _THEMES = {
     "morning": (
-        "кичик қадамлар катта натижа беради", "жамоада ишлашнинг кучи", "ўзига ишонч", "яхши кайфият",
-        "янги нарса ўрганиш", "сабр ва изчиллик", "ҳамкасбга илиқ сўз", "ишни охирига етказиш қувончи",
+        "кичик қадамлар", "жамоа", "ўзига ишонч", "яхши кайфият", "янги нарса ўрганиш", "сабр",
+        "ҳамкасбга илиқ сўз", "ишни охирига етказиш",
     ),
     "midday": (
-        "тушликдан кейинги уйқучанлик ҳақида енгил ҳазил", "чой ёки қаҳва", "қизиқ ва тўғри факт",
-        "дам олиш куни режалари", "севимли таом", "офис ҳаётидан беозор ҳазил", "энергия даражаси",
+        "афанди ва эшаги", "афанди ва қўшниси", "афанди бозорда", "афанди тўйда", "афанди ва ой",
+        "афанди ва қозон", "афанди ва шогирдлари",
     ),
     "evening": (
         "бугунги кун қандай ўтди", "бугун нима хурсанд қилди", "кечки режалар", "бугунги кичик ютуқ",
-        "эртанги кунга кайфият", "оила ва дам олиш",
+        "эртанги кайфият",
     ),
 }
 
 _SLOT_TASK = {
-    "morning": (
-        "Write a short encouraging message for the start of the working day (it is 10:00, work began at "
-        "09:00). No question: set \"question\" to null and \"options\" to []."
-    ),
+    "morning": "It is 10:00, work began at 09:00. Write a warm wish or a little encouragement for the day. No answers: \"options\": [].",
     "midday": (
-        "It is 14:00, just after lunch. Write either one short, clean, genuinely funny joke, or one "
-        "interesting fact you are CERTAIN is true, to give people a smile. Then a light fun question with "
-        "2-4 tap answers (e.g. tea or coffee, favourite season), each with a warm one-line reply."
+        "It is 14:00, just after lunch. Retell ONE classic, clean Afandi (Nasriddin Afandi) latifa — Uzbek "
+        "traditional humour — as ONE sentence that starts with \"қисқаси, афанди бир куни\" and ends with his "
+        "punchline in «…» + \"дебди\". Only kind, well-known latifas: nothing about religion, money, wives, "
+        "drinking or anyone's looks. At most " + str(JOKE_MAX) + " characters. No answers: \"options\": []."
     ),
     "evening": (
-        "It is 17:35; the working day ends at 18:00. Thank people for today's work and wish them a good "
-        "evening. Then a question that makes people feel good about their day (how did it go, what made you "
-        "happy, evening plans) with 2-4 tap answers, each with a warm one-line reply. Every answer, "
-        "including a tired or so-so one, gets a kind reply — never a lecture."
+        "It is 17:35; the day ends at 18:00. Ask how their day went, what made them happy, or their evening "
+        "plans, with 2-4 short answers, each with a warm reply. A tired or so-so answer gets kindness, never "
+        "a lecture."
     ),
 }
 
 SYSTEM_PROMPT = f"""\
-You write short friendly messages that a company's Telegram bot sends to its
-employees (MGMG, Tashkent: an industrial laundry equipment business and a
-Garmin watch shop) to cheer them up during the working day.
+You write one friendly line that a company's Telegram bot sends to its
+employees (MGMG, Tashkent) to make them smile during the working day. They
+must not feel it as a notification or a task — it should read like a warm
+colleague texting.
 
-Rules — a message that breaks one is thrown away:
-- Uzbek, CYRILLIC script only (ў, қ, ғ, ҳ). No Latin letters at all, not even
-  in brand names. Emoji are welcome, one to three.
-- Warm, respectful, simple. Addressed to everyone ("сиз"), never to one person.
-  Do not include a greeting or a name — the bot adds "Хайрли кун, <name>!".
-- Never: politics, religion, ethnicity, gender, appearance, age, health,
-  alcohol, money or bonuses, promises of any kind, sarcasm about work, the
-  boss or customers, anything that could embarrass or mock anyone.
-- A joke must be clean and understandable to everyone. A fact must be true.
-- "text" at most {TEXT_MAX} characters; "question" at most {QUESTION_MAX};
-  each answer "label" at most {LABEL_MAX} (it is a button); each "reply" at
-  most {REPLY_MAX}.
-- Do not repeat or closely paraphrase any of the RECENT MESSAGES given.
+The bot writes the person's name and a comma first ("алишер, "), then your
+sentence. So write ONE short sentence that follows naturally after a name:
+- Uzbek, Cyrillic script only, all lowercase, no emoji, no line breaks, no
+  greeting, no name, no exclamation marks in a row. At most {TEXT_MAX}
+  characters — around eight to twelve words.
+- Warm and simple. Never: politics, religion, ethnicity, gender, appearance,
+  age, health, alcohol, money, promises, sarcasm about work, the boss or
+  customers, anything that could embarrass anyone.
+- Each answer "label" is one to three words (at most {LABEL_MAX} characters),
+  lowercase; each "reply" is one short warm sentence (at most {REPLY_MAX}).
+- "emoji": exactly one emoji that fits the sentence; the bot puts it at the
+  very end. No other emoji anywhere.
+- Do not repeat or closely paraphrase any of the RECENT MESSAGES given (for
+  the midday latifa: a different latifa).
 
-Answer with JSON only:
-{{"text": "...", "question": "..." or null, "options": [{{"label": "...", "reply": "..."}}]}}
+Answer with JSON only: {{"text": "...", "emoji": "...", "options": [{{"label": "...", "reply": "..."}}]}}
 """
 
 
@@ -150,163 +156,121 @@ def user_prompt(slot: str, day: date, recent: list[str]) -> str:
 
 
 _LATIN = re.compile(r"[A-Za-z]")
-_MARKUP = re.compile(r"[<>]")
+_MARKUP = re.compile(r"[<>&]")
 
 
-def _clean(value: Any, limit: int) -> str | None:
-    if not isinstance(value, str):
+def _line(value: Any, limit: int) -> str | None:
+    """``value`` as one short casual line, or None if it can't be one."""
+    if not isinstance(value, str) or _MARKUP.search(value):
         return None
-    value = value.strip()
-    if not value or len(value) > limit or _LATIN.search(value) or _MARKUP.search(value):
+    line = casual(value)
+    if _LATIN.search(line) or not is_one_short_sentence(line, limit):
         return None
-    return value
+    return line
 
 
 def parse_ai(raw: str, slot: str) -> Cheer | None:
-    """The AI's answer as a Cheer, or None if it breaks any rule (then the built-in list is used)."""
+    """The AI's answer as a Cheer, or None if it breaks any rule (then the built-in list is used).
+
+    Emoji, capitals and a closing full stop are simply removed; anything
+    else wrong — Latin, two sentences, too long, bad answers — rejects it.
+    """
     try:
         data = json.loads(raw)
     except (TypeError, ValueError):
         return None
     if not isinstance(data, dict):
         return None
-    text = _clean(data.get("text"), TEXT_MAX)
+    text = _line(data.get("text"), JOKE_MAX if slot == "midday" else TEXT_MAX)
     if text is None:
         return None
+    emoji = str(data.get("emoji") or "").strip()
+    emoji = emoji if is_emoji(emoji) else DEFAULT_EMOJI[slot]
+    options = data.get("options") or []
     if slot == "morning":
-        return Cheer(text=text, source="ai")
-
-    question = _clean(data.get("question"), QUESTION_MAX)
-    options = data.get("options")
-    if question is None or not isinstance(options, list) or not 2 <= len(options) <= 4:
+        return Cheer(text=text, emoji=emoji, source="ai")
+    if slot == "midday":
+        # The latifa is the whole message: it must be one, and there's nothing to tap.
+        if not text.startswith("қисқаси, афанди") or "«" not in text or options:
+            return None
+        return Cheer(text=text, emoji=emoji, source="ai")
+    if not isinstance(options, list) or not 2 <= len(options) <= OPTIONS_MAX:
         return None
     cleaned = []
     for option in options:
         if not isinstance(option, dict):
             return None
-        label, reply = _clean(option.get("label"), LABEL_MAX), _clean(option.get("reply"), REPLY_MAX)
+        label, reply = _line(option.get("label"), LABEL_MAX), _line(option.get("reply"), REPLY_MAX)
         if label is None or reply is None:
             return None
         cleaned.append({"label": label, "reply": reply})
     if len({o["label"] for o in cleaned}) != len(cleaned):
         return None
-    return Cheer(text=text, question=question, options=cleaned, source="ai")
+    return Cheer(text=text, options=cleaned, emoji=emoji, source="ai")
 
 
 # --------------------------------------------- the built-in list (fallback)
 
-_MORNING = (
-    "Бугун кичик бир қадам бўлса ҳам олдинга юрсак — бу ҳам ғалаба. Омад сизга! 💪",
-    "Яхши кайфият — ишнинг ярми. Бугун ҳам зўр кун бўлади! ☀️",
-    "Ҳар бир мураккаб иш кичик қисмлардан иборат. Биринчисидан бошланг — қолгани ўзи келади. 🚀",
-    "Сизнинг меҳнатингиз жамоа учун муҳим. Бугун ҳам бирга яхши натижага эришамиз! 🤝",
-    "Бир пиёла чой, бир табассум — ва кунни бошлашга тайёрмиз! ☕",
-    "Хато қилишдан қўрқманг: ҳаракат қилмаган одамгина хато қилмайди. Олға! ✨",
-    "Бугунги мақсад: битта ишни охирига етказиш ва ўзингиздан хурсанд бўлиш. Сиз уддалайсиз! 🎯",
-    "Энг яхши ишлар шошилмасдан, лекин тўхтамасдан қилинади. Унумли кун тилаймиз! 🌱",
-    "Ҳамкасбингизга бугун бир илиқ сўз айтинг — яхши кайфият юқумли бўлади. 😊",
-    "Кеча қийин бўлган бўлса, бугун — янги имконият. Омад! 🌟",
+DEFAULT_EMOJI = {"morning": "☀️", "midday": "😄", "evening": "🌙"}
+
+_MORNING: tuple[tuple[str, str], ...] = (
+    ("бугун ҳам зўр кун бўлсин", "☀️"),
+    ("бугун ишларингиз осон битсин", "🍀"),
+    ("яхши кайфият билан бошланган кун яхши тугайди", "😊"),
+    ("бир пиёла чой ичиб, кунни хотиржам бошланг", "🍵"),
+    ("бугунги биринчи ишингиз омадли чиқсин", "🍀"),
+    ("ўзингизга ишонинг, бугун ҳаммаси яхши бўлади", "💪"),
+    ("шошилмасдан ишланг, бугун ҳаммасига улгурасиз", "🙂"),
+    ("табассум билан бошланг, қолгани ўзи келади", "😊"),
+    ("бугун кимгадир илиқ сўз айтинг, кайфият юқумли бўлади", "🤝"),
+    ("кеча қийин бўлган бўлса, бугун янги имконият", "🌱"),
 )
 
-_TIRED_OK = "Яхшилаб дам олинг — сиз бунга лойиқсиз! 🌙"
-
-_MIDDAY: tuple[Cheer, ...] = (
-    Cheer(
-        "Тушликдан кейин энг оғир иш — кўзни очиқ тутиш. 😄 Бир стакан сув ичиб, бир оз юриб келинг!",
-        "Ҳозир нима кўпроқ ёрдам берарди?",
-        [
-            {"label": "☕ Чой ёки қаҳва", "reply": "Демак, бир пиёла — ва яна олға! ☕"},
-            {"label": "🚶 Бир оз юриш", "reply": "Беш дақиқа юриш — мияга энг яхши совға! 🚶"},
-            {"label": "🎵 Яхши мусиқа", "reply": "Севимли қўшиғингизни эшитинг — кайфият кўтарилади! 🎵"},
-        ],
-    ),
-    Cheer(
-        "Иш куни ярмидан ошди — сиз аллақачон ярим йўлни босиб ўтдингиз! 🏁",
-        "Ҳозирги энергиянгиз қанча?",
-        [
-            {"label": "🔋 Тўла", "reply": "Зўр! Шу кучни кечгача сақланг! ⚡"},
-            {"label": "🔋 Ярим", "reply": "Ярим — бу ҳам кўп! Бир пиёла чой қолганини тўлдиради. ☕"},
-            {"label": "🪫 Чой керак", "reply": "Унда ҳозироқ чой дамланг — сиз бунга лойиқсиз! 🍵"},
-        ],
-    ),
-    Cheer(
-        "Кичик маслаҳат: йигирма дақиқа ишлагач, йигирма сония узоққа қаранг — кўзларингиз раҳмат айтади. 👀",
-        "Қайси фасл сизга кўпроқ ёқади?",
-        [
-            {"label": "🌸 Баҳор", "reply": "Баҳор — янгиланиш фасли! 🌸"},
-            {"label": "☀️ Ёз", "reply": "Ёз — қуёш ва мева фасли! ☀️"},
-            {"label": "🍂 Куз", "reply": "Куз — ҳосил ва олтин барглар! 🍂"},
-            {"label": "❄️ Қиш", "reply": "Қиш — иссиқ чой ва илиқ суҳбатлар! ❄️"},
-        ],
-    ),
-    Cheer(
-        "Бир пиёла чой — энг яхши «қайта юклаш». 🍵",
-        "Сиз қайси жамоадансиз?",
-        [
-            {"label": "🍵 Кўк чой", "reply": "Классика! Кўк чой — ҳар доим ўз ўрнида. 🍵"},
-            {"label": "🫖 Қора чой", "reply": "Қора чой — кучли танлов! 🫖"},
-            {"label": "☕ Қаҳва", "reply": "Қаҳва жамоаси ҳам бор экан! ☕"},
-        ],
-    ),
-    Cheer(
-        "Ишдаги энг яхши дори — ҳамкасбнинг табассуми. Бугун кимгадир табассум ҳадя қилинг! 😊",
-        "Дам олиш кунини қандай ўтказишни ёқтирасиз?",
-        [
-            {"label": "🏡 Оила билан", "reply": "Оила билан ўтган вақт — энг қимматли вақт! 🏡"},
-            {"label": "🌳 Табиатда", "reply": "Тоза ҳаво — энг яхши дам! 🌳"},
-            {"label": "🛋 Уйда дам олиб", "reply": "Баъзан энг яхши режа — ҳеч қандай режа йўқлиги! 😌"},
-            {"label": "⚽ Спорт билан", "reply": "Зўр! Соғлом тана — соғлом фикр! ⚽"},
-        ],
-    ),
-    Cheer(
-        "Компьютер: «Янгиланиш бир дақиқа давом этади». Биз: чой дамлашга улгурамиз. 😄",
-        "Энг севимли таомингиз қайси?",
-        [
-            {"label": "🍚 Палов", "reply": "Палов — ҳар доим тўғри жавоб! 🍚"},
-            {"label": "🥟 Сомса", "reply": "Иссиқ сомса — кайфият кафолати! 🥟"},
-            {"label": "🍜 Лағмон", "reply": "Лағмон ишқибозлари, салом! 🍜"},
-            {"label": "🥗 Бошқа нарса", "reply": "Демак, сизнинг ўз севимли таомингиз бор — зўр! 😋"},
-        ],
-    ),
+# Classic Afandi latifas, each told in one sentence with its punchline.
+_MIDDAY: tuple[str, ...] = (
+    "қисқаси, афанди бир куни тўйга эски тўнда борса ҳеч ким қарамабди, янги тўн кийиб келса тўрга "
+    "ўтқазишибди, шунда афанди енгини ошга тутиб «е, тўним, е, ҳурмат сенга экан» дебди",
+    "қисқаси, афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда "
+    "қоронғи, бу ер ёруғ-да» дебди",
+    "қисқаси, афанди бир куни эшакка миниб, қопни ўз елкасига олиб кетаётган экан, сўрашса «эшагим "
+    "қийналмасин, юкни ўзим кўтардим» дебди",
+    "қисқаси, афанди бир куни қудуққа қараса ой тушиб қолибди, арқон ташлаб тортаман деб чалқанча "
+    "йиқилибди-да, осмондаги ойни кўриб «ишқилиб, чиқариб олдим» дебди",
+    "қисқаси, афанди бир куни эшак сўраб келган қўшнисига «эшак уйда йўқ» дебди, шу пайт эшак ҳанграб "
+    "юборибди, қўшни «мана-ку» деса, афанди «менгами ишонасан, эшакками?» дебди",
+    "қисқаси, афанди бир куни қўшнисининг қозонини ичига қозонча солиб «қозонингиз туғди» деб "
+    "қайтарибди, кейинги сафар «қозонингиз ўлди» дебди, «қозон ҳам ўладими?» деса, «туғишига "
+    "ишондингиз-ку» дебди",
 )
 
-_EVENING_TEXTS = (
-    "Бугунги меҳнатингиз учун раҳмат! Ишни яхши якунлаб, уйга яхши кайфиятда боринг. 🌇",
-    "Яна бир кун ортда қолди — сиз кўп иш қилдингиз. Ўзингизни мақтаб қўйинг! 👏",
-    "Кун охирига оз қолди. Бугунги энг яхши ишингизни эслаб, бир табассум қилинг. 😊",
-    "Раҳмат, бугун ҳам жамоага катта ҳисса қўшдингиз. Хайрли кеч! 🏡",
-    "Чарчаган бўлсангиз ҳам — сиз бугун олдинга юрдингиз. Яхши дам олинг! 🌙",
-    "Бугунги кичик ютуқлар — эртанги катта натижаларнинг пойдевори. Раҳмат! 🧱",
-)
 
-_EVENING_QUESTIONS: tuple[tuple[str, list[dict[str, str]]], ...] = (
-    (
-        "Бугунги кунингиз қандай ўтди?",
-        [
-            {"label": "😄 Зўр", "reply": "Ажойиб! Шу кайфиятни эртага ҳам олиб келинг! 😄"},
-            {"label": "🙂 Яхши", "reply": "Яхши кун — яхши иш белгиси. Раҳмат! 🙂"},
-            {"label": "😐 Ўртача", "reply": "Ҳар кун ҳам бир хил бўлмайди — эртага яхшироқ бўлади! 💪"},
-            {"label": "😴 Чарчадим", "reply": _TIRED_OK},
-        ],
-    ),
-    (
-        "Бугун сизни нима хурсанд қилди?",
-        [
-            {"label": "🏆 Ишдаги натижа", "reply": "Натижа — меҳнатнинг энг ширин меваси! 🏆"},
-            {"label": "🤝 Ҳамкасбларим", "reply": "Яхши жамоа — катта бойлик! 🤝"},
-            {"label": "🌟 Мижоз раҳмати", "reply": "Мижознинг раҳмати — энг яхши баҳо! 🌟"},
-            {"label": "🎉 Кечки режам", "reply": "Кечки режангиз зўр ўтсин! 🎉"},
-        ],
-    ),
-    (
-        "Кечқурун нима қилмоқчисиз?",
-        [
-            {"label": "🏡 Оила билан", "reply": "Оила билан ўтган вақт — энг қимматли вақт! 🏡"},
-            {"label": "🏃 Спорт", "reply": "Зўр танлов — соғлом тана, соғлом фикр! 🏃"},
-            {"label": "😌 Дам олиш", "reply": "Яхшилаб дам олинг — эртага янги куч билан! 😌"},
-            {"label": "🤷 Ҳали билмайман", "reply": "Сюрпризли кеч ҳам яхши! 😄"},
-        ],
-    ),
+def _options(*pairs: tuple[str, str]) -> list[dict[str, str]]:
+    return [{"label": label, "reply": reply} for label, reply in pairs]
+
+
+_EVENING: tuple[Cheer, ...] = (
+    Cheer("ишларингиз билан чарчамадингизми?", _options(
+        ("йўқ, зўр", "зўр, шу кайфиятда қолинг"),
+        ("бир оз", "уйда яхшилаб дам олинг, чарчаманг"),
+        ("жуда", "раҳмат каттакон, бугун кўп ишладингиз, яхши дам олинг"),
+    ), emoji="🌙"),
+    Cheer("бугун кунингиз қандай ўтди?", _options(
+        ("зўр", "ажойиб, эртага ҳам шундай бўлсин"),
+        ("яхши", "раҳмат каттакон, меҳнатингиз учун"),
+        ("ўртача", "эртага албатта яхшироқ бўлади"),
+        ("чарчадим", "яхшилаб дам олинг, бунга лойиқсиз"),
+    ), emoji="🌇"),
+    Cheer("бугун сизни нима хурсанд қилди?", _options(
+        ("иш натижаси", "натижа меҳнатнинг энг ширин меваси"),
+        ("ҳамкасблар", "яхши жамоа катта бойлик"),
+        ("мижоз раҳмати", "мижоз раҳмати энг яхши баҳо"),
+        ("ҳали ҳеч нарса", "унда кечки вақтингиз хурсанд қилсин"),
+    ), emoji="😊"),
+    Cheer("кечқурун нима режа?", _options(
+        ("оила билан", "оила билан вақт энг қимматли вақт"),
+        ("спорт", "зўр танлов, соғлом бўлинг"),
+        ("дам олиш", "яхшилаб дам олинг, эртага янги куч билан"),
+    ), emoji="🌙"),
 )
 
 
@@ -314,29 +278,20 @@ def fallback(slot: str, day: date) -> Cheer:
     """A hand-written message for ``slot``, rotating by date so days differ."""
     n = day.toordinal()
     if slot == "morning":
-        return Cheer(_MORNING[n % len(_MORNING)])
+        text, emoji = _MORNING[n % len(_MORNING)]
+        return Cheer(text, emoji=emoji)
     if slot == "midday":
-        pick = _MIDDAY[n % len(_MIDDAY)]
-        return Cheer(pick.text, pick.question, [dict(o) for o in pick.options])
-    question, options = _EVENING_QUESTIONS[n % len(_EVENING_QUESTIONS)]
-    return Cheer(_EVENING_TEXTS[n % len(_EVENING_TEXTS)], question, [dict(o) for o in options])
+        return Cheer(_MIDDAY[n % len(_MIDDAY)], emoji=DEFAULT_EMOJI["midday"])
+    pick = _EVENING[n % len(_EVENING)]
+    return Cheer(pick.text, [dict(o) for o in pick.options], emoji=pick.emoji)
 
 
 # ------------------------------------------------------- what people see
 
-_HEADERS = {
-    "morning": "☀️ <b>Хайрли кун, {name}!</b>",
-    "midday": "😄 <b>{name}, бир дақиқалик танаффус!</b>",
-    "evening": "🌇 <b>{name}, иш куни якунланяпти!</b>",
-}
 
-
-def message_text(slot: str, cheer: Cheer, name: str) -> str:
-    """The Telegram HTML one person gets."""
-    parts = [_HEADERS[slot].format(name=escape(name)), escape(cheer.text)]
-    if cheer.question:
-        parts.append(f"<b>{escape(cheer.question)}</b>")
-    return "\n\n".join(parts)
+def message_text(cheer: Cheer, name: str) -> str:
+    """The one line a person gets: how to call them, a comma, the sentence, one emoji."""
+    return casual(f"{escape(name)}, {cheer.text}", cheer.emoji)
 
 
 def keyboard(cheer_id: str, cheer: Cheer) -> dict[str, Any] | None:
@@ -355,18 +310,14 @@ def parse_callback(rest: str) -> tuple[str, int] | None:
     return cheer_id, int(index)
 
 
-def answered_text(sent_text: str, option: dict[str, str]) -> str:
-    """The message after a tap: the answer and its reply in place of the buttons."""
-    return f"{sent_text}\n\n✅ <i>{escape(option['label'])}</i>\n{escape(option['reply'])}"
-
-
 _TEXT_REPLIES = (
-    "😊 Раҳмат, бўлишганингиз учун!",
-    "🤗 Раҳмат! Кайфиятингиз доим яхши бўлсин!",
-    "😊 Ёзганингиз учун раҳмат!",
+    ("раҳмат, ёзганингиз учун хурсандман", "😊"),
+    ("раҳмат, кайфиятингиз доим яхши бўлсин", "🌸"),
+    ("раҳмат каттакон, бўлишганингиз учун", "🤗"),
 )
 
 
 def text_reply(message_id: int) -> str:
     """A friendly word back when someone types a reply to a cheer message."""
-    return _TEXT_REPLIES[message_id % len(_TEXT_REPLIES)]
+    text, emoji = _TEXT_REPLIES[message_id % len(_TEXT_REPLIES)]
+    return casual(text, emoji)

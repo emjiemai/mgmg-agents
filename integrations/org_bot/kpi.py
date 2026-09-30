@@ -20,6 +20,9 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Sequence
 
+from integrations.org_bot.tone import casual
+from integrations.telegram.bot import escape
+
 
 @dataclass(frozen=True)
 class Metric:
@@ -142,49 +145,44 @@ def works_on(employee: dict[str, Any], day: date) -> bool:
     return True
 
 
-def build_request_text(display_name: str, metrics: Sequence[Metric]) -> str:
-    """The 16:00 message asking one employee for their day.
+def _numbers_hint(metrics: Sequence[Metric]) -> str:
+    """ "учрашувлар 4, қўнғироқлар 15" — the numbers a role reports, with the daily target as example."""
+    return ", ".join(f"{metric.label} {metric.daily_target}" for metric in metrics)
+
+
+def build_request_text(name: str, metrics: Sequence[Metric]) -> str:
+    """The 16:00 ask: one friendly line, like a colleague asking (2026-09-30, ``tone.py``).
 
     Args:
-        display_name: Employee's name, so a forwarded card is obviously theirs.
-        metrics: Their role's metrics; the numbers block is omitted when empty.
+        name: How to address them (``names.call_name``: "алишер ака").
+        metrics: Their role's numbers, asked for in the same sentence when any.
 
     Returns:
-        Telegram HTML.
+        Telegram text — one lowercase sentence, one emoji at the end.
     """
-    lines = [
-        "🕓 <b>Кунлик ҳисобот</b>",
-        "",
-        f"{display_name}, бугун нима қилдингиз? Қисқача ёзиб юборинг.",
-    ]
-    if metrics:
-        example = ", ".join(f"{metric.label} {metric.daily_target}" for metric in metrics)
-        lines += [
-            "",
-            "Рақамларни ҳам қўшинг:",
-            f"<i>{example}</i>",
-        ]
-    return "\n".join(lines)
+    numbers = f" рақамлари билан ({_numbers_hint(metrics)})" if metrics else ""
+    return casual(
+        f"{escape(name)}, ишларингиз билан чарчамаяпсизми, илтимос бугунги ҳисоботингизни{numbers} "
+        "ёзиб юборинг, раҳмат каттакон, чарчаманг",
+        "🙏",
+    )
 
 
-def build_reminder_text(metrics: Sequence[Metric]) -> str:
-    """The 17:00 nudge for someone who hasn't answered yet.
+def build_reminder_text(name: str, metrics: Sequence[Metric]) -> str:
+    """The 17:00 nudge for someone who hasn't answered yet — as gentle as the ask.
 
     Args:
-        metrics: Their role's metrics, to repeat the expected format.
+        name: How to address them (``names.call_name``).
+        metrics: Their role's numbers, repeated in the same sentence when any.
 
     Returns:
-        Telegram HTML.
+        Telegram text — one lowercase sentence, one emoji at the end.
     """
-    lines = [
-        "⏰ <b>Эслатма</b>",
-        "",
-        "Бугунги ҳисоботингиз ҳали келмади. Иш куни тугашидан олдин юборинг.",
-    ]
-    if metrics:
-        example = ", ".join(f"{metric.label} {metric.daily_target}" for metric in metrics)
-        lines += ["", f"<i>{example}</i>"]
-    return "\n".join(lines)
+    numbers = f" рақамлари билан ({_numbers_hint(metrics)})" if metrics else ""
+    return casual(
+        f"{escape(name)}, ҳисоботингизни кутиб турибман, иш тугагунча{numbers} ёзиб юборсангиз, раҳмат каттакон",
+        "🙏",
+    )
 
 
 def format_metrics(values: dict[str, int], metrics: Sequence[Metric]) -> str:

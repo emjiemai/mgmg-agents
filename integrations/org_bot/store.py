@@ -116,6 +116,25 @@ async def toggle_weekend_day(employee_id: str, day: str, changed_by: str) -> dic
     return after
 
 
+async def cycle_address_form(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Step how friendly messages address someone: name alone → ака → опа → name alone, logged.
+
+    Returns:
+        The updated row, or None if there's no such active employee.
+    """
+    after = await fetch_one(
+        """
+        UPDATE employees
+        SET address_form = CASE address_form WHEN 'aka' THEN 'opa' WHEN 'opa' THEN NULL ELSE 'aka' END
+        WHERE id = %s AND status = 'active' RETURNING *
+        """,
+        (employee_id,),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "address_form", None, after["address_form"] or "name", changed_by)
+    return after
+
+
 async def request_name_change(telegram_user_id: int) -> dict[str, Any] | None:
     """Record an employee's own request to change their name (/ism).
 
@@ -1140,7 +1159,8 @@ async def reports_awaiting_reminder(report_date: date) -> list[dict[str, Any]]:
     """
     return await fetch_all(
         """
-        SELECT r.*, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
+        SELECT r.*, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name,
+               e.full_name, e.address_form
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = %s AND r.status = 'asked' AND r.reminded_at IS NULL

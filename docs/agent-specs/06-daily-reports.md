@@ -30,6 +30,25 @@ follows at 17:00.
    forwarded to the Director (the business's decision, 2026-09-16).
 3. **17:00** — anyone still at status `asked` gets exactly one nudge
    (`reminded_at` guards against repeats).
+
+**How it sounds (2026-09-30).** Employees felt the old ask — "🕓 **Кунлик
+ҳисобот**" and two paragraphs — as one more alarm. Every message in this flow
+is now one friendly lowercase line with one emoji at the very end
+(`integrations/org_bot/tone.py`), addressed by first name plus ака/опа when the
+admin set it (`names.call_name`):
+
+| When | Message |
+| ---- | ------- |
+| 16:00 ask | алишер ака, ишларингиз билан чарчамаяпсизми, илтимос бугунги ҳисоботингизни ёзиб юборинг, раҳмат каттакон, чарчаманг 🙏 |
+| 17:00 reminder | алишер ака, ҳисоботингизни кутиб турибман, иш тугагунча ёзиб юборсангиз, раҳмат каттакон 🙏 |
+| report saved | раҳмат каттакон, ҳисоботингиз қабул қилинди, чарчаманг 😊 |
+| vague report | the AI's one question, same voice: "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди? 🙂" |
+| answer added | раҳмат каттакон, ҳисоботингизга қўшиб қўйдим 😊 |
+| too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 24:00 гача олинади 🙂 |
+| report or message? | бу бугунги ҳисоботингизми? 🙂 — buttons: ҳа, ҳисобот · директорга хабар · бекор қилиш |
+
+`selfcheck.py` fails if any of these gains a capital letter, a line break,
+markup, or an emoji anywhere but the end. Task cards keep their format.
 4. **08:00 next morning** — the CEO Daily Brief names only who didn't report
    on the last day people were asked ("🔴 Hisobot yubormaganlar: 2 / 9", with
    names), or says everyone did. It uses the last *asked* day, so Monday's

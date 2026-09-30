@@ -51,6 +51,12 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (already printed — never move it), `/f/garmin` = Garmin. No choice buttons
   on the page. Complaints reach OPS Manager Bot marked 🔴. No Uzbek Latin.
   Mobile app: not now.
+- **Friendly voice** (2026-09-30) for cheer, motivation and daily-report
+  messages: one short lowercase sentence, no line breaks, no bold, one emoji
+  only at the very end, addressed "алишер ака" (ака/опа set by the admin, never
+  guessed). Like the owner's example: "ака, ишларингиз билан чарчамаяпсизми,
+  илтимос ҳисобот ёзиб юборинг, раҳмат каттакон, чарчаманг". 14:00 cheer is an
+  Afandi latifa. Tasks keep their card format. `integrations/org_bot/tone.py`.
 - Daily reports accepted only until midnight of that day; one follow-up
   question max for vague reports; employee → Director messages need confirmation.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.

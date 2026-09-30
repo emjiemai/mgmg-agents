@@ -327,6 +327,7 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         lines.append("<i>Директорга савол юборилмайди: исми кейинги ёзма рухсат қарорида сўралади.</i>")
     else:
         lines.append(f"Иш кунлари: {workdays_text(emp)}")
+        lines.append(f"Мурожаат: {escape(address_text(emp))}")
     if note:
         lines += ["", note]
     employee_id = emp["id"]
@@ -341,11 +342,21 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
                 {"text": f"{'✅' if emp.get('works_sunday') else '☐'} Якшанба", "callback_data": f"wsun:{employee_id}"},
             ]
         )
+        # How friendly messages (cheer, report asks) address them; only the
+        # admin sets ака/опа — it's never guessed from the name.
+        rows.append([{"text": "🗣 Мурожаат: исм → ака → опа", "callback_data": f"addr:{employee_id}"}])
     rows += [
         [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
         [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
     ]
     return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def address_text(emp: dict[str, Any]) -> str:
+    """How the bot addresses this person in friendly messages, e.g. "алишер ака"."""
+    from integrations.org_bot import names  # local import keeps admin light
+
+    return (names.call_name(emp) or "—").lower()
 
 
 def workdays_text(emp: dict[str, Any]) -> str:
@@ -450,7 +461,7 @@ async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) ->
             log.warning("Could not message employee {}: {}", telegram_user_id, exc)
 
 
-EMPLOYEE_ACTIONS = ("emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun")
+EMPLOYEE_ACTIONS = ("emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun", "addr")
 
 
 async def _handle_employee_action(
@@ -521,6 +532,13 @@ async def _handle_employee_action(
             await _answer(query_id, "Ходим топилмади")
             return "not_found"
         text, keyboard = employee_card(updated, f"📅 Иш кунлари: {workdays_text(updated)}")
+        await _edit(callback, text, keyboard, run_id)
+    elif action == "addr":
+        updated = await store.cycle_address_form(employee_id, decided_by)
+        if updated is None:
+            await _answer(query_id, "Ходим топилмади")
+            return "not_found"
+        text, keyboard = employee_card(updated, f"🗣 Энди шундай мурожаат қилинади: {escape(address_text(updated))}")
         await _edit(callback, text, keyboard, run_id)
     elif action == "nameno":
         name = (employee.get("full_name") or "").strip() or employee["display_name"]
