@@ -20,6 +20,7 @@ report reminder and the Friday task scorecard share one cron service.
 Run:
     python scripts/run_morning_agents.py            # 08:00
     python scripts/run_morning_agents.py --evening  # 17:00
+    python scripts/run_morning_agents.py --daytime  # :00/:35 of 10, 14, 15, 17 (cheer + lead check-in)
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = [
     "agents/ceo-daily-brief/agent.py",
     "agents/lead-agent/agent.py",
+    "agents/lead-handout/agent.py --morning",  # after the Lead Agent: today's new leads go first
     "agents/receivables/agent.py",
     "agents/task-tracker/agent.py --morning",
     "agents/data-quality/agent.py",  # sends only on Mondays
@@ -47,6 +49,15 @@ AGENTS = [
 EVENING_AGENTS = [
     "agents/daily-reports/agent.py --remind",
     "agents/task-tracker/agent.py --weekly",
+]
+
+
+# The daytime job (render.yaml's mgmg-team-cheer, :00 and :35 of 10, 14, 15
+# and 17 o'clock): each agent checks the time itself and exits at once when
+# nothing is due — cheer at 10:00, 14:00, 17:35, the lead check-in at 15:00.
+DAYTIME_AGENTS = [
+    "agents/team-cheer/agent.py",
+    "agents/lead-handout/agent.py --checkin",
 ]
 
 
@@ -70,7 +81,8 @@ def run_agent(relative_command: str) -> int:
 
 
 def main() -> None:
-    commands = EVENING_AGENTS if "--evening" in sys.argv[1:] else AGENTS
+    args = sys.argv[1:]
+    commands = EVENING_AGENTS if "--evening" in args else DAYTIME_AGENTS if "--daytime" in args else AGENTS
     results: dict[str, int] = {}
     for command in commands:
         results[command] = run_agent(command)

@@ -153,6 +153,20 @@ class Attendance:
 
 
 @dataclass
+class LeadScore:
+    """A month of leads for one sales person (``leads.py``): the 15:00 questions and closed leads."""
+
+    asked: int = 0  # 15:00 questions
+    answered: int = 0  # ...answered the same day
+    closed: int = 0  # leads dismissed or done
+    done: int = 0
+
+
+# A goal whose title mentions leads is filled from the leads marked done.
+_LEAD_GOAL = ("лид", "lid", "lead")
+
+
+@dataclass
 class EmployeeMonth:
     """Everything measured about one person in one month."""
 
@@ -165,13 +179,14 @@ class EmployeeMonth:
     goals: list[Goal] = field(default_factory=list)
     ratings: dict[str, int] = field(default_factory=dict)
     attendance: Attendance | None = None
+    leads: LeadScore = field(default_factory=LeadScore)
     parts: dict[str, float | None] = field(default_factory=dict)
     total: float | None = None
 
     @property
     def volume(self) -> int:
-        """Finished work: tasks completed plus daily reports sent."""
-        return self.jobs_done + self.reports.reported
+        """Finished work: tasks completed, daily reports sent and leads closed."""
+        return self.jobs_done + self.reports.reported + self.leads.closed
 
     @property
     def rating_complete(self) -> bool:
@@ -193,10 +208,12 @@ def score(people: list[EmployeeMonth]) -> list[EmployeeMonth]:
             parts["rating"] = 20 * sum(marks) / len(marks)  # 5 -> 100, 4 -> 80, 3 -> 60
         # Volume only for someone who was in the work that month (asked for
         # reports, given tasks) — a new or idle-by-design person isn't a zero.
-        if median > 0 and (p.reports.asked or p.tasks.due or p.jobs_done):
+        if median > 0 and (p.reports.asked or p.tasks.due or p.jobs_done or p.leads.asked):
             parts["volume"] = min(100.0, 100 * p.volume / median)
-        if p.reports.asked:
-            parts["process"] = 100 * p.reports.on_time / p.reports.asked
+        # Process: daily reports in on time and 15:00 lead questions answered that day, together.
+        process_asked = p.reports.asked + p.leads.asked
+        if process_asked:
+            parts["process"] = 100 * (p.reports.on_time + p.leads.answered) / process_asked
         commitment = []
         if p.attendance and p.attendance.working:
             a = p.attendance
@@ -222,8 +239,13 @@ def build(
     end: date,
     attendance: dict[str, Attendance] | None = None,
     role_labels: dict[str, str] | None = None,
+    lead_rows: list[dict[str, Any]] | None = None,
 ) -> list[EmployeeMonth]:
     """One EmployeeMonth per employee from the month's rows (all keyed by ``employee_id``)."""
+    leads = {
+        str(r["employee_id"]): LeadScore(**{k: int(r.get(k) or 0) for k in ("asked", "answered", "closed", "done")})
+        for r in lead_rows or []
+    }
     by_id: dict[str, dict[str, list]] = {}
     for kind, rows in (("reports", report_rows), ("tasks", task_rows), ("goals", goal_rows), ("ratings", rating_rows)):
         for row in rows:
@@ -243,14 +265,24 @@ def build(
                 jobs_done=done_counts.get(eid, 0),
                 goals=[
                     Goal(title=g["title"], target=float(g["target"]),
-                         actual=None if g.get("actual") is None else float(g["actual"]))
+                         actual=_goal_actual(g, leads.get(eid)))
                     for g in rows.get("goals", [])
                 ],
                 ratings={k: int(rating[k]) for k in RATINGS if rating.get(k)},
                 attendance=(attendance or {}).get(eid),
+                leads=leads.get(eid, LeadScore()),
             )
         )
     return score(people)
+
+
+def _goal_actual(goal: dict[str, Any], leads: LeadScore | None) -> float | None:
+    """A goal's result: what was entered, or — for a lead goal with nothing entered — the leads done."""
+    if goal.get("actual") is not None:
+        return float(goal["actual"])
+    if leads and leads.done and any(word in goal["title"].lower() for word in _LEAD_GOAL):
+        return float(leads.done)
+    return None
 
 
 def _parts_line(p: EmployeeMonth) -> str:
@@ -299,9 +331,15 @@ def _detail(key: str, p: EmployeeMonth) -> str:
     if key == "tasks" and p.tasks.due:
         return f" — {p.tasks.on_time}/{p.tasks.due} ўз вақтида"
     if key == "volume":
-        return f" — {p.jobs_done} та иш, {p.reports.reported} та ҳисобот"
-    if key == "process" and p.reports.asked:
-        return f" — {p.reports.on_time}/{p.reports.asked} ҳисобот вақтида"
+        leads = f", {p.leads.closed} та лид ёпилди" if p.leads.closed else ""
+        return f" — {p.jobs_done} та иш, {p.reports.reported} та ҳисобот{leads}"
+    if key == "process" and (p.reports.asked or p.leads.asked):
+        parts = []
+        if p.reports.asked:
+            parts.append(f"{p.reports.on_time}/{p.reports.asked} ҳисобот вақтида")
+        if p.leads.asked:
+            parts.append(f"{p.leads.answered}/{p.leads.asked} лид саволига жавоб")
+        return " — " + ", ".join(parts)
     if key == "commitment" and p.attendance and p.attendance.working:
         a = p.attendance
         return f" — {a.working} иш куни, {a.late} кечикиш, {a.absent} келмаган"

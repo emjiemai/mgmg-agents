@@ -30,7 +30,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, cheer, kpi, kpi_flow, kpi_score, names, permission_flow, store, task_tracker
+from integrations.org_bot import admin, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_tracker
 from integrations.org_bot.tone import casual
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
@@ -218,6 +218,10 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_save_as_report(rest, callback, run_id)
     if prefix == "cheer":
         return await _handle_cheer_answer(rest, callback, run_id)
+    if prefix == "ld":
+        return await _handle_lead_status(rest, callback, run_id)
+    if prefix == "lc":
+        return await _handle_lead_choice(rest, callback, run_id)
 
     # KPI: goals, results, the Director's 1–5 ratings (kpi_flow.py).
     kpi_outcome = await kpi_flow.handle_callback(prefix, rest, callback, run_id)
@@ -520,6 +524,69 @@ async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid
             reply_markup={"inline_keyboard": []},
         )
     return "cheer_answered"
+
+
+async def _edit_lead_message(chat_id: int, message_id: int | None, text: str, keyboard: dict[str, Any], run_id: uuid.UUID) -> None:
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+            chat_id=str(chat_id), message_id=message_id, text=text, reply_markup=keyboard
+        )
+
+
+async def _ask_lead_question(telegram_user_id: int, checkin_id: str, question: str, run_id: uuid.UUID) -> None:
+    """Send the one follow-up after a tap and remember it, so the typed answer lands on this lead."""
+    ids = await _reply(telegram_user_id, run_id, casual(question, "🙂"))
+    await store.ask_lead_question(checkin_id, question, ids[-1] if ids else None)
+
+
+async def _handle_lead_status(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """A 15:00 lead tap: жараёнда → "next step?"; рад этилди / бажарилди → reason/result buttons."""
+    query_id = callback.get("id", "")
+    parsed = leads.parse_callback(rest)
+    clicker_id = (callback.get("from") or {}).get("id")
+    if parsed is None or parsed[1] not in leads.STATUSES or clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    checkin_id, letter = parsed
+    status = leads.STATUSES[letter][0]
+    row = await store.answer_lead_checkin(checkin_id, clicker_id, status)
+    if row is None:
+        await _answer(query_id, "бу лид бўйича жавобингиз олинган")
+        return "lead_already_answered"
+    await _answer(query_id, "раҳмат")
+    if status == "in_progress":
+        await _edit_lead_message(clicker_id, row["message_id"], leads.status_line(row, status),
+                                 {"inline_keyboard": []}, run_id)
+        await _ask_lead_question(clicker_id, checkin_id, leads.IN_PROGRESS_QUESTION, run_id)
+    else:
+        await _edit_lead_message(clicker_id, row["message_id"], leads.choice_question(row, status),
+                                 leads.choice_keyboard(checkin_id, status), run_id)
+    return f"lead_{status}"
+
+
+async def _handle_lead_choice(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The reason a lead was dismissed, or what came of it; "other" asks them to write it."""
+    query_id = callback.get("id", "")
+    parsed = leads.parse_callback(rest)
+    choice = leads.parse_choice(parsed[1]) if parsed else None
+    clicker_id = (callback.get("from") or {}).get("id")
+    if parsed is None or choice is None or clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    checkin_id = parsed[0]
+    status, index, outcome = choice
+    row = await store.choose_lead_outcome(checkin_id, clicker_id, outcome)
+    if row is None:
+        await _answer(query_id, "бу лид бўйича жавобингиз олинган")
+        return "lead_already_answered"
+    await _answer(query_id, "раҳмат, ёзиб қўйдим")
+    await _edit_lead_message(clicker_id, row["message_id"], leads.status_line(row, status, outcome),
+                             {"inline_keyboard": []}, run_id)
+    if leads.is_other(status, index):
+        await _ask_lead_question(clicker_id, checkin_id, leads.OTHER_QUESTION, run_id)
+    return "lead_outcome"
 
 
 async def _answer(query_id: str, text: str) -> None:
@@ -983,6 +1050,22 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
     if reply_to.get("message_id") and await store.cheer_delivery_for_message(telegram_user_id, reply_to["message_id"]):
         await _reply(telegram_user_id, run_id, cheer.text_reply(reply_to["message_id"]))
         return "cheer_reply"
+
+    # The answer to a lead's follow-up ("кейинги қадамингиз нима?"): a Reply
+    # to it, or the next message soon after — unless the 16:00 report ask
+    # came in between, in which case this is more likely the report.
+    question = None
+    if reply_to.get("message_id"):
+        question = await store.lead_question_by_message(telegram_user_id, reply_to["message_id"])
+    if question is None:
+        question = await store.pending_lead_question(telegram_user_id, leads.ANSWER_WINDOW_MINUTES)
+        if question is not None:
+            report = await store.pending_report(telegram_user_id, today_local())
+            if report is not None and report.get("asked_at") and report["asked_at"] > question["question_asked_at"]:
+                question = None
+    if question is not None and await store.save_lead_note(str(question["id"]), text) is not None:
+        await _reply(telegram_user_id, run_id, casual("раҳмат каттакон, ёзиб қўйдим", "😊"))
+        return "lead_note"
 
     outcome = await _try_daily_report(employee, text, reply_to.get("message_id"), run_id)
     if outcome is not None:
@@ -1665,6 +1748,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "ruxsatlar": permission_flow.registry_data,
         "pul_kalendari": _fetch_cash_calendar_data,
         "mijoz_fikrlari": _fetch_client_feedback_data,
+        "lidlar": _fetch_lead_handout_data,
         "davomat": _fetch_attendance_data,
     }
     if agent_slug == "all_systems":
@@ -1744,6 +1828,11 @@ async def _fetch_attendance_data() -> str:
     return attendance.describe(recs, today, now)
 
 
+async def _fetch_lead_handout_data() -> str:
+    """Leads handed to sales people in the last 30 days and where each stands."""
+    return leads.describe(await store.recent_lead_assignments(days=30))
+
+
 async def _fetch_client_feedback_data() -> str:
     """What clients wrote through the QR codes, last 60 days."""
     from integrations.org_bot import feedback
@@ -1795,13 +1884,7 @@ async def _fetch_task_tracker_data() -> str:
     return "\n".join(lines)
 
 
-LEAD_SHEET_COLUMNS = [
-    "company_name", "project_name", "industry", "location", "project_stage",
-    "estimated_opening", "signal", "signal_source_url", "signal_date",
-    "estimated_size", "contact_name", "contact_role", "contact_method",
-    "confidence", "priority", "recheck_date", "notes", "date_added",
-    "dedupe_key", "track",
-]
+LEAD_SHEET_COLUMNS = leads.SHEET_COLUMNS  # the one list, shared with the lead hand-out
 
 
 async def _fetch_lead_agent_data() -> str:
@@ -1809,7 +1892,7 @@ async def _fetch_lead_agent_data() -> str:
     the old 15-row/4-column preview an unnecessary limitation."""
     try:
         async with SheetsClient(agent=AGENT) as sheets:
-            rows = await sheets.get_values("Sheet1!A:T")
+            rows = await sheets.get_values(leads.SHEET_RANGE)
     except SheetsError as exc:
         return f"(could not read the leads sheet: {exc})"
 

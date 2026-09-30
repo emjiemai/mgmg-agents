@@ -308,6 +308,12 @@ to justify repeating a past conclusion.
 - Questions about CLIENT COMPLAINTS left through the QR code, about
   Londry or Garmin ("mijozlar nima deyapti", "shikoyatlar bormi", "Garmin
   bo'yicha shikoyat", "жалобы клиентов") — go to mijoz_fikrlari.
+- Questions about the LEADS GIVEN TO SALES PEOPLE and how they are going — who
+  got which lead, what is in progress, what was dismissed and why, what came
+  of them ("lidlar qanday", "Alisher lidi nima bo'ldi", "qaysi lidlar rad
+  etildi", "как идут лиды у продажников") — go to lidlar. Questions about the
+  leads the Lead Agent FOUND (the list itself, new tenders) stay with
+  lead_agent.
 - Questions about ATTENDANCE — who came to WORK late, who didn't come, who
   is on sick leave or vacation, when someone arrived or left ("bugun kim
   kechikdi", "ishga kim kelmadi", "Alisher soat nechada keldi", "davomat",

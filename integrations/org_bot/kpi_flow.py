@@ -116,6 +116,7 @@ async def load_month(month: date, today: date | None = None, with_attendance: bo
         end,
         attendance=attendance,
         role_labels=ROLE_LABELS,
+        lead_rows=rows.get("leads"),
     )
 
 

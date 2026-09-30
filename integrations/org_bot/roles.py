@@ -98,6 +98,12 @@ AGENTS: list[Agent] = [
         "their phone if they gave one, or anonymous), last 60 days",
     ),
     Agent(
+        "lidlar",
+        "Лидлар (B2B сотув)",
+        "the leads handed to B2B sales people in the last 30 days (one each morning): who has which, "
+        "which are in progress, dismissed (with the reason) or done (with the result), and their latest note",
+    ),
+    Agent(
         "davomat",
         "Давомат (Verifix)",
         "attendance from the Verifix face-ID terminals: who came to work late and by how many minutes, "

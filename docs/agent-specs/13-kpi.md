@@ -24,8 +24,8 @@ checked:
 | 🎯 Натижа (30%) | OKR, goals, results, sales deals | monthly goals with a number, set by the Director (`/maqsad`); actual ÷ target, 100% at most |
 | ✅ Топшириқ (20%) | Task, RACI | tasks done by their deadline ÷ tasks due — scored for the assignee (**R**esponsible); the Director who gave it is **A**ccountable |
 | ⭐ Раҳбар баҳоси (20%) | Performance, communication, interaction, qualifications | the Director's 1–5 marks once a month; the average × 20 (4 → 80) |
-| 📦 Иш ҳажми (10%) | quantity of work, jobs done | tasks finished + daily reports sent, against the team's median (at or above the median = 100) |
-| 🔄 Жараён (10%) | process done | daily reports sent before 18:00 ÷ asked |
+| 📦 Иш ҳажми (10%) | quantity of work, jobs done | tasks finished + daily reports sent + leads closed (dismissed or done, `14-lead-handout.md`), against the team's median (at or above the median = 100) |
+| 🔄 Жараён (10%) | process done | (daily reports sent before 18:00 + 15:00 lead questions answered that day) ÷ (reports asked + lead questions asked) |
 | 💪 Садоқат (10%) | commitment | attendance from Verifix ((working − absent − ½ late) ÷ working) and reports sent ÷ asked, averaged |
 
 **KPI** is the weighted total: 🟢 80+, 🟡 60–79, 🔴 below 60.

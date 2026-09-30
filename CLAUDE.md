@@ -24,12 +24,18 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **mgmg-api** (Starter plan, always on): Admin Bot (admin) + OPS Manager Bot
   (employees + Director) webhooks, SAP gateway push receiver, `/db` read-only
   viewer, `/f` client complaints page (Uzbek Cyrillic, Russian, English).
-- **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, receivables, task
-  tracker, data quality Mon, cash calendar Mon, monthly KPI 1st);
-  16:00 daily-reports ask; 17:00 reminder + Friday scorecard; team cheer
-  10:00 / 14:00 / 17:35 (`agents/team-cheer`, answers by button only, never
-  shown to the Director). Daily; weekends only for employees marked as
-  weekend workers.
+- **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, Lead Agent, lead
+  hand-out, receivables, task tracker, data quality Mon, cash calendar Mon,
+  monthly KPI 1st); 16:00 daily-reports ask; 17:00 reminder + Friday
+  scorecard; daytime job `mgmg-team-cheer` (`run_morning_agents.py --daytime`)
+  = team cheer 10:00 / 14:00 / 17:35 (answers by button only, never shown to
+  the Director) + lead check-in 15:00. Daily; weekends only for employees
+  marked as weekend workers.
+- **Leads to B2B sales** (2026-09-30, `docs/agent-specs/14-lead-handout.md`):
+  08:00 one lead per B2B Sotuv person (new first, then best unworked older;
+  all tracks), 15:00 жараёнда / рад этилди / бажарилди + one question; open
+  leads re-asked daily and pile up by design; KPI counts them inside the
+  existing parts.
 - KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`
   `/kpi` `/baho` (Director), `/kpi` `/natija` (employees); ratings on the 1st, final by the 5th.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).

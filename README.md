@@ -24,6 +24,7 @@ Garmin watch retail.
 | — | Team cheer — 10:00 encouragement, 14:00 joke, 17:35 thanks | `docs/agent-specs/12-team-cheer.md` |
 | — | OPS Manager Bot: routes the Director's tasks (to a department or one named person), answers questions from data | `docs/agent-specs/05-org-bot.md` |
 | F2 | Lead Agent — tender/lead search, 08:00 daily (resumed 2026-09-30, `LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
+| F2+ | Lead hand-out — 08:00 one lead per B2B sales person, 15:00 "how is it going?" | `docs/agent-specs/14-lead-handout.md` |
 
 Every message the bots send is Uzbek Cyrillic. Nothing reaches the Director
 from an employee without the employee confirming it. Every employee gives
@@ -131,6 +132,7 @@ agents/                      scheduled agents (one process per run, then exit)
   task-tracker/              reminders, overdue notices, Friday scorecard (A3)
   team-cheer/                10:00 / 14:00 / 17:35 friendly messages
   lead-agent/                B2B lead and tender sourcing (F2)
+  lead-handout/              08:00 a lead to each B2B sales person, 15:00 check-in
 integrations/
   api/                       FastAPI app: webhooks + /db viewer
   common/                    config, logging, DB + audit, HTTP retry, money, time, dates

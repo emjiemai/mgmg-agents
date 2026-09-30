@@ -826,3 +826,71 @@ CREATE TABLE IF NOT EXISTS kpi_periods (
     ratings_requested_at   TIMESTAMPTZ,
     final_sent_at          TIMESTAMPTZ
 );
+
+-- ---------------------------------------------------------------------------
+-- leads / lead_assignments / lead_checkins — the Lead Agent's leads handed
+-- to B2B sales (agents/lead-handout, integrations/org_bot/leads.py).
+-- 08:00: each B2B sales person at work gets one lead (today's new ones
+-- first, then the best unworked older ones). 15:00: "how is it going?" with
+-- жараёнда / рад этилди / бажарилди for every lead still open; an open lead
+-- is asked again every day until it is closed.
+-- ``leads`` mirrors the Google leads sheet (imported every morning, keyed by
+-- the sheet's own dedupe_key); ``brief`` is the Uzbek Cyrillic summary the
+-- card shows, written once.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS leads (
+    id                 BIGSERIAL    PRIMARY KEY,
+    dedupe_key         TEXT         NOT NULL UNIQUE,
+    company_name       TEXT,
+    project_name       TEXT,
+    industry           TEXT,
+    location           TEXT,
+    project_stage      TEXT,
+    signal             TEXT,
+    signal_source_url  TEXT,
+    contact_name       TEXT,
+    contact_role       TEXT,
+    contact_method     TEXT,
+    priority           TEXT,
+    confidence         NUMERIC,
+    track              TEXT,
+    date_added         DATE,
+    brief              TEXT,
+    imported_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- One lead goes to one person, once; one new lead per person per day.
+CREATE TABLE IF NOT EXISTS lead_assignments (
+    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    lead_id       BIGINT       NOT NULL UNIQUE REFERENCES leads (id),
+    employee_id   UUID         NOT NULL REFERENCES employees (id),
+    assigned_on   DATE         NOT NULL,
+    status        TEXT         NOT NULL DEFAULT 'new'
+                               CHECK (status IN ('new', 'in_progress', 'dismissed', 'done')),
+    outcome       TEXT,        -- the reason (dismissed) or the result (done)
+    closed_on     DATE,
+    message_id    BIGINT,      -- the 08:00 card
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (employee_id, assigned_on)
+);
+CREATE INDEX IF NOT EXISTS idx_lead_assignments_open ON lead_assignments (employee_id) WHERE status IN ('new', 'in_progress');
+
+-- One 15:00 question per open lead per day; the answer and the one follow-up.
+CREATE TABLE IF NOT EXISTS lead_checkins (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    assignment_id        UUID         NOT NULL REFERENCES lead_assignments (id) ON DELETE CASCADE,
+    checkin_day          DATE         NOT NULL,
+    telegram_user_id     BIGINT       NOT NULL,
+    message_id           BIGINT,
+    status               TEXT         CHECK (status IN ('in_progress', 'dismissed', 'done')),
+    answered_at          TIMESTAMPTZ,
+    question             TEXT,        -- the follow-up asked after the tap, if any
+    question_message_id  BIGINT,
+    question_asked_at    TIMESTAMPTZ,
+    note                 TEXT,        -- the typed answer to it
+    noted_at             TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (assignment_id, checkin_day)
+);
+CREATE INDEX IF NOT EXISTS idx_lead_checkins_question ON lead_checkins (telegram_user_id, question_asked_at DESC)
+    WHERE note IS NULL AND question IS NOT NULL;
