@@ -12,9 +12,11 @@ reminding so the Director doesn't have to.
       * The Director gets the week's scorecard: tasks done on time (A3's И),
         daily reports sent and on time (A1's И), and written permissions.
         Sent only on Fridays, so the evening job can run it every weekday.
-  --monthly (08:00 on the 1st, E1)
-      * The Director and HR get last month per person: report discipline and
-        tasks on time, worst first, marked by the plan's thresholds.
+  --monthly (08:00; acts on the 1st and the 5th — the KPI, kpi_flow.py)
+      * 1st: the Director gets last month's KPI table so far and a 1–5
+        rating card per person; everyone with a goal is asked for its result.
+      * The final table goes to the Director and HR once every card is rated,
+        or on the 5th with whatever is in by then.
 
 Deadlines come only from the Director (stated in the task, or picked with one
 tap) — see integrations/org_bot/task_tracker.py. A task without a deadline is
@@ -46,7 +48,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
-from integrations.org_bot import names, store, task_tracker
+from integrations.org_bot import kpi_flow, kpi_score, names, store, task_tracker
 from integrations.org_bot.roles import DIRECTOR_ROLE
 from integrations.telegram.bot import TelegramBot, TelegramError
 
@@ -56,7 +58,7 @@ log = setup_logging(AGENT)
 REQUIRED_SETTINGS = {"ops_manager_bot_telegram_bot_token"}
 
 FRIDAY = 4
-HR_ROLE = "hr"
+FINAL_DAY = 5  # the KPI's final table goes out by the 5th even if some cards aren't rated
 
 
 def _bot(run_id: uuid.UUID) -> TelegramBot:
@@ -154,38 +156,23 @@ async def weekly(run_id: uuid.UUID, force: bool = False) -> None:
 
 
 async def monthly(run_id: uuid.UUID, force: bool = False) -> None:
-    """Send last month's per-person KPI (E1) to the Director(s) and HR."""
+    """Last month's KPI: open it on the 1st (ratings, results), close it by the 5th."""
     today = today_local()
-    if today.day != 1 and not force:
-        log.info("Not the 1st — no monthly KPI")
-        return
+    month = kpi_score.previous_month(kpi_score.month_start(today))
     if not settings.monthly_kpi_enabled and not settings.dry_run:
         log.info("Monthly KPI is paused (MONTHLY_KPI_ENABLED is not true)")
         return
-
-    end = today.replace(day=1) - timedelta(days=1)  # last day of last month
-    start = end.replace(day=1)
-    kpis = task_tracker.employee_kpis(
-        await store.reports_between(start, end) if settings.daily_reports_enabled else [],
-        await store.tasks_due_between(start, end),
-        start,
-        end,
-    )
-    text = task_tracker.monthly_text(start, kpis)
-
-    recipients = {
-        e["telegram_user_id"]: e for role in (DIRECTOR_ROLE, HR_ROLE) for e in await store.active_employees_by_role(role)
-    }
     if settings.dry_run:
-        log.info("[dry-run] monthly KPI for {} person(s):\n{}", len(recipients), text)
+        people = await kpi_flow.load_month(month, today)
+        log.info("[dry-run] KPI {}:\n{}", month, kpi_score.table_text(month, people, final=False))
         return
-    async with _bot(run_id) as bot:
-        for telegram_user_id in recipients:
-            try:
-                await bot.send_message(text, chat_id=str(telegram_user_id))
-            except TelegramError as exc:
-                log.error("Could not send the monthly KPI to {}: {}", telegram_user_id, exc)
-    log.info("Monthly KPI sent to {} person(s)", len(recipients))
+    if today.day == 1 or force:
+        await kpi_flow.open_month(month, run_id)
+    elif today.day == FINAL_DAY:
+        if await kpi_flow.send_final(month, run_id):
+            log.info("KPI {} closed on day {} (not every card was rated)", month, FINAL_DAY)
+    else:
+        log.info("Not the 1st or the {}th — no KPI step today", FINAL_DAY)
 
 
 async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
@@ -226,7 +213,7 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--morning", action="store_true", help="08:00 — reminders and overdue notices")
     group.add_argument("--weekly", action="store_true", help="Friday 17:00 — the Director's scorecard")
-    group.add_argument("--monthly", action="store_true", help="08:00 on the 1st — last month's KPI (E1)")
+    group.add_argument("--monthly", action="store_true", help="08:00 — last month's KPI (acts on the 1st and the 5th)")
     parser.add_argument("--force", action="store_true", help="send the weekly scorecard on any weekday")
     parser.add_argument("--dry-run", action="store_true", help="send nothing")
     args = parser.parse_args()

@@ -775,3 +775,49 @@ CREATE TABLE IF NOT EXISTS cheer_deliveries (
     UNIQUE (cheer_id, telegram_user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cheer_deliveries_message ON cheer_deliveries (telegram_user_id, message_id);
+
+-- ---------------------------------------------------------------------------
+-- KPI (Director's criteria, 2026-09-30) — integrations/org_bot/kpi_score.py
+-- kpi_goals: monthly goals with a number (OKR / goals / results / sales
+--   deals). A 'draft' row is the Director mid-way through /maqsad; the
+--   awaiting_* pair is someone about to type an actual result.
+-- kpi_ratings: the Director's 1–5 marks (performance, communication,
+--   interaction, qualifications), one row per person per month.
+-- kpi_periods: which months' rating requests / final tables went out, so a
+--   retried cron never sends them twice.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS kpi_goals (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id          UUID         NOT NULL REFERENCES employees (id),
+    month                DATE         NOT NULL,                -- first day of the month
+    title                TEXT,                                 -- NULL while a draft
+    target               NUMERIC,
+    actual               NUMERIC,
+    actual_by            TEXT,
+    actual_at            TIMESTAMPTZ,
+    status               TEXT         NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'cancelled')),
+    set_by_telegram_id   BIGINT       NOT NULL,
+    awaiting_actual_by   BIGINT,
+    awaiting_since       TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_kpi_goals_month ON kpi_goals (month, employee_id) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS kpi_ratings (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id     UUID         NOT NULL REFERENCES employees (id),
+    month           DATE         NOT NULL,
+    performance     SMALLINT     CHECK (performance BETWEEN 1 AND 5),
+    communication   SMALLINT     CHECK (communication BETWEEN 1 AND 5),
+    interaction     SMALLINT     CHECK (interaction BETWEEN 1 AND 5),
+    qualifications  SMALLINT     CHECK (qualifications BETWEEN 1 AND 5),
+    rated_by        BIGINT,
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (employee_id, month)
+);
+
+CREATE TABLE IF NOT EXISTS kpi_periods (
+    month                  DATE         PRIMARY KEY,
+    ratings_requested_at   TIMESTAMPTZ,
+    final_sent_at          TIMESTAMPTZ
+);

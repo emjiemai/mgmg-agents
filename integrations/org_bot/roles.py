@@ -66,7 +66,9 @@ AGENTS: list[Agent] = [
         "xodimlar_kpi",
         "Ходимлар KPI",
         "the bot's OWN daily reports (asked at 16:00, answered in Telegram): who reported and who "
-        "stayed silent, and each employee's written report — per employee, last 14 days",
+        "stayed silent, and each employee's written report — per employee, last 14 days; plus each "
+        "employee's KPI score (0-100) for the month and its parts: goals/OKR results, tasks on time, the "
+        "Director's rating, volume of work, process, commitment",
     ),
     Agent(
         "ruxsatlar",

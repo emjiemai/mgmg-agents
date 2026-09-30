@@ -1026,13 +1026,11 @@ def test_db_viewer() -> None:
 
 
 def test_plan_agents() -> None:
-    """B2 cash calendar, B4 data quality, E1 monthly KPI."""
-    print("B2 / B4 / E1")
+    """B2 cash calendar, B4 data quality."""
+    print("B2 / B4")
     from datetime import datetime, timezone
 
     from integrations.common.agent_loader import load_agent
-    from integrations.org_bot import task_tracker as tt
-
     # ---- B2: 30-day cash calendar
     cc = load_agent("cash-calendar")
     today = date(2026, 9, 28)
@@ -1085,25 +1083,6 @@ def test_plan_agents() -> None:
     clean = dq.Inputs(today=today, feeds={t: {"at": datetime(2026, 9, 28, 2, tzinfo=timezone.utc), "rows": 1}
                                           for t in dq.FEED_LABELS})
     check_true("clean data says so", dq.render(clean).count("✅ тоза") == 2)
-
-    # ---- E1: monthly KPI
-    def at(d: int, h: int) -> datetime:
-        return datetime(2026, 9, d, h - 5, tzinfo=timezone.utc)
-
-    reports = [{"display_name": "Алишер", "status": "submitted", "report_date": date(2026, 9, d), "submitted_at": at(d, 17)}
-               for d in range(1, 11)]
-    reports += [{"display_name": "Дилноза", "status": "asked" if d % 2 else "submitted", "report_date": date(2026, 9, d),
-                 "submitted_at": at(d, 17)} for d in range(1, 11)]
-    tasks = [{"display_name": "Бобур", "task_summary": "x", "status": "done", "due_date": date(2026, 9, 10),
-              "completed_at": at(12, 10)}]
-    kpis = tt.employee_kpis(reports, tasks, date(2026, 9, 1), date(2026, 9, 30))
-    check("worst first: late tasks, then half the reports, then all good",
-          [(k.name, k.mark) for k in kpis], [("Бобур", "🔴"), ("Дилноза", "🟡"), ("Алишер", "🟢")])
-    monthly = tt.monthly_text(date(2026, 9, 1), kpis)
-    check_true("month named in Uzbek", "сентябр 2026" in monthly)
-    check_true("per-person line", "Дилноза — ҳисобот 5/10 (5) · топшириқ —" in monthly)
-    check_true("the KPI message is Uzbek Cyrillic", latin_words(monthly) == [])
-    check_true("an empty month says so", "на ҳисобот сўралди" in tt.monthly_text(date(2026, 9, 1), []))
 
 
 def test_employee_admin() -> None:
@@ -2048,6 +2027,202 @@ def test_verifix() -> None:
             setattr(obj, name, value)
 
 
+def test_kpi() -> None:
+    """The Director's KPI criteria: scoring, the table and card, goals, results, ratings."""
+    print("KPI (Director's criteria)")
+    import asyncio
+    import uuid
+    from datetime import datetime, timezone
+
+    from integrations.org_bot import answer_check, kpi_flow, kpi_score as ks, store
+
+    # ---- small helpers
+    check("goal number", ks.parse_number("20 та янги шартнома"), 20.0)
+    check("thousands with spaces", ks.parse_number("сотув 1 500 000 сўм"), 1500000.0)
+    check("decimal comma", ks.parse_number("12,5 тонна"), 12.5)
+    check("a result must be only a number", (ks.only_number("17"), ks.only_number("17 та")), (17.0, None))
+    check("goals set before the 25th are for this month", ks.goal_month(date(2026, 9, 24)), date(2026, 9, 1))
+    check("from the 25th, for next month", ks.goal_month(date(2026, 12, 25)), date(2027, 1, 1))
+    check("/kpi shows last month for the first 5 days", ks.score_period(date(2026, 10, 3)), date(2026, 9, 1))
+    check("...then this month", ks.score_period(date(2026, 10, 6)), date(2026, 10, 1))
+    check("month end (leap year)", ks.month_end(date(2028, 2, 1)), date(2028, 2, 29))
+    check("previous month over the year", ks.previous_month(date(2027, 1, 1)), date(2026, 12, 1))
+
+    # ---- scoring
+    def at(d: int, h: int) -> datetime:
+        return datetime(2026, 9, d, h - 5, tzinfo=timezone.utc)
+
+    employees = [
+        {"id": "a", "full_name": "Алишер Каримов", "display_name": "ak", "role": "b2b_sotuv"},
+        {"id": "b", "full_name": "Дилноза Раҳимова", "display_name": "dr", "role": "hr"},
+        {"id": "c", "full_name": "Бобур Алиев", "display_name": "ba", "role": "ombor"},
+    ]
+    reports = [{"employee_id": "a", "display_name": "ak", "status": "submitted", "report_date": date(2026, 9, d),
+                "submitted_at": at(d, 17)} for d in range(1, 11)]
+    reports += [{"employee_id": "b", "display_name": "dr", "status": "asked" if d % 2 else "submitted",
+                 "report_date": date(2026, 9, d), "submitted_at": at(d, 17)} for d in range(1, 11)]
+    tasks = [{"employee_id": "a", "display_name": "ak", "status": "done", "due_date": date(2026, 9, d),
+              "completed_at": at(d, 12)} for d in (5, 9)]
+    goals = [{"employee_id": "a", "title": "20 та шартнома", "target": 20, "actual": 15}]
+    ratings = [{"employee_id": "a", "performance": 4, "communication": 4, "interaction": 4, "qualifications": 4}]
+    people = ks.build(employees, reports, tasks, {"a": 5}, goals, ratings, date(2026, 9, 1), date(2026, 9, 30),
+                      role_labels={"b2b_sotuv": "B2B сотув", "hr": "HR (кадрлар)", "ombor": "Омбор"})
+    a, b, c = people
+    check("best first; nothing measured last", [p.name for p in people], ["Алишер Каримов", "Дилноза Раҳимова", "Бобур Алиев"])
+    check("goals: 15 of 20", round(a.parts["results"]), 75)
+    check("tasks on time", a.parts["tasks"], 100.0)
+    check("rating 4 of 5 = 80", a.parts["rating"], 80.0)
+    check("volume against the team median (15 vs 10)", (a.parts["volume"], b.parts["volume"]), (100.0, 50.0))
+    check("weighted total", round(a.total, 1), 88.5)
+    check_true("parts with no data are left out, not zero", b.parts["results"] is None and round(b.total) == 50)
+    check("nothing measured: no score", (c.total, ks.grade(c.total)), (None, "⚪"))
+    check("grades", [ks.grade(x) for x in (88.5, 70, 50)], ["🟢", "🟡", "🔴"])
+    att = ks.score([ks.EmployeeMonth("x", "Х", attendance=ks.Attendance(working=20, late=2, absent=1))])[0]
+    check("commitment from attendance: (20 − 1 − ½·2) / 20", att.parts["commitment"], 90.0)
+
+    table = ks.table_text(date(2026, 9, 1), people, final=True)
+    check_true("table: place, grade, name, score",
+               "1. 🟢 <b>Алишер Каримов</b> (B2B сотув) — <b>88</b>" in table and "Бобур" not in table)
+    check_true("table is Uzbek Cyrillic", latin_words(table, allow={"OKR", "B2B"}) == [])
+    card = ks.card_text(date(2026, 9, 1), a)
+    check_true("card shows the goal's progress", "20 та шартнома — 15 / 20 (75%)" in card)
+    check_true("card is Uzbek Cyrillic", latin_words(card, allow={"OKR"}) == [])
+    rid = str(uuid.uuid4())
+    keyboard = ks.rating_keyboard(rid, {"performance": 4})
+    buttons = [btn for row in keyboard["inline_keyboard"] for btn in row]
+    check("four criteria × 1–5", [len(r) for r in keyboard["inline_keyboard"]], [5, 5, 5, 5])
+    check_true("every rating button fits Telegram's 64 bytes", all(len(x["callback_data"].encode()) <= 64 for x in buttons))
+    check_true("the chosen mark is shown", buttons[3]["text"] == "•4•")
+    check("names match in any order", ks.match_attendance({"a": "Алишер Каримов"}, {"v1": "Каримов Алишер", "v2": "Иванов Иван"}),
+          {"a": "v1"})
+    check("two people with one name: no guess", ks.match_attendance({"a": "Алишер Каримов"},
+                                                                     {"v1": "Каримов Алишер", "v2": "Алишер Каримов"}), {})
+
+    # ---- the conversation, with Telegram and the database faked
+    director = {"id": "d", "telegram_user_id": 1, "role": "operatsion_direktor", "status": "active",
+                "full_name": "Директор", "display_name": "dir"}
+    worker = {"id": "w", "telegram_user_id": 2, "role": "b2b_sotuv", "status": "active",
+              "full_name": "Алишер Каримов", "display_name": "ak"}
+    people_by_tid = {1: director, 2: worker}
+    sent: list[tuple[int, str, object]] = []
+    goals_db: dict[str, dict] = {}
+    ratings_db: dict[str, dict] = {}
+    finals: list = []
+
+    async def fake_send(chat_id, text, run_id, keyboard=None):
+        sent.append((chat_id, text, keyboard))
+        return [1]
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    def goal_view(g):
+        return {**g, "name": worker["full_name"], "employee_telegram_user_id": 2}
+
+    async def start_goal_draft(employee_id, month, director_tid):
+        goals_db["g1"] = {"id": "g1", "employee_id": employee_id, "month": month, "title": None, "target": None,
+                          "actual": None, "status": "draft", "awaiting_actual_by": None}
+        return goals_db["g1"]
+
+    async def goal_draft(tid):
+        g = goals_db.get("g1")
+        return goal_view(g) if g and g["status"] == "draft" and tid == 1 else None
+
+    async def activate_goal(goal_id, title, target):
+        goals_db[goal_id].update(title=title, target=target, status="active")
+        return goal_view(goals_db[goal_id])
+
+    async def get_goal(goal_id):
+        return goal_view(goals_db[goal_id]) if goal_id in goals_db else None
+
+    async def await_goal_actual(goal_id, tid):
+        goals_db[goal_id]["awaiting_actual_by"] = tid
+
+    async def goal_awaiting_actual(tid):
+        g = next((g for g in goals_db.values() if g["awaiting_actual_by"] == tid), None)
+        return goal_view(g) if g else None
+
+    async def set_goal_actual(goal_id, actual, by):
+        goals_db[goal_id].update(actual=actual, awaiting_actual_by=None)
+        return goal_view(goals_db[goal_id])
+
+    async def set_rating(rating_id, criterion, value, by):
+        ratings_db[rating_id][criterion] = value
+        return ratings_db[rating_id]
+
+    async def ratings_for_month(month):
+        return list(ratings_db.values())
+
+    async def by_tid(tid):
+        return people_by_tid.get(tid)
+
+    async def by_id(eid):
+        return {"d": director, "w": worker}.get(eid)
+
+    async def good_goal(field, answer, run_id, *, agent, context):
+        return (True, None, "20 та янги шартнома") if any(ch.isdigit() for ch in answer) else (False, "Рақам қани?", answer)
+
+    async def record_final(month, run_id):
+        finals.append(month)
+        return True
+
+    patches = [
+        (kpi_flow, "_send", fake_send), (kpi_flow, "_edit", nothing), (kpi_flow, "_answer", nothing),
+        (kpi_flow, "send_final", record_final), (answer_check, "check_answer", good_goal),
+        (store, "start_goal_draft", start_goal_draft), (store, "goal_draft", goal_draft),
+        (store, "activate_goal", activate_goal), (store, "get_goal", get_goal),
+        (store, "await_goal_actual", await_goal_actual), (store, "goal_awaiting_actual", goal_awaiting_actual),
+        (store, "set_goal_actual", set_goal_actual), (store, "set_rating", set_rating),
+        (store, "ratings_for_month", ratings_for_month), (store, "get_employee_by_telegram_id", by_tid),
+        (store, "get_employee", by_id),
+    ]
+    async def list_active():
+        return [director, worker]
+
+    patches.append((store, "list_active_employees", list_active))
+    saved = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
+    for obj, name, value in patches:
+        setattr(obj, name, value)
+
+    def say(who, text):
+        return asyncio.run(kpi_flow.handle_message(who, {"text": text}, uuid.uuid4()))
+
+    def tap(tid, data):
+        prefix, rest = data.split(":", 1)
+        callback = {"id": "q", "data": data, "from": {"id": tid}, "message": {"message_id": 5, "chat": {"id": tid}}}
+        return asyncio.run(kpi_flow.handle_callback(prefix, rest, callback, uuid.uuid4()))
+
+    try:
+        check("an employee can't set goals", say(worker, "/maqsad"), None)
+        check("/maqsad: pick a person", say(director, "/maqsad"), "kpi_pick_employee")
+        check_true("...with a button per employee (not the Director)",
+                   [b["callback_data"] for row in sent[-1][2]["inline_keyboard"] for b in row] == ["kg:w"])
+        check("an employee can't press the Director's buttons", tap(2, "kg:w"), "kpi_unauthorized")
+        check("tap the person", tap(1, "kg:w"), "kpi_goal_started")
+        check("a goal with no number is asked again", say(director, "yaxshi ishlasin"), "kpi_goal_reasked")
+        check("a goal with a number is set", say(director, "20 ta yangi shartnoma"), "kpi_goal_set")
+        check_true("...the employee is told", any(c == 2 and "20 та янги шартнома" in t for c, t, _ in sent))
+        check("other messages then go on as usual", say(director, "bugun kim kechikdi?"), None)
+        check("the employee opens the result entry", tap(2, "ka:g1"), "kpi_actual_asked")
+        check("words are not a result", say(worker, "17 ta"), "kpi_actual_reasked")
+        check("a number is", say(worker, "17"), "kpi_actual_saved")
+        check_true("...with the share of the goal", "17 / 20 (85%)" in sent[-1][1])
+        check("then reports go on as usual", say(worker, "Бугун 3 та мижоз билан учрашдим"), None)
+
+        rid = str(uuid.uuid4())
+        ratings_db[rid] = {"id": rid, "employee_id": "w", "month": date(2026, 9, 1)}
+        check("an employee can't rate", tap(2, f"kr:{rid}:p5"), "kpi_unauthorized")
+        for letter in "pci":
+            tap(1, f"kr:{rid}:{letter}4")
+        check("no final table before every card is complete", finals, [])
+        check("the last mark", tap(1, f"kr:{rid}:q5"), "kpi_rated")
+        check("...closes the month", finals, [date(2026, 9, 1)])
+        check("a bad mark is refused", tap(1, f"kr:{rid}:p9"), "kpi_bad_rating")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -2071,6 +2246,7 @@ def main() -> int:
         test_team_cheer,
         test_verifix,
         test_employee_admin,
+        test_kpi,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

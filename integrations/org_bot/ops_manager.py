@@ -30,7 +30,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, cheer, kpi, names, permission_flow, store, task_tracker
+from integrations.org_bot import admin, cheer, kpi, kpi_flow, kpi_score, names, permission_flow, store, task_tracker
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -217,6 +217,11 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_save_as_report(rest, callback, run_id)
     if prefix == "cheer":
         return await _handle_cheer_answer(rest, callback, run_id)
+
+    # KPI: goals, results, the Director's 1–5 ratings (kpi_flow.py).
+    kpi_outcome = await kpi_flow.handle_callback(prefix, rest, callback, run_id)
+    if kpi_outcome is not None:
+        return kpi_outcome
 
     # Written permission buttons (send / cancel / the four SOP decisions).
     permission_outcome = await permission_flow.handle_callback(prefix, rest, callback, run_id)
@@ -553,6 +558,12 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     permission_outcome = await permission_flow.handle_message(employee, message, run_id)
     if permission_outcome is not None:
         return permission_outcome
+
+    # KPI commands and answers (/maqsad, /natija, /kpi, /baho, a goal's text,
+    # a result's number) — before reports and task routing read them.
+    kpi_outcome = await kpi_flow.handle_message(employee, message, run_id)
+    if kpi_outcome is not None:
+        return kpi_outcome
 
     if employee["role"] != DIRECTOR_ROLE:
         return await _handle_employee_message(employee, message, run_id)
@@ -1704,21 +1715,8 @@ async def _fetch_kpi_agent_data() -> str:
             parts.append(numbers)
         lines.append(" | ".join(parts))
 
-    # E1: each person's last 30 days, by the same rules as the monthly KPI.
-    start = today - timedelta(days=30)
-    kpis = task_tracker.employee_kpis(
-        await store.reports_between(start, today), await store.tasks_due_between(start, today), start, today
-    )
-    if kpis:
-        lines.append("PER-EMPLOYEE KPI, last 30 days (reports sent/asked, on time before 18:00; tasks on time/due):")
-        for person in kpis:
-            reports = (
-                f"reports {person.reports.reported}/{person.reports.asked} ({person.reports.on_time} on time)"
-                if person.reports.asked
-                else "reports: not asked"
-            )
-            tasks = f"tasks {person.tasks.on_time}/{person.tasks.due} on time" if person.tasks.due else "tasks: none due"
-            lines.append(f"- {person.mark} {person.name}: {reports}; {tasks}")
+    # The KPI score (the Director's criteria, kpi_score.py) for the period /kpi shows.
+    lines.append(await kpi_flow.describe(kpi_score.score_period(today)))
     return "\n".join(lines)
 
 

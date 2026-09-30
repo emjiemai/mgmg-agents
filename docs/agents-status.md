@@ -17,7 +17,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-28.
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | on request ("ruxsat") | requester, approvers | `PERMISSIONS_ENABLED`, limits in `PERMISSION_APPROVAL_TIERS` (**not set yet**) |
 | B2 | 30-day cash calendar | Monday 08:00 · any time: "pul kalendari" | Director, accountants | `CASH_CALENDAR_ENABLED` |
 | B4 | Data quality check | Monday 08:00 · `/sifat` | admin (IT) | `DATA_QUALITY_ENABLED` |
-| E1 | Monthly KPI per employee | 1st of the month 08:00 · any time in KPI answers | Director, HR | `MONTHLY_KPI_ENABLED` |
+| E1 | KPI per employee — the Director's 15 criteria as 6 parts (goals/OKR, tasks, rating, volume, process, commitment) | `/maqsad` `/kpi` `/natija` `/baho` · 1st: ratings · final by the 5th | Director, HR, each employee (own card) | `MONTHLY_KPI_ENABLED` |
 | — | Receivables alert (overdue debt by age) | 08:00 daily | Director | — |
 | — | Q&A — the Director asks about reports, tasks, KPI, permissions, debt, cash plan, SAP data | on question | Director | — |
 | — | Tasks to a department or to one named person, relays with confirmation | on message | employees, Director | — |

@@ -30,6 +30,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   10:00 / 14:00 / 17:35 (`agents/team-cheer`, answers by button only, never
   shown to the Director). Daily; weekends only for employees marked as
   weekend workers.
+- KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`
+  `/kpi` `/baho` (Director), `/kpi` `/natija` (employees); ratings on the 1st, final by the 5th.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
 - SAP data arrives only by push (row-capped → "камида" lower bounds).
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).

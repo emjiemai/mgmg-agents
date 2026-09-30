@@ -18,6 +18,7 @@ Garmin watch retail.
 | A2 | Morning brief — five numbers + who didn't report | `docs/agent-specs/01-ceo-daily-brief.md` |
 | A3 | Task tracker: deadlines, reminders, overdue notices, Friday scorecard | `docs/agent-specs/08-task-tracker.md` |
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | `docs/agent-specs/07-permissions.md` |
+| E1 | KPI — the Director's 15 criteria as six parts: goals/OKR, tasks, rating, volume, process, commitment | `docs/agent-specs/13-kpi.md` |
 | A4 | Attendance from Verifix: who was late, who didn't come — in the brief and on question | `docs/agent-specs/11-attendance.md` |
 | — | Receivables alert (overdue debt by age) | `docs/agent-specs/03-receivables.md` |
 | — | Team cheer — 10:00 encouragement, 14:00 joke, 17:35 thanks | `docs/agent-specs/12-team-cheer.md` |

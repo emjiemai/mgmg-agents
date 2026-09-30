@@ -1606,3 +1606,168 @@ async def cheer_delivery_for_message(telegram_user_id: int, message_id: int) -> 
         "SELECT id FROM cheer_deliveries WHERE telegram_user_id = %s AND message_id = %s",
         (telegram_user_id, message_id),
     )
+
+
+# ---------------------------------------------------------------------- KPI
+# The Director's criteria (kpi_score.py): goals, 1–5 ratings, month data.
+
+_GOAL_COLUMNS = """g.id, g.employee_id, g.month, g.title, g.target, g.actual, g.status,
+       g.awaiting_actual_by, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS name,
+       e.telegram_user_id AS employee_telegram_user_id"""
+
+
+async def start_goal_draft(employee_id: str, month: date, director_telegram_id: int) -> dict[str, Any] | None:
+    """Begin a goal for ``employee_id``: the Director's next message is its text."""
+    await execute(
+        "DELETE FROM kpi_goals WHERE status = 'draft' AND set_by_telegram_id = %s", (director_telegram_id,)
+    )
+    return await fetch_one(
+        "INSERT INTO kpi_goals (employee_id, month, set_by_telegram_id) VALUES (%s, %s, %s) RETURNING *",
+        (employee_id, month, director_telegram_id),
+    )
+
+
+async def goal_draft(director_telegram_id: int) -> dict[str, Any] | None:
+    """The Director's goal being written (started in the last 30 minutes)."""
+    return await fetch_one(
+        f"""SELECT {_GOAL_COLUMNS} FROM kpi_goals g JOIN employees e ON e.id = g.employee_id
+            WHERE g.status = 'draft' AND g.set_by_telegram_id = %s AND g.created_at > now() - interval '30 minutes'
+            ORDER BY g.created_at DESC LIMIT 1""",
+        (director_telegram_id,),
+    )
+
+
+async def activate_goal(goal_id: str, title: str, target: float) -> dict[str, Any] | None:
+    await execute(
+        "UPDATE kpi_goals SET title = %s, target = %s, status = 'active' WHERE id = %s AND status = 'draft'",
+        (title, target, goal_id),
+    )
+    return await get_goal(goal_id)
+
+
+async def cancel_goal(goal_id: str) -> dict[str, Any] | None:
+    """Cancel a goal (or a draft); the row stays, marked cancelled."""
+    await execute("UPDATE kpi_goals SET status = 'cancelled', awaiting_actual_by = NULL WHERE id = %s", (goal_id,))
+    return await get_goal(goal_id)
+
+
+async def cancel_goal_drafts(director_telegram_id: int) -> int:
+    rows = await fetch_all(
+        "DELETE FROM kpi_goals WHERE status = 'draft' AND set_by_telegram_id = %s RETURNING id", (director_telegram_id,)
+    )
+    return len(rows)
+
+
+async def get_goal(goal_id: str) -> dict[str, Any] | None:
+    return await fetch_one(
+        f"SELECT {_GOAL_COLUMNS} FROM kpi_goals g JOIN employees e ON e.id = g.employee_id WHERE g.id = %s",
+        (goal_id,),
+    )
+
+
+async def goals_for_months(months: list[date], employee_id: str | None = None) -> list[dict[str, Any]]:
+    """Active goals of the given months (one person's, or everyone's)."""
+    return await fetch_all(
+        f"""SELECT {_GOAL_COLUMNS} FROM kpi_goals g JOIN employees e ON e.id = g.employee_id
+            WHERE g.status = 'active' AND g.month = ANY(%s) AND (%s::uuid IS NULL OR g.employee_id = %s::uuid)
+            ORDER BY g.month, name, g.created_at""",
+        (months, employee_id, employee_id),
+    )
+
+
+async def await_goal_actual(goal_id: str, telegram_user_id: int) -> None:
+    """The next number ``telegram_user_id`` types is this goal's actual result."""
+    await execute(
+        "UPDATE kpi_goals SET awaiting_actual_by = NULL WHERE awaiting_actual_by = %s", (telegram_user_id,)
+    )
+    await execute(
+        "UPDATE kpi_goals SET awaiting_actual_by = %s, awaiting_since = now() WHERE id = %s AND status = 'active'",
+        (telegram_user_id, goal_id),
+    )
+
+
+async def goal_awaiting_actual(telegram_user_id: int) -> dict[str, Any] | None:
+    """The goal this person was asked the result of (in the last 3 days)."""
+    return await fetch_one(
+        f"""SELECT {_GOAL_COLUMNS} FROM kpi_goals g JOIN employees e ON e.id = g.employee_id
+            WHERE g.awaiting_actual_by = %s AND g.status = 'active' AND g.awaiting_since > now() - interval '3 days'
+            ORDER BY g.awaiting_since DESC LIMIT 1""",
+        (telegram_user_id,),
+    )
+
+
+async def clear_goal_awaiting(telegram_user_id: int) -> None:
+    await execute("UPDATE kpi_goals SET awaiting_actual_by = NULL WHERE awaiting_actual_by = %s", (telegram_user_id,))
+
+
+async def set_goal_actual(goal_id: str, actual: float, by: str) -> dict[str, Any] | None:
+    await execute(
+        """UPDATE kpi_goals SET actual = %s, actual_by = %s, actual_at = now(), awaiting_actual_by = NULL
+           WHERE id = %s AND status = 'active'""",
+        (actual, by, goal_id),
+    )
+    return await get_goal(goal_id)
+
+
+async def ensure_rating(employee_id: str, month: date) -> dict[str, Any] | None:
+    """This person's rating row for the month (created empty if missing)."""
+    await execute(
+        "INSERT INTO kpi_ratings (employee_id, month) VALUES (%s, %s) ON CONFLICT (employee_id, month) DO NOTHING",
+        (employee_id, month),
+    )
+    return await fetch_one("SELECT * FROM kpi_ratings WHERE employee_id = %s AND month = %s", (employee_id, month))
+
+
+async def set_rating(rating_id: str, criterion: str, value: int, rated_by: int) -> dict[str, Any] | None:
+    """Store one 1–5 mark; ``criterion`` must be a kpi_score.RATINGS key."""
+    if criterion not in ("performance", "communication", "interaction", "qualifications"):
+        raise ValueError(criterion)
+    return await fetch_one(
+        f"UPDATE kpi_ratings SET {criterion} = %s, rated_by = %s, updated_at = now() WHERE id = %s RETURNING *",
+        (value, rated_by, rating_id),
+    )
+
+
+async def ratings_for_month(month: date) -> list[dict[str, Any]]:
+    return await fetch_all("SELECT * FROM kpi_ratings WHERE month = %s", (month,))
+
+
+async def kpi_period(month: date) -> dict[str, Any] | None:
+    await execute("INSERT INTO kpi_periods (month) VALUES (%s) ON CONFLICT (month) DO NOTHING", (month,))
+    return await fetch_one("SELECT * FROM kpi_periods WHERE month = %s", (month,))
+
+
+async def mark_kpi_period(month: date, column: str) -> bool:
+    """Set ``ratings_requested_at`` / ``final_sent_at`` once; False if it was already set."""
+    if column not in ("ratings_requested_at", "final_sent_at"):
+        raise ValueError(column)
+    await kpi_period(month)
+    row = await fetch_one(
+        f"UPDATE kpi_periods SET {column} = now() WHERE month = %s AND {column} IS NULL RETURNING month", (month,)
+    )
+    return row is not None
+
+
+async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any]]]:
+    """Everything the KPI needs for ``[start, end]``, keyed by employee_id."""
+    reports = await fetch_all(
+        """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, e.display_name
+           FROM daily_reports r JOIN employees e ON e.id = r.employee_id
+           WHERE r.report_date BETWEEN %s AND %s""",
+        (start, end),
+    )
+    tasks = await fetch_all(
+        """SELECT t.assigned_employee_id AS employee_id, t.status, t.due_date, t.completed_at, t.created_at,
+                  e.display_name
+           FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
+           WHERE t.due_date BETWEEN %s AND %s""",
+        (start, end),
+    )
+    done = await fetch_all(
+        """SELECT assigned_employee_id AS employee_id, count(*) AS n FROM tasks
+           WHERE status = 'done' AND assigned_employee_id IS NOT NULL
+             AND (completed_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s
+           GROUP BY assigned_employee_id""",
+        (start, end),
+    )
+    return {"reports": reports, "tasks": tasks, "done": done}
