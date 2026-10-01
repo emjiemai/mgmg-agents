@@ -2744,6 +2744,66 @@ def test_kpi() -> None:
             setattr(obj, name, value)
 
 
+def test_garmin_leads() -> None:
+    """Leads pushed by the Garmin AI bot: validation, the webhook, the Director's data."""
+    print("Garmin AI bot leads")
+    from datetime import datetime, timezone
+
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from integrations.api import app as api_app
+    from integrations.common.config import settings
+    from integrations.garmin import leads
+
+    lead = {"event": "lead", "lead_id": "6b1f0c1e-1111-4a5b-9c1d-1234567890ab", "chat_id": "555", "urgency": "now",
+            "name": "Азиз", "phone": "+998901234567", "product_id": "fenix-8", "product_name": "fēnix 8",
+            "price": "13490000", "summary": "Хочет купить сегодня", "lang": "ru", "source": "card",
+            "at": "2026-10-01T09:30:00.000Z"}
+    event, error = leads.clean(lead)
+    check_true("a lead is accepted", error is None and event["chat_id"] == 555 and event["price"] == 13490000.0)
+    check("its time is kept", event["at"], datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc))
+    check("an unknown urgency is refused", leads.clean({**lead, "urgency": "boiling"})[1], "unknown urgency 'boiling'")
+    check("no lead_id, no lead", leads.clean({**lead, "lead_id": ""})[1], "lead_id is required")
+    check("a later phone", leads.clean({"event": "phone", "chat_id": 555, "phone": "+998901112233"})[0],
+          {"event": "phone", "chat_id": 555, "phone": "+998901112233"})
+    check_true("long text is cut, not refused", len(leads.clean({**lead, "summary": "x" * 5000})[0]["summary"]) == 2000)
+
+    stored = []
+
+    async def fake_save(ev):
+        stored.append(ev)
+        return {"ok": True, "stored": True}
+
+    saved = [(leads, "save", leads.save), (settings, "garmin_leads_secret", settings.garmin_leads_secret)]
+    leads.save, settings.garmin_leads_secret = fake_save, SecretStr("s3cret-garmin")
+    client = TestClient(api_app.app)
+    try:
+        check("wrong secret: 401 (the bot won't retry)", client.post("/webhooks/garmin-lead/nope", json=lead).status_code, 401)
+        check("bad lead: 422", client.post("/webhooks/garmin-lead/s3cret-garmin", json={**lead, "urgency": "x"}).status_code, 422)
+        ok = client.post("/webhooks/garmin-lead/s3cret-garmin", json=lead)
+        check_true("a good lead is stored", ok.status_code == 200 and stored[-1]["lead_id"] == lead["lead_id"])
+
+        async def broken(ev):
+            raise RuntimeError("db down")
+
+        leads.save = broken
+        check("storage down: 503 (the bot retries)", client.post("/webhooks/garmin-lead/s3cret-garmin", json=lead).status_code, 503)
+        settings.garmin_leads_secret = SecretStr("")
+        check("no secret set: every call refused", client.post("/webhooks/garmin-lead/", json=lead).status_code in (401, 404, 405), True)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    rows = [{**leads.clean(lead)[0], "created_at": datetime(2026, 10, 1, 4, 30, tzinfo=timezone.utc)},
+            {**leads.clean({**lead, "lead_id": "x" * 12, "urgency": "next", "phone": None})[0],
+             "created_at": datetime(2026, 9, 30, 10, tzinfo=timezone.utc)}]
+    text = leads.describe(rows)
+    check_true("the Director's data: totals and each lead",
+               "2 sales leads (1 hot" in text and "1 with a phone" in text and "fēnix 8 (2)" in text and "2026-10-01 09:30" in text)
+    check_true("garmin_lidlar is a data source the Director can ask", "garmin_lidlar" in AGENT_SLUGS)
+
+
 def main() -> int:
     """Run every check.
 
@@ -2770,6 +2830,7 @@ def main() -> int:
         test_verifix,
         test_employee_admin,
         test_kpi,
+        test_garmin_leads,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

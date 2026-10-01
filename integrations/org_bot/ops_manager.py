@@ -1753,6 +1753,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "mijoz_fikrlari": _fetch_client_feedback_data,
         "lidlar": _fetch_lead_handout_data,
         "davomat": _fetch_attendance_data,
+        "garmin_lidlar": _fetch_garmin_leads_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1810,6 +1811,13 @@ async def _fetch_kpi_agent_data() -> str:
     # The KPI score (the Director's criteria, kpi_score.py) for the period /kpi shows.
     lines.append(await kpi_flow.describe(kpi_score.score_period(today)))
     return "\n".join(lines)
+
+
+async def _fetch_garmin_leads_data() -> str:
+    """Leads the Garmin AI bot sent to the Command Center, last 30 days."""
+    from integrations.garmin import leads as garmin_leads
+
+    return garmin_leads.describe(await garmin_leads.recent(30))
 
 
 async def _fetch_attendance_data() -> str:

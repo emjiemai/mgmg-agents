@@ -320,6 +320,11 @@ to justify repeating a past conclusion.
   etildi", "как идут лиды у продажников") — go to lidlar. Questions about the
   leads the Lead Agent FOUND (the list itself, new tenders) stay with
   lead_agent.
+- Questions about customers of the GARMIN AI BOT — people who came from
+  Instagram / the web catalog to @garminofficialuzbot and want a watch
+  ("garmin lidlari", "botdan nechta lid keldi", "kim fenix so'radi",
+  "заявки с гармин бота") — go to garmin_lidlar. Leads the Lead Agent finds
+  (tenders, companies) and the B2B hand-out are lead_agent.
 - Questions about ATTENDANCE — who came to WORK late, who didn't come, who
   is on sick leave or vacation, when someone arrived or left ("bugun kim
   kechikdi", "ishga kim kelmadi", "Alisher soat nechada keldi", "davomat",

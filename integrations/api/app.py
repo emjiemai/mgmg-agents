@@ -9,6 +9,7 @@ Endpoints:
     POST /webhooks/telegram/ops/{secret}              OPS Manager Bot (task routing)
     POST /webhooks/sap-push/{secret}                  AR-aging snapshot pushed from the SAP gateway's machine
     POST /webhooks/sap-gateway-push/{tool}/{secret}   every other SAP gateway tool's raw snapshot
+    POST /webhooks/garmin-lead/{secret}               a lead from the Garmin AI bot (integrations/garmin/leads.py)
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
     GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
 
@@ -31,12 +32,14 @@ import uuid
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from integrations.ai.openrouter_client import describe_openrouter_key
 from integrations.api import db_viewer, feedback_page
 from integrations.common.config import settings
 from integrations.common.db import close_pool, fetch_one
 from integrations.common.logging_setup import setup_logging
+from integrations.garmin import leads as garmin_leads
 from integrations.org_bot import admin as org_admin
 from integrations.org_bot import ops_manager as org_ops_manager
 from integrations.sap import push_handler as sap_push_handler
@@ -242,6 +245,32 @@ async def sap_gateway_push_webhook(tool: str, secret: str, request: Request) -> 
 
     payload = await request.json()
     return await sap_push_handler.handle_gateway_push(tool, payload, uuid.uuid4())
+
+
+@app.post("/webhooks/garmin-lead/{secret}")
+async def garmin_lead_webhook(secret: str, request: Request) -> JSONResponse:
+    """Store a lead (or a later phone number) sent by the Garmin AI bot.
+
+    Unlike the SAP routes, failures answer with an HTTP error status: the bot
+    retries on 5xx and network errors, and gives up on 4xx (a wrong secret or
+    a malformed lead won't get better by retrying).
+    """
+    if not _secret_ok(secret, settings.garmin_leads_secret.get_secret_value(), "GARMIN_LEADS_SECRET"):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    try:
+        payload = await request.json()
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "body is not JSON"}, status_code=400)
+    event, error = garmin_leads.clean(payload)
+    if error:
+        log.warning("Garmin lead rejected: {}", error)
+        return JSONResponse({"ok": False, "error": error}, status_code=422)
+    try:
+        result = await garmin_leads.save(event)
+    except Exception as exc:  # noqa: BLE001 — a 5xx makes the bot retry later
+        log.error("Could not store a Garmin lead: {}", exc)
+        return JSONResponse({"ok": False, "error": "storage failed"}, status_code=503)
+    return JSONResponse(result)
 
 
 # -------------------------------------------------------------------- helpers

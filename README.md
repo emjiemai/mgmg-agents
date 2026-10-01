@@ -76,6 +76,12 @@ Director through OPS Manager Bot, marked 🔴 with the business. Admin Bot
 `/qr` makes both cards. See
 `docs/agent-specs/10-client-feedback.md`.
 
+## Garmin AI bot leads
+
+The Garmin AI bot (emjiemai/Garmin-AI-bot) sends every lead to
+`/webhooks/garmin-lead/{secret}`; they're kept in `garmin_leads` and the Director
+can ask about them. See `docs/agent-specs/14-garmin-leads.md`.
+
 ## Attendance (Verifix)
 
 Read-only from Verifix's public API: yesterday's late arrivals and absences

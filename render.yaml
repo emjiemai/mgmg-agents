@@ -216,6 +216,10 @@ envVarGroups:
       # (Администрирование -> Настройки -> Внешние системы -> Клиенты OAuth2
       # для сервера для компании). Empty = no attendance anywhere. See
       # docs/agent-specs/11-attendance.md.
+      # Garmin AI bot -> /webhooks/garmin-lead/{secret}; the same value is the
+      # Garmin bot's COMMAND_CENTER_SECRET (integrations/garmin/leads.py).
+      - key: GARMIN_LEADS_SECRET
+        sync: false
       - key: VERIFIX_CLIENT_ID
         sync: false
       - key: VERIFIX_CLIENT_SECRET

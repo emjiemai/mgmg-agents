@@ -104,6 +104,13 @@ AGENTS: list[Agent] = [
         "which are in progress, dismissed (with the reason) or done (with the result), and their latest note",
     ),
     Agent(
+        "garmin_lidlar",
+        "Garmin лидлари",
+        "leads from the Garmin AI Telegram bot (@garminofficialuzbot, customers coming from Instagram "
+        "Reels and the web catalog): who wants to buy which watch, hot (buy now) or warm, phone, "
+        "summary of the chat — last 30 days",
+    ),
+    Agent(
         "davomat",
         "Давомат (Verifix)",
         "attendance from the Verifix face-ID terminals: who came to work late and by how many minutes, "

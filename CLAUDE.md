@@ -38,6 +38,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   existing parts.
 - KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`
   `/kpi` `/baho` (Director), `/kpi` `/natija` (employees); ratings on the 1st, final by the 5th.
+- Garmin AI bot (separate repo emjiemai/Garmin-AI-bot, cloned at D:\Garmin-AI-bot) POSTs its leads to
+  `/webhooks/garmin-lead/{GARMIN_LEADS_SECRET}` → table `garmin_leads`; Q&A agent `garmin_lidlar`.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
 - SAP data arrives only by push (row-capped → "камида" lower bounds).
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).

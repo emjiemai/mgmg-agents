@@ -920,3 +920,30 @@ CREATE TABLE IF NOT EXISTS announcements (
     sent_at     TIMESTAMPTZ,
     sent_count  INTEGER
 );
+
+-- ---------------------------------------------------------------------------
+-- garmin_leads — leads the Garmin AI bot (emjiemai/Garmin-AI-bot) POSTs to
+-- /webhooks/garmin-lead/{secret} (integrations/garmin/leads.py). Before
+-- 2026-10-01 they lived only on the bot's ephemeral disk.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS garmin_leads (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    lead_id         TEXT         NOT NULL UNIQUE,      -- the bot's own id: a retried POST is stored once
+    chat_id         BIGINT       NOT NULL,             -- the customer's Telegram chat with the bot
+    urgency         TEXT         NOT NULL CHECK (urgency IN ('now', 'next', 'outage')),
+    name            TEXT,
+    username        TEXT,
+    phone           TEXT,
+    phone_added_at  TIMESTAMPTZ,
+    product_id      TEXT,
+    product_name    TEXT,
+    price           NUMERIC,
+    budget          TEXT,
+    summary         TEXT,
+    lang            TEXT,
+    source          TEXT,                              -- card / quiz / cmp / cta / telegram
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    received_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_garmin_leads_created ON garmin_leads (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_garmin_leads_chat ON garmin_leads (chat_id, created_at DESC);

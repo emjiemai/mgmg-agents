@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # Arriving up to this many minutes after the schedule's start is on time.
     verifix_late_grace_minutes: int = 5
 
+    # --- Garmin AI bot leads (POST /webhooks/garmin-lead/{secret}) ---
+    # The same long random value goes into the Garmin bot's COMMAND_CENTER_SECRET.
+    garmin_leads_secret: SecretStr = SecretStr("")
+
     # --- Telegram ---
     # Every scheduled agent (CEO Daily Brief, Receivables, Lead Agent) sends
     # through integrations/org_bot/notify.py via OPS_MANAGER_BOT_TELEGRAM_BOT_TOKEN
