@@ -22,6 +22,7 @@ from typing import Any
 
 from integrations.common.config import settings
 from integrations.common.translit import name_to_cyrillic
+from integrations.org_bot.tone import capitalized
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import answer_check, store
 from integrations.org_bot.permissions import Field
@@ -77,7 +78,7 @@ def call_name(employee: dict[str, Any] | None) -> str:
     if not employee:
         return ""
     words = name_to_cyrillic(person_name(employee)).split()
-    first = next((w for w in words if not _SURNAME.search(w.lower())), words[0] if words else "")
+    first = capitalized(next((w for w in words if not _SURNAME.search(w.lower())), words[0] if words else ""))
     form = ADDRESS_FORMS.get(employee.get("address_form") or "", "")
     return " ".join(part for part in (first, form) if part and part != "—")
 

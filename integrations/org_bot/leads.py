@@ -31,7 +31,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from integrations.common.translit import latin_to_cyrillic
-from integrations.org_bot.tone import casual
+from integrations.org_bot.tone import casual, is_polite
 from integrations.telegram.bot import escape
 
 AGENT = "lead-handout"
@@ -158,6 +158,7 @@ Write in Uzbek, Cyrillic script, for the sales person:
 - "location": the city/region in Uzbek Cyrillic (e.g. "Тошкент"), or "".
 
 Use only the facts given; never invent a contact, a date or a number.
+Always polite: the respectful "сиз" form, never "сен" or its verb forms.
 Answer with JSON only: {"brief": "...", "location": "..."}
 """
 
@@ -184,6 +185,8 @@ def parse_brief(raw: str) -> tuple[str, str] | None:
     location = " ".join(str(data.get("location") or "").split())
     letters = _LETTER.findall(brief)
     if not brief or len(brief) > 300 or "<" in brief or len(_CYRILLIC.findall(brief)) < 0.7 * len(letters):
+        return None
+    if not is_polite(brief):
         return None
     if re.search(r"[A-Za-z]", location) or len(location) > 60:
         location = ""
@@ -228,7 +231,8 @@ def card_text(lead: dict[str, Any], brief: str, location: str = "") -> str:
 def checkin_text(name: str, lead: dict[str, Any], days_open: int) -> str:
     """One friendly line per open lead."""
     since = f", {days_open}-кун" if days_open > 1 else ""
-    return casual(f"{escape(name)}, «{escape(lead_name(lead))}» лиди қандай кетяпти{since}?", "🙂")
+    company = escape(lead_name(lead))
+    return casual(f"{escape(name)}, «{company}» лиди қандай кетяпти{since}?", "🙂", keep=[escape(name), company])
 
 
 def checkin_keyboard(checkin_id: str) -> dict[str, Any]:
@@ -265,13 +269,15 @@ def parse_choice(value: str) -> tuple[str, int, str] | None:
 def choice_question(lead: dict[str, Any], status: str) -> str:
     """The line shown with the reason/result buttons."""
     ask = "нима сабабдан?" if status == "dismissed" else "натижаси қандай?"
-    return casual(f"«{escape(lead_name(lead))}» лиди: {STATUS_LABELS[status]}, {ask}", "🙂")
+    company = escape(lead_name(lead))
+    return casual(f"«{company}» лиди: {STATUS_LABELS[status]}, {ask}", "🙂", keep=[company])
 
 
 def status_line(lead: dict[str, Any], status: str, outcome: str | None = None) -> str:
     """The check-in message once answered: the lead, what was chosen."""
     chosen = STATUS_LABELS[status] + (f", {outcome}" if outcome else "")
-    return casual(f"«{escape(lead_name(lead))}» лиди: {escape(chosen)}", "✅")
+    company = escape(lead_name(lead))
+    return casual(f"«{company}» лиди: {escape(chosen)}", "✅", keep=[company])
 
 
 def is_other(status: str, index: int) -> bool:

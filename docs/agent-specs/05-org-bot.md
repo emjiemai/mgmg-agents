@@ -306,6 +306,20 @@ first one this Director has ever sent. Verified live: a follow-up message
 with no task content of its own ("send the same thing to IT too") correctly
 resolved against the prior turn's task.
 
+## Admin: days off and announcements (2026-10-01)
+
+- **`/dam`** (also `/damolish`, `/dayoff`) — the next 14 days as buttons; tap
+  a day to make it a day off (✅), tap again to make it a working day. On a day
+  off no employee gets the report ask or reminder, cheer messages, a lead or
+  the 15:00 lead question, or task reminders, and nobody counts as not having
+  reported. The Director's brief, the Friday scorecard and the monthly KPI
+  still run. Stored in `days_off`.
+- **`/elon`** — the "something went wrong" notice ("кечирасиз, техник хатолик
+  юз берди, бугунги хабарларни инобатга олманг, тез орада тузатамиз 🙏");
+  **`/elon <text>`** — your own words. Either way a preview with ✅ Юбориш /
+  ❌ Бекор comes first; on Send it goes to every active employee through OPS
+  Manager Bot, once (`announcements`), and the card shows how many got it.
+
 ## Admin: employee list & removal
 
 `/employees` (or `/users`, `/list`, `/xodimlar`) sent to **Admin Bot** lists

@@ -21,13 +21,13 @@ version (bold header, emoji, two paragraphs) felt like one more alarm.
 
 | Time | Example | Answer |
 | ---- | ------- | ------ |
-| 10:00 | алишер ака, бугун ҳам зўр кун бўлсин ☀️ | — |
-| 14:00 | алишер ака, қисқаси, афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда қоронғи, бу ер ёруғ-да» дебди 😄 | — |
-| 17:35 | алишер ака, ишларингиз билан чарчамадингизми? 🌙 | 2–4 buttons |
+| 10:00 | Алишер ака, бугун ҳам зўр кун бўлсин ☀️ | — |
+| 14:00 | Алишер ака, қисқаси, Афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда қоронғи, бу ер ёруғ-да» дебди 😄 | — |
+| 17:35 | Алишер ака, ишларингиз билан чарчамадингизми? 🌙 | 2–4 buttons |
 
 14:00 is right after the usual 13:00–14:00 lunch; its joke is Uzbek
 traditional humour — a classic Afandi latifa told in one sentence ("қисқаси,
-афанди бир куни … дебди"). A tap on an evening answer shows its warm reply
+Афанди бир куни … дебди"). A tap on an evening answer shows its warm reply
 as a brief pop-up (no new message) and the buttons go away; every answer,
 tired ones included, gets a kind reply ("жуда" → "раҳмат каттакон, бугун кўп
 ишладингиз, яхши дам олинг").
@@ -58,6 +58,15 @@ When the AI fails or its answer is thrown away, a **hand-written** message
 from `cheer.py` goes out instead (10 mornings, 6 Afandi latifas, 4 evening
 questions, rotating by date). Nobody ever gets nothing, and nobody gets
 something odd. `cheer_messages.source` says which it was (`ai`/`fallback`).
+
+## Names and politeness (2026-10-01)
+
+Lowercase is for the sentence, never for a name: "Алишер ака", «Hyatt
+Regency», Афанди keep their capitals (`tone.casual(..., keep=[...])`). Every
+line uses the respectful "сиз" — never "сен" or its verb forms (-сан, -санг,
+-динг); an AI line with them is thrown away (`tone.is_polite`), and the
+latifas were adjusted so Afandi speaks politely too ("енг, тўним, енг, ҳурмат
+сизга экан"). On a day off set with Admin Bot `/dam` nothing is sent.
 
 ## Why buttons, not typing
 

@@ -199,6 +199,10 @@ async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
         return 0
 
     if mode == "morning":
+        # A day off set by the admin (/dam): no deadline reminders to employees.
+        if await store.is_day_off(today_local()):
+            log.info("Today is a day off (Admin Bot /dam) — no task reminders")
+            return 0
         await morning(run_id)
     elif mode == "monthly":
         await monthly(run_id, force)

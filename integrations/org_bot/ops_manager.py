@@ -31,7 +31,7 @@ from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import admin, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_tracker
-from integrations.org_bot.tone import casual
+from integrations.org_bot.tone import casual, is_polite
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
     CLASSIFY_SYSTEM_PROMPT,
@@ -799,7 +799,9 @@ lowercase, no emoji, like a colleague asking — about the 1–2 most important 
 vague items from THEIR report, asking for a number or a result, fitted to their \
 role. Example for a sales person who wrote "answered calls, consulted clients, \
 sales": "нечта қўнғироққа жавоб бердингиз ва бугун қанча сотув бўлди?". Never \
-scold, never ask about chores, never more than one question.
+scold, never ask about chores, never more than one question. Always the \
+respectful "сиз" form — never "сен" or its verb forms (-сан, -санг, -динг); \
+be especially courteous with women.
 
 Return ONLY JSON: {"ask": false} or {"ask": true, "follow_up": "<the question>"}."""
 
@@ -829,8 +831,9 @@ async def _report_follow_up(text: str, role: str, run_id: uuid.UUID) -> str | No
         return None
     if verdict.get("ask") is not True:
         return None
-    question = str(verdict.get("follow_up") or "").strip() or "бугун аниқ нималарни бажардингиз, натижасини ёзиб берасизми?"
-    return casual(question)
+    default = "бугун аниқ нималарни бажардингиз, натижасини ёзиб берасизми?"
+    question = casual(str(verdict.get("follow_up") or "").strip() or default)
+    return question if is_polite(question) else default
 
 
 async def _try_daily_report(

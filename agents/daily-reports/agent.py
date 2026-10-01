@@ -175,6 +175,10 @@ async def run(mode: str, dry_run: bool = False) -> int:
     if settings.bots_frozen:
         log.info("Bots frozen (BOTS_FROZEN=true) — nothing sent")
         return 0
+    # A day off set by the admin (/dam): nothing goes to employees.
+    if await store.is_day_off(today_local()):
+        log.info("Today is a day off (Admin Bot /dam) — nobody is asked for a report")
+        return 0
 
     if mode == "ask":
         await ask_everyone(run_id)

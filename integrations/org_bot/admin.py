@@ -18,6 +18,7 @@ through OPS Manager Bot, the chat the requester already started).
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 from typing import Any, Literal
 
 from integrations.common.config import settings
@@ -40,6 +41,14 @@ DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
 QR_COMMAND = "/qr"
 # "/verifix" -> is Verifix connected, and what does today look like there?
 VERIFIX_COMMAND = "/verifix"
+# "/dam" -> the next two weeks; tap a day to make it a day off (or a working day again).
+DAY_OFF_COMMANDS = ("/dam", "/damolish", "/dayoff")
+DAY_OFF_DAYS = 14
+# "/elon" (+ text) -> one message to every employee, after a confirm tap.
+ANNOUNCE_COMMAND = "/elon"
+# What /elon sends when no text is given: the "something went wrong" notice.
+TECH_ERROR_TEXT = "кечирасиз, техник хатолик юз берди, бугунги хабарларни инобатга олманг, тез орада тузатамиз"
+WEEKDAYS_UZ = ("душанба", "сешанба", "чоршанба", "пайшанба", "жума", "шанба", "якшанба")
 
 
 def _person_line(request: dict[str, Any]) -> str:
@@ -172,7 +181,12 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         log.warning("Admin command attempted by non-admin telegram_user_id={}", sender.get("id"))
         return "unauthorized"
 
-    text = (message.get("text") or "").strip().lower()
+    raw = (message.get("text") or "").strip()
+    text = raw.lower()
+    if text in DAY_OFF_COMMANDS:
+        return await _show_days_off(run_id)
+    if text.split()[:1] == [ANNOUNCE_COMMAND]:
+        return await _draft_announcement(raw[len(ANNOUNCE_COMMAND):].strip(), sender, run_id)
     if text in EMPLOYEE_LIST_COMMANDS:
         return await _list_employees(run_id)
     if text in ASK_NAMES_COMMANDS:
@@ -412,6 +426,119 @@ def name_request_view(emp: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return text, keyboard
 
 
+def days_off_view(today: date, off: set[date]) -> tuple[str, dict[str, Any]]:
+    """The next two weeks as buttons; a day off is marked ✅."""
+    days = [today + timedelta(days=i) for i in range(DAY_OFF_DAYS)]
+    buttons = [
+        {"text": f"{'✅ ' if d in off else ''}{d:%d.%m} {WEEKDAYS_UZ[d.weekday()]}", "callback_data": f"doff:{d.isoformat()}"}
+        for d in days
+    ]
+    marked = ", ".join(f"{d:%d.%m} {WEEKDAYS_UZ[d.weekday()]}" for d in sorted(off) if d >= today)
+    text = (
+        "📅 <b>Дам олиш кунлари</b>\n\n"
+        "Кунни босинг — у дам олиш куни бўлади (✅), яна босинг — иш куни.\n"
+        "Дам олиш кунида ходимларга ҳисобот сўрови, кайфият хабарлари, лидлар ва топшириқ эслатмалари "
+        "юборилмайди; ҳисобот бермаган деб ҳисобланмайди.\n\n"
+        f"Белгиланган: {marked or 'йўқ'}"
+    )
+    return text, {"inline_keyboard": [buttons[i:i + 2] for i in range(0, len(buttons), 2)]}
+
+
+async def _show_days_off(run_id: uuid.UUID) -> str:
+    today = today_local()
+    text, keyboard = days_off_view(today, await store.days_off_between(today, today + timedelta(days=DAY_OFF_DAYS)))
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text, reply_markup=keyboard)
+    return "days_off_shown"
+
+
+async def _toggle_day_off(target: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    try:
+        day = date.fromisoformat(target)
+    except ValueError:
+        await _answer(query_id, "Номаълум сана")
+        return "unrecognized"
+    now_off = await store.toggle_day_off(day, decided_by)
+    await log_action(
+        agent=AGENT, action="day_off_set" if now_off else "day_off_cleared", target_system="postgres",
+        status="success", run_id=run_id, target_ref=day.isoformat(), mode="write", payload={"by": decided_by},
+    )
+    today = today_local()
+    text, keyboard = days_off_view(today, await store.days_off_between(today, today + timedelta(days=DAY_OFF_DAYS)))
+    await _edit(callback, text, keyboard, run_id)
+    await _answer(query_id, f"{day:%d.%m} — {'дам олиш куни' if now_off else 'иш куни'}")
+    return "day_off_set" if now_off else "day_off_cleared"
+
+
+def announcement_view(announcement: dict[str, Any], recipients: int) -> tuple[str, dict[str, Any]]:
+    """The preview the admin confirms before anything goes out."""
+    text = (
+        f"📣 <b>Эълон — {recipients} ходимга</b>\n\n{escape(announcement['text'])}\n\n"
+        "<i>Барча фаол ходимларга OPS Manager Bot орқали юборилади.</i>"
+    )
+    keyboard = {"inline_keyboard": [[
+        {"text": "✅ Юбориш", "callback_data": f"ann:{announcement['id']}"},
+        {"text": "❌ Бекор", "callback_data": f"annx:{announcement['id']}"},
+    ]]}
+    return text, keyboard
+
+
+async def _draft_announcement(text: str, sender: dict[str, Any], run_id: uuid.UUID) -> str:
+    """/elon [text]: keep it and show the admin a preview with Send/Cancel. No text = the tech-error notice."""
+    from integrations.org_bot.tone import casual  # local import keeps admin light
+
+    body = text or casual(TECH_ERROR_TEXT, "🙏")
+    announcement = await store.create_announcement(body, sender.get("username") or str(sender.get("id", "")))
+    recipients = len(await store.list_active_employees())
+    preview, keyboard = announcement_view(announcement, recipients)
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(preview, reply_markup=keyboard)
+    return "announcement_drafted"
+
+
+async def _send_announcement(target: str, send: bool, query_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Send a confirmed announcement to every active employee, once."""
+    if not target.isdigit():
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    announcement = await store.claim_announcement(int(target))
+    if announcement is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "announcement_already_handled"
+    if not send:
+        await store.finish_announcement(announcement["id"], 0)
+        await _edit(callback, f"❌ Бекор қилинди\n\n{escape(announcement['text'])}", {"inline_keyboard": []}, run_id)
+        await _answer(query_id, "Бекор қилинди")
+        return "announcement_cancelled"
+
+    employees = await store.list_active_employees()
+    sent = 0
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for employee in employees:
+            try:
+                await bot.send_message(escape(announcement["text"]), chat_id=str(employee["telegram_user_id"]))
+                sent += 1
+            except TelegramError as exc:
+                log.error("Announcement {} not delivered to {}: {}", announcement["id"], employee["display_name"], exc)
+    await store.finish_announcement(announcement["id"], sent)
+    await _edit(callback, f"✅ Юборилди — {sent}/{len(employees)} ходимга\n\n{escape(announcement['text'])}",
+                {"inline_keyboard": []}, run_id)
+    await _answer(query_id, f"Юборилди: {sent}")
+    return "announcement_sent"
+
+
 async def _list_employees(run_id: uuid.UUID) -> str:
     """Send the admin every active employee, each opening their own card."""
     text, keyboard = employee_list_view(await store.list_active_employees())
@@ -599,6 +726,12 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action == "removeuser":
         return await _handle_remove_user(target_id, query_id, decided_by, callback, run_id)
+
+    if action == "doff":
+        return await _toggle_day_off(target_id, query_id, decided_by, callback, run_id)
+
+    if action in ("ann", "annx"):
+        return await _send_announcement(target_id, action == "ann", query_id, callback, run_id)
 
     if action in EMPLOYEE_ACTIONS:
         return await _handle_employee_action(action, target_id, query_id, decided_by, callback, run_id)

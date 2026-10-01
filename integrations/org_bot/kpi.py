@@ -165,6 +165,7 @@ def build_request_text(name: str, metrics: Sequence[Metric]) -> str:
         f"{escape(name)}, ишларингиз билан чарчамаяпсизми, илтимос бугунги ҳисоботингизни{numbers} "
         "ёзиб юборинг, раҳмат каттакон, чарчаманг",
         "🙏",
+        keep=[escape(name)],
     )
 
 
@@ -182,6 +183,7 @@ def build_reminder_text(name: str, metrics: Sequence[Metric]) -> str:
     return casual(
         f"{escape(name)}, ҳисоботингизни кутиб турибман, иш тугагунча{numbers} ёзиб юборсангиз, раҳмат каттакон",
         "🙏",
+        keep=[escape(name)],
     )
 
 

@@ -2004,3 +2004,47 @@ async def recent_lead_assignments(days: int = 30) -> list[dict[str, Any]]:
         """,
         (days,),
     )
+
+
+# ---------------------------------------------------------------- days off
+
+
+async def is_day_off(day: date) -> bool:
+    """Whether the admin marked ``day`` as a day off (/dam)."""
+    return await fetch_one("SELECT 1 AS off FROM days_off WHERE day = %s", (day,)) is not None
+
+
+async def days_off_between(start: date, end: date) -> set[date]:
+    """The days off in ``[start, end]``."""
+    rows = await fetch_all("SELECT day FROM days_off WHERE day BETWEEN %s AND %s", (start, end))
+    return {r["day"] for r in rows}
+
+
+async def toggle_day_off(day: date, set_by: str) -> bool:
+    """Mark ``day`` off, or back to a working day. Returns True if it is now a day off."""
+    removed = await fetch_one("DELETE FROM days_off WHERE day = %s RETURNING day", (day,))
+    if removed is not None:
+        return False
+    await execute("INSERT INTO days_off (day, set_by) VALUES (%s, %s) ON CONFLICT (day) DO NOTHING", (day, set_by))
+    return True
+
+
+# ----------------------------------------------------------- announcements
+
+
+async def create_announcement(text: str, created_by: str) -> dict[str, Any] | None:
+    """Keep an announcement until the admin confirms it."""
+    return await fetch_one(
+        "INSERT INTO announcements (text, created_by) VALUES (%s, %s) RETURNING *", (text, created_by)
+    )
+
+
+async def claim_announcement(announcement_id: int) -> dict[str, Any] | None:
+    """Take an announcement for sending, once; None if it was already sent or cancelled."""
+    return await fetch_one(
+        "UPDATE announcements SET sent_at = now() WHERE id = %s AND sent_at IS NULL RETURNING *", (announcement_id,)
+    )
+
+
+async def finish_announcement(announcement_id: int, sent_count: int) -> None:
+    await execute("UPDATE announcements SET sent_count = %s WHERE id = %s", (sent_count, announcement_id))

@@ -59,10 +59,16 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   Mobile app: not now.
 - **Friendly voice** (2026-09-30) for cheer, motivation and daily-report
   messages: one short lowercase sentence, no line breaks, no bold, one emoji
-  only at the very end, addressed "алишер ака" (ака/опа set by the admin, never
-  guessed). Like the owner's example: "ака, ишларингиз билан чарчамаяпсизми,
+  only at the very end, addressed "Алишер ака" (ака/опа set by the admin, never
+  guessed). **Names always keep their capital** — person, company, Афанди
+  (2026-10-01). **Always polite "сиз", never "сен"** or -сан/-санг/-динг forms,
+  extra courtesy to women; `tone.is_polite` rejects AI text that breaks it. Like the owner's example: "ака, ишларингиз билан чарчамаяпсизми,
   илтимос ҳисобот ёзиб юборинг, раҳмат каттакон, чарчаманг". 14:00 cheer is an
   Afandi latifa. Tasks keep their card format. `integrations/org_bot/tone.py`.
+- **Days off**: Admin Bot `/dam` marks a day off (holiday) — no report asks,
+  cheer, leads, 15:00 lead questions or task reminders that day. **Announce**:
+  `/elon` (no text = "техник хатолик юз берди…" notice) or `/elon <text>`,
+  preview + confirm, goes to every active employee once (2026-10-01).
 - Daily reports accepted only until midnight of that day; one follow-up
   question max for vague reports; employee → Director messages need confirmation.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.

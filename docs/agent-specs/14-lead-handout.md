@@ -16,7 +16,7 @@ going with three buttons, asks a question about the result, and KPI counts it.
 | Time | What happens |
 | ---- | ------------ |
 | 08:00 | The Lead Agent runs; its sheet is copied into `leads`. Each B2B Sotuv person at work today (Saturday/Sunday: weekend workers only) gets **one** lead card. |
-| 15:00 | For **every lead still open** — today's and older ones in progress — one friendly line: "алишер ака, «hyatt regency» лиди қандай кетяпти, 3-кун? 🙂" with **жараёнда · рад этилди · бажарилди**. |
+| 15:00 | For **every lead still open** — today's and older ones in progress — one friendly line: "Алишер ака, «Hyatt Regency» лиди қандай кетяпти, 3-кун? 🙂" with **жараёнда · рад этилди · бажарилди**. |
 | after a tap | **жараёнда** → "кейинги қадамингиз нима ва қачон?" (typed answer kept as a note). **рад этилди** → reason buttons: эҳтиёжи йўқ · боғланиб бўлмади · бошқадан олишган · бошқа сабаб. **бажарилди** → result buttons: учрашув бўлди · таклиф юборилди · шартнома тузилди · бошқа натижа. "бошқа…" asks them to write it. |
 
 ## Rules (the owner's decisions, 2026-09-30)

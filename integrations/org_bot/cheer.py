@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Any
 
-from integrations.org_bot.tone import casual, is_emoji, is_one_short_sentence
+from integrations.org_bot.tone import casual, is_emoji, is_one_short_sentence, is_polite
 from integrations.telegram.bot import escape
 
 AGENT = "team-cheer"
@@ -127,11 +127,14 @@ employees (MGMG, Tashkent) to make them smile during the working day. They
 must not feel it as a notification or a task — it should read like a warm
 colleague texting.
 
-The bot writes the person's name and a comma first ("алишер, "), then your
-sentence. So write ONE short sentence that follows naturally after a name:
-- Uzbek, Cyrillic script only, all lowercase, no emoji, no line breaks, no
-  greeting, no name, no exclamation marks in a row. At most {TEXT_MAX}
+The bot writes the person's name and a comma first ("Алишер ака, "), then
+your sentence. So write ONE short sentence that follows naturally after a name:
+- Uzbek, Cyrillic script only, lowercase except names (Афанди), no emoji, no
+  line breaks, no greeting, no name, no exclamation marks in a row. At most {TEXT_MAX}
   characters — around eight to twelve words.
+- Always polite: the respectful "сиз" form only — never "сен" or its verb
+  forms (-сан, -санг, -динг), not even inside the Afandi story. Some readers
+  are women: be especially courteous, nothing familiar or teasing.
 - Warm and simple. Never: politics, religion, ethnicity, gender, appearance,
   age, health, alcohol, money, promises, sarcasm about work, the boss or
   customers, anything that could embarrass anyone.
@@ -164,7 +167,7 @@ def _line(value: Any, limit: int) -> str | None:
     if not isinstance(value, str) or _MARKUP.search(value):
         return None
     line = casual(value)
-    if _LATIN.search(line) or not is_one_short_sentence(line, limit):
+    if _LATIN.search(line) or not is_one_short_sentence(line, limit) or not is_polite(line):
         return None
     return line
 
@@ -191,7 +194,7 @@ def parse_ai(raw: str, slot: str) -> Cheer | None:
         return Cheer(text=text, emoji=emoji, source="ai")
     if slot == "midday":
         # The latifa is the whole message: it must be one, and there's nothing to tap.
-        if not text.startswith("қисқаси, афанди") or "«" not in text or options:
+        if not text.lower().startswith("қисқаси, афанди") or "«" not in text or options:
             return None
         return Cheer(text=text, emoji=emoji, source="ai")
     if not isinstance(options, list) or not 2 <= len(options) <= OPTIONS_MAX:
@@ -229,7 +232,7 @@ _MORNING: tuple[tuple[str, str], ...] = (
 # Classic Afandi latifas, each told in one sentence with its punchline.
 _MIDDAY: tuple[str, ...] = (
     "қисқаси, афанди бир куни тўйга эски тўнда борса ҳеч ким қарамабди, янги тўн кийиб келса тўрга "
-    "ўтқазишибди, шунда афанди енгини ошга тутиб «е, тўним, е, ҳурмат сенга экан» дебди",
+    "ўтқазишибди, шунда афанди енгини ошга тутиб «енг, тўним, енг, ҳурмат сизга экан» дебди",
     "қисқаси, афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда "
     "қоронғи, бу ер ёруғ-да» дебди",
     "қисқаси, афанди бир куни эшакка миниб, қопни ўз елкасига олиб кетаётган экан, сўрашса «эшагим "
@@ -237,7 +240,7 @@ _MIDDAY: tuple[str, ...] = (
     "қисқаси, афанди бир куни қудуққа қараса ой тушиб қолибди, арқон ташлаб тортаман деб чалқанча "
     "йиқилибди-да, осмондаги ойни кўриб «ишқилиб, чиқариб олдим» дебди",
     "қисқаси, афанди бир куни эшак сўраб келган қўшнисига «эшак уйда йўқ» дебди, шу пайт эшак ҳанграб "
-    "юборибди, қўшни «мана-ку» деса, афанди «менгами ишонасан, эшакками?» дебди",
+    "юборибди, қўшни «мана-ку» деса, афанди «менгами ишонасиз, эшакками?» дебди",
     "қисқаси, афанди бир куни қўшнисининг қозонини ичига қозонча солиб «қозонингиз туғди» деб "
     "қайтарибди, кейинги сафар «қозонингиз ўлди» дебди, «қозон ҳам ўладими?» деса, «туғишига "
     "ишондингиз-ку» дебди",
@@ -291,7 +294,7 @@ def fallback(slot: str, day: date) -> Cheer:
 
 def message_text(cheer: Cheer, name: str) -> str:
     """The one line a person gets: how to call them, a comma, the sentence, one emoji."""
-    return casual(f"{escape(name)}, {cheer.text}", cheer.emoji)
+    return casual(f"{escape(name)}, {cheer.text}", cheer.emoji, keep=[escape(name)])
 
 
 def keyboard(cheer_id: str, cheer: Cheer) -> dict[str, Any] | None:

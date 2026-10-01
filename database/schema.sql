@@ -894,3 +894,29 @@ CREATE TABLE IF NOT EXISTS lead_checkins (
 );
 CREATE INDEX IF NOT EXISTS idx_lead_checkins_question ON lead_checkins (telegram_user_id, question_asked_at DESC)
     WHERE note IS NULL AND question IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- days_off — days nobody works (a holiday, a company day off), set by the
+-- admin with Admin Bot /dam (2026-10-01). On such a day no employee gets the
+-- report ask or reminder, cheer messages, a lead or the 15:00 lead question,
+-- or task reminders; nobody is counted as not having reported.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS days_off (
+    day         DATE         PRIMARY KEY,
+    set_by      TEXT,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- announcements — a message the admin sends to every employee at once with
+-- Admin Bot /elon (e.g. "техник хатолик юз берди"), kept until confirmed so
+-- the confirm button carries only its id; sent once.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS announcements (
+    id          BIGSERIAL    PRIMARY KEY,
+    text        TEXT         NOT NULL,
+    created_by  TEXT,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    sent_at     TIMESTAMPTZ,
+    sent_count  INTEGER
+);
