@@ -78,6 +78,22 @@ code on purpose: old `VERIFIX_BASE_URL` / `VERIFIX_API_TOKEN` / `VERIFIX_MODE`
 / `VERIFIX_CSV_DIR` values from the integration removed on 2026-09-15 are
 ignored and can be deleted from the env group.
 
+## Or: a Verifix login and password (used since 2026-10-01)
+
+The company couldn't create an OAuth client, so the docs' other way in is
+supported ("Basic auth", marked deprecated but working). In Render →
+`mgmg-shared`:
+
+    VERIFIX_LOGIN=<user>@<company>     e.g. admins@emjiem
+    VERIFIX_PASSWORD=<password>
+    VERIFIX_FILIAL_ID=<the organisation's ID>
+
+The organisation's ID is required in this mode. `/verifix` then shows the
+organisation's name (`core/filial$info`), so a wrong ID is seen at once.
+Best practice: a separate Verifix user for the bot with read access only,
+not a person's own (or the main admin) account. If both ways are filled in,
+the client id/secret win.
+
 ## API facts this relies on
 
 Source: Verifix Public API v1.0,

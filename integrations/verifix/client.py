@@ -14,8 +14,14 @@ documented there:
     time facts (lateness, absence, sick leave, vacation...).
   * ``POST /b/vhr/api/v1/core/time_kind$list`` — the names of those facts.
 
-Every call sends ``project_code: vhr`` and the bearer token (``filial_id``
-only if set: client credentials are already tied to one organisation).
+Two ways in, as the docs give them (settings.verifix_auth picks):
+  * **oauth** — client credentials → bearer token (above). ``filial_id`` only
+    if set: the client is already tied to one organisation.
+  * **basic** — "Basic auth (deprecated)": ``Authorization: Basic
+    base64("<user>@<company>:<password>")`` on every call, and then the
+    ``filial_id`` header (the organisation's ID) is required. Used when the
+    company can't create an OAuth client (2026-10-01).
+Every call also sends ``project_code: vhr``.
 Lists page with a ``cursor`` request header and ``meta.next_cursor`` in the
 answer (-1 = no more). Verifix sends numbers as strings and labels some JSON
 as text/plain, so bodies are read as JSON whatever the header says.
@@ -25,6 +31,7 @@ Read-only by design: nothing here writes to Verifix.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -45,6 +52,7 @@ BASE_URL = "https://app.verifix.com"
 TOKEN_PATH = "/security/oauth/token"
 TIMESHEET_PATH = "/b/vhr/api/v1/core/timesheet$export"
 TIME_KINDS_PATH = "/b/vhr/api/v1/core/time_kind$list"
+FILIAL_INFO_PATH = "/b/vhr/api/v1/core/filial$info"
 PROJECT_CODE = "vhr"
 TIMESHEET_PAGE = 100  # the documented maximum for timesheet$export
 LIST_PAGE = 500  # ...and for the other lists
@@ -117,9 +125,14 @@ class VerifixClient:
         self._token_expires = time.monotonic() + max(int(data.get("expires_in") or 600) - 60, 30)
 
     async def _headers(self, cursor: str | None, limit: int | None) -> dict[str, str]:
-        if self._token is None or time.monotonic() >= self._token_expires:
-            await self._fetch_token()
-        headers = {"project_code": PROJECT_CODE, "Authorization": f"Bearer {self._token}"}
+        if settings.verifix_auth == "basic":
+            pair = f"{settings.verifix_login.strip()}:{settings.verifix_password.get_secret_value()}"
+            authorization = "Basic " + base64.b64encode(pair.encode("utf-8")).decode("ascii")
+        else:
+            if self._token is None or time.monotonic() >= self._token_expires:
+                await self._fetch_token()
+            authorization = f"Bearer {self._token}"
+        headers = {"project_code": PROJECT_CODE, "Authorization": authorization}
         if settings.verifix_filial_id:
             headers["filial_id"] = settings.verifix_filial_id
         if cursor is not None:
@@ -135,8 +148,9 @@ class VerifixClient:
         response = await request_with_retry(
             self._http, "POST", path, json=body, headers=await self._headers(cursor, limit)
         )
-        if response.status_code == 401:
+        if response.status_code == 401 and settings.verifix_auth == "oauth":
             # The token expired early or was revoked: one more try with a fresh one.
+            # (A 401 with login+password means wrong credentials: no point retrying.)
             self._token = None
             response = await request_with_retry(
                 self._http, "POST", path, json=body, headers=await self._headers(cursor, limit)
@@ -168,6 +182,17 @@ class VerifixClient:
         """Attendance per employee and day, ``begin``..``end`` inclusive (Tashkent dates)."""
         body = {"period_begin_date": _day(begin), "period_end_date": _day(end), "division_ids": [], "employee_ids": []}
         return await self._list(TIMESHEET_PATH, body, TIMESHEET_PAGE)
+
+    async def organisation(self) -> dict[str, Any]:
+        """The organisation the requests go to (``core/filial$info``) — its name, to check filial_id."""
+        assert self._http is not None
+        async with audited(agent=self.agent, action="filial_info", target_system="verifix", run_id=self.run_id,
+                           target_ref=FILIAL_INFO_PATH):
+            response = await request_with_retry(
+                self._http, "POST", FILIAL_INFO_PATH, json={}, headers=await self._headers(None, None)
+            )
+            body = _body(response, FILIAL_INFO_PATH)
+        return body if isinstance(body, dict) else {}
 
     async def time_kinds(self) -> list[dict[str, Any]]:
         """The company's time kinds (Явка, Опоздание, Больничный...)."""

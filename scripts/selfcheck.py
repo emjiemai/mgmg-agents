@@ -2525,6 +2525,9 @@ def test_verifix() -> None:
         async def time_kinds(self):
             return documented
 
+        async def organisation(self):
+            return {"filial_name": "ЭМЖИЕМ"}
+
         async def timesheet(self, begin, end):
             d = begin.strftime("%d.%m.%Y")
             return [{"employee_id": "1", "employee_name": "Salimov Mumin", "days": [day(d, came="09:40")]},
@@ -2542,7 +2545,8 @@ def test_verifix() -> None:
         check_true("...tells the admin where the keys are", "VERIFIX_CLIENT_ID" in sent[-1] and "OAuth2" in sent[-1])
         settings.verifix_client_id, settings.verifix_client_secret = "cid", SecretStr("sec")
         check("/verifix once set up", asyncio.run(admin.handle_admin_message(message, uuid.uuid4())), "verifix_ok")
-        check_true("...shows today's picture", "Verifix уланди" in sent[-1] and "Табелда: 2 ходим" in sent[-1])
+        check_true("...shows today's picture and the organisation",
+                   "Verifix уланди" in sent[-1] and "Табелда: 2 ходим" in sent[-1] and "ЭМЖИЕМ" in sent[-1])
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
@@ -2946,6 +2950,64 @@ def test_billz() -> None:
             setattr(obj, name, value)
 
 
+def test_verifix_basic_login() -> None:
+    """Verifix with a user's login + password (the docs' Basic auth) and the organisation ID."""
+    print("Verifix login + password")
+    import asyncio
+    import base64
+    import contextlib
+    import json
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.common.config import settings
+    from integrations.verifix import client as vx
+
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("filial$info"):
+            return httpx.Response(200, text=json.dumps({"filial_name": "ЭМЖИЕМ"}))
+        return httpx.Response(200, text=json.dumps({"data": [{"name": "Опоздание", "time_kind_id": "82"}],
+                                                    "meta": {"next_cursor": "-1"}}))
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    names = ("verifix_client_id", "verifix_client_secret", "verifix_login", "verifix_password", "verifix_filial_id",
+             "verifix_enabled")
+    saved = [(settings, n, getattr(settings, n)) for n in names] + [(vx, "audited", vx.audited)]
+    vx.audited = no_audit
+    settings.verifix_client_id, settings.verifix_client_secret = "", SecretStr("")
+    settings.verifix_login, settings.verifix_password, settings.verifix_enabled = "admins@emjiem", SecretStr("p@ss"), True
+    try:
+        settings.verifix_filial_id = ""
+        check("login + password without the organisation ID: not configured", settings.verifix_auth, None)
+        settings.verifix_filial_id = "161"
+        check("login + password + organisation ID: basic", settings.verifix_auth, "basic")
+
+        async def read():
+            async with vx.VerifixClient(agent="test", transport=httpx.MockTransport(handler)) as c:
+                return await c.organisation(), await c.time_kinds()
+
+        org, kinds = asyncio.run(read())
+        expected = "Basic " + base64.b64encode(b"admins@emjiem:p@ss").decode()
+        check_true("every call: Basic auth, project_code, filial_id",
+                   all(r.headers.get("authorization") == expected and r.headers.get("project_code") == "vhr"
+                       and r.headers.get("filial_id") == "161" for r in seen))
+        check_true("no token request in this mode", not any(r.url.path.endswith("oauth/token") for r in seen))
+        check("the organisation's name, to check the ID", org.get("filial_name"), "ЭМЖИЕМ")
+        check("data is read", kinds[0]["name"], "Опоздание")
+        settings.verifix_client_id, settings.verifix_client_secret = "cid", SecretStr("sec")
+        check("client id + secret win when both are set", settings.verifix_auth, "oauth")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -2970,6 +3032,7 @@ def main() -> int:
         test_lead_handout,
         test_politeness_days_off_announcements,
         test_verifix,
+        test_verifix_basic_login,
         test_employee_admin,
         test_kpi,
         test_garmin_leads,

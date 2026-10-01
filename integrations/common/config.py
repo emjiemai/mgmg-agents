@@ -96,7 +96,14 @@ class Settings(BaseSettings):
     verifix_enabled: bool = True
     verifix_client_id: str = ""
     verifix_client_secret: SecretStr = SecretStr("")
-    # Only needed if Verifix says so: client credentials already name the organisation.
+    # The other way in (Verifix docs: "Basic auth", deprecated but working):
+    # a Verifix user's login as "user@company" and password. Then
+    # VERIFIX_FILIAL_ID — the organisation's ID — is required. Used only when
+    # the client id/secret above are empty.
+    verifix_login: str = ""
+    verifix_password: SecretStr = SecretStr("")
+    # The organisation's ID: required with VERIFIX_LOGIN/PASSWORD; with client
+    # credentials only if Verifix says so (the client already names the organisation).
     verifix_filial_id: str = ""
     # Arriving up to this many minutes after the schedule's start is on time.
     verifix_late_grace_minutes: int = 5
@@ -298,11 +305,20 @@ class Settings(BaseSettings):
         return bool(self.billz_enabled and self.billz_secret_token.get_secret_value().strip())
 
     @property
+    def verifix_auth(self) -> str | None:
+        """'oauth' (client id + secret), 'basic' (login + password + filial id), or None."""
+        if not self.verifix_enabled:
+            return None
+        if self.verifix_client_id.strip() and self.verifix_client_secret.get_secret_value():
+            return "oauth"
+        if self.verifix_login.strip() and self.verifix_password.get_secret_value() and self.verifix_filial_id.strip():
+            return "basic"
+        return None
+
+    @property
     def verifix_configured(self) -> bool:
-        """Verifix is switched on and has its client credentials."""
-        return bool(
-            self.verifix_enabled and self.verifix_client_id.strip() and self.verifix_client_secret.get_secret_value()
-        )
+        """Verifix is switched on and has a complete way to log in."""
+        return self.verifix_auth is not None
 
     def missing_placeholders(self) -> list[str]:
         """Return names of settings still holding a ``[PLACEHOLDER]`` value.

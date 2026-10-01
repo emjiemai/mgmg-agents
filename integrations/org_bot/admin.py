@@ -244,15 +244,17 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
     if not settings.verifix_configured:
         text, outcome = (
             "🕘 <b>Verifix уланмаган.</b>\n"
-            "Render → mgmg-shared: VERIFIX_CLIENT_ID ва VERIFIX_CLIENT_SECRET ни киритинг.\n"
-            "Улар Verifix'да: Администрирование → Настройки → Внешние системы → "
-            "«Клиенты OAuth2 для сервера для компании» (тури: client credentials).",
+            "Render → mgmg-shared, икки йўлдан бири:\n"
+            "• VERIFIX_LOGIN (масалан admins@emjiem), VERIFIX_PASSWORD ва VERIFIX_FILIAL_ID (ташкилот ID);\n"
+            "• ёки VERIFIX_CLIENT_ID ва VERIFIX_CLIENT_SECRET (Verifix: Внешние системы → "
+            "«Клиенты OAuth2 для сервера для компании»).",
             "verifix_not_configured",
         )
     else:
         today = today_local()
         try:
             async with VerifixClient(agent=AGENT, run_id=run_id) as client:
+                organisation = (await client.organisation()).get("filial_name") or "—"
                 raw_kinds = await client.time_kinds()
                 rows = await client.timesheet(today, today)
         except Exception as exc:  # noqa: BLE001 — the admin needs the reason, not a stack trace
@@ -265,7 +267,7 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
             )
             day = attendance.summarize(recs, today)
             text, outcome = (
-                "✅ <b>Verifix уланди.</b>\n"
+                f"✅ <b>Verifix уланди.</b> Ташкилот: {escape(organisation)}\n"
                 f"Табелда: {len(rows)} ходим. Бугун иш куни: {day.scheduled} киши, келди: {day.arrived}, "
                 f"кечикди: {len(day.late)}.\n"
                 f"Кечикиш чегараси: {grace} дақиқа. Давомат эртанги 08:00 ҳисоботида чиқади.",
@@ -326,6 +328,9 @@ async def _check_billz(run_id: uuid.UUID) -> str:
 def _verifix_hint(exc: Exception) -> str:
     """What to fix, for the errors people actually hit."""
     message = str(exc)
+    if settings.verifix_auth == "basic" and ("HTTP 401" in message or "HTTP 403" in message):
+        return ("\n\nЛогин, парол ёки VERIFIX_FILIAL_ID нотўғри. Логин «фойдаланувчи@компания» "
+                "кўринишида бўлсин (масалан admins@emjiem).")
     if "HTTP 401" in message or "invalid_client" in message or ("HTTP 400" in message and "token" in message):
         return "\n\nclient_id ёки client_secret нотўғри — Verifix'даги қийматларни қайта нусхаланг."
     if "HTTP 403" in message:

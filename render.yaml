@@ -226,6 +226,14 @@ envVarGroups:
         sync: false
       - key: VERIFIX_CLIENT_ID
         sync: false
+      # Or, instead of the client id/secret: a Verifix user's login
+      # ("user@company"), password and the organisation's ID.
+      - key: VERIFIX_LOGIN
+        sync: false
+      - key: VERIFIX_PASSWORD
+        sync: false
+      - key: VERIFIX_FILIAL_ID
+        sync: false
       - key: VERIFIX_CLIENT_SECRET
         sync: false
       - key: GOOGLE_LEADS_SHEET_ID
