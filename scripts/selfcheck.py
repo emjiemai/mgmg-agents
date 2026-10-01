@@ -2838,6 +2838,9 @@ def test_billz() -> None:
     check_true("brief block is Uzbek Cyrillic (shop names aside)",
                latin_words(block, allow={"Garmin", "Next", "Samarqand", "Darvoza", "Billz"}) == [])
     check_true("a day with no sales says so", "сотув бўлмаган" in sales.render_day(sales.day_sales([], day)))
+    with_idle = sales.day_sales(rows + [{"date": "2026-09-30", "shop_name": "PRIMUS Склад", "net_gross_sales": 0,
+                                         "orders_count": 0}], day)
+    check_true("shops that sold nothing (warehouses) are left out", "PRIMUS" not in sales.render_day(with_idle))
     text = sales.describe(rows, [{"seller_name": "Ширин", "net_gross_sales": 5000000, "orders_count": 9,
                                   "average_cheque": 555555}],
                           [{"product_name": "fēnix 8", "net_sales": 18000000, "net_sold_measurement_value": 1}],

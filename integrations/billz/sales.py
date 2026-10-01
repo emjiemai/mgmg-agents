@@ -80,11 +80,13 @@ def render_day(sales: DaySales, max_lines: int = 5) -> str:
     if not sales.shops or (sales.net_sales == 0 and sales.orders == 0):
         return f"🛍 <b>Дўконлар (Billz), {label}:</b> сотув бўлмаган\n"
     lines = [f"🛍 <b>Дўконлар (Billz), {label}:</b> {_som(sales.net_sales)} · {sales.orders} та чек"]
-    for s in sales.shops[:max_lines]:
+    # Warehouses and service points appear in the report with nothing sold — not news.
+    selling = [s for s in sales.shops if s.net_sales or s.orders or s.returns]
+    for s in selling[:max_lines]:
         returns = f", {s.returns} та қайтариш" if s.returns else ""
         lines.append(f"   • {escape(s.name)} — {_som(s.net_sales)} ({s.orders} та чек{returns})")
-    if len(sales.shops) > max_lines:
-        lines.append(f"   <i>+яна {len(sales.shops) - max_lines} та дўкон</i>")
+    if len(selling) > max_lines:
+        lines.append(f"   <i>+яна {len(selling) - max_lines} та дўкон</i>")
     return "\n".join(lines) + "\n"
 
 
