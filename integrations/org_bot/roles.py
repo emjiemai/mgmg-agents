@@ -104,6 +104,12 @@ AGENTS: list[Agent] = [
         "which are in progress, dismissed (with the reason) or done (with the result), and their latest note",
     ),
     Agent(
+        "billz_savdo",
+        "Дўконлар савдоси (Billz)",
+        "retail shop sales from the BILLZ till system, last 30 days: revenue per shop per day, number of "
+        "sales, returns, each seller's sales, top-selling products",
+    ),
+    Agent(
         "garmin_lidlar",
         "Garmin лидлари",
         "leads from the Garmin AI Telegram bot (@garminofficialuzbot, customers coming from Instagram "

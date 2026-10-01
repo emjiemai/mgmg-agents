@@ -41,6 +41,8 @@ DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
 QR_COMMAND = "/qr"
 # "/verifix" -> is Verifix connected, and what does today look like there?
 VERIFIX_COMMAND = "/verifix"
+# "/billz" -> is BILLZ connected, and yesterday's shop sales.
+BILLZ_COMMAND = "/billz"
 # "/dam" -> the next two weeks; tap a day to make it a day off (or a working day again).
 DAY_OFF_COMMANDS = ("/dam", "/damolish", "/dayoff")
 DAY_OFF_DAYS = 14
@@ -199,6 +201,8 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await load_agent("data-quality").check_now(run_id)
     if text == VERIFIX_COMMAND:
         return await _check_verifix(run_id)
+    if text == BILLZ_COMMAND:
+        return await _check_billz(run_id)
 
     return "ignored"
 
@@ -266,6 +270,48 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
                 f"кечикди: {len(day.late)}.\n"
                 f"Кечикиш чегараси: {grace} дақиқа. Давомат эртанги 08:00 ҳисоботида чиқади.",
                 "verifix_ok",
+            )
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text)
+    return outcome
+
+
+async def _check_billz(run_id: uuid.UUID) -> str:
+    """Admin Bot /billz: can we read BILLZ, and what were yesterday's shop sales?"""
+    from datetime import timedelta
+
+    from integrations.billz import sales as billz_sales
+    from integrations.billz.client import BillzClient
+
+    if not settings.billz_configured:
+        text, outcome = (
+            "🛍 <b>Billz уланмаган.</b>\nRender → mgmg-shared: BILLZ_SECRET_TOKEN ни киритинг "
+            "(Billz: Настройки → Компания → Ключи интеграции).",
+            "billz_not_configured",
+        )
+    else:
+        yesterday = today_local() - timedelta(days=1)
+        try:
+            async with BillzClient(agent=AGENT, run_id=run_id) as client:
+                shops = await client.shops()
+                day = billz_sales.day_sales(await client.shop_days(yesterday, yesterday), yesterday)
+        except Exception as exc:  # noqa: BLE001 — the admin needs the reason
+            log.error("BILLZ check failed: {}", exc)
+            hint = ""
+            if "HTTP 403" in str(exc) or "HTTP 401" in str(exc):
+                hint = "\n\nКалит нотўғри ёки ўчирилган — Billz'да янги калит яратиб, Render'га қайта киритинг."
+            text, outcome = f"❌ <b>Billz'га уланиб бўлмади.</b>\n{escape(str(exc)[:300])}{hint}", "billz_failed"
+        else:
+            text, outcome = (
+                f"✅ <b>Billz уланди.</b> Дўконлар: {len(shops)} та.\n\n"
+                + billz_sales.render_day(day)
+                + "\nЭрталабки ҳисоботда ҳар куни чиқади; Директор ботдан сўраши мумкин.",
+                "billz_ok",
             )
     async with TelegramBot(
         agent=AGENT,

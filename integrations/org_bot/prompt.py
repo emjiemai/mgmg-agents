@@ -320,6 +320,11 @@ to justify repeating a past conclusion.
   etildi", "как идут лиды у продажников") — go to lidlar. Questions about the
   leads the Lead Agent FOUND (the list itself, new tenders) stay with
   lead_agent.
+- Questions about SALES IN THE SHOPS / at the till — revenue per shop,
+  cheques, which seller sold most, best-selling products in the stores
+  ("do'konlarda savdo qanday", "kecha magazinda qancha sotildi", "qaysi
+  sotuvchi ko'p sotdi", "Billz", "выручка магазинов") — go to billz_savdo.
+  SAP orders, invoices and B2B sales stay with the sap_* / finance agents.
 - Questions about customers of the GARMIN AI BOT — people who came from
   Instagram / the web catalog to @garminofficialuzbot and want a watch
   ("garmin lidlari", "botdan nechta lid keldi", "kim fenix so'radi",

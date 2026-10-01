@@ -220,6 +220,10 @@ envVarGroups:
       # Garmin bot's COMMAND_CENTER_SECRET (integrations/garmin/leads.py).
       - key: GARMIN_LEADS_SECRET
         sync: false
+      # BILLZ shop tills, read-only (integrations/billz/): the integration key
+      # from BILLZ -> Настройки -> Компания -> Ключи интеграции.
+      - key: BILLZ_SECRET_TOKEN
+        sync: false
       - key: VERIFIX_CLIENT_ID
         sync: false
       - key: VERIFIX_CLIENT_SECRET

@@ -2804,6 +2804,145 @@ def test_garmin_leads() -> None:
     check_true("garmin_lidlar is a data source the Director can ask", "garmin_lidlar" in AGENT_SLUGS)
 
 
+def test_billz() -> None:
+    """BILLZ shop sales: the client against a fake BILLZ, the brief block, the bot, /billz."""
+    print("BILLZ (shop tills)")
+    import asyncio
+    import contextlib
+    import json
+    import uuid
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.billz import client as bz
+    from integrations.billz import sales
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, ops_manager
+
+    day = date(2026, 9, 30)
+    rows = [
+        {"date": "2026-09-30", "shop_name": "Garmin Next", "net_gross_sales": 8100000, "gross_sales": 8500000,
+         "orders_count": 20, "returns_count": 1},
+        {"date": "2026-09-30", "shop_name": "Garmin Samarqand Darvoza", "net_gross_sales": 4350000.5, "gross_sales": 4350000,
+         "orders_count": 14, "returns_count": 0},
+        {"date": "2026-09-29", "shop_name": "Garmin Next", "net_gross_sales": 999, "orders_count": 1},
+    ]
+    s = sales.day_sales(rows, day)
+    check("one day, biggest shop first", [x.name for x in s.shops], ["Garmin Next", "Garmin Samarqand Darvoza"])
+    check("totals", (round(s.net_sales), s.orders), (12450000, 34))
+    block = sales.render_day(s)
+    check_true("brief block: total, cheques, each shop, returns",
+               "Billz" in block and "34 та чек" in block and "Garmin Next" in block and "1 та қайтариш" in block)
+    check_true("brief block is Uzbek Cyrillic (shop names aside)",
+               latin_words(block, allow={"Garmin", "Next", "Samarqand", "Darvoza", "Billz"}) == [])
+    check_true("a day with no sales says so", "сотув бўлмаган" in sales.render_day(sales.day_sales([], day)))
+    text = sales.describe(rows, [{"seller_name": "Ширин", "net_gross_sales": 5000000, "orders_count": 9,
+                                  "average_cheque": 555555}],
+                          [{"product_name": "fēnix 8", "net_sales": 18000000, "net_sold_measurement_value": 1}],
+                          date(2026, 9, 1), day)
+    check_true("the Director's data: shops, sellers, products",
+               "Garmin Next: net 8,100,999" in text and "Ширин: 5,000,000, 9 sales" in text and "fēnix 8: 18,000,000, 1 pcs" in text)
+
+    brief = load_agent("ceo-daily-brief")
+    check_true("the brief shows shop sales once BILLZ is set up",
+               "Дўконлар (Billz)" in brief.render(brief.BriefData(report_rows=[], shop_sales=s)))
+    check_true("no BILLZ, no block", "Billz" not in brief.render(brief.BriefData(report_rows=[])))
+    check_true("a BILLZ failure is said plainly",
+               "Billz'дан маълумот олиб бўлмади" in brief.render(brief.BriefData(report_rows=[], shop_sales_failed=True)))
+
+    # ---- the client against a fake BILLZ
+    calls: list[httpx.Request] = []
+    state = {"logins": 0, "expire_once": False, "forbidden": False}
+
+    def handler(request):
+        calls.append(request)
+        if request.url.path == "/v1/auth/login":
+            state["logins"] += 1
+            ok = json.loads(request.content) == {"secret_token": "key-123"}
+            return httpx.Response(200 if ok else 403, json={"code": 200, "message": "ok", "error": None,
+                                  "data": {"access_token": f"A{state['logins']}", "expires_in": 1296000}})
+        if state["forbidden"]:
+            return httpx.Response(403, json={"code": 403, "message": "forbidden", "error": "access denied"})
+        if state["expire_once"]:
+            state["expire_once"] = False
+            return httpx.Response(401, json={"code": 401, "message": "token expired"})
+        page = int(request.url.params["page"])
+        batch = [{"date": "2026-09-30", "shop_name": f"S{(page - 1) * 100 + i}", "net_gross_sales": 1,
+                  "orders_count": 1} for i in range(100 if page == 1 else 3)]
+        return httpx.Response(200, json={"count": 103, "shop_stats_by_date": batch})
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    saved = [(bz, "audited", bz.audited), (bz, "PAUSE", bz.PAUSE),
+             (settings, "billz_secret_token", settings.billz_secret_token), (settings, "billz_enabled", settings.billz_enabled)]
+    bz.audited, bz.PAUSE = no_audit, 0
+    settings.billz_secret_token, settings.billz_enabled = SecretStr("key-123"), True
+
+    async def read(**flags):
+        state.update(flags)
+        async with bz.BillzClient(agent="test", transport=httpx.MockTransport(handler)) as c:
+            return await c.shop_days(day, day)
+
+    try:
+        got = asyncio.run(read())
+        check("both pages read (103 rows)", len(got), 103)
+        report = [r for r in calls if r.url.path == "/v1/general-report-table"]
+        check_true("bearer token, day detalization, dates", report[0].headers["authorization"] == "Bearer A1"
+                   and report[0].url.params["detalization"] == "day" and report[0].url.params["start_date"] == "2026-09-30")
+        check("one login for the run", state["logins"], 1)
+        state["logins"] = 0
+        check_true("an expired token: one fresh login, then the read goes on",
+                   len(asyncio.run(read(expire_once=True))) == 103 and state["logins"] == 2)
+        try:
+            asyncio.run(read(forbidden=True))
+            check_true("a refusal raises", False)
+        except bz.BillzError as exc:
+            check_true("a refusal says why, never the key", "HTTP 403" in str(exc) and "key-123" not in str(exc))
+        state["forbidden"] = False
+        settings.billz_secret_token = SecretStr("")
+        try:
+            asyncio.run(read())
+            check_true("not configured raises", False)
+        except bz.BillzError:
+            check_true("not configured: refuses before any call", True)
+        check_true("the bot says BILLZ isn't connected", "not connected" in asyncio.run(ops_manager._fetch_billz_data()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("billz_savdo is a data source the Director can ask", "billz_savdo" in AGENT_SLUGS)
+
+    sent: list[str] = []
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, **kwargs):
+            sent.append(text)
+            return [1]
+
+    saved = [(admin, "TelegramBot", admin.TelegramBot), (settings, "admin_bot_admin_user_id", settings.admin_bot_admin_user_id),
+             (settings, "billz_secret_token", settings.billz_secret_token)]
+    admin.TelegramBot, settings.admin_bot_admin_user_id, settings.billz_secret_token = FakeBot, 0, SecretStr("")
+    try:
+        check("/billz before setup", asyncio.run(admin.handle_admin_message({"from": {"id": 9}, "text": "/billz"}, uuid.uuid4())),
+              "billz_not_configured")
+        check_true("...says where the key goes", "BILLZ_SECRET_TOKEN" in sent[-1] and "Ключи интеграции" in sent[-1])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -2831,6 +2970,7 @@ def main() -> int:
         test_employee_admin,
         test_kpi,
         test_garmin_leads,
+        test_billz,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

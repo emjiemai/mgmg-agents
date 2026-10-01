@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     # Arriving up to this many minutes after the schedule's start is on time.
     verifix_late_grace_minutes: int = 5
 
+    # --- BILLZ 2.0 (shop tills; integrations/billz/) ---
+    # The integration key from BILLZ: Настройки → Компания → Ключи интеграции.
+    # Read-only use: shop sales in the brief and the Director's answers.
+    billz_enabled: bool = True
+    billz_secret_token: SecretStr = SecretStr("")
+
     # --- Garmin AI bot leads (POST /webhooks/garmin-lead/{secret}) ---
     # The same long random value goes into the Garmin bot's COMMAND_CENTER_SECRET.
     garmin_leads_secret: SecretStr = SecretStr("")
@@ -285,6 +291,11 @@ class Settings(BaseSettings):
     def public_url(self) -> str:
         """The address printed on QR codes ("" when neither setting is known)."""
         return (self.public_base_url or self.render_external_url).strip().rstrip("/")
+
+    @property
+    def billz_configured(self) -> bool:
+        """BILLZ is switched on and has its integration key."""
+        return bool(self.billz_enabled and self.billz_secret_token.get_secret_value().strip())
 
     @property
     def verifix_configured(self) -> bool:

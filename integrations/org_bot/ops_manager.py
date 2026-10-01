@@ -1754,6 +1754,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "lidlar": _fetch_lead_handout_data,
         "davomat": _fetch_attendance_data,
         "garmin_lidlar": _fetch_garmin_leads_data,
+        "billz_savdo": _fetch_billz_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1811,6 +1812,19 @@ async def _fetch_kpi_agent_data() -> str:
     # The KPI score (the Director's criteria, kpi_score.py) for the period /kpi shows.
     lines.append(await kpi_flow.describe(kpi_score.score_period(today)))
     return "\n".join(lines)
+
+
+async def _fetch_billz_data() -> str:
+    """BILLZ shop sales, last 30 days (shops, sellers, top products)."""
+    from integrations.billz import sales as billz_sales
+
+    if not settings.billz_configured:
+        return "BILLZ (the shop till system) is not connected yet: BILLZ_SECRET_TOKEN is not set. Say so; do not guess."
+    try:
+        return await billz_sales.load_period(today_local(), 30, run_id=None, agent=AGENT)
+    except Exception as exc:  # noqa: BLE001 — "unavailable", not an error, for the Director
+        log.error("BILLZ read failed: {}", exc)
+        return f"BILLZ could not be read right now ({exc}). Say shop sales are unavailable; do not guess."
 
 
 async def _fetch_garmin_leads_data() -> str:

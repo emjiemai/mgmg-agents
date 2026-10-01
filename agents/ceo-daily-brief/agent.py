@@ -68,6 +68,7 @@ from integrations.sap import figures
 from integrations.sap.figures import Figure
 from integrations.sap.models import ARAging, ARInvoice
 from integrations.telegram.bot import escape
+from integrations.billz import sales as billz_sales
 from integrations.verifix import attendance
 
 AGENT = "ceo-daily-brief"
@@ -110,6 +111,9 @@ class BriefData:
     # Yesterday from Verifix; None when Verifix isn't set up (section hidden).
     attendance: attendance.DaySummary | None = None
     attendance_failed: bool = False
+    # Yesterday's shop sales from BILLZ; None when BILLZ isn't set up (hidden).
+    shop_sales: billz_sales.DaySales | None = None
+    shop_sales_failed: bool = False
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def note_failure(self, source: str, error: BaseException) -> None:
@@ -127,7 +131,7 @@ async def collect() -> BriefData:
     today = today_local()
     names = [
         "sap_aging", "sap_invoice_cap", "sap_orders", "sap_inventory", "payments", "daily_reports", "previous",
-        "attendance",
+        "attendance", "billz",
     ]
     results = await asyncio.gather(
         _fetch_aging(),
@@ -138,6 +142,7 @@ async def collect() -> BriefData:
         _fetch_report_results(),
         _fetch_previous(today),
         _fetch_attendance(today),
+        _fetch_shop_sales(today),
         return_exceptions=True,
     )
     by_name = dict(zip(names, results))
@@ -166,7 +171,18 @@ async def collect() -> BriefData:
         data.attendance_failed = True
     else:
         data.attendance = by_name["attendance"]
+    if isinstance(by_name["billz"], BaseException):
+        data.shop_sales_failed = True
+    else:
+        data.shop_sales = by_name["billz"]
     return data
+
+
+async def _fetch_shop_sales(today: date) -> billz_sales.DaySales | None:
+    """Yesterday's sales in the shops (BILLZ), or None when BILLZ isn't set up."""
+    if not settings.billz_configured:
+        return None
+    return await billz_sales.load_day(today - timedelta(days=1), run_id=None, agent=AGENT)
 
 
 async def _fetch_attendance(today: date) -> attendance.DaySummary | None:
@@ -311,6 +327,7 @@ def render(data: BriefData) -> str:
         f"<b>☀️ CEO кунлик ҳисоботи — {fmt_date(day)}.</b> <i>{now_local().strftime('%H:%M')} Тошкент</i>",
         "",
         render_five(data),
+        _render_shop_sales(data),
         _render_missed_reports(data),
         _render_attendance(data),
     ]
@@ -430,6 +447,15 @@ def _render_missed_reports(data: BriefData) -> str | None:
     if len(missed) > MAX_LINES:
         lines.append(f"   <i>+яна {len(missed) - MAX_LINES} та</i>")
     return "\n".join(lines) + "\n"
+
+
+def _render_shop_sales(data: BriefData) -> str | None:
+    """Yesterday in the shops (hidden until BILLZ is set up)."""
+    if data.shop_sales_failed:
+        return "🛍 <b>Дўконлар (Billz)</b>\n   ⚠️ Billz'дан маълумот олиб бўлмади\n"
+    if data.shop_sales is None:
+        return None
+    return billz_sales.render_day(data.shop_sales, MAX_LINES)
 
 
 def _render_attendance(data: BriefData) -> str | None:

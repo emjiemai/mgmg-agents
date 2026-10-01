@@ -76,6 +76,12 @@ Director through OPS Manager Bot, marked 🔴 with the business. Admin Bot
 `/qr` makes both cards. See
 `docs/agent-specs/10-client-feedback.md`.
 
+## Shop sales (BILLZ)
+
+Read-only from the BILLZ 2.0 API: yesterday's sales per shop in the 08:00 brief,
+and "do'konlarda savdo qanday?" in OPS Manager Bot. Off until `BILLZ_SECRET_TOKEN`
+is set; Admin Bot `/billz` checks it. See `docs/agent-specs/15-billz.md`.
+
 ## Garmin AI bot leads
 
 The Garmin AI bot (emjiemai/Garmin-AI-bot) sends every lead to
