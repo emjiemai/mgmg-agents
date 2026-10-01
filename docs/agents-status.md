@@ -3,7 +3,7 @@
 Status against the owner's plan (*ЭМЖИЕМ AI Агентлар Тизими*, 21 agents).
 Everything runs through the same engine: two Telegram bots (OPS Manager Bot
 for everyone, Admin Bot for the admin) on the always-on `mgmg-api` service,
-plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-09-28.
+plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-01. Board for the Director: `docs/board/` (SVG, drag into Figma).
 
 ## Working
 
@@ -47,7 +47,7 @@ None. The Lead Agent (F2), paused on 2026-09-16, was switched back on on
 | D1 | Stock & reorder signal | Full stock and sales from SAP (same push limit) |
 | C2 | Sales forecast & targets | Full sales history per sales person from SAP |
 | B3 | Reconciliation bank ↔ SAP ↔ 1C ↔ Didox | Access to the bank, 1C and Didox |
-| C1 | Lead collector (Telegram, WhatsApp, Instagram) | WhatsApp Business API and Instagram access |
+| C1 | Lead collector (Telegram, WhatsApp, Instagram) — **in progress**: the Garmin AI bot (separate repo emjiemai/Garmin-AI-bot: Instagram Reels → web catalog → AI Telegram bot → manager) is live; its leads are still in a JSONL file on Render's free disk | WhatsApp Business API and Instagram access; move the Garmin bot's leads to a database and into the Command Center |
 | C4 | Service & contract reminders | A list of machines installed at each customer |
 | C5 | Customer win-back | Customer purchase history (SAP, complete) |
 | F1 | Marketing & content plan | Instagram access (a plan-only version could be built without it) |
