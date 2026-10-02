@@ -3084,6 +3084,44 @@ def test_onec() -> None:
             setattr(obj, name, value)
 
 
+def test_onec_cash() -> None:
+    """1C money: the brief's «Касса», the change since yesterday, the Director's data."""
+    print("1C cash in the brief")
+    from datetime import datetime
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.onec import cash
+
+    report = {"accounts": [{"key": "a", "code": "5010", "name": "Основная касса организации"},
+                           {"key": "b", "code": "5110.1", "name": "Расчетные счета"},
+                           {"key": "c", "code": "5110.2", "name": "Расчетные счета"},
+                           {"key": "d", "code": "5210", "name": "Валютные счета внутри Республики"}],
+              "balances": {"5010": 76719951.0, "5110.1": 2368215063.0, "5110.2": 1152167476.0, "5210": 0.0},
+              "amount_field": "СуммаBalance", "errors": []}
+    pos = cash.from_report(report, datetime(2026, 10, 2, 8, 0))
+    check("cash desk vs bank (2026-10-02 /1c figures)", (round(pos.cash), round(pos.bank)), (76719951, 3520382539))
+    check("zero accounts are left out", [a[0] for a in pos.accounts], ["5010", "5110.1", "5110.2"])
+    try:
+        cash.from_report({"accounts": [], "balances": {}, "amount_field": None, "errors": ["HTTP 401"]}, pos.at)
+        check_true("unreadable balances raise", False)
+    except Exception as exc:
+        check_true("unreadable balances raise, with 1C's reason", "401" in str(exc))
+
+    brief = load_agent("ceo-daily-brief")
+    text = brief.render(brief.BriefData(report_rows=[], cash=pos))
+    check_true("the brief shows bank and cash", "💰 Касса: 3,6 млрд сўм (банк 3,52 млрд сўм, нақд 76,72 млн сўм)" in text
+               or ("💰 Касса:" in text and "банк" in text and "нақд" in text))
+    check_true("not set up: «уланмаган»", "💰 Касса: <i>уланмаган</i>" in brief.render(brief.BriefData(report_rows=[])))
+    check_true("1C down: «маълумот йўқ»", "💰 Касса: <i>маълумот йўқ</i>" in brief.render(brief.BriefData(report_rows=[], cash_failed=True)))
+    saved = brief.five_numbers_json(brief.BriefData(cash=pos))["cash"]
+    check("today's cash is kept for tomorrow's change", saved, {"status": "ok", "totals": {"UZS": round(pos.total * 100)}})
+    tomorrow = brief.render(brief.BriefData(report_rows=[], cash=pos, previous={"cash": {"status": "ok", "totals": {"UZS": 0}}}))
+    check_true("…and shown as a change", "кечагига" in tomorrow)
+    data = cash.describe(pos)
+    check_true("the Director's data: totals and accounts", "bank accounts 3,520,382,539" in data and "5110.2" in data)
+    check_true("pul_qoldigi is a data source the Director can ask", "pul_qoldigi" in AGENT_SLUGS)
+
+
 def main() -> int:
     """Run every check.
 
@@ -3114,6 +3152,7 @@ def main() -> int:
         test_garmin_leads,
         test_billz,
         test_onec,
+        test_onec_cash,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

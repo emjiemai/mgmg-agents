@@ -104,6 +104,12 @@ AGENTS: list[Agent] = [
         "which are in progress, dismissed (with the reason) or done (with the result), and their latest note",
     ),
     Agent(
+        "pul_qoldigi",
+        "Пул қолдиғи (1C)",
+        "money right now from 1C accounting: balance on each bank account and cash desk (class-5000 "
+        "accounts), bank vs cash totals, in so'm",
+    ),
+    Agent(
         "billz_savdo",
         "Дўконлар савдоси (Billz)",
         "retail shop sales from the BILLZ till system, last 30 days: revenue per shop per day, number of "

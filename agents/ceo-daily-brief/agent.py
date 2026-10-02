@@ -6,7 +6,7 @@ Uzbek Cyrillic like every bot message:
     ☀️ CEO кунлик ҳисоботи — 26.09.2026. 08:00 Тошкент
 
     📊 5 рақам
-    💰 Касса: уланмаган
+    💰 Касса: 3,6 млрд сўм (банк 3,52 млрд сўм, нақд 76,7 млн сўм)
     📈 Кечаги сотув: $12,340.00 (8 та буюртма)
     📦 Захира: камида $120,000.00*
     🧾 Мижоз қарзи: $15,200.00, муддати ўтгани $7,384.36 (16 та)
@@ -23,7 +23,8 @@ cash, yesterday's sales, stock value, customer debt, today's payments — with
 the change since the previous brief where the two days are comparable.
 
 Honesty rules, because a wrong number here is worse than none:
-  * Cash has no source yet (the SAP gateway has no cash tool): "уланмаган".
+  * Cash is 1C's balance on the class-5000 money accounts (integrations/onec/
+    cash.py), bank and cash desk shown apart; "уланмаган" until ONEC_* is set.
   * A SAP feed that hit its push row limit gives a lower bound: "камида",
     with a footnote. See integrations/sap/figures.py.
   * Today's payments come from approved written permissions (B1 makes that
@@ -58,7 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_money, format_money_by_currency
+from integrations.common.money import format_money, format_money_by_currency, to_tiyin
 from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
 from integrations.org_bot import permissions
 from integrations.org_bot import store as org_store
@@ -69,6 +70,7 @@ from integrations.sap.figures import Figure
 from integrations.sap.models import ARAging, ARInvoice
 from integrations.telegram.bot import escape
 from integrations.billz import sales as billz_sales
+from integrations.onec import cash as onec_cash
 from integrations.verifix import attendance
 
 AGENT = "ceo-daily-brief"
@@ -111,6 +113,9 @@ class BriefData:
     # Yesterday from Verifix; None when Verifix isn't set up (section hidden).
     attendance: attendance.DaySummary | None = None
     attendance_failed: bool = False
+    # Money in the bank and cash desks from 1C; None when 1C isn't set up.
+    cash: onec_cash.CashPosition | None = None
+    cash_failed: bool = False
     # Yesterday's shop sales from BILLZ; None when BILLZ isn't set up (hidden).
     shop_sales: billz_sales.DaySales | None = None
     shop_sales_failed: bool = False
@@ -131,7 +136,7 @@ async def collect() -> BriefData:
     today = today_local()
     names = [
         "sap_aging", "sap_invoice_cap", "sap_orders", "sap_inventory", "payments", "daily_reports", "previous",
-        "attendance", "billz",
+        "attendance", "billz", "cash",
     ]
     results = await asyncio.gather(
         _fetch_aging(),
@@ -143,6 +148,7 @@ async def collect() -> BriefData:
         _fetch_previous(today),
         _fetch_attendance(today),
         _fetch_shop_sales(today),
+        _fetch_cash(),
         return_exceptions=True,
     )
     by_name = dict(zip(names, results))
@@ -171,11 +177,22 @@ async def collect() -> BriefData:
         data.attendance_failed = True
     else:
         data.attendance = by_name["attendance"]
+    if isinstance(by_name["cash"], BaseException):
+        data.cash_failed = True
+    else:
+        data.cash = by_name["cash"]
     if isinstance(by_name["billz"], BaseException):
         data.shop_sales_failed = True
     else:
         data.shop_sales = by_name["billz"]
     return data
+
+
+async def _fetch_cash() -> onec_cash.CashPosition | None:
+    """Bank + cash balances from 1C right now (08:00 = end of yesterday), or None if not set up."""
+    if not settings.onec_configured:
+        return None
+    return await onec_cash.load(now_local().replace(tzinfo=None), run_id=None, agent=AGENT)
 
 
 async def _fetch_shop_sales(today: date) -> billz_sales.DaySales | None:
@@ -373,7 +390,7 @@ def _figure_value(figure: Figure | None, key: str, data: BriefData, *, what: str
 
 def render_five(data: BriefData) -> str:
     """The five-number block (A2)."""
-    lines = ["📊 <b>5 рақам</b>", "💰 Касса: <i>уланмаган</i>"]
+    lines = ["📊 <b>5 рақам</b>", f"💰 Касса: {_cash_value(data)}"]
     lower_bound = False
 
     sales, capped = _figure_value(data.sales, "sales", data, what="буюртма")
@@ -414,6 +431,16 @@ def render_five(data: BriefData) -> str:
     if lower_bound:
         lines.append("<i>* SAP'дан фақат чекланган миқдордаги ёзув келди — рақам тўлиқ эмас.</i>")
     return "\n".join(lines) + "\n"
+
+
+def _cash_value(data: BriefData) -> str:
+    """Bank + cash from 1C, with the change since yesterday's brief."""
+    if data.cash_failed:
+        return "<i>маълумот йўқ</i>"
+    if data.cash is None:
+        return "<i>уланмаган</i>"
+    totals = {"UZS": to_tiyin(data.cash.total)}
+    return onec_cash.brief_value(data.cash) + _change("cash", totals, data, comparable=True)
 
 
 def _totals_by_currency(invoices: list[ARInvoice], *, overdue_only: bool) -> dict[str, int]:
@@ -494,7 +521,11 @@ def five_numbers_json(data: BriefData) -> dict[str, Any]:
     payments = None
     if data.payments is not None:
         payments = {"status": "ok", "totals": data.payments.totals, "count": data.payments.count}
+    cash = None
+    if data.cash is not None:
+        cash = {"status": "ok", "totals": {"UZS": to_tiyin(data.cash.total)}}
     return {
+        "cash": cash,
         "sales": _figure_json(data.sales),
         "inventory": _figure_json(data.inventory),
         "debt": debt,

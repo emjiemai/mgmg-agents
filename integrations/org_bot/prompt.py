@@ -320,6 +320,10 @@ to justify repeating a past conclusion.
   etildi", "как идут лиды у продажников") — go to lidlar. Questions about the
   leads the Lead Agent FOUND (the list itself, new tenders) stay with
   lead_agent.
+- Questions about how much MONEY there is right now — in the bank accounts
+  or the cash desk ("hisobda qancha pul bor", "kassada qancha", "pul
+  qoldig'i", "остаток на расчётном счёте", "сколько денег в кассе") — go to
+  pul_qoldigi. Upcoming money in/out stays with pul_kalendari.
 - Questions about SALES IN THE SHOPS / at the till — revenue per shop,
   cheques, which seller sold most, best-selling products in the stores
   ("do'konlarda savdo qanday", "kecha magazinda qancha sotildi", "qaysi

@@ -1755,6 +1755,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "davomat": _fetch_attendance_data,
         "garmin_lidlar": _fetch_garmin_leads_data,
         "billz_savdo": _fetch_billz_data,
+        "pul_qoldigi": _fetch_cash_balance_data,
     }
     if agent_slug == "all_systems":
         sections = []
@@ -1812,6 +1813,19 @@ async def _fetch_kpi_agent_data() -> str:
     # The KPI score (the Director's criteria, kpi_score.py) for the period /kpi shows.
     lines.append(await kpi_flow.describe(kpi_score.score_period(today)))
     return "\n".join(lines)
+
+
+async def _fetch_cash_balance_data() -> str:
+    """Bank and cash balances from 1C, right now."""
+    from integrations.onec import cash as onec_cash
+
+    if not settings.onec_configured:
+        return "1C is not connected yet (ONEC_ODATA_URL / ONEC_LOGIN / ONEC_PASSWORD not set). Say so; do not guess."
+    try:
+        return onec_cash.describe(await onec_cash.load(now_local().replace(tzinfo=None), run_id=None, agent=AGENT))
+    except Exception as exc:  # noqa: BLE001 — "unavailable" for the Director
+        log.error("1C cash read failed: {!r}", exc)
+        return f"1C could not be read right now ({type(exc).__name__}: {exc}). Say balances are unavailable; do not guess."
 
 
 async def _fetch_billz_data() -> str:
