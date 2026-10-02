@@ -1086,7 +1086,7 @@ def test_report_or_message() -> None:
     from integrations.org_bot.ops_manager import report_message_kind, report_or_ai_keyboard
 
     # 2026-10-02: no more "or a message for the Director?" — only report or a question for the AI.
-    check("plain message -> report", report_message_kind(False, False, False), "report")
+    check("plain message -> confirmed first, never guessed", report_message_kind(False, False, False), "ask")
     check("reply to the ask/reminder -> report, even if it asks something", report_message_kind(True, False, True), "report")
     check("reply to a task card -> a question about the task", report_message_kind(False, True, False), "task_question")
     check("a plain question -> ask", report_message_kind(False, False, True), "ask")
@@ -1776,6 +1776,11 @@ def test_team_cheer() -> None:
     saved.clear()
     patch(store, "answer_cheer", answer_cheer)
     patch(store, "cheer_delivery_for_message", delivery_for)
+
+    async def not_editing(*args):
+        return None
+
+    patch(store, "report_being_edited", not_editing)
     patch(ops_manager, "TelegramBot", EditBot)
     patch(ops_manager, "_answer", fake_answer)
     patch(ops_manager, "_reply", fake_reply)
@@ -2043,6 +2048,7 @@ def test_lead_handout() -> None:
     for name, fake in (("answer_lead_checkin", answer_checkin), ("choose_lead_outcome", choose), ("ask_lead_question", ask_q),
                        ("pending_lead_question", pending_q), ("lead_question_by_message", q_by_message),
                        ("save_lead_note", save_note), ("pending_report", pending_report),
+                       ("report_being_edited", no_cheer),
                        ("cheer_delivery_for_message", no_cheer)):
         patch(store, name, fake)
     patch(ops_manager, "TelegramBot", EditBot)
@@ -2351,6 +2357,7 @@ def test_ai_chat_and_sheet() -> None:
     for name, fake in (("log_ai_turn", log_turn), ("recent_ai_turns", empty), ("ai_questions_today", questions_today),
                        ("open_tasks_for_employee", open_tasks), ("open_leads_for_employee", empty),
                        ("cheer_delivery_for_message", none), ("lead_question_by_message", none),
+                       ("report_being_edited", none),
                        ("pending_lead_question", none), ("pending_report", pending_report),
                        ("open_report_followup", none), ("submitted_report_today", none), ("find_task_by_message_id", none),
                        ("create_pending_relay", create_held), ("resolve_pending_relay", resolve_held),
@@ -2440,6 +2447,221 @@ def test_ai_chat_and_sheet() -> None:
                out[moved.index("company_name")] == "Hilton" and out[moved.index("date_added")] == "2026-10-02"
                and out[1] == "" and len(out) == len(moved))
     check("column letters", [leads.column_letter(n) for n in (1, 20, 26, 27, 52)], ["A", "T", "Z", "AA", "AZ"])
+
+
+def test_files_reports_cheer_off() -> None:
+    """2026-10-02: files go to the Director when asked; today's report confirmed, changed, deleted; cheer off per person."""
+    print("files, today's report, cheer off")
+    import asyncio
+    import uuid
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import admin, ops_manager, report_tools, store
+
+    # ---- the pure parts
+    check("a photo is a file", report_tools.file_kind({"photo": [{}]}), "photo")
+    check("text is not", report_tools.file_kind({"text": "салом"}), None)
+    with_report = report_tools.purpose_keyboard("11111111-2222-3333-4444-555555555555", True)
+    without = report_tools.purpose_keyboard("11111111-2222-3333-4444-555555555555", False)
+    labels = [b["text"] for row in with_report["inline_keyboard"] for b in row]
+    check("report, Director, cancel", labels, ["бугунги ҳисобот", "директорга юбориш", "бекор қилиш"])
+    check_true("no 'today's report' when none was asked today",
+               "бугунги ҳисобот" not in [b["text"] for row in without["inline_keyboard"] for b in row])
+    check_true("buttons fit 64 bytes", all(len(b["callback_data"].encode()) <= 64 for row in with_report["inline_keyboard"] for b in row))
+    caption = report_tools.director_caption("Алишер <К>", "B2B сотув", "report", "омбор расми")
+    check_true("the Director sees who, what for, their words — escaped",
+               "Алишер &lt;К&gt;" in caption and "бугунги ҳисоботи" in caption and "омбор расми" in caption)
+    for text in (report_tools.ask_purpose_text("video"), report_tools.sent_text("report", True), report_tools.sent_text("director", True),
+                 report_tools.cancelled_text(), report_tools.no_report_today_text(), report_tools.edit_prompt_text(),
+                 report_tools.edited_text(), report_tools.delete_question_text(), report_tools.deleted_text()):
+        check(f"friendly: {text[:28]}…", friendly_problems(text), [])
+    card, kb = report_tools.report_card({"id": "r1", "status": "submitted", "content": "омборни санадим", "media_count": 2})
+    check_true("/hisobot shows the report, its files, ✏️ and 🗑",
+               "омборни санадим" in card and "файллар: 2" in card and [b["callback_data"] for b in kb["inline_keyboard"][0]] == ["rpe:r1", "rpd:r1"])
+    check("nothing to change before it's sent", report_tools.report_card({"id": "r1", "status": "asked"})[1], None)
+
+    # ---- the bot, with a fake database and Telegram
+    worker = {"id": "e7", "telegram_user_id": 7, "role": "b2b_sotuv", "status": "active", "full_name": "Алишер Каримов",
+              "display_name": "a"}
+    director = {"telegram_user_id": 1}
+    replies, edits, copies = [], [], []
+    state = {"report": {"id": "r1", "status": "submitted", "content": "эски", "media_count": 0}, "file": None,
+             "editing": None, "attached": None}
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def _call(self, method, payload, **kwargs):
+            copies.append((method, payload))
+            return {"message_id": 99}
+
+        async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
+            edits.append((text, reply_markup))
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+        replies.append((text, reply_markup))
+        return [1]
+
+    async def create_file(user, message_id, kind, caption):
+        state["file"] = {"id": "f1", "message_id": message_id, "caption": caption, "resolved": False}
+        return state["file"]
+
+    async def resolve_file(file_id, user, purpose):
+        f = state["file"]
+        if not f or f["resolved"] or user != 7:
+            return None
+        f["resolved"] = True
+        return f
+
+    async def report_for_day(user, day):
+        return state["report"]
+
+    async def attach(user, day, caption):
+        state["attached"] = caption
+        return state["report"]
+
+    async def directors(role):
+        return [director]
+
+    async def get_by_tg(user):
+        return worker
+
+    async def start_edit(report_id, user, day):
+        state["editing"] = report_id
+        return state["report"]
+
+    async def being_edited(user, day, minutes):
+        return state["report"] if state["editing"] else None
+
+    async def replace(report_id, content):
+        state["report"] = {**state["report"], "content": content}
+        state["editing"] = None
+        return state["report"]
+
+    async def delete(report_id, user, day):
+        state["report"] = {**state["report"], "status": "asked", "content": None}
+        return state["report"]
+
+    async def none(*args, **kwargs):
+        return None
+
+    saved = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    for name, fake in (("create_employee_file", create_file), ("resolve_employee_file", resolve_file),
+                       ("report_for_day", report_for_day), ("attach_media_to_report", attach),
+                       ("active_employees_by_role", directors), ("get_employee_by_telegram_id", get_by_tg),
+                       ("set_employee_file_sent", none), ("start_report_edit", start_edit),
+                       ("report_being_edited", being_edited), ("replace_report", replace), ("delete_report", delete)):
+        patch(store, name, fake)
+    patch(ops_manager, "TelegramBot", FakeBot)
+    patch(ops_manager, "_reply", fake_reply)
+    patch(ops_manager, "_answer", none)
+
+    def tap(data):
+        return asyncio.run(ops_manager._handle_callback({"id": "q", "data": data, "from": {"id": 7},
+                                                          "message": {"message_id": 5, "chat": {"id": 7}}}, uuid.uuid4()))
+
+    try:
+        photo = {"message_id": 42, "photo": [{"file_id": "x"}], "caption": "омбор"}
+        check("a photo: asked what it's for", asyncio.run(ops_manager._handle_employee_message(worker, photo, uuid.uuid4())),
+              "file_purpose_asked")
+        check_true("...never sent to the AI or anyone yet", not copies and replies[-1][0].startswith("бу расм нима учун?"))
+        check("'директорга юбориш' forwards the photo itself", tap("fp:f1:d"), "file_director")
+        check_true("...to the Director, with who sent it",
+                   copies[-1][0] == "copyMessage" and copies[-1][1]["chat_id"] == "1" and copies[-1][1]["message_id"] == 42
+                   and "Алишер Каримов" in copies[-1][1]["caption"] and "сизга юборди" in copies[-1][1]["caption"])
+        check("a second tap does nothing", tap("fp:f1:d"), "file_already_resolved")
+
+        asyncio.run(ops_manager._handle_employee_message(worker, {**photo, "message_id": 43}, uuid.uuid4()))
+        check("'бугунги ҳисобот' adds it to today's report and forwards it", tap("fp:f1:r"), "file_report")
+        check_true("...marked as the report", state["attached"] == "омбор" and "бугунги ҳисоботи" in copies[-1][1]["caption"])
+        copies.clear()
+        asyncio.run(ops_manager._handle_employee_message(worker, {**photo, "message_id": 44}, uuid.uuid4()))
+        check("'бекор' sends nothing", (tap("fp:f1:x"), copies), ("file_cancelled", []))
+
+        check("/hisobot shows today's report", asyncio.run(ops_manager._handle_employee_message(worker, {"text": "/hisobot"}, uuid.uuid4())),
+              "report_shown")
+        check("✏️ starts the change", tap("rpe:r1"), "report_edit_started")
+        check("the next message is the new text",
+              (asyncio.run(ops_manager._handle_employee_message(worker, {"text": "янги матн"}, uuid.uuid4())), state["report"]["content"]),
+              ("report_edited", "янги матн"))
+        check("🗑 asks first", tap("rpd:r1"), "report_delete_asked")
+        check("'ҳа, ўчириш' deletes it — it's owed again", (tap("rpdy:r1"), state["report"]["status"]), ("report_deleted", "asked"))
+        check("a report that isn't today's own can't be touched", tap("rpe:someone-elses"), "report_not_today")
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+    # ---- cheer off for one person
+    agent = load_agent("team-cheer")
+    sent = []
+
+    class CheerBot(FakeBot):
+        async def send_message(self, text, chat_id=None, **kwargs):
+            sent.append(chat_id)
+            return [1]
+
+    async def everyone():
+        return [{**worker, "cheer_off": True}, {**worker, "telegram_user_id": 8, "cheer_off": False}]
+
+    async def claim(day, slot):
+        return {"id": "c1"}
+
+    saved.clear()
+    patch(store, "list_active_employees", everyone)
+    patch(store, "claim_cheer", claim)
+    patch(store, "set_cheer_content", none)
+    patch(store, "save_cheer_delivery", none)
+    patch(agent, "TelegramBot", CheerBot)
+    patch(agent, "now_local", lambda: datetime(2026, 10, 2, 10, 0, tzinfo=TASHKENT))
+
+    async def fixed(slot, day, run_id):
+        from integrations.org_bot import cheer
+
+        return cheer.fallback(slot, day)
+
+    patch(agent, "write", fixed)
+    try:
+        asyncio.run(agent.send_slot("morning", uuid.uuid4()))
+        check("someone with the cheer switched off gets nothing", sent, ["8"])
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+    edits.clear()
+
+    async def toggle(employee_id, by):
+        return {**worker, "id": employee_id, "cheer_off": True}
+
+    async def get_employee(employee_id):
+        return {"id": employee_id, "status": "active", "role": "b2b_sotuv", "display_name": "a"}
+
+    async def admin_edit(callback, text, keyboard, run_id):
+        edits.append((text, keyboard))
+
+    saved.clear()
+    patch(store, "toggle_cheer", toggle)
+    patch(store, "get_employee", get_employee)
+    patch(admin, "_edit", admin_edit)
+    patch(admin, "_answer", none)
+    try:
+        asyncio.run(admin.handle_admin_callback({"id": "q", "data": "chof:e7", "from": {"id": 5}}, uuid.uuid4()))
+        check_true("the 💬 button switches the cheer off, and the card shows it",
+                   edits and "Кайфият хабарлари (10:00, 17:35): ўчирилган" in edits[-1][0] and "💬 Кайфият хабарлари: ⛔" in str(edits[-1][1]))
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
 
 
 def test_report_accuracy() -> None:
@@ -3424,6 +3646,7 @@ def main() -> int:
         test_lead_handout,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
+        test_files_reports_cheer_off,
         test_verifix,
         test_verifix_basic_login,
         test_employee_admin,

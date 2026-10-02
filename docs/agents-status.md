@@ -24,11 +24,11 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-01. Board fo
 | — | Tasks: the Director ticks who gets each one (the bot's guess pre-ticked), nothing goes out before Юбориш | on message | employees, Director | — |
 | — | Names and roles — every employee's typed name; admin re-asks a name or changes a role | on registration · `/xodimlar` · `/ism` | admin, employees | — |
 | F2+ | Lead hand-out: one lead to each B2B sales person, then "how is it going?" with жараёнда / рад этилди / бажарилди; counted in KPI | 08:00 · 15:00 (open leads every day until closed) | B2B Sotuv; the Director asks "lidlar qanday?" | `LEAD_HANDOUT_ENABLED` |
-| — | Team cheer: one friendly line, sent silently — a wish, "how was your day" (tap answers, not shown to anyone) | 10:00 · 17:35 (weekends: weekend workers) | employees (not the Director) | `TEAM_CHEER_ENABLED` |
+| — | Team cheer: one friendly line, sent silently — a wish, "how was your day" (tap answers, not shown to anyone; off per person: /xodimlar → 💬) | 10:00 · 17:35 (weekends: weekend workers) | employees (not the Director) | `TEAM_CHEER_ENABLED` |
 | — | Days off and announcements: Admin Bot `/dam` stops everything employee-facing on a holiday; `/elon` tells everyone (e.g. a technical error) | on demand | employees | — |
 | A2+ | Cash in the brief from 1C (bank + cash desk, change since yesterday); "hisobda qancha pul?" | 08:00 · any time · `/1c` check | Director | `ONEC_ODATA_URL` / `ONEC_LOGIN` / `ONEC_PASSWORD` |
 | — | Shop sales from BILLZ: yesterday per shop in the brief; shops, sellers, top products on question | 08:00 · any time: "do'konlarda savdo" · `/billz` check | Director | `BILLZ_SECRET_TOKEN` (**not set yet**) |
-| — | Work AI: every employee's message about their work and tasks is answered by the AI (honest, no company data); the bot carries no messages between people | on message, 60 a day | employees | Admin Bot `/xodimlar` → 🤖 (off for one person) |
+| — | Work AI: every employee's message about their work and tasks is answered by the AI (honest, no company data); the bot carries no text between people — only files, after "what is it for?" | on message, 60 a day | employees | Admin Bot `/xodimlar` → 🤖 (off for one person) |
 | — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
 

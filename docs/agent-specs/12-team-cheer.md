@@ -30,8 +30,10 @@ as a brief pop-up (no new message) and the buttons go away; every answer,
 tired ones included, gets a kind reply ("жуда" → "раҳмат каттакон, бугун кўп
 ишладингиз, яхши дам олинг").
 
-**Who:** every active employee except the Director — the same people the
-daily reports ask. Saturday/Sunday: only those marked as weekend workers
+**Who:** every active employee except the Director and anyone the admin
+switched it off for (Admin Bot `/xodimlar` → 💬 Кайфият хабарлари —
+some find it irritating, 2026-10-02) — otherwise the same people the daily
+reports ask. Saturday/Sunday: only those marked as weekend workers
 (Admin Bot `/xodimlar`). Everyone gets the same sentence that day, with
 their own name in front.
 

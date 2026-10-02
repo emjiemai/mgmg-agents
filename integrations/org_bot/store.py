@@ -2127,6 +2127,17 @@ async def toggle_ai_chat(employee_id: str, changed_by: str) -> dict[str, Any] | 
     return after
 
 
+async def toggle_cheer(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Switch the 10:00 / 17:35 cheer messages off for one person, or back on; logged."""
+    after = await fetch_one(
+        "UPDATE employees SET cheer_off = NOT cheer_off WHERE id = %s AND status = 'active' RETURNING *",
+        (employee_id,),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "cheer", None, "off" if after["cheer_off"] else "on", changed_by)
+    return after
+
+
 async def set_responsibilities(employee_id: str, text: str | None) -> dict[str, Any] | None:
     """Keep a person's written duties, for the work AI."""
     return await fetch_one(
@@ -2174,3 +2185,98 @@ async def ai_questions_today(telegram_user_id: int) -> int:
         (telegram_user_id,),
     )
     return int(row["n"]) if row else 0
+
+
+# -------------------------------------------- employees' files, today's report
+
+
+async def create_employee_file(telegram_user_id: int, message_id: int, kind: str, caption: str | None) -> dict[str, Any] | None:
+    """Hold a file an employee sent until they say what it's for."""
+    return await fetch_one(
+        "INSERT INTO employee_files (telegram_user_id, message_id, kind, caption) VALUES (%s, %s, %s, %s) RETURNING *",
+        (telegram_user_id, message_id, kind, caption),
+    )
+
+
+async def resolve_employee_file(file_id: str, telegram_user_id: int, purpose: str) -> dict[str, Any] | None:
+    """Settle a held file once, by its sender, within a day; None otherwise."""
+    return await fetch_one(
+        """UPDATE employee_files SET purpose = %s, resolved_at = now()
+           WHERE id = %s AND telegram_user_id = %s AND resolved_at IS NULL
+             AND created_at > now() - interval '24 hours'
+           RETURNING *""",
+        (purpose, file_id, telegram_user_id),
+    )
+
+
+async def set_employee_file_sent(file_id: str, sent_count: int) -> None:
+    await execute("UPDATE employee_files SET sent_count = %s WHERE id = %s", (sent_count, file_id))
+
+
+async def report_for_day(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """This person's report row for the day, asked or submitted."""
+    return await fetch_one(
+        "SELECT * FROM daily_reports WHERE telegram_user_id = %s AND report_date = %s",
+        (telegram_user_id, report_date),
+    )
+
+
+async def attach_media_to_report(telegram_user_id: int, report_date: date, caption: str | None) -> dict[str, Any] | None:
+    """A file sent as today's report: submits the report if it's still owed, else counts the file.
+
+    None when no report was asked today (nothing to attach it to).
+    """
+    return await fetch_one(
+        """
+        UPDATE daily_reports
+        SET media_count = media_count + 1,
+            status = 'submitted',
+            submitted_at = COALESCE(submitted_at, now()),
+            content = CASE WHEN status = 'asked' THEN %s ELSE content END
+        WHERE telegram_user_id = %s AND report_date = %s
+        RETURNING *
+        """,
+        ((caption or "").strip() or "📎 файл", telegram_user_id, report_date),
+    )
+
+
+async def start_report_edit(report_id: str, telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """Mark today's submitted report as "the next message is its new text"."""
+    return await fetch_one(
+        """UPDATE daily_reports SET editing_at = now()
+           WHERE id = %s AND telegram_user_id = %s AND report_date = %s AND status = 'submitted'
+           RETURNING *""",
+        (report_id, telegram_user_id, report_date),
+    )
+
+
+async def report_being_edited(telegram_user_id: int, report_date: date, within_minutes: int) -> dict[str, Any] | None:
+    return await fetch_one(
+        """SELECT * FROM daily_reports
+           WHERE telegram_user_id = %s AND report_date = %s AND status = 'submitted'
+             AND editing_at > now() - make_interval(mins => %s)""",
+        (telegram_user_id, report_date, within_minutes),
+    )
+
+
+async def replace_report(report_id: str, content: str) -> dict[str, Any] | None:
+    """Today's report gets its new text; when it was first sent doesn't change."""
+    return await fetch_one(
+        """UPDATE daily_reports SET content = %s, editing_at = NULL
+           WHERE id = %s AND status = 'submitted' RETURNING *""",
+        (content, report_id),
+    )
+
+
+async def delete_report(report_id: str, telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
+    """Take back today's report: it is owed again (it can be written anew until midnight)."""
+    return await fetch_one(
+        """
+        UPDATE daily_reports
+        SET status = 'asked', content = NULL, metrics = '{}'::jsonb, submitted_at = NULL, editing_at = NULL,
+            followup_asked_at = NULL, followup_answered_at = NULL, media_count = 0
+        WHERE id = %s AND telegram_user_id = %s AND report_date = %s AND status = 'submitted'
+        RETURNING *
+        """,
+        (report_id, telegram_user_id, report_date),
+    )

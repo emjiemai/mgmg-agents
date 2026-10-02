@@ -72,9 +72,13 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   extra courtesy to women; `tone.is_polite` rejects AI text that breaks it. Like the owner's example: "ака, ишларингиз билан чарчамаяпсизми,
   илтимос ҳисобот ёзиб юборинг, раҳмат каттакон, чарчаманг". No jokes/anecdotes
   (deleted 2026-10-02). Tasks keep their card format. `integrations/org_bot/tone.py`.
-- **OPS Manager Bot is for work only** (2026-10-02): **no messages between
+- **OPS Manager Bot is for work only** (2026-10-02): **no text messages between
   employees and the Director (either way) through the bot** — the relay is
-  deleted. Employees' messages about their work go to the **work AI**
+  deleted. **Files are the exception**: a photo/video/file is asked "what is
+  it for?" (бугунги ҳисобот / директорга / бекор) and forwarded to the Director
+  as it is — the AI never reads files. **Reports are never guessed** (any typed
+  message while it's owed is confirmed); **/hisobot** changes/deletes today's
+  report only. Cheer can be switched off per person (/xodimlar → 💬). Employees' messages about their work go to the **work AI**
   (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks, own
   leads and (once uploaded) `employees.responsibilities`; **honesty first —
   "билмайман", never a guess**; no company data, no other people; Garmin sales

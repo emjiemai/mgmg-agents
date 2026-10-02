@@ -31,7 +31,8 @@ from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_picker, task_tracker,
+    admin, ai_chat, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store, task_picker,
+    task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
 from integrations.org_bot.prompt import (
@@ -105,11 +106,11 @@ def parse_role_and_request(rest: str) -> tuple[str, str] | None:
 def report_message_kind(replied_to_ask: bool, replied_to_task: bool, is_question: bool) -> str:
     """What a message sent while today's report is still owed should be.
 
-    Nobody has to use Telegram's reply feature: a plain message is the
-    report. A Reply to a task card is a question about that task (for the
-    AI), and a plain message that asks something ("…?") could be either, so
-    the bot asks with one tap (2026-10-02 — messages no longer go to the
-    Director, so the old "or a message for the Director?" is gone).
+    A Reply to the 16:00 ask or the 17:00 reminder is plainly the report. A
+    Reply to a task card is a question about that task (for the AI). Any
+    other message is confirmed with one tap — the bot never guesses a report
+    (the owner, 2026-10-02). ``is_question`` no longer changes the answer;
+    it's kept so callers don't change.
 
     Returns:
         "report", "task_question" or "ask".
@@ -118,7 +119,7 @@ def report_message_kind(replied_to_ask: bool, replied_to_task: bool, is_question
         return "report"
     if replied_to_task:
         return "task_question"
-    return "ask" if is_question else "report"
+    return "ask"
 
 
 def report_or_ai_keyboard(held_id: str) -> dict[str, Any]:
@@ -224,6 +225,10 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return "relay_disabled"
     if prefix == "asai":
         return await _handle_held_as_question(rest, callback, run_id, background)
+    if prefix == "fp":
+        return await _handle_file_purpose(rest, callback, run_id)
+    if prefix in ("rpe", "rpd", "rpdy", "rpn"):
+        return await _handle_report_button(prefix, rest, callback, run_id)
     if prefix == "asrep":
         return await _handle_save_as_report(rest, callback, run_id)
     if prefix == "cheer":
@@ -970,7 +975,7 @@ async def _save_daily_report(
         await _reply(employee["telegram_user_id"], run_id, casual(escape(follow_up), "🙂"))
         return "daily_report_weak"
 
-    ack = casual("раҳмат каттакон, ҳисоботингиз қабул қилинди, чарчаманг", "😊")
+    ack = casual("раҳмат каттакон, ҳисоботингиз қабул қилинди, ўзгартириш учун /hisobot, чарчаманг", "😊")
     missing = kpi.missing_metrics(values, metrics_def)
     if missing:
         ack = casual(
@@ -987,10 +992,116 @@ async def _ask_report_or_ai(employee: dict[str, Any], text: str, run_id: uuid.UU
     await _reply(
         employee["telegram_user_id"],
         run_id,
-        casual("бу бугунги ҳисоботингизми ёки савол?", "🙂"),
+        casual("бу бугунги ҳисоботингизми?", "🙂"),
         report_or_ai_keyboard(str(held["id"])),
     )
     return "report_or_ai_asked"
+
+
+async def _ask_file_purpose(employee: dict[str, Any], message: dict[str, Any], kind: str, run_id: uuid.UUID) -> str:
+    """Hold a file and ask what it's for; "today's report" only when a report was asked today."""
+    telegram_user_id = employee["telegram_user_id"]
+    held = await store.create_employee_file(telegram_user_id, message["message_id"], kind, message.get("caption"))
+    report = await store.report_for_day(telegram_user_id, today_local())
+    await _reply(
+        telegram_user_id, run_id, report_tools.ask_purpose_text(kind),
+        report_tools.purpose_keyboard(str(held["id"]), report is not None),
+    )
+    return "file_purpose_asked"
+
+
+async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Today's report / to the Director → forward the file as it is; cancel → nothing."""
+    query_id = callback.get("id", "")
+    file_id, _, letter = rest.rpartition(":")
+    purpose = report_tools.PURPOSES.get(letter)
+    clicker_id = (callback.get("from") or {}).get("id")
+    if not file_id or purpose is None or clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    held = await store.resolve_employee_file(file_id, clicker_id, purpose)
+    if held is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "file_already_resolved"
+    await _answer(query_id, "OK")
+    message = callback.get("message") or {}
+
+    async def settle(text: str) -> None:
+        if message.get("message_id"):
+            await _edit_lead_message(clicker_id, message["message_id"], text, {"inline_keyboard": []}, run_id)
+
+    if purpose == "cancelled":
+        await settle(report_tools.cancelled_text())
+        return "file_cancelled"
+    employee = await store.get_employee_by_telegram_id(clicker_id)
+    if employee is None or employee["status"] != "active":
+        return "unknown_employee"
+    if purpose == "report" and await store.attach_media_to_report(clicker_id, today_local(), held.get("caption")) is None:
+        await settle(report_tools.no_report_today_text())
+        return "file_no_report"
+
+    caption = report_tools.director_caption(
+        names.person_name(employee), ROLE_LABELS.get(employee["role"], employee["role"]), purpose, held.get("caption")
+    )
+    delivered = 0
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for director in await store.active_employees_by_role(DIRECTOR_ROLE):
+            try:
+                result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                    "copyMessage",
+                    {"chat_id": str(director["telegram_user_id"]), "from_chat_id": str(clicker_id),
+                     "message_id": held["message_id"], "caption": caption, "parse_mode": "HTML"},
+                    mode="notify", target_ref=str(director["telegram_user_id"]),
+                )
+                delivered += 1 if result else 0
+            except TelegramError as exc:
+                log.error("Could not forward a file to the Director: {}", exc)
+    await store.set_employee_file_sent(file_id, delivered)
+    await settle(report_tools.sent_text(purpose, delivered > 0))
+    return f"file_{purpose}"
+
+
+async def _show_today_report(employee: dict[str, Any], run_id: uuid.UUID) -> str:
+    """/hisobot: today's report with ✏️ / 🗑, or how to send it."""
+    report = await store.report_for_day(employee["telegram_user_id"], today_local())
+    if report is None:
+        await _reply(employee["telegram_user_id"], run_id, report_tools.no_report_today_text())
+        return "report_not_asked"
+    text, keyboard = report_tools.report_card(report)
+    await _reply(employee["telegram_user_id"], run_id, text, keyboard)
+    return "report_shown"
+
+
+async def _handle_report_button(prefix: str, report_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """✏️ / 🗑 on today's report (only today's, only one's own)."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    message = callback.get("message") or {}
+    today = today_local()
+    report = await store.report_for_day(clicker_id, today) if clicker_id else None
+    if report is None or str(report["id"]) != report_id or report["status"] != "submitted":
+        await _answer(query_id, "фақат бугунги ҳисоботни ўзгартириш мумкин")
+        return "report_not_today"
+    await _answer(query_id, "OK")
+    if prefix == "rpe":
+        await store.start_report_edit(report_id, clicker_id, today)
+        await _edit_lead_message(clicker_id, message.get("message_id"), report_tools.edit_prompt_text(),
+                                 {"inline_keyboard": []}, run_id)
+        return "report_edit_started"
+    if prefix == "rpd":
+        await _edit_lead_message(clicker_id, message.get("message_id"), report_tools.delete_question_text(),
+                                 report_tools.delete_confirm_keyboard(report_id), run_id)
+        return "report_delete_asked"
+    if prefix == "rpn":
+        text, keyboard = report_tools.report_card(report)
+        await _edit_lead_message(clicker_id, message.get("message_id"), text, keyboard or {"inline_keyboard": []}, run_id)
+        return "report_delete_kept"
+    await store.delete_report(report_id, clicker_id, today)
+    await _edit_lead_message(clicker_id, message.get("message_id"), report_tools.deleted_text(),
+                             {"inline_keyboard": []}, run_id)
+    return "report_deleted"
 
 
 async def _handle_held_as_question(
@@ -1074,9 +1185,21 @@ async def _handle_employee_message(
     their own flows and never reach this point.
     """
     telegram_user_id = employee["telegram_user_id"]
+    # A photo, video or file: ask what it's for — it goes to the Director as
+    # it is, never to the AI (report_tools.py).
+    kind = report_tools.file_kind(message)
+    if kind is not None:
+        return await _ask_file_purpose(employee, message, kind, run_id)
     text = (message.get("text") or message.get("caption") or "").strip()
     if not text:
         return "ignored"
+    if text.lower() in report_tools.REPORT_COMMANDS:
+        return await _show_today_report(employee, run_id)
+    editing = await store.report_being_edited(telegram_user_id, today_local(), report_tools.EDIT_MINUTES)
+    if editing is not None and not text.startswith("/"):
+        await store.replace_report(str(editing["id"]), text)
+        await _reply(telegram_user_id, run_id, report_tools.edited_text())
+        return "report_edited"
     if text.lower() == ai_chat.COMMAND:
         await _reply(telegram_user_id, run_id, ai_chat.hint_text())
         return "ai_hint"

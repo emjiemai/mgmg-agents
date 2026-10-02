@@ -45,7 +45,9 @@ admin set it (`names.call_name`):
 | vague report | the AI's one question, same voice: "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди? 🙂" |
 | answer added | раҳмат каттакон, ҳисоботингизга қўшиб қўйдим 😊 |
 | too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 24:00 гача олинади 🙂 |
-| report or question? (a message that asks something) | бу бугунги ҳисоботингизми ёки савол? 🙂 — buttons: ҳа, ҳисобот · йўқ, бу савол (→ the work AI) |
+| any typed message while the report is owed (not a Reply to the ask) | бу бугунги ҳисоботингизми? 🙂 — ҳа, ҳисобот · йўқ, бу савол (→ the work AI). **Never guessed** (2026-10-02). |
+| a photo / video / file | бу расм нима учун? 🙂 — бугунги ҳисобот · директорга юбориш · бекор қилиш; report or Director: the file itself is forwarded to the Director with who sent it; the AI never reads it |
+| /hisobot | today's report with ✏️ ўзгартириш (the next message is the new text) and 🗑 ўчириш (after «ҳа, ўчириш» it's owed again until midnight). Only today's, only one's own. |
 
 `selfcheck.py` fails if any of these gains a capital letter, a line break,
 markup, or an emoji anywhere but the end. Task cards keep their format.

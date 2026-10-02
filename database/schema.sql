@@ -694,7 +694,7 @@ CREATE TABLE IF NOT EXISTS employee_changes (
 CREATE INDEX IF NOT EXISTS idx_employee_changes_employee ON employee_changes (employee_id, changed_at DESC);
 ALTER TABLE employee_changes DROP CONSTRAINT IF EXISTS employee_changes_field_check;
 ALTER TABLE employee_changes ADD CONSTRAINT employee_changes_field_check
-    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat'));
+    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat', 'cheer'));
 
 -- Who also works at the weekend (set by the admin on the /xodimlar card).
 -- Everyone works Monday–Friday; on Saturday/Sunday only these are asked for
@@ -994,3 +994,29 @@ CREATE TABLE IF NOT EXISTS ai_chat_turns (
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_ai_chat_turns_recent ON ai_chat_turns (telegram_user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Employees' files and today's report (2026-10-02). A photo, video or file an
+-- employee sends is held in employee_files until they say what it's for:
+-- today's report or "to the Director" — then it is forwarded to the Director
+-- as it is (the AI never reads it). Today's report can be changed or deleted
+-- with /hisobot: editing_at marks "the next message is the new text";
+-- media_count counts files sent as part of it.
+-- ---------------------------------------------------------------------------
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS editing_at TIMESTAMPTZ;
+-- Some people find the cheer messages irritating: the admin can switch them
+-- off per person on the /xodimlar card (2026-10-02).
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS cheer_off BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS media_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS employee_files (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    telegram_user_id  BIGINT       NOT NULL,
+    message_id        BIGINT       NOT NULL,
+    kind              TEXT         NOT NULL,
+    caption           TEXT,
+    purpose           TEXT         CHECK (purpose IN ('report', 'director', 'cancelled')),
+    sent_count        INTEGER,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    resolved_at       TIMESTAMPTZ
+);

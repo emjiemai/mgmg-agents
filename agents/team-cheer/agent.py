@@ -69,8 +69,11 @@ async def send_slot(slot: str, run_id: uuid.UUID) -> int:
         How many people got it.
     """
     day = now_local().date()
+    # Not the Director, not someone off today, not someone the admin switched
+    # the cheer off for (/xodimlar → 💬, 2026-10-02).
     employees = [
-        e for e in await store.list_active_employees() if e["role"] != DIRECTOR_ROLE and kpi.works_on(e, day)
+        e for e in await store.list_active_employees()
+        if e["role"] != DIRECTOR_ROLE and kpi.works_on(e, day) and not e.get("cheer_off")
     ]
     if not employees:
         log.info("Nobody at work today besides the Director — nothing to send")

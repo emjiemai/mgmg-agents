@@ -36,7 +36,10 @@ to the Director" buttons do nothing.
   Garmin and Tanita; Garmin sales also get the public catalog.
 
 It has no SAP, sales figures, debts, cash, stock, reports, KPI, customers or
-anything about other employees. It can't send, save or change anything, or
+anything about other employees. It tells people the two work ways that do
+exist: a **file** (e.g. a photo report) sent to the bot can go to the
+Director (the bot asks what it's for), and **/hisobot** changes or deletes
+today's report. It can't send, save or change anything, or
 pass a message to anyone — asked to "tell the Director", it says the bot
 doesn't carry messages.
 

@@ -144,6 +144,14 @@ and the Director doesn't message employees, through the bot** — the relay
 both ways (and its "📨 Бу хабар директорга юборилсинми?") was removed on the
 owner's word. An old "send it" button left in a chat does nothing.
 
+**Files are the exception** (the same day): a photo, video or file an
+employee sends is asked about — "бу расм нима учун?" — **бугунги ҳисобот** /
+**директорга юбориш** / **бекор қилиш**, and for the first two it's
+forwarded to the Director as it is (`copyMessage`, with who sent it); the AI
+never reads files (`report_tools.py`, `employee_files`). A report is never
+guessed: any typed message while it's owed is confirmed first, and
+**/hisobot** lets them change or delete today's report.
+
 An employee's free message goes, in order, to: a reply to a cheer, a lead's
 follow-up, today's daily report (during the report window a message that
 asks something gets "бу бугунги ҳисоботингизми ёки савол?" — ҳа, ҳисобот /
