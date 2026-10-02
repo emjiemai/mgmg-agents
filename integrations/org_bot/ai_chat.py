@@ -1,40 +1,41 @@
-"""AI chat for employees — help with their own work, with none of the company's data.
+"""The AI every employee talks to about their own work — honest, and with no one else's data.
 
-2026-10-02, from the owner: some employees (B2B sales first) should be able
-to talk with the AI about their work, but get no access to the company's
-systems or information. So:
+2026-10-02, from the owner: OPS Manager Bot is for work only. Employees no
+longer message the Director (or each other) through it; what they write
+about their work and their tasks is answered by the AI. So:
 
-- the admin grants it per person (Admin Bot /xodimlar → the card → 🤖);
-- the person turns it on with /ai — from then on their plain messages go
-  to the AI — and off with /ai again; it also ends after 20 quiet minutes,
-  so a later report or message isn't taken by the AI by accident. A Reply
-  to one of the bot's own messages (the report ask, a lead question, a
-  cheer) keeps its usual meaning even while it's on;
-- the AI knows only what MGMG sells (public) and, for Garmin sales, the
-  public catalog. It has no SAP, money, stock, reports, tasks, KPI, leads,
-  customers or other people, must say so when asked, and never invents
-  them. It can't send, save or change anything;
-- its answers are Uzbek Cyrillic and always polite ("сиз"); a draft the
-  person asks for in another language (a Russian email) may be in it;
-- 60 questions a day per person; the chat is kept a day as its memory and
-  shown to no one.
+- every employee's free message (not a report, a lead answer or a cheer
+  reply) goes to the AI — no command needed; the admin can switch it off
+  for one person (Admin Bot /xodimlar → 🤖), who is then told the bot is
+  for reports, tasks and leads only;
+- the AI knows the person's role, their open tasks (and the one they reply
+  to), their open leads, and — once the owner uploads them — their written
+  duties (``employees.responsibilities``); plus what MGMG sells (public),
+  and for Garmin sales the public catalog;
+- it has no SAP, money, stock, reports, KPI, customers or anything about
+  other people, can't send, save or change anything, and contacts no one;
+- honesty first: when it doesn't know, it says so plainly ("билмайман",
+  "бу маълумот менда йўқ") and points to the manager — never a guess;
+- Uzbek Cyrillic, always polite "сиз"; a draft asked for in another
+  language (a Russian email) may be in it; 60 questions a day per person;
+  the chat is kept a day as its memory and shown to no one.
 
 Pure logic here (tested offline); ``ops_manager`` runs it.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import date
 from typing import Any
 
 from integrations.org_bot.prompt import GARMIN_CATALOG
 from integrations.org_bot.roles import ROLE_LABELS
 from integrations.org_bot.tone import casual
-from integrations.telegram.bot import escape, sanitize_model_html
+from integrations.telegram.bot import sanitize_model_html
 
 AGENT = "ai-chat"
-COMMAND = "/ai"
-SESSION_MINUTES = 20
+COMMAND = "/ai"  # no longer needed; answered with a hint for anyone used to it
 DAILY_LIMIT = 60
 ANSWER_MAX = 3500
 
@@ -50,21 +51,27 @@ MGMG (ЭМЖИЕМ), Tashkent, has two business lines:
 """
 
 SYSTEM_PROMPT = """\
-You are a helpful AI assistant for one employee of MGMG — {role}. You help
-them with THEIR OWN WORK: drafting a message, an email or a commercial offer
-for a customer, preparing for a call or a meeting, answering objections,
-explaining a product category, planning their day, Excel or Word help,
-translating a text they give you.
+You are the work assistant inside MGMG's Telegram bot, talking with one
+employee: {name} — {role}. You help them with THEIR OWN WORK and THEIR OWN
+TASKS: understanding a task, planning the steps, drafting a message, an email
+or a commercial offer, preparing a call, answering objections, explaining a
+product category, Excel or Word, translating a text they give you.
 
-What you know — public facts only:
+HONESTY FIRST. If you don't know something, or it isn't in what you were
+given below, say so plainly ("билмайман", "бу маълумот менда йўқ") and tell
+them who could know (their manager or the Director). Never guess, never
+invent a number, a name, a date, a price or a fact about the company.
+
+What you know about them (only this):
+{context}
+What you know about the company — public facts only:
 {company}{catalog}
-What you do NOT have — say so plainly whenever it comes up:
-- no access to any company system or data: no SAP, sales figures, prices
-  beyond the public catalog, debts, cash, stock, reports, tasks, KPI, leads,
-  customers or anything about other employees. Never invent such data —
-  not a number, not a name, not a date. When they need it, tell them to ask
-  their manager or the Director.
-- no actions: you cannot send, save or change anything, or contact anyone.
+What you do NOT have: any company system or data — no SAP, sales figures,
+debts, cash, stock, reports, KPI, customers, or anything about other
+employees. What you can NOT do: send, save or change anything, pass a message
+to anyone (not to the Director, not to a colleague), or contact a customer.
+If they want to tell the Director something, say the bot doesn't carry
+messages — they should speak to the Director directly.
 
 How you write:
 - Uzbek, Cyrillic script. A draft they ask for in another language (e.g. a
@@ -73,32 +80,58 @@ How you write:
   especially courteous with women.
 - Short and practical. Telegram HTML only: <b>, <i>; no Markdown, no tables.
 - Keep to work. Politely decline anything harmful, illegal, or about other
-  people's private matters.
+  people.
 """
 
 
-def session_active(employee: dict[str, Any], now: datetime) -> bool:
-    """Whether this person's AI chat is on right now."""
-    until = employee.get("ai_chat_until")
-    return bool(employee.get("ai_chat")) and until is not None and until > now
+def work_context(
+    employee: dict[str, Any], tasks: list[dict[str, Any]], own_leads: list[dict[str, Any]], today: date
+) -> str:
+    """What the AI may know about this person: their duties, open tasks and open leads."""
+    lines = []
+    duties = (employee.get("responsibilities") or "").strip()
+    lines.append(f"Their written duties:\n{duties}" if duties else "Their written duties: not uploaded yet — say so if asked.")
+    if tasks:
+        lines.append("Their open tasks from the Director:")
+        for t in tasks[:15]:
+            due = t.get("due_date")
+            due_text = f", due {due:%d.%m}" + (" (overdue)" if due < today else "") if due else ", no deadline"
+            status = "started" if t.get("status") == "started" else "not started"
+            lines.append(f"- {_plain(t.get('task_summary'))} ({status}{due_text})")
+    else:
+        lines.append("Their open tasks: none.")
+    if own_leads:
+        lines.append("Their open leads (given to them each morning):")
+        for lead in own_leads[:15]:
+            lines.append(f"- {lead.get('company')} (given {lead['assigned_on']:%d.%m}, {lead.get('status')})")
+    return "\n".join(lines)
 
 
-def system_prompt(employee: dict[str, Any]) -> str:
+def system_prompt(employee: dict[str, Any], context: str) -> str:
     """The AI's rules for this person; Garmin sales also get the public catalog."""
     role = employee.get("role") or ""
     catalog = f"\nThe public Garmin catalog (prices may have changed):\n{GARMIN_CATALOG}\n" if role == "garmin_sotuv" else ""
-    return SYSTEM_PROMPT.format(role=ROLE_LABELS.get(role, role) or "employee", company=_COMPANY, catalog=catalog)
+    name = (employee.get("full_name") or "").strip() or employee.get("display_name") or "employee"
+    return SYSTEM_PROMPT.format(
+        name=name, role=ROLE_LABELS.get(role, role) or "employee", context=context, company=_COMPANY, catalog=catalog
+    )
 
 
-def user_prompt(history: list[dict[str, Any]], question: str) -> str:
-    """The recent chat, then the new question."""
+def user_prompt(history: list[dict[str, Any]], question: str, task: dict[str, Any] | None = None) -> str:
+    """The recent chat, the task they replied to (if any), then the new message."""
     lines = []
     if history:
         lines.append("EARLIER IN THIS CHAT:")
         lines += [f"{'Employee' if h['role'] == 'employee' else 'You'}: {h['content']}" for h in history]
         lines.append("")
-    lines += ["THE EMPLOYEE NOW ASKS:", question]
+    if task is not None:
+        lines += [f"THEY ARE REPLYING TO THIS TASK CARD: {_plain(task.get('task_summary'))}", ""]
+    lines += ["THE EMPLOYEE WRITES:", question]
     return "\n".join(lines)
+
+
+def _plain(text: str | None) -> str:
+    return " ".join(re.sub(r"<[^>]+>", "", text or "").split())
 
 
 def clean_answer(answer: str) -> str:
@@ -109,26 +142,14 @@ def clean_answer(answer: str) -> str:
     return text or casual("кечирасиз, жавоб топа олмадим, саволни бошқача ёзиб кўринг", "🙏")
 
 
-def on_text(name: str) -> str:
-    return casual(
-        f"{escape(name)}, AI ёрдамчи ёқилди, ишингиз бўйича саволингизни ёзинг, тугатиш учун яна /ai ни босинг",
-        "🤖", keep=[escape(name), "AI"],
-    )
-
-
-def granted_text(name: str) -> str:
-    return casual(
-        f"{escape(name)}, сизга AI ёрдамчи очилди, ишингиз бўйича савол бериш учун /ai ни босинг",
-        "🤖", keep=[escape(name), "AI"],
-    )
+def hint_text() -> str:
+    return casual("ишингиз бўйича саволингизни шунчаки ёзаверинг, AI жавоб беради", "🙂", keep=["AI"])
 
 
 def off_text() -> str:
-    return casual("AI суҳбати ёпилди, раҳмат", "🙂", keep=["AI"])
-
-
-def not_granted_text() -> str:
-    return casual("AI суҳбати сизга ҳали очилмаган, керак бўлса админга айтинг", "🙂", keep=["AI"])
+    return casual(
+        "бу бот фақат иш учун: ҳисобот, топшириқлар ва лидлар, бошқа хабарлар ҳеч кимга юборилмайди", "🙂"
+    )
 
 
 def limit_text() -> str:

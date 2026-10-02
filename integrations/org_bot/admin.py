@@ -481,7 +481,8 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
     else:
         lines.append(f"Иш кунлари: {workdays_text(emp)}")
         lines.append(f"Мурожаат: {escape(address_text(emp))}")
-        lines.append(f"AI суҳбат: {'рухсат берилган' if emp.get('ai_chat') else 'йўқ'}")
+        lines.append(f"AI ёрдамчи: {'ўчирилган' if emp.get('ai_chat_off') else 'ёқилган'}")
+        lines.append(f"Вазифалари: {'юкланган' if (emp.get('responsibilities') or '').strip() else 'ҳали юкланмаган'}")
     if note:
         lines += ["", note]
     employee_id = emp["id"]
@@ -499,8 +500,8 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         # How friendly messages (cheer, report asks) address them; only the
         # admin sets ака/опа — it's never guessed from the name.
         rows.append([{"text": "🗣 Мурожаат: исм → ака → опа", "callback_data": f"addr:{employee_id}"}])
-        # AI chat about their own work, no company data (ai_chat.py).
-        rows.append([{"text": f"🤖 AI суҳбат: {'✅ берилган' if emp.get('ai_chat') else '☐ бериш'}",
+        # The work AI answers their messages (ai_chat.py); off = the bot only takes reports, tasks, leads.
+        rows.append([{"text": f"🤖 AI ёрдамчи: {'⛔ ўчирилган' if emp.get('ai_chat_off') else '✅ ёқилган'}",
                       "callback_data": f"aich:{employee_id}"}])
     rows += [
         [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
@@ -808,11 +809,8 @@ async def _handle_employee_action(
         if updated is None:
             await _answer(query_id, "Ходим топилмади")
             return "not_found"
-        from integrations.org_bot import ai_chat, names  # local import keeps admin light
-
-        if updated["ai_chat"]:
-            await _tell_employee(updated["telegram_user_id"], ai_chat.granted_text(names.call_name(updated)), run_id)
-        note = "🤖 AI суҳбат берилди — ходимга хабар юборилди." if updated["ai_chat"] else "🤖 AI суҳбат олиб қўйилди."
+        note = "🤖 AI ёрдамчи ўчирилди — бот энди фақат ҳисобот, топшириқ ва лидларни қабул қилади." if updated["ai_chat_off"] \
+            else "🤖 AI ёрдамчи ёқилди."
         text, keyboard = employee_card(updated, note)
         await _edit(callback, text, keyboard, run_id)
     elif action == "addr":

@@ -28,7 +28,7 @@ from integrations.common.config import settings
 from integrations.common.db import fetch_all, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
-from integrations.common.timeutil import now_local, now_utc, today_local
+from integrations.common.timeutil import now_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
     admin, ai_chat, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_picker, task_tracker,
@@ -102,34 +102,32 @@ def parse_role_and_request(rest: str) -> tuple[str, str] | None:
     return role_slug, request_id
 
 
-def report_message_kind(replied_to_ask: bool, replied_to_task: bool, open_tasks: int) -> str:
+def report_message_kind(replied_to_ask: bool, replied_to_task: bool, is_question: bool) -> str:
     """What a message sent while today's report is still owed should be.
 
-    Nobody has to use Telegram's reply feature: a plain message is the report,
-    unless the employee has a task in flight — then it could be either, and
-    the bot asks with one tap instead of guessing.
+    Nobody has to use Telegram's reply feature: a plain message is the
+    report. A Reply to a task card is a question about that task (for the
+    AI), and a plain message that asks something ("…?") could be either, so
+    the bot asks with one tap (2026-10-02 — messages no longer go to the
+    Director, so the old "or a message for the Director?" is gone).
 
     Returns:
-        "report" (save it as today's report), "task_update" (a reply to a
-        task card — the normal relay), or "ask" (report or message? buttons).
+        "report", "task_question" or "ask".
     """
     if replied_to_ask:
         return "report"
     if replied_to_task:
-        return "task_update"
-    return "ask" if open_tasks else "report"
+        return "task_question"
+    return "ask" if is_question else "report"
 
 
-def report_or_relay_keyboard(relay_id: str) -> dict[str, Any]:
-    """The one-tap choice for a message that could be the report or a message."""
+def report_or_ai_keyboard(held_id: str) -> dict[str, Any]:
+    """The one-tap choice for a message that could be the report or a question for the AI."""
     return {
-        "inline_keyboard": [
-            [
-                {"text": "ҳа, ҳисобот", "callback_data": f"asrep:{relay_id}"},
-                {"text": "директорга хабар", "callback_data": f"relayok:{relay_id}"},
-            ],
-            [{"text": "бекор қилиш", "callback_data": f"relayno:{relay_id}"}],
-        ]
+        "inline_keyboard": [[
+            {"text": "ҳа, ҳисобот", "callback_data": f"asrep:{held_id}"},
+            {"text": "йўқ, бу савол", "callback_data": f"asai:{held_id}"},
+        ]]
     }
 
 
@@ -181,7 +179,7 @@ async def handle_update(update: dict[str, Any], run_id: uuid.UUID, background: B
     """
     callback = update.get("callback_query")
     if callback:
-        return await _handle_callback(callback, run_id)
+        return await _handle_callback(callback, run_id, background)
 
     message = update.get("message")
     if not message:
@@ -193,7 +191,7 @@ async def handle_update(update: dict[str, Any], run_id: uuid.UUID, background: B
 # ---------------------------------------------------------- callback buttons
 
 
-async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
+async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks | None = None) -> str:
     """Route a button press to the role-picker or mark-done handler."""
     data = callback.get("data", "")
     query_id = callback.get("id", "")
@@ -220,7 +218,12 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
     if prefix == "tdx":
         return await _handle_draft_cancel(rest, callback, run_id)
     if prefix in ("relayok", "relayno"):
-        return await _handle_relay_decision(rest, prefix == "relayok", callback, run_id)
+        # Messages to the Director through the bot were removed (2026-10-02);
+        # an old "send it" button left in someone's chat does nothing.
+        await _answer(query_id, "бот орқали директорга хабар юбориш ўчирилган")
+        return "relay_disabled"
+    if prefix == "asai":
+        return await _handle_held_as_question(rest, callback, run_id, background)
     if prefix == "asrep":
         return await _handle_save_as_report(rest, callback, run_id)
     if prefix == "cheer":
@@ -642,10 +645,7 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return kpi_outcome
 
     if employee["role"] != DIRECTOR_ROLE:
-        ai_outcome = await _maybe_ai_chat(employee, message, run_id, background)
-        if ai_outcome is not None:
-            return ai_outcome
-        return await _handle_employee_message(employee, message, run_id)
+        return await _handle_employee_message(employee, message, run_id, background)
 
     has_media = any(message.get(field) for field in MEDIA_FIELDS)
     text = (message.get("text") or "").strip()
@@ -653,11 +653,6 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
 
     if not has_media and not text:
         return "ignored"
-
-    reply_to = message.get("reply_to_message") or {}
-    if not has_media and reply_to.get("message_id"):
-        if await _try_forward_director_reply(telegram_user_id, reply_to["message_id"], text, run_id):
-            return "relayed"
 
     await _show_typing(telegram_user_id, run_id)
 
@@ -668,54 +663,44 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     return "queued"
 
 
-async def _maybe_ai_chat(
-    employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks
-) -> str | None:
-    """/ai turns the AI chat on or off; while on, plain messages go to the AI (``ai_chat.py``).
-
-    Returns None when the message is not for the AI, so it's handled as usual.
-    """
+async def _route_to_ai(
+    employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
+    background: BackgroundTasks | None,
+) -> str:
+    """An employee's message about their work goes to the AI (``ai_chat.py``), never to a person."""
     telegram_user_id = employee["telegram_user_id"]
-    text = (message.get("text") or "").strip()
-    if text.lower() == ai_chat.COMMAND:
-        if not employee.get("ai_chat"):
-            await _reply(telegram_user_id, run_id, ai_chat.not_granted_text())
-            return "ai_not_granted"
-        if ai_chat.session_active(employee, now_utc()):
-            await store.set_ai_session(telegram_user_id, None)
-            await _reply(telegram_user_id, run_id, ai_chat.off_text())
-            return "ai_off"
-        await store.set_ai_session(telegram_user_id, ai_chat.SESSION_MINUTES)
-        await _reply(telegram_user_id, run_id, ai_chat.on_text(names.call_name(employee)))
-        return "ai_on"
-    if not text or text.startswith("/") or not ai_chat.session_active(employee, now_utc()):
-        return None
-    # A Reply to one of the bot's own messages (the report ask, a lead
-    # question, a cheer) keeps its usual meaning even while the AI is on.
-    if (message.get("reply_to_message") or {}).get("message_id"):
-        return None
+    if employee.get("ai_chat_off"):
+        await _reply(telegram_user_id, run_id, ai_chat.off_text())
+        return "ai_off"
     await _show_typing(telegram_user_id, run_id)
-    background.add_task(_answer_ai_chat, employee, text, run_id)
+    if background is not None:
+        background.add_task(_answer_ai_chat, employee, text, task, run_id)
+    else:
+        await _answer_ai_chat(employee, text, task, run_id)
     return "ai_chat"
 
 
-async def _answer_ai_chat(employee: dict[str, Any], text: str, run_id: uuid.UUID) -> None:
-    """Answer one AI-chat message — in the background, like the Director's questions."""
+async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID) -> None:
+    """Answer one message — with the person's own tasks, leads and duties, nothing of anyone else's."""
     telegram_user_id = employee["telegram_user_id"]
     try:
         if await store.ai_questions_today(telegram_user_id) >= ai_chat.DAILY_LIMIT:
             await _reply(telegram_user_id, run_id, ai_chat.limit_text())
             return
         history = await store.recent_ai_turns(telegram_user_id)
+        tasks = await store.open_tasks_for_employee(telegram_user_id)
+        own_leads = await store.open_leads_for_employee(str(employee["id"])) if employee.get("id") else []
         await store.log_ai_turn(telegram_user_id, "employee", text)
-        await store.set_ai_session(telegram_user_id, ai_chat.SESSION_MINUTES)
         async with OpenRouterClient(
             agent=ai_chat.AGENT,
             run_id=run_id,
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
-            raw = await ai.complete(ai_chat.system_prompt(employee), ai_chat.user_prompt(history, text))
+            raw = await ai.complete(
+                ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, own_leads, today_local())),
+                ai_chat.user_prompt(history, text, task),
+            )
         answer = ai_chat.clean_answer(raw)
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
         await _reply(telegram_user_id, run_id, answer)
@@ -741,46 +726,6 @@ async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> s
         "📨 Исм ўзгартириш сўровингиз админга юборилди. Рухсат берилса, бот исмингизни сўрайди.",
     )
     return "name_change_requested"
-
-
-async def _try_forward_director_reply(
-    director_id: int, reply_to_message_id: int, text: str, run_id: uuid.UUID
-) -> bool:
-    """If the Director is replying to a relayed employee message, forward
-    the reply straight to that employee instead of running it through task
-    classification -- a targeted reply to a specific person is the other
-    half of a conversation already in progress, not a new task to route.
-
-    Args:
-        director_id: The replying Director's Telegram numeric id.
-        reply_to_message_id: ``message.reply_to_message.message_id``.
-        text: The Director's reply text.
-        run_id: UUID grouping this webhook call's audit rows.
-
-    Returns:
-        True if this was a matching reply and has been handled (the caller
-        must not also run classification on it); False if it doesn't match
-        a known relay, so the caller should fall through to normal dispatch.
-    """
-    relay = await store.find_relay_by_director_message(director_id, reply_to_message_id)
-    if relay is None:
-        return False
-
-    employee_telegram_user_id = relay["employee_telegram_user_id"]
-    try:
-        await _reply(employee_telegram_user_id, run_id, f"💬 Директордан:\n{escape(text)}")
-    except TelegramError as exc:
-        log.warning("Could not forward the Director's reply to employee {}: {}", employee_telegram_user_id, exc)
-        return True  # matched a known relay -- don't fall through to classification even on delivery failure
-
-    await store.create_task_update(
-        task_id=relay.get("task_id"),
-        employee_telegram_user_id=employee_telegram_user_id,
-        message_text=text,
-        director_telegram_user_id=director_id,
-        direction="director_to_employee",
-    )
-    return True
 
 
 async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -917,11 +862,9 @@ async def _try_daily_report(
         run_id: UUID grouping this webhook call's audit rows.
 
     Returns:
-        An outcome string when the message WAS the report (the caller must
-        then not also relay it as a task update), or None to fall through to
-        the normal relay — including when late numbers were merged into an
-        already-submitted report, since that message still deserves to reach
-        the Director like any other.
+        An outcome string when the message WAS the report (or the one-tap
+        question about it), or None to fall through to the AI — including
+        when late numbers were merged into an already-submitted report.
     """
     day = today_local()
     metrics_def = kpi.metrics_for_role(employee["role"])
@@ -958,7 +901,7 @@ async def _try_daily_report(
 
         # Numbers arriving a minute after a report already sent in words:
         # merge them so the scorecard is complete, and still fall through so
-        # the Director sees the message itself.
+        # the message itself gets its answer.
         if metrics_def:
             submitted = await store.submitted_report_today(employee["telegram_user_id"], day)
             if submitted is not None:
@@ -970,9 +913,9 @@ async def _try_daily_report(
         return None
 
     # No one has to reply to anything (2026-09-25): a reply to the 16:00 ask
-    # or the 17:00 reminder is the report, a reply to a task card is a task
-    # update, and a plain message is the report — unless a task is in flight,
-    # when the bot asks with one tap instead of guessing.
+    # or the 17:00 reminder is the report, a reply to a task card is a
+    # question about it (for the AI), and a plain message is the report —
+    # unless it asks something, when the bot asks with one tap.
     telegram_user_id = employee["telegram_user_id"]
     replied_to_ask = reply_to_message_id is not None and reply_to_message_id in (
         pending.get("prompt_message_id"),
@@ -983,12 +926,11 @@ async def _try_daily_report(
         and reply_to_message_id is not None
         and await store.find_task_by_message_id(reply_to_message_id, telegram_user_id) is not None
     )
-    open_tasks = [] if replied_to_ask or replied_to_task else await store.open_tasks_for_employee(telegram_user_id)
-    kind = report_message_kind(replied_to_ask, replied_to_task, len(open_tasks))
-    if kind == "task_update":
+    kind = report_message_kind(replied_to_ask, replied_to_task, "?" in text)
+    if kind == "task_question":
         return None
     if kind == "ask":
-        return await _ask_report_or_relay(employee, text, open_tasks[0] if len(open_tasks) == 1 else None, run_id)
+        return await _ask_report_or_ai(employee, text, run_id)
     # None means Telegram delivered this same report twice and the first copy
     # already saved it — stop here rather than offer the copy to the Director.
     return await _save_daily_report(employee, pending, text, run_id) or "daily_report_duplicate"
@@ -1039,18 +981,42 @@ async def _save_daily_report(
     return "daily_report"
 
 
-async def _ask_report_or_relay(
-    employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID
-) -> str:
-    """Ask whether a message is today's report or a message for the Director."""
-    pending = await store.create_pending_relay(employee["telegram_user_id"], text, str(task["id"]) if task else None)
+async def _ask_report_or_ai(employee: dict[str, Any], text: str, run_id: uuid.UUID) -> str:
+    """Ask whether a message is today's report or a question for the AI."""
+    held = await store.create_pending_relay(employee["telegram_user_id"], text, None)
     await _reply(
         employee["telegram_user_id"],
         run_id,
-        casual("бу бугунги ҳисоботингизми?", "🙂"),
-        report_or_relay_keyboard(str(pending["id"])),
+        casual("бу бугунги ҳисоботингизми ёки савол?", "🙂"),
+        report_or_ai_keyboard(str(held["id"])),
     )
-    return "report_or_relay_asked"
+    return "report_or_ai_asked"
+
+
+async def _handle_held_as_question(
+    held_id: str, callback: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks | None
+) -> str:
+    """"йўқ, бу савол": the held message goes to the AI instead of the report."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    held = await store.resolve_pending_relay(held_id, clicker_id, "ai")
+    if held is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "held_already_resolved"
+    employee = await store.get_employee_by_telegram_id(clicker_id)
+    await _answer(query_id, "OK")
+    message = callback.get("message") or {}
+    if message.get("message_id") and message.get("chat", {}).get("id"):
+        async with TelegramBot(
+            agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+        ) as bot:
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=str(message["chat"]["id"]), message_id=message["message_id"],
+                text=casual("савол сифатида қабул қилдим", "🙂"), reply_markup={"inline_keyboard": []},
+            )
+    if employee is None or employee["status"] != "active":
+        return "unknown_employee"
+    return await _route_to_ai(employee, held["message_text"], None, run_id, background)
 
 
 async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1095,30 +1061,31 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
 # -------------------------------------------------------------- employee updates
 
 
-async def _handle_employee_message(employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Relay a non-Director employee's free-text message to the Director.
+async def _handle_employee_message(
+    employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks | None = None
+) -> str:
+    """An employee's free-text message: about their work, answered by the AI.
 
-    Employees can write at any time about anything — before starting a
-    task, mid-task, after finishing, or something with no task behind it at
-    all. A message that resolves to a specific task (via reply-to-card, or
-    their one open task) is attributed to it with a stage label; anything
-    else is relayed as a general message instead of refused — being able to
-    talk to the Director through this bot shouldn't require an open task to
-    exist.
-
-    Nothing is relayed straight away: the employee first gets "Бу хабар
-    директорга юборилсинми?" and it goes only on "✅ Ҳа, юбориш" (2026-09-25).
-    Daily reports and permission requests have their own flows and never
-    reach this point.
+    2026-10-02, from the owner: OPS Manager Bot is for work only. Employees
+    don't message the Director or each other through it; what they write
+    goes, in order, to: a cheer reply, a lead's follow-up, today's report —
+    and otherwise to the AI, which answers about their own work and tasks
+    (``ai_chat.py``). Permission requests, KPI commands and task buttons have
+    their own flows and never reach this point.
     """
     telegram_user_id = employee["telegram_user_id"]
     text = (message.get("text") or message.get("caption") or "").strip()
     if not text:
         return "ignored"
+    if text.lower() == ai_chat.COMMAND:
+        await _reply(telegram_user_id, run_id, ai_chat.hint_text())
+        return "ai_hint"
+    if text.startswith("/"):
+        return "ignored"  # an unknown command: not a question
 
     reply_to = message.get("reply_to_message") or {}
     # A typed answer to a team-cheer message ("how was your day?") is chat,
-    # not a report and not a message for the Director (cheer.py).
+    # not a report and not a question (cheer.py).
     if reply_to.get("message_id") and await store.cheer_delivery_for_message(telegram_user_id, reply_to["message_id"]):
         await _reply(telegram_user_id, run_id, cheer.text_reply(reply_to["message_id"]))
         return "cheer_reply"
@@ -1146,120 +1113,12 @@ async def _handle_employee_message(employee: dict[str, Any], message: dict[str, 
     task = None
     if reply_to.get("message_id"):
         task = await store.find_task_by_message_id(reply_to["message_id"], telegram_user_id)
-    if task is None:
-        task = await store.find_open_task_for_employee(telegram_user_id)
-
-    if not await store.active_employees_by_role(DIRECTOR_ROLE):
-        await _reply(telegram_user_id, run_id, "Ҳозирча директор рўйхатдан ўтмаган — хабарингиз етказилмади.")
-        return "no_director"
-
-    # Nothing reaches the Director without the employee confirming it: one
-    # stray message to the CEO is one too many (the business's rule).
-    pending = await store.create_pending_relay(telegram_user_id, text, str(task["id"]) if task else None)
-    preview = text if len(text) <= 300 else text[:299].rstrip() + "…"
-    prompt = "📨 <b>Бу хабар директорга юборилсинми?</b>"
-    if task is not None:
-        prompt += f"\n<i>Топшириқ: {escape(_plain(task['task_summary'])[:120])}</i>"
-    prompt += f"\n\n«{escape(preview)}»"
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Ҳа, юбориш", "callback_data": f"relayok:{pending['id']}"},
-                {"text": "❌ Йўқ", "callback_data": f"relayno:{pending['id']}"},
-            ]
-        ]
-    }
-    await _reply(telegram_user_id, run_id, prompt, keyboard)
-    return "relay_confirm_asked"
+    return await _route_to_ai(employee, text, task, run_id, background)
 
 
 def _plain(text: str | None) -> str:
     """AI-written text without its <b>/<i> tags, on one line — for previews."""
     return " ".join(re.sub(r"<[^>]+>", "", text or "").split())
-
-
-# Held messages expire: a tap days later shouldn't deliver something stale.
-RELAY_CONFIRM_HOURS = 24
-
-
-async def _handle_relay_decision(relay_id: str, send: bool, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """The employee confirmed (or cancelled) sending a held message to the Director."""
-    query_id = callback.get("id", "")
-    clicker_id = callback.get("from", {}).get("id")
-    relay = await store.resolve_pending_relay(relay_id, clicker_id, "sent" if send else "cancelled")
-    if relay is None:
-        await _answer(query_id, "Аллақачон ҳал қилинган")
-        return "relay_already_resolved"
-
-    expired = (now_utc() - relay["created_at"]).total_seconds() > RELAY_CONFIRM_HOURS * 3600
-    if send and expired:
-        status_line = "⌛ Муддати ўтди — хабарни қайта ёзиб юборинг."
-        outcome = "relay_expired"
-    elif send:
-        employee = await store.get_employee_by_telegram_id(clicker_id)
-        task = await store.get_task(str(relay["task_id"])) if relay.get("task_id") else None
-        delivered = await _relay_to_director(employee, relay["message_text"], task, run_id) if employee else 0
-        status_line = "✅ Директорга юборилди." if delivered else "⚠️ Директорга етказиб бўлмади."
-        outcome = "relayed" if delivered else "relay_failed"
-    else:
-        status_line = "❌ Юборилмади."
-        outcome = "relay_cancelled"
-
-    message = callback.get("message") or {}
-    async with TelegramBot(
-        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
-    ) as bot:
-        if message.get("message_id") and message.get("chat", {}).get("id"):
-            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
-                chat_id=str(message["chat"]["id"]),
-                message_id=message["message_id"],
-                text=f"{status_line}\n\n«{escape(relay['message_text'][:300])}»",
-                reply_markup={"inline_keyboard": []},
-            )
-        await bot._answer_callback(query_id, "OK")  # noqa: SLF001
-    return outcome
-
-
-async def _relay_to_director(
-    employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID
-) -> int:
-    """Deliver an employee's confirmed message to every Director.
-
-    Returns:
-        How many Directors received it.
-    """
-    who = f"<b>{escape(names.person_name(employee))}</b> ({escape(ROLE_LABELS.get(employee['role'], employee['role']))})"
-    if task is not None:
-        stage_label = {"sent": "бошланмаган", "started": "давом этмоқда", "done": "бажарилган"}.get(
-            task["status"], task["status"]
-        )
-        relay_text = (
-            f"💬 {who}, топшириқ {stage_label}:\n{escape(text)}\n\n"
-            f"<i>Топшириқ: {escape(_plain(task['task_summary']))}</i>"
-        )
-    else:
-        relay_text = f"💬 {who}:\n{escape(text)}"
-
-    delivered = 0
-    for director in await store.active_employees_by_role(DIRECTOR_ROLE):
-        director_id = director["telegram_user_id"]
-        try:
-            message_ids = await _reply(director_id, run_id, relay_text)
-        except TelegramError as exc:
-            log.warning("Could not relay employee message to Director {}: {}", director_id, exc)
-            continue
-        delivered += 1
-        await store.create_task_update(
-            task_id=str(task["id"]) if task else None,
-            employee_telegram_user_id=employee["telegram_user_id"],
-            message_text=text,
-            director_telegram_user_id=director_id,
-            director_message_id=message_ids[0] if message_ids else None,
-        )
-    return delivered
-
-
-# ----------------------------------------------------- director task routing
 
 
 async def _dispatch_director_task(

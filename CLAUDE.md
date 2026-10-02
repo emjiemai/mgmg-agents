@@ -72,11 +72,13 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   extra courtesy to women; `tone.is_polite` rejects AI text that breaks it. Like the owner's example: "ака, ишларингиз билан чарчамаяпсизми,
   илтимос ҳисобот ёзиб юборинг, раҳмат каттакон, чарчаманг". No jokes/anecdotes
   (deleted 2026-10-02). Tasks keep their card format. `integrations/org_bot/tone.py`.
-- **AI chat for employees** (2026-10-02, `docs/agent-specs/15-ai-chat.md`): the
-  admin grants it per person (/xodimlar → 🤖); `/ai` turns it on/off (20 min
-  idle ends it); help with their own work only — **no company data** (no SAP,
-  money, reports, tasks, KPI, leads, other people), never invented; Garmin
-  sales also get the public catalog; 60 questions/day.
+- **OPS Manager Bot is for work only** (2026-10-02): **no messages between
+  employees and the Director (either way) through the bot** — the relay is
+  deleted. Employees' messages about their work go to the **work AI**
+  (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks, own
+  leads and (once uploaded) `employees.responsibilities`; **honesty first —
+  "билмайман", never a guess**; no company data, no other people; Garmin sales
+  get the public catalog; 60/day; admin can switch it off per person (🤖).
 - **Leads sheet is edited by people** (2026-10-02): share it from Google
   Sheets yourself (Editor); the bot reads/writes columns **by header name**,
   so moved/added columns are fine — don't rename the header cells.
@@ -85,7 +87,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   `/elon` (no text = "техник хатолик юз берди…" notice) or `/elon <text>`,
   preview + confirm, goes to every active employee once (2026-10-01).
 - Daily reports accepted only until midnight of that day; one follow-up
-  question max for vague reports; employee → Director messages need confirmation.
+  question max for vague reports; a question during the report window gets
+  "ҳисоботми ёки савол?".
 - **Director's tasks are confirmed before sending** (2026-10-02): a card lists
   everyone as tick-boxes with the bot's guess ticked; nothing goes out before
   📨 Юбориш (`task_picker.py`, `task_drafts`). Files too.

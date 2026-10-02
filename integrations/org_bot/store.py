@@ -2117,27 +2117,35 @@ async def get_task_draft(draft_id: str) -> dict[str, Any] | None:
 
 
 async def toggle_ai_chat(employee_id: str, changed_by: str) -> dict[str, Any] | None:
-    """Grant or take away an employee's AI chat, logged; taking it away also ends a running session."""
+    """Switch the work AI off for one person, or back on; logged."""
     after = await fetch_one(
-        """UPDATE employees SET ai_chat = NOT ai_chat,
-                  ai_chat_until = CASE WHEN ai_chat THEN NULL ELSE ai_chat_until END
-           WHERE id = %s AND status = 'active' RETURNING *""",
+        "UPDATE employees SET ai_chat_off = NOT ai_chat_off WHERE id = %s AND status = 'active' RETURNING *",
         (employee_id,),
     )
     if after is not None:
-        await log_employee_change(employee_id, "ai_chat", None, "on" if after["ai_chat"] else "off", changed_by)
+        await log_employee_change(employee_id, "ai_chat", None, "off" if after["ai_chat_off"] else "on", changed_by)
     return after
 
 
-async def set_ai_session(telegram_user_id: int, minutes: int | None) -> None:
-    """Start or extend someone's AI chat for ``minutes``; None ends it."""
-    if minutes is None:
-        await execute("UPDATE employees SET ai_chat_until = NULL WHERE telegram_user_id = %s", (telegram_user_id,))
-    else:
-        await execute(
-            "UPDATE employees SET ai_chat_until = now() + make_interval(mins => %s) WHERE telegram_user_id = %s AND ai_chat",
-            (minutes, telegram_user_id),
-        )
+async def set_responsibilities(employee_id: str, text: str | None) -> dict[str, Any] | None:
+    """Keep a person's written duties, for the work AI."""
+    return await fetch_one(
+        "UPDATE employees SET responsibilities = %s WHERE id = %s AND status = 'active' RETURNING *",
+        ((text or "").strip() or None, employee_id),
+    )
+
+
+async def open_leads_for_employee(employee_id: str) -> list[dict[str, Any]]:
+    """This person's own open leads, newest first — for the work AI."""
+    return await fetch_all(
+        """
+        SELECT a.assigned_on, a.status, COALESCE(l.company_name, l.project_name) AS company
+        FROM lead_assignments a JOIN leads l ON l.id = a.lead_id
+        WHERE a.employee_id = %s AND a.status IN ('new', 'in_progress')
+        ORDER BY a.assigned_on DESC
+        """,
+        (employee_id,),
+    )
 
 
 async def log_ai_turn(telegram_user_id: int, role: str, content: str) -> None:

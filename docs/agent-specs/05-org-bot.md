@@ -137,28 +137,22 @@ video notes (round videos) — none of these support a caption in the Bot API,
 which the Start/Done card edit relies on, so forwarding them would need a
 different (uncaptioned) card design this v1 doesn't build.
 
-## Flow — employee progress updates
+## Flow — employees' messages go to the work AI (2026-10-02)
 
-An employee can write free text about a task at any point — before starting,
-mid-task, after finishing ("something always might happen"). This isn't
-gated on task status. Resolution order:
-1. If the message is a Telegram **reply** to a specific task card, that task
-   is unambiguous — used directly.
-2. Otherwise, if the employee has **exactly one** open task (`sent`/`started`),
-   it's attached to that one.
-3. Otherwise (zero or multiple open tasks, no reply), they're asked to reply
-   directly to the right card — the note is never silently dropped or
-   attached to the wrong task.
+OPS Manager Bot is for work only. **Employees don't message the Director,
+and the Director doesn't message employees, through the bot** — the relay
+both ways (and its "📨 Бу хабар директорга юборилсинми?") was removed on the
+owner's word. An old "send it" button left in a chat does nothing.
 
-Every update is stored in `task_updates` (a paper trail) and relayed to the
-Director, tagged with the task's current stage.
-
-**Nothing reaches the Director without the employee confirming it**
-(2026-09-25). The bot first answers "📨 Бу хабар директорга юборилсинми?"
-with a preview and **✅ Ҳа, юбориш / ❌ Йўқ**; only the tap sends it. Held
-messages live in `pending_relays`; a tap after 24 hours doesn't deliver
-(write it again), and a double tap can't send twice. Daily reports and
-permission requests have their own flows and never pass through here.
+An employee's free message goes, in order, to: a reply to a cheer, a lead's
+follow-up, today's daily report (during the report window a message that
+asks something gets "бу бугунги ҳисоботингизми ёки савол?" — ҳа, ҳисобот /
+йўқ, бу савол) — and otherwise to the **work AI**
+(`integrations/org_bot/ai_chat.py`, `docs/agent-specs/15-ai-chat.md`), which
+answers about their own work and their own tasks. A Reply to a task card
+brings that task into the question. Task progress is told with the card's
+▶️ / ✅ buttons; the Director still sees those. Permission requests and KPI
+commands keep their own flows.
 
 ## Names — every employee's real name (2026-09-25)
 
@@ -173,7 +167,7 @@ once — `integrations/org_bot/names.py`:
   instead (and "хабарингиз ҳали юборилмади — қайта юборинг").
 - The answer is AI-checked like the permission form's answers (a real first
   name and surname, not "alo"), written in Cyrillic, and stored in
-  `employees.full_name`. It's used everywhere a person is named: relays,
+  `employees.full_name`. It's used everywhere a person is named:
   task confirmations, the brief, the weekly scorecard, the permission form.
 
 **When a name or position changes** (2026-09-26) — a correction, a move to

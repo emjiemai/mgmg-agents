@@ -725,7 +725,7 @@ CREATE TABLE IF NOT EXISTS pending_relays (
 -- could have been either (see ops_manager._ask_report_or_relay).
 ALTER TABLE pending_relays DROP CONSTRAINT IF EXISTS pending_relays_outcome_check;
 ALTER TABLE pending_relays ADD CONSTRAINT pending_relays_outcome_check
-    CHECK (outcome IN ('sent', 'cancelled', 'report'));
+    CHECK (outcome IN ('sent', 'cancelled', 'report', 'ai'));
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;
 
 -- ---------------------------------------------------------------------------
@@ -972,15 +972,19 @@ CREATE TABLE IF NOT EXISTS task_drafts (
 );
 
 -- ---------------------------------------------------------------------------
--- AI chat for employees (2026-10-02): the admin grants it per person on the
--- /xodimlar card (employees.ai_chat); the person turns it on with /ai and it
--- runs until /ai again or 20 quiet minutes (ai_chat_until). The AI has no
--- company data — no SAP, money, reports, tasks or other people — only what
--- MGMG sells. ai_chat_turns is its short memory, per person, never shown to
--- anyone else.
+-- The work AI (2026-10-02, integrations/org_bot/ai_chat.py): every
+-- employee's free message about their work goes to the AI — the bot no
+-- longer carries messages to the Director or between people. The admin can
+-- switch it off for one person (ai_chat_off). ``responsibilities`` holds the
+-- person's written duties once the owner uploads them; the AI reads them,
+-- with the person's own open tasks and leads — nothing of anyone else's.
+-- ai_chat_turns is its short memory, per person, never shown to anyone else.
+-- (The first version, the same day, was opt-in with an /ai on/off mode.)
 -- ---------------------------------------------------------------------------
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS ai_chat BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS ai_chat_until TIMESTAMPTZ;
+ALTER TABLE employees DROP COLUMN IF EXISTS ai_chat;
+ALTER TABLE employees DROP COLUMN IF EXISTS ai_chat_until;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS ai_chat_off BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS responsibilities TEXT;
 
 CREATE TABLE IF NOT EXISTS ai_chat_turns (
     id                BIGSERIAL    PRIMARY KEY,

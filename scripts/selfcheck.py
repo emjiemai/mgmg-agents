@@ -1083,16 +1083,16 @@ def test_names_and_routing() -> None:
 def test_report_or_message() -> None:
     """A report never needs Telegram's reply; an unclear message gets one tap."""
     print("report or message")
-    from integrations.org_bot.ops_manager import report_message_kind, report_or_relay_keyboard
+    from integrations.org_bot.ops_manager import report_message_kind, report_or_ai_keyboard
 
-    check("plain message, no task -> report", report_message_kind(False, False, 0), "report")
-    check("reply to the ask/reminder -> report, even with tasks", report_message_kind(True, False, 3), "report")
-    check("reply to a task card -> task update", report_message_kind(False, True, 1), "task_update")
-    check("plain message with a task in flight -> ask", report_message_kind(False, False, 1), "ask")
-    check("plain message with several tasks -> ask", report_message_kind(False, False, 4), "ask")
+    # 2026-10-02: no more "or a message for the Director?" — only report or a question for the AI.
+    check("plain message -> report", report_message_kind(False, False, False), "report")
+    check("reply to the ask/reminder -> report, even if it asks something", report_message_kind(True, False, True), "report")
+    check("reply to a task card -> a question about the task", report_message_kind(False, True, False), "task_question")
+    check("a plain question -> ask", report_message_kind(False, False, True), "ask")
     real_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
-    buttons = [b for row in report_or_relay_keyboard(real_id)["inline_keyboard"] for b in row]
-    check("three choices", [b["callback_data"].split(":")[0] for b in buttons], ["asrep", "relayok", "relayno"])
+    buttons = [b for row in report_or_ai_keyboard(real_id)["inline_keyboard"] for b in row]
+    check("two choices: report, or a question", [b["callback_data"].split(":")[0] for b in buttons], ["asrep", "asai"])
     check_true("every button fits Telegram's 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in buttons))
     check_true("buttons are Uzbek Cyrillic", all(latin_words(b["text"]) == [] for b in buttons))
 
@@ -2241,39 +2241,47 @@ def test_politeness_days_off_announcements() -> None:
 
 
 def test_ai_chat_and_sheet() -> None:
-    """2026-10-02: AI chat for granted employees (no company data); the leads sheet read by header."""
-    print("AI chat for employees, leads sheet by header")
+    """2026-10-02: employees talk to the work AI, never to people; the leads sheet read by header."""
+    print("work AI for employees, no relay; leads sheet by header")
     import asyncio
     import uuid
-    from datetime import timezone
 
     from integrations.common.agent_loader import load_agent
     from integrations.org_bot import admin, ai_chat, leads, ops_manager, store
 
-    # ---- who may chat, and when it's on
-    now = datetime(2026, 10, 2, 10, 0, tzinfo=timezone.utc)
-    later, earlier = now + timedelta(minutes=5), now - timedelta(minutes=5)
-    check("granted and running", ai_chat.session_active({"ai_chat": True, "ai_chat_until": later}, now), True)
-    check("granted, timed out", ai_chat.session_active({"ai_chat": True, "ai_chat_until": earlier}, now), False)
-    check("not granted", ai_chat.session_active({"ai_chat": False, "ai_chat_until": later}, now), False)
+    today = date(2026, 10, 2)
+    seller = {"id": "e7", "telegram_user_id": 7, "role": "b2b_sotuv", "full_name": "Алишер Каримов",
+              "address_form": "aka", "status": "active", "ai_chat_off": False, "responsibilities": None}
 
-    # ---- what the AI knows, and doesn't
-    b2b = ai_chat.system_prompt({"role": "b2b_sotuv"})
-    garmin = ai_chat.system_prompt({"role": "garmin_sotuv"})
-    check_true("no company data, no actions, never invented",
-               "no access to any company system or data" in b2b and "Never invent such data" in b2b and "cannot send" in b2b)
-    check_true("polite and Uzbek Cyrillic", '"сиз"' in b2b and "Cyrillic" in b2b)
-    check_true("Garmin sales also get the public catalog, B2B doesn't", "MARQ" in garmin and "MARQ" not in b2b)
-    for text, names_in in ((ai_chat.on_text("Алишер ака"), ("Алишер ака", "AI")), (ai_chat.off_text(), ("AI",)),
-                           (ai_chat.not_granted_text(), ("AI",)), (ai_chat.limit_text(), ("AI",)), (ai_chat.error_text(), ())):
-        check(f"friendly: {text[:30]}…", friendly_problems(text, names_in), [])
+    # ---- what the AI knows: their own work only, honesty first
+    tasks = [{"task_summary": "<b>Принтерни</b> текширинг", "status": "started", "due_date": today - timedelta(days=1)},
+             {"task_summary": "КП тайёрланг", "status": "sent", "due_date": None}]
+    own_leads = [{"company": "Hyatt Regency", "assigned_on": today, "status": "in_progress"}]
+    context = ai_chat.work_context(seller, tasks, own_leads, today)
+    check_true("their tasks (deadline, overdue) and leads are in it",
+               "Принтерни текширинг (started, due 01.10 (overdue))" in context and "КП тайёрланг (not started, no deadline)" in context
+               and "Hyatt Regency" in context)
+    check_true("duties not uploaded yet: the AI is told so", "not uploaded yet" in context)
+    check_true("uploaded duties are read",
+               "Мижозлар билан ишлаш" in ai_chat.work_context({**seller, "responsibilities": "Мижозлар билан ишлаш"}, [], [], today))
+    prompt = ai_chat.system_prompt(seller, context)
+    check_true("honesty first: say 'I don't know', never guess",
+               "HONESTY FIRST" in prompt and "билмайман" in prompt and "Never guess" in prompt)
+    check_true("no company data, no other people, no passing messages to the Director",
+               "no SAP" in prompt and "anything about other\nemployees" in prompt and "not to the Director" in prompt)
+    check_true("Garmin sales also get the public catalog, B2B doesn't",
+               "MARQ" in ai_chat.system_prompt({**seller, "role": "garmin_sotuv"}, context) and "MARQ" not in prompt)
+    check_true("a Reply to a task card brings that task", "THEY ARE REPLYING TO THIS TASK CARD: КП тайёрланг"
+               in ai_chat.user_prompt([], "қандай бошлай?", {"task_summary": "КП тайёрланг"}))
+    for text in (ai_chat.hint_text(), ai_chat.off_text(), ai_chat.limit_text(), ai_chat.error_text()):
+        check(f"friendly: {text[:30]}…", friendly_problems(text, ("AI",)), [])
 
-    # ---- the switch and the answers in OPS Manager Bot
-    replies, sessions, turns, tasks = [], [], [], []
+    # ---- the bot: a message goes to the AI, never to a person
+    replies, turns, tasks_bg = [], [], []
 
     class Background:
         def add_task(self, func, *args):
-            tasks.append((func, args))
+            tasks_bg.append((func, args))
 
     class FakeAI:
         def __init__(self, *args, **kwargs):
@@ -2286,20 +2294,20 @@ def test_ai_chat_and_sheet() -> None:
             return None
 
         async def complete(self, system, user, **kwargs):
-            assert "no access to any company system or data" in system
-            return "Мана <b>хат</b> лойиҳаси"
+            assert "HONESTY FIRST" in system and "КП тайёрланг" in system
+            return "Бу маълумот менда йўқ, раҳбарингиздан сўранг"
 
     async def fake_reply(chat_id, run_id, text, reply_markup=None):
-        replies.append(text)
+        replies.append((text, reply_markup))
         return [1]
 
-    async def set_session(user, minutes):
-        sessions.append(minutes)
-
     async def log_turn(user, role, content):
-        turns.append((role, content))
+        turns.append(role)
 
-    async def no_turns(user, limit=12):
+    async def none(*args, **kwargs):
+        return None
+
+    async def empty(*args, **kwargs):
         return []
 
     counter = {"n": 0}
@@ -2307,8 +2315,25 @@ def test_ai_chat_and_sheet() -> None:
     async def questions_today(user):
         return counter["n"]
 
-    async def nothing(*args, **kwargs):
-        return None
+    async def open_tasks(user):
+        return tasks
+
+    held = {"row": {"id": "h1", "message_text": "КП қандай ёзилади?"}}
+
+    async def create_held(user, text, task_id):
+        return {"id": "h1"}
+
+    async def resolve_held(held_id, user, outcome):
+        row, held["row"] = held["row"], None
+        return row
+
+    async def get_by_tg(user):
+        return seller
+
+    pending = {"row": None}
+
+    async def pending_report(user, day):
+        return pending["row"]
 
     saved = []
 
@@ -2316,75 +2341,78 @@ def test_ai_chat_and_sheet() -> None:
         saved.append((obj, name, getattr(obj, name)))
         setattr(obj, name, value)
 
-    for name, fake in (("set_ai_session", set_session), ("log_ai_turn", log_turn), ("recent_ai_turns", no_turns),
-                       ("ai_questions_today", questions_today)):
+    for name, fake in (("log_ai_turn", log_turn), ("recent_ai_turns", empty), ("ai_questions_today", questions_today),
+                       ("open_tasks_for_employee", open_tasks), ("open_leads_for_employee", empty),
+                       ("cheer_delivery_for_message", none), ("lead_question_by_message", none),
+                       ("pending_lead_question", none), ("pending_report", pending_report),
+                       ("open_report_followup", none), ("submitted_report_today", none), ("find_task_by_message_id", none),
+                       ("create_pending_relay", create_held), ("resolve_pending_relay", resolve_held),
+                       ("get_employee_by_telegram_id", get_by_tg)):
         patch(store, name, fake)
     patch(ops_manager, "_reply", fake_reply)
-    patch(ops_manager, "_show_typing", nothing)
+    patch(ops_manager, "_show_typing", none)
+    patch(ops_manager, "_answer", none)
     patch(ops_manager, "OpenRouterClient", FakeAI)
-    patch(ops_manager, "now_utc", lambda: now)
-    seller = {"telegram_user_id": 7, "role": "b2b_sotuv", "full_name": "Алишер Каримов", "address_form": "aka",
-              "ai_chat": False, "ai_chat_until": None}
     bg = Background()
     try:
-        check("/ai without the grant: politely refused",
-              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_not_granted")
-        seller["ai_chat"] = True
-        check("/ai with the grant turns it on", asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_on")
-        check_true("...for 20 minutes, and says how to stop", sessions[-1] == 20 and "/ai" in replies[-1])
-        check("while off, a message goes the usual way",
-              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "салом"}, uuid.uuid4(), bg)), None)
-        seller["ai_chat_until"] = later
-        check("while on, a message goes to the AI",
-              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "мижозга хат ёзиб беринг"}, uuid.uuid4(), bg)), "ai_chat")
-        check("...but a Reply to the bot's own message keeps its meaning",
-              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "x", "reply_to_message": {"message_id": 5}}, uuid.uuid4(), bg)), None)
-        func, args = tasks[-1]
+        outcome = asyncio.run(ops_manager._handle_employee_message(seller, {"text": "директорга айтинг, эртага келмайман"}, uuid.uuid4(), bg))
+        check("an employee's message goes to the AI, not the Director", outcome, "ai_chat")
+        func, args = tasks_bg[-1]
         asyncio.run(func(*args))
-        check("the answer comes back, and both turns are kept", (replies[-1], [r for r, _c in turns]),
-              ("Мана <b>хат</b> лойиҳаси", ["employee", "assistant"]))
+        check("the AI answers honestly, both turns kept", (replies[-1][0], turns), ("Бу маълумот менда йўқ, раҳбарингиздан сўранг", ["employee", "assistant"]))
+        check_true("nothing offers to send anything to the Director",
+                   not any("директорга юборилсинми" in r[0].lower() or "relayok" in str(r[1]) for r in replies))
         counter["n"] = ai_chat.DAILY_LIMIT
         asyncio.run(func(*args))
-        check("past the daily limit: told kindly, no AI call", replies[-1], ai_chat.limit_text())
-        check("/ai again turns it off", asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_off")
-        check("...ending the session", sessions[-1], None)
+        check("past the daily limit: told kindly", replies[-1][0], ai_chat.limit_text())
+        counter["n"] = 0
+        check("/ai is just a hint now", asyncio.run(ops_manager._handle_employee_message(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_hint")
+        check("an unknown command is ignored", asyncio.run(ops_manager._handle_employee_message(seller, {"text": "/xyz"}, uuid.uuid4(), bg)), "ignored")
+        off = {**seller, "ai_chat_off": True}
+        check("switched off for this person: told the bot is for work, nothing sent anywhere",
+              (asyncio.run(ops_manager._handle_employee_message(off, {"text": "салом"}, uuid.uuid4(), bg)), replies[-1][0]),
+              ("ai_off", ai_chat.off_text()))
+
+        # during the report window: a plain message is the report, a question gets one tap
+        pending["row"] = {"id": "r1", "prompt_message_id": 50, "reminder_message_id": None}
+        outcome = asyncio.run(ops_manager._handle_employee_message(seller, {"text": "КП қандай ёзилади?"}, uuid.uuid4(), bg))
+        buttons = [b["callback_data"].split(":")[0] for row in replies[-1][1]["inline_keyboard"] for b in row]
+        check("a question while the report is due: report or question?", (outcome, buttons), ("report_or_ai_asked", ["asrep", "asai"]))
+        tasks_bg.clear()
+        tap = {"id": "q", "data": "asai:h1", "from": {"id": 7}}
+        check("'йўқ, бу савол' sends it to the AI", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4(), bg)), "ai_chat")
+        check_true("...in the background", len(tasks_bg) == 1)
+        old = {"id": "q", "data": "relayok:x", "from": {"id": 7}}
+        check("an old 'send to the Director' button does nothing", asyncio.run(ops_manager._handle_callback(old, uuid.uuid4(), bg)), "relay_disabled")
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
 
-    # ---- the admin grants it, and the person is told
-    told, edits = [], []
+    # ---- the admin's off switch
+    edits = []
 
     async def toggle(employee_id, by):
-        return {"id": employee_id, "telegram_user_id": 7, "role": "b2b_sotuv", "status": "active", "display_name": "a",
-                "full_name": "Алишер Каримов", "address_form": "aka", "ai_chat": True}
+        return {**seller, "id": employee_id, "display_name": "a", "ai_chat_off": True}
 
     async def get_employee(employee_id):
         return {"id": employee_id, "status": "active", "role": "b2b_sotuv", "display_name": "a"}
 
-    async def tell(user, text, run_id):
-        told.append(text)
-
     async def edit(callback, text, keyboard, run_id):
         edits.append((text, keyboard))
-
-    async def fake_answer(query_id, text):
-        return None
 
     saved.clear()
     patch(store, "toggle_ai_chat", toggle)
     patch(store, "get_employee", get_employee)
-    patch(admin, "_tell_employee", tell)
     patch(admin, "_edit", edit)
-    patch(admin, "_answer", fake_answer)
+    patch(admin, "_answer", none)
     try:
         asyncio.run(admin.handle_admin_callback({"id": "q", "data": "aich:e7", "from": {"id": 5}}, uuid.uuid4()))
-        check_true("the 🤖 button grants it and tells the person how to start",
-                   told and told[-1].startswith("Алишер ака, сизга AI ёрдамчи очилди") and "/ai" in told[-1])
-        check_true("...and the card shows it", edits and "AI суҳбат: рухсат берилган" in edits[-1][0])
+        check_true("the 🤖 button switches the AI off for one person, and the card shows it",
+                   edits and "AI ёрдамчи: ўчирилган" in edits[-1][0] and "⛔ ўчирилган" in str(edits[-1][1]))
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
+
 
     # ---- the leads sheet, read and written by header (people edit it now)
     cols = list(leads.SHEET_COLUMNS)

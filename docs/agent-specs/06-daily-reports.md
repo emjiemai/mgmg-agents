@@ -45,7 +45,7 @@ admin set it (`names.call_name`):
 | vague report | the AI's one question, same voice: "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди? 🙂" |
 | answer added | раҳмат каттакон, ҳисоботингизга қўшиб қўйдим 😊 |
 | too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 24:00 гача олинади 🙂 |
-| report or message? | бу бугунги ҳисоботингизми? 🙂 — buttons: ҳа, ҳисобот · директорга хабар · бекор қилиш |
+| report or question? (a message that asks something) | бу бугунги ҳисоботингизми ёки савол? 🙂 — buttons: ҳа, ҳисобот · йўқ, бу савол (→ the work AI) |
 
 `selfcheck.py` fails if any of these gains a capital letter, a line break,
 markup, or an emoji anywhere but the end. Task cards keep their format.
@@ -167,7 +167,7 @@ AI outages skip the check.
 - **Reports close at midnight** (Tashkent) of the day they were asked for.
   A report sent after that is not recorded; the employee counts as missed in
   the 08:00 brief. Replying to an old ask gets "hisobot muddati tugagan"
-  instead of being relayed to the Director.
+  (messages no longer go to the Director through the bot, 2026-10-02).
 - **Follow-up answer.** The one follow-up question on a vague report waits up
   to 3 hours, and never past midnight. After that it lapses: the report
   stands as first sent, and later messages are never glued onto it.
