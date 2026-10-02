@@ -76,7 +76,7 @@ Business rules already encoded (do not silently change any of them):
 
 - Roles are in `integrations/org_bot/roles.py`: `b2b_sotuv`, `it`,
   `buxgalteriya`, `moliya` (finance), `hr`, `ombor`, `operatsion_direktor`,
-  `mobilograf`, `aloqa_markazi`, `garmin_sotuv`. `operatsion_direktor` is the Director.
+  `mobilograf`, `aloqa_markazi`, `garmin_sotuv`, `londry` (Londry team). `operatsion_direktor` is the Director.
 - **Daily reports:** asked at 16:00 Tashkent (Mon–Fri), reminder at 17:00,
   accepted only until midnight of that same day. A vague report ("ok",
   "ishladim") is saved and gets exactly **one** AI follow-up question; the

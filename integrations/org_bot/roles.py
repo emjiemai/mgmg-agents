@@ -42,6 +42,7 @@ ROLES: list[Role] = [
     Role("mobilograf", "Мобилограф"),
     Role("aloqa_markazi", "Алоқа маркази"),
     Role("garmin_sotuv", "Garmin сотув"),
+    Role("londry", "Londry"),  # Primus Londry's own team — the brand, never "Laundry" (2026-10-02)
 ]
 
 AGENTS: list[Agent] = [

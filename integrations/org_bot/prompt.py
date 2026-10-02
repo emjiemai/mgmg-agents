@@ -414,6 +414,9 @@ Finance and accounting are two departments: "moliyaga", "moliya bo'limi",
 "бухгалтерия", "accounting" -> buxgalteriya. Never swap one for the other.
 (A QUESTION about invoices or debts is still data — finance_agent — not a
 task for either department.)
+Londry is its own team: "londryga", "Londry bo'limi", "Лондри", "londry
+xodimlari" -> londry. It is not B2B sales (b2b_sotuv) — route there only when
+the message is about selling to business customers.
 
 # DEADLINE (target_type="employee" only)
 If the Director STATED when the task must be done, put that date in due_date

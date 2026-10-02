@@ -454,14 +454,20 @@ def test_org_bot() -> None:
     check_true("schema.sql: both role CHECKs list exactly roles.py's roles",
                len(checks) == 2 and all(c == ROLE_SLUGS for c in checks))
     check_true("every role has a name for the SOP form", set(ROLE_LABELS_CYR) == ROLE_SLUGS)
+    from integrations.org_bot.prompt import CLASSIFY_SYSTEM_PROMPT
+
     check("Finance is a role of its own (2026-09-29)", roles.ROLE_LABELS.get("moliya"), "Молия")
     check_true("...next to accounting, not instead of it", "buxgalteriya" in ROLE_SLUGS)
     check_true("...a task can be routed to it", "moliya" in roles.ROUTABLE_ROLE_SLUGS)
+    check("Londry is a role, spelled as the brand (2026-10-02)", roles.ROLE_LABELS.get("londry"), "Londry")
+    check_true("...never 'Laundry'", not any("laundry" in r.slug or "Laundry" in r.label for r in roles.ROLES))
+    check_true("...routable, pickable, and the classifier knows it",
+               "londry" in roles.ROUTABLE_ROLE_SLUGS and "- londry: Londry" in CLASSIFY_SYSTEM_PROMPT
+               and any(b[0]["callback_data"].startswith("setrole:londry:")
+                       for b in roles.role_picker_keyboard("req-1")["inline_keyboard"]))
     check_true("...and new employees can pick it",
                any(b[0]["callback_data"].startswith("setrole:moliya:")
                    for b in roles.role_picker_keyboard("req-1")["inline_keyboard"]))
-    from integrations.org_bot.prompt import CLASSIFY_SYSTEM_PROMPT
-
     check_true("the classifier knows moliya and tells it from buxgalteriya",
                "- moliya: Молия" in CLASSIFY_SYSTEM_PROMPT and "Never swap one for the other" in CLASSIFY_SYSTEM_PROMPT)
 
