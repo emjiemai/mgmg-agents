@@ -224,6 +224,15 @@ envVarGroups:
       # from BILLZ -> Настройки -> Компания -> Ключи интеграции.
       - key: BILLZ_SECRET_TOKEN
         sync: false
+      # 1C (Бухгалтерия для Узбекистана on Clobus), OData, read-only
+      # (integrations/onec/): the database's .../odata/standard.odata/ address
+      # and the OData service user's login and password.
+      - key: ONEC_ODATA_URL
+        sync: false
+      - key: ONEC_LOGIN
+        sync: false
+      - key: ONEC_PASSWORD
+        sync: false
       - key: VERIFIX_CLIENT_ID
         sync: false
       # Or, instead of the client id/secret: a Verifix user's login

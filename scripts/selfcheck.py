@@ -3008,6 +3008,82 @@ def test_verifix_basic_login() -> None:
             setattr(obj, name, value)
 
 
+def test_onec() -> None:
+    """1C over OData: GET-only client, Basic auth, the /1c discovery report."""
+    print("1C (Clobus, OData)")
+    import asyncio
+    import base64
+    import contextlib
+    from datetime import datetime
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.common.config import settings
+    from integrations.onec import client as oc
+    from integrations.onec import discover
+    from integrations.org_bot import admin
+
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        path = request.url.path
+        if path.endswith("standard.odata/"):
+            return httpx.Response(200, json={"value": [{"name": n} for n in (
+                "ChartOfAccounts_Хозрасчетный", "AccountingRegister_Хозрасчетный", "Catalog_Контрагенты",
+                "Document_НачислениеЗарплаты", "Catalog_ФизическиеЛица")]})
+        if "ChartOfAccounts" in path:
+            return httpx.Response(200, json={"value": [
+                {"Ref_Key": "k1", "Code": "5010", "Description": "Касса в национальной валюте", "DeletionMark": False},
+                {"Ref_Key": "k2", "Code": "5110", "Description": "Расчетный счет", "DeletionMark": False},
+                {"Ref_Key": "k3", "Code": "4010", "Description": "Счета к получению", "DeletionMark": False}]})
+        if "Balance" in path:
+            return httpx.Response(200, json={"value": [
+                {"Account_Key": "k1", "СуммаBalance": 1500000.5}, {"Account_Key": "k2", "СуммаBalance": 98000000},
+                {"Account_Key": "k3", "СуммаBalance": 5}]})
+        return httpx.Response(404, json={"odata.error": {"message": {"value": "not found"}}})
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    names = ("onec_odata_url", "onec_login", "onec_password")
+    saved = [(settings, n, getattr(settings, n)) for n in names] + [(oc, "audited", oc.audited)]
+    oc.audited = no_audit
+    settings.onec_odata_url, settings.onec_login = "https://clobus.uz/a/acc313/61458/odata/standard.odata/", "mgmg_bot_odata"
+    settings.onec_password = SecretStr("s3cr3t")
+    try:
+        check_true("configured", settings.onec_configured)
+
+        async def probe():
+            async with oc.OneCClient(agent="t", transport=httpx.MockTransport(handler)) as c:
+                return await discover.run(c, datetime(2026, 10, 2, 9, 0))
+
+        report = asyncio.run(probe())
+        expected = "Basic " + base64.b64encode(b"mgmg_bot_odata:s3cr3t").decode()
+        check_true("every call is a GET with Basic auth and $format=json",
+                   all(r.method == "GET" and r.headers["authorization"] == expected
+                       and r.url.params.get("$format") == "json" for r in seen))
+        check_true("Cyrillic names are encoded in the path", any("%D0%A5" in str(r.url) for r in seen))
+        check("money accounts by the Uzbek chart (class 5000)", [a["code"] for a in report["accounts"]], ["5010", "5110"])
+        check("balance field found", report["amount_field"], "СуммаBalance")
+        check("balances per money account", report["balances"], {"5010": 1500000.5, "5110": 98000000.0})
+        check("payroll / personal data flagged", discover.sensitive(report["sets"]),
+              ["Catalog_ФизическиеЛица", "Document_НачислениеЗарплаты"])
+        check_true("the client has no way to write", not any(hasattr(oc.OneCClient, m) for m in ("post", "patch", "put", "delete")))
+        text = admin._onec_text(report)
+        check_true("/1c report: connected, accounts, warning about payroll",
+                   "1C уланди" in text and "5110" in text and "Иш ҳақи" in text)
+        check_true("/1c without a login says why", "1C'га уланиб бўлмади" in admin._onec_text(
+            {"sets": [], "accounts": [], "fields": [], "balances": {}, "errors": ["HTTP 401 — unauthorized"]}))
+        settings.onec_password = SecretStr("")
+        check_true("no password: not configured", not settings.onec_configured)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -3037,6 +3113,7 @@ def main() -> int:
         test_kpi,
         test_garmin_leads,
         test_billz,
+        test_onec,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

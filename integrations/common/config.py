@@ -108,6 +108,14 @@ class Settings(BaseSettings):
     # Arriving up to this many minutes after the schedule's start is on time.
     verifix_late_grace_minutes: int = 5
 
+    # --- 1C on Clobus (OData, read-only; integrations/onec/) ---
+    # The database's OData address (https://clobus.uz/a/acc313/61458/odata/standard.odata/)
+    # and the OData service user made in 1C: Администрирование → Синхронизация
+    # данных → Настройки стандартного интерфейса OData → Авторизация.
+    onec_odata_url: str = ""
+    onec_login: str = ""
+    onec_password: SecretStr = SecretStr("")
+
     # --- BILLZ 2.0 (shop tills; integrations/billz/) ---
     # The integration key from BILLZ: Настройки → Компания → Ключи интеграции.
     # Read-only use: shop sales in the brief and the Director's answers.
@@ -298,6 +306,15 @@ class Settings(BaseSettings):
     def public_url(self) -> str:
         """The address printed on QR codes ("" when neither setting is known)."""
         return (self.public_base_url or self.render_external_url).strip().rstrip("/")
+
+    @property
+    def onec_configured(self) -> bool:
+        """1C's OData address, login and password are all set."""
+        return bool(
+            self.onec_odata_url.strip().startswith("https://")
+            and self.onec_login.strip()
+            and self.onec_password.get_secret_value()
+        )
 
     @property
     def billz_configured(self) -> bool:

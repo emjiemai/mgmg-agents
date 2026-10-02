@@ -93,7 +93,10 @@ class VerifixClient:
         if not settings.verifix_configured:
             raise VerifixError("Verifix is not configured (VERIFIX_CLIENT_ID / VERIFIX_CLIENT_SECRET)")
         self._http = httpx.AsyncClient(
-            base_url=BASE_URL, timeout=30.0, transport=self._transport
+            # A whole day's timesheet with its time facts can take Verifix a while
+            # to build (2026-10-02: the 08:00 brief failed where /verifix's
+            # half-empty "today" didn't); 30 s was too tight.
+            base_url=BASE_URL, timeout=120.0, transport=self._transport
         )
         return self
 

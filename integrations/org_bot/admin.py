@@ -43,6 +43,8 @@ QR_COMMAND = "/qr"
 VERIFIX_COMMAND = "/verifix"
 # "/billz" -> is BILLZ connected, and yesterday's shop sales.
 BILLZ_COMMAND = "/billz"
+# "/1c" -> is 1C (Clobus, OData) readable: what's published, where the money is.
+ONEC_COMMANDS = ("/1c", "/1с")
 # "/dam" -> the next two weeks; tap a day to make it a day off (or a working day again).
 DAY_OFF_COMMANDS = ("/dam", "/damolish", "/dayoff")
 DAY_OFF_DAYS = 14
@@ -203,6 +205,8 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await _check_verifix(run_id)
     if text == BILLZ_COMMAND:
         return await _check_billz(run_id)
+    if text in ONEC_COMMANDS:
+        return await _check_onec(run_id)
 
     return "ignored"
 
@@ -270,9 +274,21 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
                 f"✅ <b>Verifix уланди.</b> Ташкилот: {escape(organisation)}\n"
                 f"Табелда: {len(rows)} ходим. Бугун иш куни: {day.scheduled} киши, келди: {day.arrived}, "
                 f"кечикди: {len(day.late)}.\n"
-                f"Кечикиш чегараси: {grace} дақиқа. Давомат эртанги 08:00 ҳисоботида чиқади.",
+                f"Кечикиш чегараси: {grace} дақиқа.",
                 "verifix_ok",
             )
+            # Exactly what the 08:00 brief does: yesterday, the whole day.
+            yesterday = today - timedelta(days=1)
+            try:
+                block = attendance.render_day(
+                    attendance.summarize(await attendance.load(yesterday, yesterday, run_id=run_id, agent=AGENT), yesterday)
+                )
+            except Exception as exc:  # noqa: BLE001 — show the reason the brief would hit
+                log.error("Verifix yesterday (brief path) failed: {!r}", exc)
+                text += f"\n\n⚠️ <b>Кечаги давомат (брифингдагидек) олинмади:</b>\n{escape(_error_text(exc))}"
+                outcome = "verifix_yesterday_failed"
+            else:
+                text += "\n\n<b>Брифингда шундай чиқади:</b>\n" + (block or "кеча ҳеч кимнинг иш куни бўлмаган")
     async with TelegramBot(
         agent=AGENT,
         run_id=run_id,
@@ -323,6 +339,78 @@ async def _check_billz(run_id: uuid.UUID) -> str:
     ) as bot:
         await bot.send_message(text)
     return outcome
+
+
+async def _check_onec(run_id: uuid.UUID) -> str:
+    """Admin Bot /1c: log in to 1C over OData and report what the bot can see."""
+    from integrations.onec import discover
+    from integrations.onec.client import OneCClient
+
+    if not settings.onec_configured:
+        text, outcome = (
+            "📒 <b>1C уланмаган.</b>\nRender → mgmg-shared: ONEC_ODATA_URL "
+            "(https://clobus.uz/a/acc313/61458/odata/standard.odata/), ONEC_LOGIN (mgmg_bot_odata) "
+            "ва ONEC_PASSWORD ни киритинг.",
+            "onec_not_configured",
+        )
+    else:
+        try:
+            async with OneCClient(agent=AGENT, run_id=run_id) as client:
+                report = await discover.run(client, now_local().replace(tzinfo=None))
+        except Exception as exc:  # noqa: BLE001
+            log.error("1C check failed: {!r}", exc)
+            report = {"sets": [], "accounts": [], "fields": [], "balances": {}, "errors": [_error_text(exc)]}
+        text, outcome = _onec_text(report), ("onec_ok" if report["sets"] else "onec_failed")
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text)
+    return outcome
+
+
+def _onec_text(report: dict) -> str:
+    """The /1c report: what's published, money accounts, balance fields, problems."""
+    from integrations.common.money import format_uzs, to_tiyin
+    from integrations.onec import discover
+
+    if not report["sets"]:
+        reason = escape("; ".join(report["errors"])[:500]) or "жавоб йўқ"
+        hint = ""
+        if "401" in reason:
+            hint = "\n\nЛогин ёки парол нотўғри (ONEC_LOGIN / ONEC_PASSWORD)."
+        elif "404" in reason:
+            hint = "\n\nМанзил нотўғри: ONEC_ODATA_URL …/odata/standard.odata/ билан тугасин."
+        return f"❌ <b>1C'га уланиб бўлмади.</b>\n{reason}{hint}"
+    lines = [f"✅ <b>1C уланди.</b> Очиқ объектлар: {len(report['sets'])} та."]
+    risky = discover.sensitive(report["sets"])
+    if risky:
+        lines.append(
+            f"⚠️ Иш ҳақи ва шахсий маълумотлар ҳам очиқ ({len(risky)} та, масалан: "
+            f"{escape(', '.join(risky[:4]))}). Ботга керак эмас — OData созламаларидаги «Состав»дан олиб ташланг."
+        )
+    accounts = report["accounts"]
+    lines.append(f"\n💰 <b>Пул ҳисобварақлари (5000-синф):</b> {len(accounts)} та")
+    for a in accounts[:12]:
+        balance = report["balances"].get(a["code"])
+        shown = format_uzs(to_tiyin(balance)) if balance is not None else "—"
+        lines.append(f"   • {escape(a['code'])} {escape(a['name'][:40])}: {shown}")
+    lines.append(
+        f"\nҚолдиқ майдонлари: {escape(', '.join(report['fields'][:8]) or 'топилмади')}"
+        + (f" (ҳисобда: {escape(report['amount_field'])})" if report.get("amount_field") else "")
+    )
+    if report["errors"]:
+        lines.append("\n<i>" + escape("; ".join(report["errors"])[:600]) + "</i>")
+    lines.append("\n<i>Шу хабарни IT'га юборинг — «Касса» брифингга шу асосда уланади.</i>")
+    return "\n".join(lines)
+
+
+def _error_text(exc: Exception) -> str:
+    """The error's type and message — a timeout's message is often empty, so the type matters."""
+    message = str(exc).strip()
+    return f"{type(exc).__name__}: {message[:300]}" if message else type(exc).__name__
 
 
 def _verifix_hint(exc: Exception) -> str:

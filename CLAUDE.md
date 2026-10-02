@@ -40,6 +40,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   `/kpi` `/baho` (Director), `/kpi` `/natija` (employees); ratings on the 1st, final by the 5th.
 - Garmin AI bot (separate repo emjiemai/Garmin-AI-bot, cloned at D:\Garmin-AI-bot) POSTs its leads to
   `/webhooks/garmin-lead/{GARMIN_LEADS_SECRET}` → table `garmin_leads`; Q&A agent `garmin_lidlar`.
+- 1C «Бухгалтерия для Узбекистана» on Clobus, OData read-only (`integrations/onec/`, `docs/agent-specs/16-1c.md`):
+  Admin `/1c` discovery first; «Касса» in the brief after its output is checked.
+- Verifix logs in with VERIFIX_LOGIN/PASSWORD/FILIAL_ID (works since 2026-10-01).
 - BILLZ (shop tills, read-only, `integrations/billz/`, `docs/agent-specs/15-billz.md`): brief block,
   Q&A agent `billz_savdo`, Admin `/billz`; waits for `BILLZ_SECRET_TOKEN` in Render.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
