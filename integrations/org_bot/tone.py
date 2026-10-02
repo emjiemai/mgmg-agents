@@ -7,7 +7,7 @@ lowercase, no line breaks, no bold, and at most one emoji — at the very end.
 Tasks keep their card format; they are work, not chat.
 
 2026-10-01, from the owner: names always keep their capital letter
-("Алишер ака", «Hyatt Regency», Афанди) — lowercase is for the sentence,
+("Алишер ака", «Hyatt Regency») — lowercase is for the sentence,
 never for a person or a company. And the bot is always polite: the
 respectful "сиз", never "сен" or its verb forms, and extra courtesy to women
 (опа) — Uzbek tradition.
@@ -32,7 +32,7 @@ _SECOND_SENTENCE = re.compile(r"[.!?…]\s+\S")
 
 SHORT_MAX = 110  # characters, name included
 # Names that appear inside the bot's own sentences and keep their capital.
-PROPER_NAMES = ("Афанди",)
+PROPER_NAMES: tuple[str, ...] = ()
 
 
 def casual(text: str, emoji: str = "", keep: tuple[str, ...] | list[str] = ()) -> str:
@@ -48,7 +48,8 @@ def casual(text: str, emoji: str = "", keep: tuple[str, ...] | list[str] = ()) -
     text = " ".join(text.split()).lower().rstrip(". ").strip()
     names = {" ".join(n.split()) for n in (*keep, *PROPER_NAMES) if n and n.strip()}
     for name in sorted(names, key=len, reverse=True):
-        text = text.replace(name.lower(), name)
+        # Whole words only, and never inside a /command ("/ai" stays "/ai").
+        text = re.sub(rf"(?<![\w/]){re.escape(name.lower())}(?!\w)", lambda _m, n=name: n, text)
     return f"{text} {emoji}" if emoji and is_emoji(emoji) else text
 
 

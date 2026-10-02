@@ -48,7 +48,7 @@ async def import_sheet(run_id: uuid.UUID) -> None:
     """Copy new rows of the leads sheet into ``leads``; an unreadable sheet leaves what's already there."""
     try:
         async with SheetsClient(agent=AGENT, run_id=run_id) as sheets:
-            rows = await sheets.get_values(leads.SHEET_RANGE)
+            rows = await sheets.get_values(leads.SHEET_READ_RANGE)
     except SheetsError as exc:
         log.warning("Could not read the leads sheet, handing out from what's already imported: {}", exc)
         return

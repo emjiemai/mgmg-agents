@@ -1,4 +1,4 @@
-# Team cheer — encouragement, a joke, thanks
+# Team cheer — encouragement and thanks
 
 **Code:** `agents/team-cheer/agent.py` (sends), `integrations/org_bot/cheer.py`
 (times, the AI's rules, the built-in messages, what people see),
@@ -9,8 +9,9 @@
 **Switch:** `TEAM_CHEER_ENABLED` (default `true`)
 
 Asked for by the owner on 2026-09-29: work runs 09:00–18:00, and people
-should get a little encouragement or a joke at the start, in the middle and
-at the end of it — something that makes them happy.
+should get a little encouragement at the start and the end of it — something
+that makes them happy. (A 14:00 Afandi joke ran 2026-09-29 → 2026-10-02 and
+was deleted at the owner's request: its slot, texts and schedule hour are gone.)
 
 ## What goes out
 
@@ -22,12 +23,9 @@ version (bold header, emoji, two paragraphs) felt like one more alarm.
 | Time | Example | Answer |
 | ---- | ------- | ------ |
 | 10:00 | Алишер ака, бугун ҳам зўр кун бўлсин ☀️ | — |
-| 14:00 | Алишер ака, қисқаси, Афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда қоронғи, бу ер ёруғ-да» дебди 😄 | — |
 | 17:35 | Алишер ака, ишларингиз билан чарчамадингизми? 🌙 | 2–4 buttons |
 
-14:00 is right after the usual 13:00–14:00 lunch; its joke is Uzbek
-traditional humour — a classic Afandi latifa told in one sentence ("қисқаси,
-Афанди бир куни … дебди"). A tap on an evening answer shows its warm reply
+A tap on an evening answer shows its warm reply
 as a brief pop-up (no new message) and the buttons go away; every answer,
 tired ones included, gets a kind reply ("жуда" → "раҳмат каттакон, бугун кўп
 ишладингиз, яхши дам олинг").
@@ -45,9 +43,8 @@ Emoji, capitals and a closing full stop are simply removed and one emoji is
 put at the end; the answer is **thrown away** if it:
 
 - has any Latin letter (Uzbek Cyrillic only — the business's rule),
-- is more than one sentence, or too long (80 characters; the Afandi story
-  230; a button 20; a tap reply 70),
-- at 14:00, isn't an Afandi latifa ("қисқаси, афанди…" with his words in «»),
+- is more than one sentence, or too long (80 characters; a button 20; a
+  tap reply 70),
 - has markup, an evening question without 2–4 answers, an answer without a
   reply, two identical buttons, or isn't JSON at all.
 
@@ -55,18 +52,17 @@ The prompt also forbids politics, religion, ethnicity, gender, appearance,
 age, health, alcohol, money, promises and anything that mocks anyone.
 
 When the AI fails or its answer is thrown away, a **hand-written** message
-from `cheer.py` goes out instead (10 mornings, 6 Afandi latifas, 4 evening
-questions, rotating by date). Nobody ever gets nothing, and nobody gets
+from `cheer.py` goes out instead (10 mornings, 4 evening questions, rotating
+by date). Nobody ever gets nothing, and nobody gets
 something odd. `cheer_messages.source` says which it was (`ai`/`fallback`).
 
 ## Names and politeness (2026-10-01)
 
 Lowercase is for the sentence, never for a name: "Алишер ака", «Hyatt
-Regency», Афанди keep their capitals (`tone.casual(..., keep=[...])`). Every
-line uses the respectful "сиз" — never "сен" or its verb forms (-сан, -санг,
--динг); an AI line with them is thrown away (`tone.is_polite`), and the
-latifas were adjusted so Afandi speaks politely too ("енг, тўним, енг, ҳурмат
-сизга экан"). On a day off set with Admin Bot `/dam` nothing is sent.
+Regency» keep their capitals (`tone.casual(..., keep=[...])`). Every line uses
+the respectful "сиз" — never "сен" or its verb forms (-сан, -санг, -динг); an
+AI line with them is thrown away (`tone.is_polite`). On a day off set with
+Admin Bot `/dam` nothing is sent.
 
 ## Why buttons, not typing
 
@@ -86,8 +82,8 @@ the boss reads is no longer a friendly question.
 ## Schedule, and why it runs six times
 
 Render gives a cron service one expression, and one expression can't hold
-three different minutes. `mgmg-team-cheer` runs `0,35 5,9,12 * * *` (UTC) =
-10:00, 10:35, 14:00, 14:35, 17:00, 17:35 Tashkent. Each run sends the slot
+three different minutes. `mgmg-team-cheer` runs `0,35 5,10,12 * * *` (UTC) =
+10:00, 10:35, 15:00, 15:35, 17:00, 17:35 Tashkent. Each run sends the slot
 whose time passed less than 25 minutes ago (so a cron that starts a few
 minutes late still sends), and exits at once otherwise. `cheer_messages` has
 one row per day and slot, so a retried or doubled run never sends twice.

@@ -38,8 +38,12 @@ AGENT = "lead-handout"
 SALES_ROLE = "b2b_sotuv"
 
 # The Lead Agent's Google Sheet (agents/lead-agent writes it; selfcheck keeps
-# the two column lists identical).
-SHEET_RANGE = "Sheet1!A:T"
+# the two column lists identical). Sales people may edit it (2026-10-02), so
+# columns are found by their header, never by position: a moved or added
+# column doesn't shift anything. Reads take a wide range for that reason.
+SHEET_TAB = "Sheet1"
+SHEET_RANGE = f"{SHEET_TAB}!A:T"
+SHEET_READ_RANGE = f"{SHEET_TAB}!A:AZ"
 SHEET_COLUMNS = [
     "company_name", "project_name", "industry", "location", "project_stage",
     "estimated_opening", "signal", "signal_source_url", "signal_date",
@@ -98,11 +102,49 @@ def _date(value: str) -> date | None:
         return None
 
 
+def column_order(header: list[str]) -> list[str]:
+    """The sheet's columns in their current order, read from its header row.
+
+    When the header doesn't carry our column names (renamed or missing), the
+    standard order is assumed — the sheet as the Lead Agent first wrote it.
+    Extra columns people add are kept in place and simply not read.
+    """
+    names = [str(h).strip() for h in header or []]
+    if len(set(names) & set(SHEET_COLUMNS)) >= 0.8 * len(SHEET_COLUMNS):
+        return names
+    return list(SHEET_COLUMNS)
+
+
+def sheet_records(rows: list[list[str]]) -> list[dict[str, str]]:
+    """The sheet's data rows as {column: value}, by header (``column_order``)."""
+    if not rows:
+        return []
+    order = column_order(rows[0])
+    return [
+        {c: (row[i].strip() if i < len(row) and row[i] else "") for i, c in enumerate(order) if c}
+        for row in rows[1:]
+    ]
+
+
+def row_for_sheet(values: dict[str, str], header: list[str] | None) -> list[str]:
+    """One row to append, its values in the sheet's current column order."""
+    return [str(values.get(c, "") or "") for c in column_order(header or [])]
+
+
+def column_letter(count: int) -> str:
+    """The letter of the ``count``-th column (1 → A, 27 → AA)."""
+    letters = ""
+    while count:
+        count, rest = divmod(count - 1, 26)
+        letters = chr(65 + rest) + letters
+    return letters
+
+
 def rows_to_leads(rows: list[list[str]]) -> list[dict[str, Any]]:
     """The sheet's rows (header first) as lead dicts ready for ``leads``; unnamed rows are skipped."""
     leads = []
-    for row in rows[1:]:
-        cells = {c: (row[i].strip() if i < len(row) and row[i] else "") for i, c in enumerate(SHEET_COLUMNS)}
+    for record in sheet_records(rows):
+        cells = {c: record.get(c, "") for c in SHEET_COLUMNS}
         name = cells["company_name"] or cells["project_name"]
         if not name:
             continue

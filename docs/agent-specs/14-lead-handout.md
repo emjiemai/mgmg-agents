@@ -58,6 +58,16 @@ the `lidlar` agent in OPS Manager Bot answers from the last 30 days: who has
 which lead, where it stands, the reason or result, the latest note. The
 leads the Lead Agent *found* stay with `lead_agent`.
 
+## People edit the sheet (2026-10-02)
+
+Sales people may get edit access to the leads Google Sheet — share it from
+Google Sheets (Share → their email → Editor); the bot can't share files. So
+every reader and writer finds columns **by their header** (`leads.column_order`,
+`sheet_records`, `row_for_sheet`): moving a column or adding your own column
+doesn't break the hand-out, the Lead Agent's dedupe or its new rows. Don't
+rename the header cells — if most of them aren't recognised, the bot falls
+back to the original column order.
+
 ## Runbook
 
 ```bash

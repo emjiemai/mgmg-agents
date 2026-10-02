@@ -31,7 +31,7 @@ from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_picker, task_tracker,
+    admin, ai_chat, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_picker, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
 from integrations.org_bot.prompt import (
@@ -642,6 +642,9 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return kpi_outcome
 
     if employee["role"] != DIRECTOR_ROLE:
+        ai_outcome = await _maybe_ai_chat(employee, message, run_id, background)
+        if ai_outcome is not None:
+            return ai_outcome
         return await _handle_employee_message(employee, message, run_id)
 
     has_media = any(message.get(field) for field in MEDIA_FIELDS)
@@ -663,6 +666,65 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     else:
         background.add_task(_dispatch_director_task, telegram_user_id, text, message.get("message_id"), run_id)
     return "queued"
+
+
+async def _maybe_ai_chat(
+    employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks
+) -> str | None:
+    """/ai turns the AI chat on or off; while on, plain messages go to the AI (``ai_chat.py``).
+
+    Returns None when the message is not for the AI, so it's handled as usual.
+    """
+    telegram_user_id = employee["telegram_user_id"]
+    text = (message.get("text") or "").strip()
+    if text.lower() == ai_chat.COMMAND:
+        if not employee.get("ai_chat"):
+            await _reply(telegram_user_id, run_id, ai_chat.not_granted_text())
+            return "ai_not_granted"
+        if ai_chat.session_active(employee, now_utc()):
+            await store.set_ai_session(telegram_user_id, None)
+            await _reply(telegram_user_id, run_id, ai_chat.off_text())
+            return "ai_off"
+        await store.set_ai_session(telegram_user_id, ai_chat.SESSION_MINUTES)
+        await _reply(telegram_user_id, run_id, ai_chat.on_text(names.call_name(employee)))
+        return "ai_on"
+    if not text or text.startswith("/") or not ai_chat.session_active(employee, now_utc()):
+        return None
+    # A Reply to one of the bot's own messages (the report ask, a lead
+    # question, a cheer) keeps its usual meaning even while the AI is on.
+    if (message.get("reply_to_message") or {}).get("message_id"):
+        return None
+    await _show_typing(telegram_user_id, run_id)
+    background.add_task(_answer_ai_chat, employee, text, run_id)
+    return "ai_chat"
+
+
+async def _answer_ai_chat(employee: dict[str, Any], text: str, run_id: uuid.UUID) -> None:
+    """Answer one AI-chat message — in the background, like the Director's questions."""
+    telegram_user_id = employee["telegram_user_id"]
+    try:
+        if await store.ai_questions_today(telegram_user_id) >= ai_chat.DAILY_LIMIT:
+            await _reply(telegram_user_id, run_id, ai_chat.limit_text())
+            return
+        history = await store.recent_ai_turns(telegram_user_id)
+        await store.log_ai_turn(telegram_user_id, "employee", text)
+        await store.set_ai_session(telegram_user_id, ai_chat.SESSION_MINUTES)
+        async with OpenRouterClient(
+            agent=ai_chat.AGENT,
+            run_id=run_id,
+            model_override=settings.ops_manager_bot_model,
+            fallback_override=settings.ops_manager_bot_fallback_models,
+        ) as ai:
+            raw = await ai.complete(ai_chat.system_prompt(employee), ai_chat.user_prompt(history, text))
+        answer = ai_chat.clean_answer(raw)
+        await store.log_ai_turn(telegram_user_id, "assistant", answer)
+        await _reply(telegram_user_id, run_id, answer)
+    except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
+        log.error("AI chat failed for {}: {}", telegram_user_id, exc)
+        try:
+            await _reply(telegram_user_id, run_id, ai_chat.error_text())
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1974,17 +2036,17 @@ async def _fetch_lead_agent_data() -> str:
     the old 15-row/4-column preview an unnecessary limitation."""
     try:
         async with SheetsClient(agent=AGENT) as sheets:
-            rows = await sheets.get_values(leads.SHEET_RANGE)
+            rows = await sheets.get_values(leads.SHEET_READ_RANGE)
     except SheetsError as exc:
         return f"(could not read the leads sheet: {exc})"
 
-    data_rows = rows[1:] if len(rows) > 1 else []
-    if not data_rows:
+    records = leads.sheet_records(rows)  # by header: people may move columns
+    if not records:
         return "No leads recorded yet."
 
-    lines = [f"{len(data_rows)} total leads on record, numbered in sheet order:"]
-    for i, row in enumerate(data_rows, start=1):
-        fields = {LEAD_SHEET_COLUMNS[j]: (row[j] if j < len(row) else "") for j in range(len(LEAD_SHEET_COLUMNS))}
+    lines = [f"{len(records)} total leads on record, numbered in sheet order:"]
+    for i, record in enumerate(records, start=1):
+        fields = {c: record.get(c, "") for c in LEAD_SHEET_COLUMNS}
         lines.append(
             f"{i}. {fields['company_name']} | {fields['industry']} | {fields['location']} | "
             f"stage={fields['project_stage']} | opening={fields['estimated_opening']} | "

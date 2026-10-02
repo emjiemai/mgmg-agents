@@ -21,7 +21,7 @@ Garmin watch retail.
 | E1 | KPI — the Director's 15 criteria as six parts: goals/OKR, tasks, rating, volume, process, commitment | `docs/agent-specs/13-kpi.md` |
 | A4 | Attendance from Verifix: who was late, who didn't come — in the brief and on question | `docs/agent-specs/11-attendance.md` |
 | — | Receivables alert (overdue debt by age) | `docs/agent-specs/03-receivables.md` |
-| — | Team cheer — 10:00 encouragement, 14:00 joke, 17:35 thanks | `docs/agent-specs/12-team-cheer.md` |
+| — | Team cheer — 10:00 encouragement, 17:35 thanks | `docs/agent-specs/12-team-cheer.md` |
 | — | OPS Manager Bot: routes the Director's tasks (to a department or one named person), answers questions from data | `docs/agent-specs/05-org-bot.md` |
 | F2 | Lead Agent — tender/lead search, 08:00 daily (resumed 2026-09-30, `LEAD_AGENT_ENABLED`) | `docs/agent-specs/04-lead-agent.md` |
 | F2+ | Lead hand-out — 08:00 one lead per B2B sales person, 15:00 "how is it going?" | `docs/agent-specs/14-lead-handout.md` |
@@ -38,7 +38,7 @@ SAP gateway (its own Windows machine) ──push──┐
 Telegram ◀──▶ mgmg-api (FastAPI) ──▶ PostgreSQL ◀── cron: 08:00 morning agents
              Admin Bot, OPS Manager Bot,             16:00 report ask
              SAP push webhooks, /db viewer           17:00 reminder + Friday scorecard
-                                                     10:00 · 14:00 · 17:35 team cheer
+                                                     10:00 · 17:35 team cheer, 15:00 lead check-in
 ```
 
 - **mgmg-api** — always-on web service: both bots' webhooks, the SAP pushes,
@@ -142,7 +142,7 @@ agents/                      scheduled agents (one process per run, then exit)
   receivables/               overdue debt alert
   daily-reports/             16:00 ask + 17:00 reminder (A1)
   task-tracker/              reminders, overdue notices, Friday scorecard (A3)
-  team-cheer/                10:00 / 14:00 / 17:35 friendly messages
+  team-cheer/                10:00 / 17:35 friendly messages
   lead-agent/                B2B lead and tender sourcing (F2)
   lead-handout/              08:00 a lead to each B2B sales person, 15:00 check-in
 integrations/

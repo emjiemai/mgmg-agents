@@ -1,12 +1,12 @@
-"""Agent — team cheer: one friendly line, three times a working day.
+"""Agent — team cheer: one friendly line, twice a working day.
 
-10:00 a warm wish, 14:00 a light one-liner or playful question, 17:35 "how
+10:00 a warm wish, 17:35 "how
 was your day?" — one short lowercase sentence each, sent silently, to every
 employee except the Director (Saturday/Sunday only the weekend workers).
 What each slot says and why is in ``integrations/org_bot/cheer.py``; taps
 and replies are handled by OPS Manager Bot (``ops_manager.py``).
 
-One Render cron service runs this at :00 and :35 of 10, 14 and 17 o'clock;
+One Render cron service runs this at :00 and :35 of 10, 15 and 17 o'clock;
 each run sends the slot that is due and exits quietly otherwise.
 
 Run:
@@ -155,7 +155,7 @@ async def run(slot: str | None, dry_run: bool = False) -> int:
 
 def main() -> None:
     """CLI entry point."""
-    parser = argparse.ArgumentParser(description="Friendly messages to the team, three times a day.")
+    parser = argparse.ArgumentParser(description="Friendly messages to the team, twice a day.")
     parser.add_argument("--slot", choices=sorted(cheer.SLOTS), help="send this slot now, whatever the time")
     parser.add_argument("--dry-run", action="store_true", help="print the message, send nothing")
     args = parser.parse_args()

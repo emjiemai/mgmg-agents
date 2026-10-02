@@ -28,8 +28,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   hand-out, receivables, task tracker, data quality Mon, cash calendar Mon,
   monthly KPI 1st); 16:00 daily-reports ask; 17:00 reminder + Friday
   scorecard; daytime job `mgmg-team-cheer` (`run_morning_agents.py --daytime`)
-  = team cheer 10:00 / 14:00 / 17:35 (answers by button only, never shown to
-  the Director) + lead check-in 15:00. Daily; weekends only for employees
+  = team cheer 10:00 / 17:35 (answers by button only, never shown to the
+  Director; the 14:00 joke was deleted 2026-10-02) + lead check-in 15:00. Daily; weekends only for employees
   marked as weekend workers.
 - **Leads to B2B sales** (2026-09-30, `docs/agent-specs/14-lead-handout.md`):
   08:00 one lead per B2B Sotuv person (new first, then best unworked older;
@@ -67,11 +67,19 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **Friendly voice** (2026-09-30) for cheer, motivation and daily-report
   messages: one short lowercase sentence, no line breaks, no bold, one emoji
   only at the very end, addressed "Алишер ака" (ака/опа set by the admin, never
-  guessed). **Names always keep their capital** — person, company, Афанди
+  guessed). **Names always keep their capital** — person, company
   (2026-10-01). **Always polite "сиз", never "сен"** or -сан/-санг/-динг forms,
   extra courtesy to women; `tone.is_polite` rejects AI text that breaks it. Like the owner's example: "ака, ишларингиз билан чарчамаяпсизми,
-  илтимос ҳисобот ёзиб юборинг, раҳмат каттакон, чарчаманг". 14:00 cheer is an
-  Afandi latifa. Tasks keep their card format. `integrations/org_bot/tone.py`.
+  илтимос ҳисобот ёзиб юборинг, раҳмат каттакон, чарчаманг". No jokes/anecdotes
+  (deleted 2026-10-02). Tasks keep their card format. `integrations/org_bot/tone.py`.
+- **AI chat for employees** (2026-10-02, `docs/agent-specs/15-ai-chat.md`): the
+  admin grants it per person (/xodimlar → 🤖); `/ai` turns it on/off (20 min
+  idle ends it); help with their own work only — **no company data** (no SAP,
+  money, reports, tasks, KPI, leads, other people), never invented; Garmin
+  sales also get the public catalog; 60 questions/day.
+- **Leads sheet is edited by people** (2026-10-02): share it from Google
+  Sheets yourself (Editor); the bot reads/writes columns **by header name**,
+  so moved/added columns are fine — don't rename the header cells.
 - **Days off**: Admin Bot `/dam` marks a day off (holiday) — no report asks,
   cheer, leads, 15:00 lead questions or task reminders that day. **Announce**:
   `/elon` (no text = "техник хатолик юз берди…" notice) or `/elon <text>`,

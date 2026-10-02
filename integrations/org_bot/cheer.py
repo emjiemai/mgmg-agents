@@ -1,11 +1,13 @@
-"""Team cheer — three friendly messages a working day, through OPS Manager Bot.
+"""Team cheer — two friendly messages a working day, through OPS Manager Bot.
 
 Work runs 09:00–18:00 Tashkent. The owner asked (2026-09-29) for a little
-encouragement or a joke at the start, in the middle and at the end of it:
+encouragement at the start and the end of it:
 
     10:00  morning  a warm wish for the day
-    14:00  midday   an Afandi story in one sentence ("қисқаси, афанди бир куни…")
     17:35  evening  a question about their day, to tap
+
+(A 14:00 joke — an Afandi latifa — ran from 2026-09-29 and was deleted on
+2026-10-02 at the owner's request.)
 
 Everyone gets it except the Director — the same people the daily reports ask
 (Saturday/Sunday only the weekend workers).
@@ -14,8 +16,7 @@ The voice (2026-09-30, ``tone.py``): employees felt the first version — bold
 header, emoji, two paragraphs — as one more notification to deal with. Each
 message is now one short sentence after the person's name (with ака/опа when
 the admin set it), lowercase, one emoji at the very end, sent silently (no
-sound): "алишер ака, бугун ҳам зўр кун бўлсин ☀️". The midday joke is Uzbek
-traditional humour — a classic Afandi latifa told in one sentence.
+sound): "Алишер ака, бугун ҳам зўр кун бўлсин ☀️".
 
 The AI writes each slot once a day (the same sentence for everyone); anything
 that isn't one short Uzbek Cyrillic sentence is thrown away and a
@@ -47,11 +48,10 @@ from integrations.telegram.bot import escape
 AGENT = "team-cheer"
 
 # Slot -> the moment it goes out (Tashkent). render.yaml's one cron service
-# runs at :00 and :35 of 10, 14 and 17; each run sends the slot whose time has
-# just passed and skips the rest (10:35, 14:35 and 17:00 find nothing).
+# runs at :00 and :35 of 10, 15 and 17; each run sends the slot whose time has
+# just passed and skips the rest (10:35, 15:00, 15:35 and 17:00 find nothing).
 SLOTS: dict[str, time] = {
     "morning": time(10, 0),
-    "midday": time(14, 0),
     "evening": time(17, 35),
 }
 # How late a run may still send its slot (cron can start a few minutes late);
@@ -59,7 +59,6 @@ SLOTS: dict[str, time] = {
 SLOT_WINDOW_MINUTES = 25
 
 TEXT_MAX = 80  # the sentence after "<name>, "
-JOKE_MAX = 230  # an Afandi latifa needs its punchline, still one sentence
 LABEL_MAX = 20  # a button
 REPLY_MAX = 70  # the pop-up after a tap
 OPTIONS_MAX = 4
@@ -96,10 +95,6 @@ _THEMES = {
         "кичик қадамлар", "жамоа", "ўзига ишонч", "яхши кайфият", "янги нарса ўрганиш", "сабр",
         "ҳамкасбга илиқ сўз", "ишни охирига етказиш",
     ),
-    "midday": (
-        "афанди ва эшаги", "афанди ва қўшниси", "афанди бозорда", "афанди тўйда", "афанди ва ой",
-        "афанди ва қозон", "афанди ва шогирдлари",
-    ),
     "evening": (
         "бугунги кун қандай ўтди", "бугун нима хурсанд қилди", "кечки режалар", "бугунги кичик ютуқ",
         "эртанги кайфият",
@@ -108,12 +103,6 @@ _THEMES = {
 
 _SLOT_TASK = {
     "morning": "It is 10:00, work began at 09:00. Write a warm wish or a little encouragement for the day. No answers: \"options\": [].",
-    "midday": (
-        "It is 14:00, just after lunch. Retell ONE classic, clean Afandi (Nasriddin Afandi) latifa — Uzbek "
-        "traditional humour — as ONE sentence that starts with \"қисқаси, афанди бир куни\" and ends with his "
-        "punchline in «…» + \"дебди\". Only kind, well-known latifas: nothing about religion, money, wives, "
-        "drinking or anyone's looks. At most " + str(JOKE_MAX) + " characters. No answers: \"options\": []."
-    ),
     "evening": (
         "It is 17:35; the day ends at 18:00. Ask how their day went, what made them happy, or their evening "
         "plans, with 2-4 short answers, each with a warm reply. A tired or so-so answer gets kindness, never "
@@ -129,11 +118,11 @@ colleague texting.
 
 The bot writes the person's name and a comma first ("Алишер ака, "), then
 your sentence. So write ONE short sentence that follows naturally after a name:
-- Uzbek, Cyrillic script only, lowercase except names (Афанди), no emoji, no
+- Uzbek, Cyrillic script only, lowercase, no emoji, no
   line breaks, no greeting, no name, no exclamation marks in a row. At most {TEXT_MAX}
   characters — around eight to twelve words.
 - Always polite: the respectful "сиз" form only — never "сен" or its verb
-  forms (-сан, -санг, -динг), not even inside the Afandi story. Some readers
+  forms (-сан, -санг, -динг). Some readers
   are women: be especially courteous, nothing familiar or teasing.
 - Warm and simple. Never: politics, religion, ethnicity, gender, appearance,
   age, health, alcohol, money, promises, sarcasm about work, the boss or
@@ -142,8 +131,7 @@ your sentence. So write ONE short sentence that follows naturally after a name:
   lowercase; each "reply" is one short warm sentence (at most {REPLY_MAX}).
 - "emoji": exactly one emoji that fits the sentence; the bot puts it at the
   very end. No other emoji anywhere.
-- Do not repeat or closely paraphrase any of the RECENT MESSAGES given (for
-  the midday latifa: a different latifa).
+- Do not repeat or closely paraphrase any of the RECENT MESSAGES given.
 
 Answer with JSON only: {{"text": "...", "emoji": "...", "options": [{{"label": "...", "reply": "..."}}]}}
 """
@@ -184,18 +172,13 @@ def parse_ai(raw: str, slot: str) -> Cheer | None:
         return None
     if not isinstance(data, dict):
         return None
-    text = _line(data.get("text"), JOKE_MAX if slot == "midday" else TEXT_MAX)
+    text = _line(data.get("text"), TEXT_MAX)
     if text is None:
         return None
     emoji = str(data.get("emoji") or "").strip()
     emoji = emoji if is_emoji(emoji) else DEFAULT_EMOJI[slot]
     options = data.get("options") or []
     if slot == "morning":
-        return Cheer(text=text, emoji=emoji, source="ai")
-    if slot == "midday":
-        # The latifa is the whole message: it must be one, and there's nothing to tap.
-        if not text.lower().startswith("қисқаси, афанди") or "«" not in text or options:
-            return None
         return Cheer(text=text, emoji=emoji, source="ai")
     if not isinstance(options, list) or not 2 <= len(options) <= OPTIONS_MAX:
         return None
@@ -214,7 +197,7 @@ def parse_ai(raw: str, slot: str) -> Cheer | None:
 
 # --------------------------------------------- the built-in list (fallback)
 
-DEFAULT_EMOJI = {"morning": "☀️", "midday": "😄", "evening": "🌙"}
+DEFAULT_EMOJI = {"morning": "☀️", "evening": "🌙"}
 
 _MORNING: tuple[tuple[str, str], ...] = (
     ("бугун ҳам зўр кун бўлсин", "☀️"),
@@ -228,24 +211,6 @@ _MORNING: tuple[tuple[str, str], ...] = (
     ("бугун кимгадир илиқ сўз айтинг, кайфият юқумли бўлади", "🤝"),
     ("кеча қийин бўлган бўлса, бугун янги имконият", "🌱"),
 )
-
-# Classic Afandi latifas, each told in one sentence with its punchline.
-_MIDDAY: tuple[str, ...] = (
-    "қисқаси, афанди бир куни тўйга эски тўнда борса ҳеч ким қарамабди, янги тўн кийиб келса тўрга "
-    "ўтқазишибди, шунда афанди енгини ошга тутиб «енг, тўним, енг, ҳурмат сизга экан» дебди",
-    "қисқаси, афанди бир куни узугини уйда йўқотиб кўчада қидираётган экан, сабабини сўрашса «уйда "
-    "қоронғи, бу ер ёруғ-да» дебди",
-    "қисқаси, афанди бир куни эшакка миниб, қопни ўз елкасига олиб кетаётган экан, сўрашса «эшагим "
-    "қийналмасин, юкни ўзим кўтардим» дебди",
-    "қисқаси, афанди бир куни қудуққа қараса ой тушиб қолибди, арқон ташлаб тортаман деб чалқанча "
-    "йиқилибди-да, осмондаги ойни кўриб «ишқилиб, чиқариб олдим» дебди",
-    "қисқаси, афанди бир куни эшак сўраб келган қўшнисига «эшак уйда йўқ» дебди, шу пайт эшак ҳанграб "
-    "юборибди, қўшни «мана-ку» деса, афанди «менгами ишонасиз, эшакками?» дебди",
-    "қисқаси, афанди бир куни қўшнисининг қозонини ичига қозонча солиб «қозонингиз туғди» деб "
-    "қайтарибди, кейинги сафар «қозонингиз ўлди» дебди, «қозон ҳам ўладими?» деса, «туғишига "
-    "ишондингиз-ку» дебди",
-)
-
 
 def _options(*pairs: tuple[str, str]) -> list[dict[str, str]]:
     return [{"label": label, "reply": reply} for label, reply in pairs]
@@ -283,8 +248,6 @@ def fallback(slot: str, day: date) -> Cheer:
     if slot == "morning":
         text, emoji = _MORNING[n % len(_MORNING)]
         return Cheer(text, emoji=emoji)
-    if slot == "midday":
-        return Cheer(_MIDDAY[n % len(_MIDDAY)], emoji=DEFAULT_EMOJI["midday"])
     pick = _EVENING[n % len(_EVENING)]
     return Cheer(pick.text, [dict(o) for o in pick.options], emoji=pick.emoji)
 

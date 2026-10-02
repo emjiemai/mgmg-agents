@@ -2111,3 +2111,58 @@ async def close_task_draft(draft_id: str, director_telegram_user_id: int, status
 
 async def get_task_draft(draft_id: str) -> dict[str, Any] | None:
     return await fetch_one("SELECT * FROM task_drafts WHERE id = %s", (draft_id,))
+
+
+# ---------------------------------------------------------- AI chat (employees)
+
+
+async def toggle_ai_chat(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Grant or take away an employee's AI chat, logged; taking it away also ends a running session."""
+    after = await fetch_one(
+        """UPDATE employees SET ai_chat = NOT ai_chat,
+                  ai_chat_until = CASE WHEN ai_chat THEN NULL ELSE ai_chat_until END
+           WHERE id = %s AND status = 'active' RETURNING *""",
+        (employee_id,),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "ai_chat", None, "on" if after["ai_chat"] else "off", changed_by)
+    return after
+
+
+async def set_ai_session(telegram_user_id: int, minutes: int | None) -> None:
+    """Start or extend someone's AI chat for ``minutes``; None ends it."""
+    if minutes is None:
+        await execute("UPDATE employees SET ai_chat_until = NULL WHERE telegram_user_id = %s", (telegram_user_id,))
+    else:
+        await execute(
+            "UPDATE employees SET ai_chat_until = now() + make_interval(mins => %s) WHERE telegram_user_id = %s AND ai_chat",
+            (minutes, telegram_user_id),
+        )
+
+
+async def log_ai_turn(telegram_user_id: int, role: str, content: str) -> None:
+    await execute(
+        "INSERT INTO ai_chat_turns (telegram_user_id, role, content) VALUES (%s, %s, %s)",
+        (telegram_user_id, role, content),
+    )
+
+
+async def recent_ai_turns(telegram_user_id: int, limit: int = 12) -> list[dict[str, Any]]:
+    """The last turns of someone's AI chat, oldest first."""
+    rows = await fetch_all(
+        """SELECT role, content FROM ai_chat_turns
+           WHERE telegram_user_id = %s AND created_at > now() - interval '1 day'
+           ORDER BY created_at DESC LIMIT %s""",
+        (telegram_user_id, limit),
+    )
+    return list(reversed(rows))
+
+
+async def ai_questions_today(telegram_user_id: int) -> int:
+    row = await fetch_one(
+        """SELECT count(*) AS n FROM ai_chat_turns
+           WHERE telegram_user_id = %s AND role = 'employee'
+             AND (created_at AT TIME ZONE 'Asia/Tashkent')::date = (now() AT TIME ZONE 'Asia/Tashkent')::date""",
+        (telegram_user_id,),
+    )
+    return int(row["n"]) if row else 0

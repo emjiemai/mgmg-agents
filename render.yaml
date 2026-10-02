@@ -122,13 +122,13 @@ services:
           name: mgmg-db
           property: connectionString
 
-  # ------------------------------------------ team cheer: 10:00, 14:00, 17:35
-  # Encouragement, a joke/fun question, thanks for the day (agents/team-cheer,
-  # integrations/org_bot/cheer.py). One service (~$1/month minimum) instead of
-  # three: a cron expression can't list three different minutes, so it runs
-  # at :00 and :35 of 10, 14 and 17 o'clock Tashkent — six short runs — and
-  # each sends only the slot that is due (10:00, 14:00, 17:35); the other
-  # three exit at once. TEAM_CHEER_ENABLED=false pauses it.
+  # ------------------------------------------ team cheer: 10:00, 17:35
+  # Encouragement and thanks for the day (agents/team-cheer,
+  # integrations/org_bot/cheer.py). One service (~$1/month minimum): a cron
+  # expression can't list different minutes per hour, so it runs at :00 and
+  # :35 of 10, 15 and 17 o'clock Tashkent — six short runs — and each agent
+  # sends only what is due (cheer 10:00 and 17:35, the lead check-in 15:00);
+  # the other runs exit at once. TEAM_CHEER_ENABLED=false pauses the cheer.
   - type: cron
     name: mgmg-team-cheer
     runtime: docker
@@ -137,7 +137,7 @@ services:
     # 2026-09-30: also runs the 15:00 lead check-in (agents/lead-handout), so
     # the same service fires at 15:00/15:35 too; each agent checks the time
     # itself and exits at once when nothing is due.
-    schedule: "0,35 5,9,10,12 * * *"  # 10:00/10:35, 14:00/14:35, 15:00/15:35, 17:00/17:35 Asia/Tashkent
+    schedule: "0,35 5,10,12 * * *"  # 10:00/10:35, 15:00/15:35, 17:00/17:35 Asia/Tashkent (14:00 joke deleted 2026-10-02)
     dockerCommand: python scripts/run_morning_agents.py --daytime
     envVars:
       - fromGroup: mgmg-shared

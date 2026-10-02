@@ -1568,7 +1568,7 @@ def test_client_feedback() -> None:
 
 def test_team_cheer() -> None:
     """Team cheer: when each slot goes out, the friendly voice, the AI's limits, the send, taps and replies."""
-    print("team cheer (10:00 / 14:00 / 17:35)")
+    print("team cheer (10:00 / 17:35)")
     import asyncio
     import json
     import re
@@ -1579,7 +1579,7 @@ def test_team_cheer() -> None:
 
     # ---- when
     for hm, expected in (("09:00", None), ("10:00", "morning"), ("10:24", "morning"), ("10:35", None),
-                         ("14:00", "midday"), ("14:35", None), ("17:00", None), ("17:35", "evening"),
+                         ("14:00", None), ("15:00", None), ("17:00", None), ("17:35", "evening"),
                          ("17:59", "evening"), ("18:00", None)):
         h, m = map(int, hm.split(":"))
         check(f"at {hm}", cheer.due_slot(datetime(2026, 9, 28, h, m)), expected)
@@ -1589,7 +1589,8 @@ def test_team_cheer() -> None:
     runs = [(int(h) + 5, int(m)) for h in hours.split(",") for m in minutes.split(",")]  # Tashkent = UTC+5
     fired = [cheer.due_slot(datetime(2026, 9, 28, h, m)) for h, m in runs]
     check("render.yaml's runs send each slot once, the rest nothing",
-          sorted(f for f in fired if f), ["evening", "midday", "morning"])
+          sorted(f for f in fired if f), ["evening", "morning"])
+    check("the 14:00 joke is deleted (2026-10-02)", sorted(cheer.SLOTS), ["evening", "morning"])
 
     # ---- the voice
     check("casual: one line, lowercase, no emoji inside, no full stop",
@@ -1610,8 +1611,6 @@ def test_team_cheer() -> None:
                 ok = False
                 print(f"    bad fallback: {slot} {day} {problems}")
     check_true("every built-in message: one friendly line, one emoji at the end, passes the AI's own rules", ok)
-    check_true("the midday one is an Afandi story",
-               all(t.lower().startswith("қисқаси, афанди бир куни") and "«" in t for t in cheer._MIDDAY))
     check_true("consecutive days differ",
                cheer.fallback("morning", date(2026, 10, 1)).text != cheer.fallback("morning", date(2026, 10, 2)).text)
 
@@ -1626,15 +1625,10 @@ def test_team_cheer() -> None:
     check_true("morning drops any answers", morning is not None and not morning.options)
     check("a missing emoji gets the slot's own",
           cheer.parse_ai(json.dumps({**good, "emoji": "зўр"}), "evening").emoji, "🌙")
-    joke = {"text": "қисқаси, афанди бир куни эшагини излаб «топилмаса ўзим эшак бўламан» дебди", "emoji": "😄",
-            "options": []}
-    check_true("midday takes an Afandi story", cheer.parse_ai(json.dumps(joke), "midday") is not None)
 
     def bad(slot="evening", **change):
         return cheer.parse_ai(json.dumps({**good, **change}), slot) is None
 
-    check_true("midday refuses anything that isn't an Afandi latifa", bad("midday", text="чой ёки қаҳва?", options=[]))
-    check_true("midday refuses buttons under the story", cheer.parse_ai(json.dumps({**joke, "options": good["options"]}), "midday") is None)
     check_true("Latin letters are refused", bad(text="good kun"))
     check_true("two sentences are refused", bad(text="бугун зўр ўтди. эртага ҳам шундай бўлсин"))
     check_true("too long is refused", bad(text="зўр " * 40))
@@ -2095,7 +2089,6 @@ def test_politeness_days_off_announcements() -> None:
     # ---- names keep their capitals; the sentence stays lowercase
     check("a name keeps its capitals", tone.casual("Алишер ака, БУГУН зўр кун", "☀️", keep=["Алишер ака"]),
           "Алишер ака, бугун зўр кун ☀️")
-    check("Афанди always capitalised", tone.casual("қисқаси, афанди бир куни"), "қисқаси, Афанди бир куни")
 
     # ---- "сиз", never "сен"
     for text, polite in (("бугун зўр ишладингиз", True), ("илтимос ёзиб юборсангиз", True), ("нима қилдингиз?", True),
@@ -2103,7 +2096,7 @@ def test_politeness_days_off_announcements() -> None:
                          ("қилсанг бўлади", False), ("бир минг сўм", True), ("Ҳасан ака", True)):
         check(f"polite: {text!r}", tone.is_polite(text), polite)
     every_fixed_line = [
-        *[t for t, _e in cheer._MORNING], *cheer._MIDDAY,
+        *[t for t, _e in cheer._MORNING],
         *[c.text for c in cheer._EVENING], *[o[k] for c in cheer._EVENING for o in c.options for k in ("label", "reply")],
         *[t for t, _e in cheer._TEXT_REPLIES], kpi.build_request_text("Алишер", ()), kpi.build_reminder_text("Алишер", ()),
         leads.IN_PROGRESS_QUESTION, leads.OTHER_QUESTION, *leads.DISMISS_REASONS, *leads.DONE_RESULTS,
@@ -2245,6 +2238,173 @@ def test_politeness_days_off_announcements() -> None:
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
+
+
+def test_ai_chat_and_sheet() -> None:
+    """2026-10-02: AI chat for granted employees (no company data); the leads sheet read by header."""
+    print("AI chat for employees, leads sheet by header")
+    import asyncio
+    import uuid
+    from datetime import timezone
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import admin, ai_chat, leads, ops_manager, store
+
+    # ---- who may chat, and when it's on
+    now = datetime(2026, 10, 2, 10, 0, tzinfo=timezone.utc)
+    later, earlier = now + timedelta(minutes=5), now - timedelta(minutes=5)
+    check("granted and running", ai_chat.session_active({"ai_chat": True, "ai_chat_until": later}, now), True)
+    check("granted, timed out", ai_chat.session_active({"ai_chat": True, "ai_chat_until": earlier}, now), False)
+    check("not granted", ai_chat.session_active({"ai_chat": False, "ai_chat_until": later}, now), False)
+
+    # ---- what the AI knows, and doesn't
+    b2b = ai_chat.system_prompt({"role": "b2b_sotuv"})
+    garmin = ai_chat.system_prompt({"role": "garmin_sotuv"})
+    check_true("no company data, no actions, never invented",
+               "no access to any company system or data" in b2b and "Never invent such data" in b2b and "cannot send" in b2b)
+    check_true("polite and Uzbek Cyrillic", '"сиз"' in b2b and "Cyrillic" in b2b)
+    check_true("Garmin sales also get the public catalog, B2B doesn't", "MARQ" in garmin and "MARQ" not in b2b)
+    for text, names_in in ((ai_chat.on_text("Алишер ака"), ("Алишер ака", "AI")), (ai_chat.off_text(), ("AI",)),
+                           (ai_chat.not_granted_text(), ("AI",)), (ai_chat.limit_text(), ("AI",)), (ai_chat.error_text(), ())):
+        check(f"friendly: {text[:30]}…", friendly_problems(text, names_in), [])
+
+    # ---- the switch and the answers in OPS Manager Bot
+    replies, sessions, turns, tasks = [], [], [], []
+
+    class Background:
+        def add_task(self, func, *args):
+            tasks.append((func, args))
+
+    class FakeAI:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def complete(self, system, user, **kwargs):
+            assert "no access to any company system or data" in system
+            return "Мана <b>хат</b> лойиҳаси"
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+        replies.append(text)
+        return [1]
+
+    async def set_session(user, minutes):
+        sessions.append(minutes)
+
+    async def log_turn(user, role, content):
+        turns.append((role, content))
+
+    async def no_turns(user, limit=12):
+        return []
+
+    counter = {"n": 0}
+
+    async def questions_today(user):
+        return counter["n"]
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    saved = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    for name, fake in (("set_ai_session", set_session), ("log_ai_turn", log_turn), ("recent_ai_turns", no_turns),
+                       ("ai_questions_today", questions_today)):
+        patch(store, name, fake)
+    patch(ops_manager, "_reply", fake_reply)
+    patch(ops_manager, "_show_typing", nothing)
+    patch(ops_manager, "OpenRouterClient", FakeAI)
+    patch(ops_manager, "now_utc", lambda: now)
+    seller = {"telegram_user_id": 7, "role": "b2b_sotuv", "full_name": "Алишер Каримов", "address_form": "aka",
+              "ai_chat": False, "ai_chat_until": None}
+    bg = Background()
+    try:
+        check("/ai without the grant: politely refused",
+              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_not_granted")
+        seller["ai_chat"] = True
+        check("/ai with the grant turns it on", asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_on")
+        check_true("...for 20 minutes, and says how to stop", sessions[-1] == 20 and "/ai" in replies[-1])
+        check("while off, a message goes the usual way",
+              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "салом"}, uuid.uuid4(), bg)), None)
+        seller["ai_chat_until"] = later
+        check("while on, a message goes to the AI",
+              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "мижозга хат ёзиб беринг"}, uuid.uuid4(), bg)), "ai_chat")
+        check("...but a Reply to the bot's own message keeps its meaning",
+              asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "x", "reply_to_message": {"message_id": 5}}, uuid.uuid4(), bg)), None)
+        func, args = tasks[-1]
+        asyncio.run(func(*args))
+        check("the answer comes back, and both turns are kept", (replies[-1], [r for r, _c in turns]),
+              ("Мана <b>хат</b> лойиҳаси", ["employee", "assistant"]))
+        counter["n"] = ai_chat.DAILY_LIMIT
+        asyncio.run(func(*args))
+        check("past the daily limit: told kindly, no AI call", replies[-1], ai_chat.limit_text())
+        check("/ai again turns it off", asyncio.run(ops_manager._maybe_ai_chat(seller, {"text": "/ai"}, uuid.uuid4(), bg)), "ai_off")
+        check("...ending the session", sessions[-1], None)
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+    # ---- the admin grants it, and the person is told
+    told, edits = [], []
+
+    async def toggle(employee_id, by):
+        return {"id": employee_id, "telegram_user_id": 7, "role": "b2b_sotuv", "status": "active", "display_name": "a",
+                "full_name": "Алишер Каримов", "address_form": "aka", "ai_chat": True}
+
+    async def get_employee(employee_id):
+        return {"id": employee_id, "status": "active", "role": "b2b_sotuv", "display_name": "a"}
+
+    async def tell(user, text, run_id):
+        told.append(text)
+
+    async def edit(callback, text, keyboard, run_id):
+        edits.append((text, keyboard))
+
+    async def fake_answer(query_id, text):
+        return None
+
+    saved.clear()
+    patch(store, "toggle_ai_chat", toggle)
+    patch(store, "get_employee", get_employee)
+    patch(admin, "_tell_employee", tell)
+    patch(admin, "_edit", edit)
+    patch(admin, "_answer", fake_answer)
+    try:
+        asyncio.run(admin.handle_admin_callback({"id": "q", "data": "aich:e7", "from": {"id": 5}}, uuid.uuid4()))
+        check_true("the 🤖 button grants it and tells the person how to start",
+                   told and told[-1].startswith("Алишер ака, сизга AI ёрдамчи очилди") and "/ai" in told[-1])
+        check_true("...and the card shows it", edits and "AI суҳбат: рухсат берилган" in edits[-1][0])
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+    # ---- the leads sheet, read and written by header (people edit it now)
+    cols = list(leads.SHEET_COLUMNS)
+    moved = ["notes", "Менинг изоҳим", *[c for c in cols if c != "notes"]]  # a column moved, one added
+    row = {c: "" for c in moved}
+    row.update({"company_name": "Hyatt", "signal_source_url": "https://x.uz/1", "dedupe_key": "hyatt|equipment_sales",
+                "notes": "қўнғироқ қилдим", "Менинг изоҳим": "эртага"})
+    records = leads.sheet_records([moved, [row[c] for c in moved]])
+    check("a moved column is still found by its header", (records[0]["company_name"], records[0]["signal_source_url"]),
+          ("Hyatt", "https://x.uz/1"))
+    check("rows_to_leads reads it right too", leads.rows_to_leads([moved, [row[c] for c in moved]])[0]["dedupe_key"],
+          "hyatt|equipment_sales")
+    check("an unrecognisable header falls back to the standard order",
+          leads.column_order(["А", "Б", "В"]), cols)
+    lead_agent = load_agent("lead-agent")
+    out = lead_agent.to_sheet_row({"company_name": "Hilton", "track": "equipment_sales"}, "2026-10-02", moved)
+    check_true("a new lead is written in the sheet's current order",
+               out[moved.index("company_name")] == "Hilton" and out[moved.index("date_added")] == "2026-10-02"
+               and out[1] == "" and len(out) == len(moved))
+    check("column letters", [leads.column_letter(n) for n in (1, 20, 26, 27, 52)], ["A", "T", "Z", "AA", "AZ"])
 
 
 def test_report_accuracy() -> None:
@@ -3228,6 +3388,7 @@ def main() -> int:
         test_team_cheer,
         test_lead_handout,
         test_politeness_days_off_announcements,
+        test_ai_chat_and_sheet,
         test_verifix,
         test_verifix_basic_login,
         test_employee_admin,

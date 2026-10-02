@@ -20,7 +20,7 @@ report reminder and the Friday task scorecard share one cron service.
 Run:
     python scripts/run_morning_agents.py            # 08:00
     python scripts/run_morning_agents.py --evening  # 17:00
-    python scripts/run_morning_agents.py --daytime  # :00/:35 of 10, 14, 15, 17 (cheer + lead check-in)
+    python scripts/run_morning_agents.py --daytime  # :00/:35 of 10, 15, 17 (cheer + lead check-in)
 """
 
 from __future__ import annotations
@@ -52,9 +52,9 @@ EVENING_AGENTS = [
 ]
 
 
-# The daytime job (render.yaml's mgmg-team-cheer, :00 and :35 of 10, 14, 15
+# The daytime job (render.yaml's mgmg-team-cheer, :00 and :35 of 10, 15
 # and 17 o'clock): each agent checks the time itself and exits at once when
-# nothing is due — cheer at 10:00, 14:00, 17:35, the lead check-in at 15:00.
+# nothing is due — cheer at 10:00 and 17:35, the lead check-in at 15:00.
 DAYTIME_AGENTS = [
     "agents/team-cheer/agent.py",
     "agents/lead-handout/agent.py --checkin",

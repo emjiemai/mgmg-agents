@@ -694,7 +694,7 @@ CREATE TABLE IF NOT EXISTS employee_changes (
 CREATE INDEX IF NOT EXISTS idx_employee_changes_employee ON employee_changes (employee_id, changed_at DESC);
 ALTER TABLE employee_changes DROP CONSTRAINT IF EXISTS employee_changes_field_check;
 ALTER TABLE employee_changes ADD CONSTRAINT employee_changes_field_check
-    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form'));
+    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat'));
 
 -- Who also works at the weekend (set by the admin on the /xodimlar card).
 -- Everyone works Monday–Friday; on Saturday/Sunday only these are asked for
@@ -750,7 +750,7 @@ ALTER TABLE client_feedback ALTER COLUMN place DROP NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- cheer_messages / cheer_deliveries — the three friendly messages a day
--- (10:00 encouragement, 14:00 joke or fun question, 17:35 thanks + "how was
+-- (10:00 encouragement, 17:35 thanks + "how was
 -- your day"), agents/team-cheer/agent.py. One row per day and slot: the
 -- UNIQUE is what stops a retried or doubled cron run from sending twice.
 -- A tapped answer is kept only so the same person can't answer twice; it is
@@ -970,3 +970,23 @@ CREATE TABLE IF NOT EXISTS task_drafts (
     message_id                 BIGINT,
     created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- AI chat for employees (2026-10-02): the admin grants it per person on the
+-- /xodimlar card (employees.ai_chat); the person turns it on with /ai and it
+-- runs until /ai again or 20 quiet minutes (ai_chat_until). The AI has no
+-- company data — no SAP, money, reports, tasks or other people — only what
+-- MGMG sells. ai_chat_turns is its short memory, per person, never shown to
+-- anyone else.
+-- ---------------------------------------------------------------------------
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS ai_chat BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS ai_chat_until TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS ai_chat_turns (
+    id                BIGSERIAL    PRIMARY KEY,
+    telegram_user_id  BIGINT       NOT NULL,
+    role              TEXT         NOT NULL CHECK (role IN ('employee', 'assistant')),
+    content           TEXT         NOT NULL,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_turns_recent ON ai_chat_turns (telegram_user_id, created_at DESC);

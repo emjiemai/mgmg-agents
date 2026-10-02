@@ -38,6 +38,7 @@ from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
 from integrations.search.tavily_client import TavilyClient, TavilyError
+from integrations.org_bot import leads as leads_sheet
 from integrations.org_bot.notify import notify_directors
 from integrations.telegram.bot import escape
 from integrations.tenders.uzex_client import UzExClient
@@ -694,15 +695,16 @@ async def existing_keys(run_id: uuid.UUID) -> tuple[set[str], set[str]]:
         SheetsError: if the sheet cannot be read.
     """
     async with SheetsClient(agent=AGENT, run_id=run_id) as sheets:
-        rows = await sheets.get_values(SHEET_RANGE)
+        rows = await sheets.get_values(leads_sheet.SHEET_READ_RANGE)
 
+    # By header, not position: sales people edit this sheet (2026-10-02).
     urls: set[str] = set()
     keys: set[str] = set()
-    for row in rows[1:]:  # skip header
-        if len(row) > 7 and row[7]:
-            urls.add(row[7].strip())
-        if len(row) > 18 and row[18]:
-            keys.add(row[18].strip())
+    for record in leads_sheet.sheet_records(rows):
+        if record.get("signal_source_url"):
+            urls.add(record["signal_source_url"])
+        if record.get("dedupe_key"):
+            keys.add(record["dedupe_key"])
     return urls, keys
 
 
@@ -741,7 +743,7 @@ def filter_new(leads: list[dict], known_urls: set[str], known_keys: set[str]) ->
     return fresh
 
 
-def to_sheet_row(lead: dict, today: str) -> list[str]:
+def to_sheet_row(lead: dict, today: str, header: list[str] | None = None) -> list[str]:
     """Build one sheet row in the exact existing column order.
 
     Args:
@@ -754,7 +756,8 @@ def to_sheet_row(lead: dict, today: str) -> list[str]:
     values = {c: str(lead.get(c, "") or "") for c in SHEET_COLUMNS}
     values["date_added"] = today
     values["dedupe_key"] = compute_dedupe_key(lead)
-    return [values[c] for c in SHEET_COLUMNS]
+    # In the sheet's current column order (people may have moved columns).
+    return leads_sheet.row_for_sheet(values, header)
 
 
 async def store_new_leads(new_leads: list[dict], run_id: uuid.UUID) -> int:
@@ -794,7 +797,10 @@ async def store_new_leads(new_leads: list[dict], run_id: uuid.UUID) -> int:
         return 0
 
     async with SheetsClient(agent=AGENT, run_id=run_id) as sheets:
-        return await sheets.append_rows(SHEET_RANGE, rows)
+        header = (await sheets.get_values(f"{SHEET_TAB}!1:1") or [[]])[0]
+        rows = [to_sheet_row(lead, today, header) for lead in new_leads]
+        width = len(rows[0]) if rows else len(SHEET_COLUMNS)
+        return await sheets.append_rows(f"{SHEET_TAB}!A:{leads_sheet.column_letter(width)}", rows)
 
 
 async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
