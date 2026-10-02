@@ -6,8 +6,9 @@ with three buttons — жараёнда (in progress), рад этилди (dism
 бажарилди (done) — then one question about that result. KPI counts it.
 
 Decisions from the owner, the same day:
-- a thin morning (fewer new leads than people) is topped up with the best
-  older leads nobody has worked yet;
+- a thin morning (fewer new leads than people) is topped up with older
+  leads nobody has worked yet — always the newest first, "from the end" of
+  the sheet (2026-10-02: a fresh lead negotiates best and leaves the most time);
 - an in-progress lead stays with the person and is asked about again every
   day at 15:00 until it is closed — and a new lead still comes every
   morning, so open leads can pile up;
@@ -162,18 +163,23 @@ def rows_to_leads(rows: list[list[str]]) -> list[dict[str, Any]]:
 
 
 def handout_order(lead: dict[str, Any], today: date) -> tuple:
-    """Sort key: today's new leads first, then priority, confidence, and the newer one."""
+    """Sort key: the newest lead first — "from the end" of the sheet (the owner, 2026-10-02).
+
+    A fresh lead is the best chance to negotiate and leaves the most time, so
+    it goes by the day it was added, then by its place in the sheet (a later
+    row first — ``leads.id`` follows the sheet's order); priority only breaks
+    a tie between leads of the same day and row.
+    """
     added = lead.get("date_added")
     return (
-        added != today,
-        _PRIORITY_RANK.get((lead.get("priority") or "").lower(), 3),
-        -float(lead.get("confidence") or 0),
         -(added.toordinal() if added else 0),
+        -int(lead.get("id") or 0),
+        _PRIORITY_RANK.get((lead.get("priority") or "").lower(), 3),
     )
 
 
 def plan_handout(people: list[dict[str, Any]], free_leads: list[dict[str, Any]], today: date) -> list[tuple[dict, dict]]:
-    """Who gets which lead this morning: one each, best leads first, until the leads run out."""
+    """Who gets which lead this morning: one each, newest leads first, until the leads run out."""
     ordered = sorted(free_leads, key=lambda lead: handout_order(lead, today))
     people = sorted(people, key=lambda p: ((p.get("full_name") or p.get("display_name") or "").lower(), str(p["id"])))
     return list(zip(people, ordered))

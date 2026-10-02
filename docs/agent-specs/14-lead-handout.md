@@ -21,9 +21,11 @@ going with three buttons, asks a question about the result, and KPI counts it.
 
 ## Rules (the owner's decisions, 2026-09-30)
 
-- **Which lead:** today's new leads first, then the best older leads nobody has
-  been given (priority, then confidence, then newest). One lead goes to one
-  person, once. When the leads run out, the rest get none that day.
+- **Which lead:** always the **newest first — "from the end" of the sheet**
+  (2026-10-02: a fresh lead negotiates best and leaves the most time): by the
+  day it was added, then the later row first; priority only breaks a tie.
+  Older unworked leads top up a thin morning the same way. One lead goes to
+  one person, once. When the leads run out, the rest get none that day.
 - **In progress stays:** an open lead is asked about every day at 15:00 until
   it's dismissed or done, and a new lead still comes every morning — open
   leads can pile up, by design.

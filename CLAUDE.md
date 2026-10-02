@@ -32,8 +32,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   Director; the 14:00 joke was deleted 2026-10-02) + lead check-in 15:00. Daily; weekends only for employees
   marked as weekend workers.
 - **Leads to B2B sales** (2026-09-30, `docs/agent-specs/14-lead-handout.md`):
-  08:00 one lead per B2B Sotuv person (new first, then best unworked older;
-  all tracks), 15:00 жараёнда / рад этилди / бажарилди + one question; open
+  08:00 one lead per B2B Sotuv person (newest first — "from the end" of the
+  sheet; all tracks; sheet: "POSSIBLE Leads", tab Sheet1), 15:00 жараёнда / рад этилди / бажарилди + one question; open
   leads re-asked daily and pile up by design; KPI counts them inside the
   existing parts.
 - KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`

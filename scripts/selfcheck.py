@@ -1837,8 +1837,15 @@ def test_lead_handout() -> None:
     ]
     people = [{"id": "e2", "full_name": "Бобур"}, {"id": "e1", "full_name": "Алишер"}]
     plan = leads.plan_handout(people, pool, today)
-    check("today's new lead first, then the best older one", [(p["full_name"], lead["id"]) for p, lead in plan],
+    check("the newest lead first, then the next newest — not by priority", [(p["full_name"], lead["id"]) for p, lead in plan],
           [("Алишер", 3), ("Бобур", 2)])
+    same_day = [{"id": 10, "priority": "high", "date_added": date(2026, 9, 30)},
+                {"id": 12, "priority": "low", "date_added": date(2026, 9, 30)},
+                {"id": 11, "priority": "medium", "date_added": date(2026, 9, 30)},
+                {"id": 13, "priority": "high", "date_added": None}]
+    check("same day: the later row in the sheet first (\"from the end\")",
+          [lead["id"] for _p, lead in leads.plan_handout([{"id": str(i), "full_name": str(i)} for i in range(4)], same_day, today)],
+          [12, 11, 10, 13])
     check("fewer leads than people: the rest get none", len(leads.plan_handout(people, pool[:1], today)), 1)
     for hm, due in (("14:59", False), ("15:00", True), ("15:24", True), ("15:35", False)):
         h, m = map(int, hm.split(":"))
@@ -1961,7 +1968,7 @@ def test_lead_handout() -> None:
     patch(agent, "now_local", lambda: datetime(2026, 10, 1, 8, 0, tzinfo=TASHKENT))
     try:
         asyncio.run(agent.morning(uuid.uuid4()))
-        check("each sales person gets one lead, the best first", [(a[0], a[1]) for a in assigned], [(3, "e1"), (2, "e2")])
+        check("each sales person gets one lead, the newest first", [(a[0], a[1]) for a in assigned], [(3, "e1"), (2, "e2")])
         check_true("the card carries the AI's Uzbek summary", "Кир ювиш ускуналарини" in sent[0][1])
         check_true("...and it's kept, so it's written once", any(args and args[0] == 3 for args in briefs))
         sent.clear()
