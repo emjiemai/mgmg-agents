@@ -2048,3 +2048,66 @@ async def claim_announcement(announcement_id: int) -> dict[str, Any] | None:
 
 async def finish_announcement(announcement_id: int, sent_count: int) -> None:
     await execute("UPDATE announcements SET sent_count = %s WHERE id = %s", (sent_count, announcement_id))
+
+
+# ------------------------------------------------------------- task drafts
+
+
+async def create_task_draft(
+    *,
+    director_telegram_user_id: int,
+    source_message_id: int | None,
+    raw_message: str,
+    task_summary: str,
+    role_slug: str | None,
+    due_date: date | None,
+    has_media: bool,
+    candidate_ids: list[str],
+    selected_ids: list[str],
+) -> dict[str, Any] | None:
+    """Hold a Director's task until they confirm who gets it."""
+    return await fetch_one(
+        """
+        INSERT INTO task_drafts (director_telegram_user_id, source_message_id, raw_message, task_summary, role_slug,
+                                 due_date, has_media, candidate_ids, selected_ids)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::uuid[], %s::uuid[])
+        RETURNING *
+        """,
+        (director_telegram_user_id, source_message_id, raw_message, task_summary, role_slug, due_date, has_media,
+         candidate_ids, selected_ids),
+    )
+
+
+async def set_task_draft_message(draft_id: str, message_id: int | None) -> None:
+    await execute("UPDATE task_drafts SET message_id = %s WHERE id = %s", (message_id, draft_id))
+
+
+async def toggle_task_draft_person(draft_id: str, director_telegram_user_id: int, employee_id: str) -> dict[str, Any] | None:
+    """Tick or untick one person on an open draft of this Director's; None if it isn't open or theirs."""
+    return await fetch_one(
+        """
+        UPDATE task_drafts
+        SET selected_ids = CASE WHEN %(e)s::uuid = ANY(selected_ids) THEN array_remove(selected_ids, %(e)s::uuid)
+                                ELSE array_append(selected_ids, %(e)s::uuid) END
+        WHERE id = %(id)s AND director_telegram_user_id = %(d)s AND status = 'open'
+        RETURNING *
+        """,
+        {"e": employee_id, "id": draft_id, "d": director_telegram_user_id},
+    )
+
+
+async def close_task_draft(draft_id: str, director_telegram_user_id: int, status: str) -> dict[str, Any] | None:
+    """Mark an open draft sent or cancelled, once; None if it was already closed, isn't theirs or is a day old."""
+    return await fetch_one(
+        """
+        UPDATE task_drafts SET status = %s
+        WHERE id = %s AND director_telegram_user_id = %s AND status = 'open'
+          AND created_at > now() - interval '24 hours'
+        RETURNING *
+        """,
+        (status, draft_id, director_telegram_user_id),
+    )
+
+
+async def get_task_draft(draft_id: str) -> dict[str, Any] | None:
+    return await fetch_one("SELECT * FROM task_drafts WHERE id = %s", (draft_id,))

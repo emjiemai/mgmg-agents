@@ -947,3 +947,26 @@ CREATE TABLE IF NOT EXISTS garmin_leads (
 );
 CREATE INDEX IF NOT EXISTS idx_garmin_leads_created ON garmin_leads (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_garmin_leads_chat ON garmin_leads (chat_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- task_drafts — a Director's task held until they confirm who gets it
+-- (2026-10-02). Every task (text or file) first comes back to the Director as
+-- a list of people with the bot's guess ticked; it goes out only on
+-- "Юбориш". ``candidate_ids`` is the list in button order (a button carries
+-- only its index); ``selected_ids`` is who is ticked.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS task_drafts (
+    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    director_telegram_user_id  BIGINT       NOT NULL,
+    source_message_id          BIGINT,
+    raw_message                TEXT         NOT NULL,
+    task_summary               TEXT         NOT NULL,
+    role_slug                  TEXT,
+    due_date                   DATE,
+    has_media                  BOOLEAN      NOT NULL DEFAULT false,
+    candidate_ids              UUID[]       NOT NULL,
+    selected_ids               UUID[]       NOT NULL DEFAULT '{}',
+    status                     TEXT         NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'sent', 'cancelled')),
+    message_id                 BIGINT,
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
+);

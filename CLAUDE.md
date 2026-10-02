@@ -78,6 +78,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   preview + confirm, goes to every active employee once (2026-10-01).
 - Daily reports accepted only until midnight of that day; one follow-up
   question max for vague reports; employee → Director messages need confirmation.
+- **Director's tasks are confirmed before sending** (2026-10-02): a card lists
+  everyone as tick-boxes with the bot's guess ticked; nothing goes out before
+  📨 Юбориш (`task_picker.py`, `task_drafts`). Files too.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
 

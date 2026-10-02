@@ -223,6 +223,7 @@ def test_bot_flows() -> None:
         return {"id": "t1", **kwargs}
 
     replies: list[str] = []
+    edits: list[tuple] = []
 
     async def fake_reply(_chat_id, _run_id, text, reply_markup=None):
         replies.append(text)
@@ -266,6 +267,12 @@ def test_bot_flows() -> None:
 
         async def _call(self, *args, **kwargs):
             return {"message_id": 201}
+
+        async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
+            edits.append((text, reply_markup))
+
+        async def _answer_callback(self, query_id, text):
+            return None
 
     class NoSheets:
         def __init__(self, *args, **kwargs):
@@ -324,12 +331,66 @@ def test_bot_flows() -> None:
         asyncio.run(ops_manager._dispatch_director_task(1, "kechagi hisobotlarni korsat", 11, uuid.uuid4()))
         check("a question gets the AI's answer, not the error", replies, ["Жавоб"])
 
+        # 2026-10-02: a task first comes back to the Director as a list of
+        # people to tick; it goes out only on "Юбориш".
+        drafts: dict = {}
+
+        async def create_draft(**kwargs):
+            drafts["d"] = {"id": "11111111-2222-3333-4444-555555555555", "status": "open", **kwargs}
+            return drafts["d"]
+
+        async def get_draft(draft_id):
+            return drafts.get("d")
+
+        async def close_draft(draft_id, director, status):
+            row = drafts.get("d")
+            if not row or row["status"] != "open" or row["director_telegram_user_id"] != director:
+                return None
+            row["status"] = status
+            return row
+
+        patch(store, "create_task_draft", create_draft)
+        patch(store, "get_task_draft", get_draft)
+        patch(store, "close_task_draft", close_draft)
         FakeAI.classification = {"target_type": "employee", "target_role": "it", "target_employee": "E1",
                                  "task_summary": "Принтерни текширинг", "due_date": None}
         replies.clear()
         asyncio.run(ops_manager._dispatch_director_task(1, "Alisherga ayt printerni tekshirsin", 12, uuid.uuid4()))
-        check_true("a task reaches the named person", any("Принтерни текширинг" in r for r in replies))
-        check_true("and the Director is told who got it", any(r.startswith("Юборилди: Алишер Каримов") for r in replies))
+        check_true("the Director first gets the list, the named person ticked",
+                   any("кимга юборилсин" in r and "Белгиланган: Алишер Каримов" in r for r in replies)
+                   and drafts["d"]["selected_ids"] == ["w"])
+        check_true("nothing reaches the employee before Юбориш", not any("Янги топшириқ" in r for r in replies))
+
+        async def toggle(draft_id, director, employee_id):
+            row = drafts["d"]
+            if director != row["director_telegram_user_id"] or row["status"] != "open":
+                return None
+            chosen = list(row["selected_ids"])
+            row["selected_ids"] = [i for i in chosen if i != employee_id] if employee_id in chosen else chosen + [employee_id]
+            return row
+
+        patch(store, "toggle_task_draft_person", toggle)
+        tick = {"id": "q", "data": f"tdt:{drafts['d']['id']}:0", "from": {"id": 1},
+                "message": {"message_id": 5, "chat": {"id": 1}}}
+        asyncio.run(ops_manager._handle_callback(tick, uuid.uuid4()))
+        check_true("a tap unticks the person, and the card shows it",
+                   drafts["d"]["selected_ids"] == [] and "▫️ Алишер Каримов" in str(edits[-1][1]) and "Белгиланган: ҳеч ким" in edits[-1][0])
+        empty_send = {"id": "q", "data": f"tds:{drafts['d']['id']}", "from": {"id": 1}, "message": {"message_id": 5, "chat": {"id": 1}}}
+        check("Юбориш with nobody ticked sends nothing", asyncio.run(ops_manager._handle_callback(empty_send, uuid.uuid4())), "draft_empty")
+        asyncio.run(ops_manager._handle_callback(tick, uuid.uuid4()))
+        check("a second tap ticks them again", drafts["d"]["selected_ids"], ["w"])
+        replies.clear()
+        send = {"id": "q", "data": f"tds:{drafts['d']['id']}", "from": {"id": 1},
+                "message": {"message_id": 5, "chat": {"id": 1}}}
+        check("Юбориш sends it", asyncio.run(ops_manager._handle_callback(send, uuid.uuid4())), "draft_sent")
+        check_true("the task reaches the named person", any("Янги топшириқ" in r and "Принтерни текширинг" in r for r in replies))
+        check_true("and the Director's card says who got it, then asks the deadline",
+                   edits and "✅ Юборилди: Алишер Каримов (IT)" in edits[-1][0] and "Муддат кўрсатилмади" in edits[-1][0])
+        check("a second tap sends nothing more", asyncio.run(ops_manager._handle_callback(send, uuid.uuid4())), "draft_closed")
+        stranger = {**send, "from": {"id": 2}}
+        drafts["d"]["status"] = "open"
+        check("nobody but the Director can send it", asyncio.run(ops_manager._handle_callback(stranger, uuid.uuid4())),
+              "unrecognized")
         check_true("no error on the task path", not any("Хатолик" in r for r in replies))
     finally:
         for obj, name, value in reversed(saved):
@@ -440,6 +501,22 @@ def test_org_bot() -> None:
 
     check_true("every role slug is a known role", all(r in ROLE_SLUGS for r in ("it", "hr", "ombor")))
     check_true("bogus role slug is rejected", "not_a_role" not in ROLE_SLUGS)
+
+    # 2026-10-02: who gets a task is confirmed on a list first (task_picker.py).
+    from integrations.org_bot import task_picker
+
+    people = [{"id": "a", "role": "it", "full_name": "Шерзод"}, {"id": "b", "role": "ombor", "full_name": "Алишер"},
+              {"id": "c", "role": "it", "full_name": "Бобур"}]
+    ordered = task_picker.candidates(people, {"c"})
+    check("the bot's guess first, then by department and name", [p["id"] for p in ordered], ["c", "a", "b"])
+    draft_id = "11111111-2222-3333-4444-555555555555"
+    kb = task_picker.keyboard(draft_id, ordered, {"c"})
+    flat = [b for row in kb["inline_keyboard"] for b in row]
+    check("ticked and unticked people, then Send (count) and Cancel",
+          [b["text"] for b in flat], ["✅ Бобур", "▫️ Шерзод", "▫️ Алишер", "📨 Юбориш (1)", "❌ Бекор"])
+    check_true("every button fits 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in flat))
+    check("a tick-box reads back", task_picker.parse_toggle(flat[2]["callback_data"].split(":", 1)[1]), (draft_id, 2))
+    check("a broken one doesn't", task_picker.parse_toggle("x"), None)
 
     # A role must exist in three places kept by hand; a miss is only found
     # when someone picks the role live (the INSERT fails the CHECK).

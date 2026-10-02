@@ -81,7 +81,18 @@ start receiving every daily report and giving the bot orders.
    exists because open-ended lead qualification has a much wider failure
    surface). An unrecognized or missing target — including the model's own
    "none" — asks the Director to clarify rather than guessing.
-8. **Target is a human role**: every *active* employee with that role gets
+8. **Target is a human role — confirmed first (2026-10-02).** Nothing goes
+   out straight away: the Director gets a card with the task and every
+   active employee as a tick-box (`integrations/org_bot/task_picker.py`,
+   held in `task_drafts`). The bot's guess is ticked — the person he named,
+   or everyone in the department — and he can tick or untick anyone, from any
+   department, then **📨 Юбориш (N)** or **❌ Бекор**. Only the Director who
+   wrote it can tap, once; a draft older than 24 hours can't be sent. Files
+   use the same card (a file without a caption: nobody ticked). After
+   Юбориш the card shows who got it and asks the deadline as before.
+   Added because a correction ("faqat Ulug'bek Isoqovga jo'nat") went out as a
+   second task after the first had reached the whole department.
+   Then every ticked employee gets
    their own `tasks` row and their own task card with **"▶️ Start" and
    "✅ Done" buttons** — Start moves `sent → started` and notifies the
    Director so they can see progress, not just completion; Done works from

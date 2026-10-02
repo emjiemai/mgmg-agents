@@ -30,7 +30,9 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
 from integrations.common.timeutil import now_local, now_utc, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot import admin, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_tracker
+from integrations.org_bot import (
+    admin, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, store, task_picker, task_tracker,
+)
 from integrations.org_bot.tone import casual, is_polite
 from integrations.org_bot.prompt import (
     ANSWER_SYSTEM_PROMPT,
@@ -46,7 +48,6 @@ from integrations.org_bot.roles import (
     DIRECTOR_ROLE,
     ROLE_LABELS,
     ROLE_SLUGS,
-    ROLES,
     ROUTABLE_ROLE_SLUGS,
     role_picker_keyboard,
 )
@@ -212,6 +213,12 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID) -> str:
         return await _handle_dispatch_role(rest, callback, run_id)
     if prefix == "taskdue":
         return await _handle_task_due(rest, callback, run_id)
+    if prefix == "tdt":
+        return await _handle_draft_toggle(rest, callback, run_id)
+    if prefix == "tds":
+        return await _handle_draft_send(rest, callback, run_id)
+    if prefix == "tdx":
+        return await _handle_draft_cancel(rest, callback, run_id)
     if prefix in ("relayok", "relayno"):
         return await _handle_relay_decision(rest, prefix == "relayok", callback, run_id)
     if prefix == "asrep":
@@ -1252,8 +1259,8 @@ async def _dispatch_director_task(
             raw_message[:120], target_type, target_role, target_agent,
         )
         if target_type == "employee":
-            await _dispatch_to_role(
-                director_telegram_user_id, source_message_id, raw_message, target_role, task_summary, run_id,
+            await _propose_task(
+                director_telegram_user_id, source_message_id, raw_message, task_summary, target_role, run_id,
                 due_date, person,
             )
         elif target_type == "agent":
@@ -1345,87 +1352,197 @@ async def _safe_notify_failure(director_telegram_user_id: int, run_id: uuid.UUID
         log.error("Also failed to notify the Director of the dispatch failure: {}", exc)
 
 
-async def _dispatch_to_role(
+async def _propose_task(
     director_id: int,
     source_message_id: int | None,
     raw_message: str,
-    role_slug: str,
     task_summary: str,
+    role_slug: str | None,
     run_id: uuid.UUID,
     due_date: date | None = None,
     person: dict[str, Any] | None = None,
+    has_media: bool = False,
 ) -> None:
-    """Create + send one task card per active employee holding ``role_slug``.
+    """Hold the task and ask the Director who gets it (``task_picker.py``).
 
-    When the Director named one person, only that person gets it.
+    The bot's guess — the named person, or everyone in the department — is
+    ticked; nothing reaches an employee until the Director taps "Юбориш".
     """
-    employees = [person] if person is not None else await store.active_employees_by_role(role_slug)
-    if not employees:
-        await _reply_and_log(
-            director_id,
-            run_id,
-            f"{ROLE_LABELS[role_slug]} учун ҳали ҳеч ким рўйхатдан ўтмаган.",
-        )
+    people = [e for e in await store.list_active_employees() if e["role"] != DIRECTOR_ROLE]
+    if not people:
+        await _reply_and_log(director_id, run_id, "Ҳали ҳеч ким рўйхатдан ўтмаган.")
         return
+    if person is not None:
+        suggested = {str(person["id"])}
+    elif role_slug:
+        suggested = {str(e["id"]) for e in people if e["role"] == role_slug}
+    else:
+        suggested = set()
+    note = ""
+    if role_slug and person is None and not suggested:
+        note = f"{ROLE_LABELS.get(role_slug, role_slug)} учун ҳали ҳеч ким рўйхатдан ўтмаган — керакли одамни белгиланг."
+    ordered = task_picker.candidates(people, suggested)
+    draft = await store.create_task_draft(
+        director_telegram_user_id=director_id,
+        source_message_id=source_message_id,
+        raw_message=raw_message,
+        task_summary=task_summary,
+        role_slug=role_slug,
+        due_date=due_date,
+        has_media=has_media,
+        candidate_ids=[str(p["id"]) for p in ordered],
+        selected_ids=sorted(suggested),
+    )
+    picked = [p for p in ordered if str(p["id"]) in suggested]
+    message_ids = await _reply(
+        director_id, run_id, task_picker.card_text(task_summary, raw_message, picked, note),
+        task_picker.keyboard(str(draft["id"]), ordered, suggested),
+    )
+    await store.set_task_draft_message(str(draft["id"]), message_ids[-1] if message_ids else None)
+    await store.log_conversation_turn(director_id, "bot", "Топшириқ тайёр — кимга юборишни белгиланг.")
 
-    sent_names: list[str] = []
+
+async def _draft_people(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    """The draft's people in button order (anyone removed since is left out)."""
+    active = {str(e["id"]): e for e in await store.list_active_employees()}
+    return [active[str(i)] for i in draft["candidate_ids"] if str(i) in active]
+
+
+async def _edit_draft_card(callback: dict[str, Any], text: str, keyboard: dict[str, Any], run_id: uuid.UUID) -> None:
+    message = callback.get("message") or {}
+    if not (message.get("message_id") and message.get("chat", {}).get("id")):
+        return
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+            chat_id=str(message["chat"]["id"]), message_id=message["message_id"], text=text, reply_markup=keyboard
+        )
+
+
+async def _handle_draft_toggle(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The Director ticked or unticked one person on a task card."""
+    query_id = callback.get("id", "")
+    parsed = task_picker.parse_toggle(rest)
+    clicker_id = (callback.get("from") or {}).get("id")
+    draft = await store.get_task_draft(parsed[0]) if parsed else None
+    if draft is None or parsed[1] >= len(draft["candidate_ids"]):
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    draft = await store.toggle_task_draft_person(str(draft["id"]), clicker_id, str(draft["candidate_ids"][parsed[1]]))
+    if draft is None:
+        await _answer(query_id, "Бу топшириқ аллақачон ҳал қилинган")
+        return "draft_closed"
+    people = await _draft_people(draft)
+    selected = {str(i) for i in draft["selected_ids"]}
+    await _edit_draft_card(
+        callback,
+        task_picker.card_text(draft["task_summary"], draft["raw_message"], [p for p in people if str(p["id"]) in selected]),
+        task_picker.keyboard(str(draft["id"]), people, selected),
+        run_id,
+    )
+    await _answer(query_id, "")
+    return "draft_toggled"
+
+
+async def _handle_draft_send(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """"Юбориш": the task goes to everyone ticked, once; then the deadline question as before."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    draft = await store.get_task_draft(rest)
+    if draft is None or draft["director_telegram_user_id"] != clicker_id:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    if not draft["selected_ids"]:
+        await _answer(query_id, "Ҳеч ким белгиланмаган")
+        return "draft_empty"
+    draft = await store.close_task_draft(str(draft["id"]), clicker_id, "sent")
+    if draft is None:
+        await _answer(query_id, "Бу топшириқ аллақачон ҳал қилинган ёки муддати ўтган")
+        return "draft_closed"
+    await _answer(query_id, "Юборилмоқда")
+    selected = {str(i) for i in draft["selected_ids"]}
+    recipients = [p for p in await _draft_people(draft) if str(p["id"]) in selected]
+    sent = await _send_task_cards(draft, recipients, run_id)
+
+    text = task_picker.sent_text(draft["task_summary"], sent) if sent else "⚠️ Ҳеч кимга етказиб бўлмади."
+    keyboard: dict[str, Any] = {"inline_keyboard": []}
+    if sent and draft["due_date"] is not None:
+        text += f"\n{task_tracker.deadline_line(draft['due_date'], today_local())}"
+    elif sent and draft["source_message_id"]:
+        # A3 needs "who, what, by when": a deadline is asked, never guessed.
+        text += "\n⏰ Муддат кўрсатилмади — қачонгача?"
+        keyboard = task_tracker.deadline_keyboard(draft["source_message_id"])
+    await _edit_draft_card(callback, text, keyboard, run_id)
+    await store.log_conversation_turn(clicker_id, "bot", text)
+    return "draft_sent"
+
+
+async def _handle_draft_cancel(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    draft = await store.close_task_draft(rest, clicker_id, "cancelled")
+    if draft is None:
+        await _answer(query_id, "Бу топшириқ аллақачон ҳал қилинган")
+        return "draft_closed"
+    await _answer(query_id, "Бекор қилинди")
+    await _edit_draft_card(callback, task_picker.cancelled_text(draft["task_summary"]), {"inline_keyboard": []}, run_id)
+    return "draft_cancelled"
+
+
+async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]], run_id: uuid.UUID) -> list[dict[str, Any]]:
+    """One task row and card per person — a text card, or the Director's file copied with the card as caption."""
+    sent: list[dict[str, Any]] = []
+    director_id = draft["director_telegram_user_id"]
+    due_date = draft["due_date"]
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         for employee in employees:
             task = await store.create_task(
                 director_telegram_user_id=director_id,
-                source_message_id=source_message_id or 0,
-                raw_message=raw_message,
+                source_message_id=draft["source_message_id"] or 0,
+                raw_message=draft["raw_message"],
                 target_type="employee",
-                target_role=role_slug,
+                target_role=employee["role"],
                 target_agent=None,
                 assigned_employee_id=str(employee["id"]),
-                task_summary=task_summary,
+                task_summary=draft["task_summary"],
+                has_media=draft["has_media"],
                 due_date=due_date,
             )
             if task is None:
-                continue  # already dispatched -- duplicate webhook delivery
-
-            message_ids = await bot.send_message(
-                _task_card_text(task_summary, raw_message, due_date),
-                chat_id=str(employee["telegram_user_id"]),
-                reply_markup=_task_keyboard(str(task["id"])),
-            )
-            if message_ids:
-                await store.set_task_message_id(str(task["id"]), message_ids[0])
-            sent_names.append(names.person_name(employee))
-
-    if sent_names:
-        await _confirm_dispatch(director_id, source_message_id, sent_names, role_slug, due_date, run_id)
-
-
-async def _confirm_dispatch(
-    director_id: int,
-    source_message_id: int | None,
-    sent_names: list[str],
-    role_slug: str,
-    due_date: date | None,
-    run_id: uuid.UUID,
-) -> None:
-    """Tell the Director who got the task — and ask for a deadline if none was stated.
-
-    A3 needs "who, what, by when" for every task. The deadline is never
-    guessed: when the Director didn't state one, they get one-tap choices,
-    and "Muddatsiz" (no deadline) is an answer too.
-    """
-    who = ", ".join(escape(n) for n in sent_names)
-    text = f"Юборилди: {who} ({ROLE_LABELS[role_slug]})."
-    if due_date is not None:
-        text += f"\n{task_tracker.deadline_line(due_date, today_local())}"
-        await _reply_and_log(director_id, run_id, text)
-        return
-    if not source_message_id:
-        await _reply_and_log(director_id, run_id, text)
-        return
-    text += "\n⏰ Муддат кўрсатилмади — қачонгача?"
-    await _reply(director_id, run_id, text, task_tracker.deadline_keyboard(source_message_id))
-    await store.log_conversation_turn(director_id, "bot", text)
+                continue  # already sent (a duplicate tap or webhook delivery)
+            try:
+                if draft["has_media"]:
+                    result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                        "copyMessage",
+                        {
+                            "chat_id": str(employee["telegram_user_id"]),
+                            "from_chat_id": str(director_id),
+                            "message_id": draft["source_message_id"],
+                            "caption": _task_card_text(draft["task_summary"], due_date=due_date),
+                            "parse_mode": "HTML",
+                            "reply_markup": _task_keyboard(str(task["id"])),
+                        },
+                        mode="notify",
+                        target_ref=str(employee["telegram_user_id"]),
+                    )
+                    message_id = result.get("message_id") if result else None
+                else:
+                    ids = await bot.send_message(
+                        _task_card_text(draft["task_summary"], draft["raw_message"], due_date),
+                        chat_id=str(employee["telegram_user_id"]),
+                        reply_markup=_task_keyboard(str(task["id"])),
+                    )
+                    message_id = ids[0] if ids else None
+            except TelegramError as exc:
+                log.error("Could not send the task to {}: {}", names.person_name(employee), exc)
+                continue
+            if message_id:
+                await store.set_task_message_id(str(task["id"]), message_id)
+            sent.append(employee)
+    return sent
 
 
 async def _handle_task_due(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1532,9 +1649,9 @@ async def _dispatch_director_media(
 
     try:
         if validated is not None and validated[0] == "employee":
-            await _dispatch_media_to_role(
-                director_telegram_user_id, source_message_id, caption or "Медиа файл", validated[1], run_id,
-                media_due, media_person,
+            await _propose_task(
+                director_telegram_user_id, source_message_id, caption or "Медиа файл", caption or "Медиа файл",
+                validated[1], run_id, media_due, media_person, has_media=True,
             )
         elif validated is not None and validated[0] == "refused":
             # Guardrail path — refuse and stop, same as the text-task flow.
@@ -1559,20 +1676,15 @@ async def _dispatch_director_media(
 async def _ask_media_target(
     director_telegram_user_id: int, source_message_id: int, caption: str, run_id: uuid.UUID
 ) -> None:
-    """Park a media dispatch and ask the Director which role should get it."""
-    row = await store.create_pending_dispatch(
-        director_telegram_user_id=director_telegram_user_id, source_message_id=source_message_id, caption=caption
+    """A file with no (or an unclear) caption: the people list with nobody ticked."""
+    await _propose_task(
+        director_telegram_user_id, source_message_id, caption or "Медиа файл", caption or "Медиа файл", None, run_id,
+        has_media=True,
     )
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": role.label, "callback_data": f"dispatchrole:{role.slug}:{row['id']}"}] for role in ROLES
-        ]
-    }
-    await _reply(director_telegram_user_id, run_id, "Кимга юборилсин?", keyboard)
 
 
 async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Resolve a pending media dispatch's role-picker button press."""
+    """A department tap on an older file card (before 2026-10-02): now opens the people list."""
     query_id = callback.get("id", "")
     parsed = parse_role_and_request(rest)
     if parsed is None:
@@ -1595,81 +1707,12 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
         return "unauthorized"
 
     await _answer(query_id, "OK")
-    await _dispatch_media_to_role(
-        pending["director_telegram_user_id"],
-        pending["source_message_id"],
-        pending.get("caption") or "Медиа файл",
-        role_slug,
-        run_id,
+    caption = pending.get("caption") or "Медиа файл"
+    await _propose_task(
+        pending["director_telegram_user_id"], pending["source_message_id"], caption, caption, role_slug, run_id,
+        has_media=True,
     )
     return "dispatched"
-
-
-async def _dispatch_media_to_role(
-    director_id: int,
-    source_message_id: int,
-    task_summary: str,
-    role_slug: str,
-    run_id: uuid.UUID,
-    due_date: date | None = None,
-    person: dict[str, Any] | None = None,
-) -> None:
-    """Create + copy one task card per active employee holding ``role_slug``.
-
-    Mirrors ``_dispatch_to_role`` but delivers via ``copyMessage`` (which
-    duplicates the Director's original media into each recipient's chat)
-    instead of ``sendMessage`` — the same ``tasks`` row/Start/Done tracking
-    applies either way, distinguished only by the ``has_media`` flag. When the
-    Director named one person, only that person gets it.
-    """
-    employees = [person] if person is not None else await store.active_employees_by_role(role_slug)
-    if not employees:
-        await _reply_and_log(
-            director_id,
-            run_id,
-            f"{ROLE_LABELS[role_slug]} учун ҳали ҳеч ким рўйхатдан ўтмаган.",
-        )
-        return
-
-    sent_names: list[str] = []
-    async with TelegramBot(
-        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
-    ) as bot:
-        for employee in employees:
-            task = await store.create_task(
-                director_telegram_user_id=director_id,
-                source_message_id=source_message_id,
-                raw_message=task_summary,
-                target_type="employee",
-                target_role=role_slug,
-                target_agent=None,
-                assigned_employee_id=str(employee["id"]),
-                task_summary=task_summary,
-                has_media=True,
-                due_date=due_date,
-            )
-            if task is None:
-                continue  # already dispatched -- duplicate webhook delivery
-
-            result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
-                "copyMessage",
-                {
-                    "chat_id": str(employee["telegram_user_id"]),
-                    "from_chat_id": str(director_id),
-                    "message_id": source_message_id,
-                    "caption": _task_card_text(task_summary, due_date=due_date),
-                    "parse_mode": "HTML",
-                    "reply_markup": _task_keyboard(str(task["id"])),
-                },
-                mode="notify",
-                target_ref=str(employee["telegram_user_id"]),
-            )
-            if result and result.get("message_id"):
-                await store.set_task_message_id(str(task["id"]), result["message_id"])
-            sent_names.append(names.person_name(employee))
-
-    if sent_names:
-        await _confirm_dispatch(director_id, source_message_id, sent_names, role_slug, due_date, run_id)
 
 
 async def _answer_from_agent(
