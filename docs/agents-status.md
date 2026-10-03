@@ -13,12 +13,12 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | A1 | Daily reports: ask, remind, one follow-up on a vague report | 16:00 ask · 17:00 reminder (Mon–Fri; Sat/Sun only weekend workers — Admin Bot `/xodimlar`) | employees; non-reporters in the 08:00 brief | `DAILY_REPORTS_ENABLED` (**must be `true`**) |
 | A2 | Morning brief — five numbers + who didn't report | 08:00 daily | Director | — |
 | A3 | Task tracker: deadlines, reminders, overdue notices, weekly scorecard | on each task · 08:00 · Friday 17:00 | employees, Director | `TASK_TRACKER_ENABLED` |
-| A4 | Attendance from Verifix: late / didn't come / excused | 08:00 brief (yesterday) · any time: "kim kechikdi?" · `/verifix` check | Director | `VERIFIX_CLIENT_ID` + `VERIFIX_CLIENT_SECRET` (**not set yet**) |
+| A4 | Attendance from Verifix: late / didn't come / excused (most staff are on "эркин график", so late/absent is noisy for them) | 08:00 brief (yesterday) · any time: "kim kechikdi?" · `/verifix` check | Director | `VERIFIX_LOGIN` / `VERIFIX_PASSWORD` / `VERIFIX_FILIAL_ID` (set, working since 2026-10-01) |
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | on request ("ruxsat") | requester, approvers | `PERMISSIONS_ENABLED`, limits in `PERMISSION_APPROVAL_TIERS` (**not set yet**) |
 | B2 | 30-day cash calendar | Monday 08:00 · any time: "pul kalendari" | Director, accountants | `CASH_CALENDAR_ENABLED` |
 | B4 | Data quality check | Monday 08:00 · `/sifat` | admin (IT) | `DATA_QUALITY_ENABLED` |
 | E1 | KPI per employee — the Director's 15 criteria as 6 parts (goals/OKR, tasks, rating, volume, process, commitment) | `/maqsad` `/kpi` `/natija` `/baho` · 1st: ratings · final by the 5th | Director, HR, each employee (own card) | `MONTHLY_KPI_ENABLED` |
-| — | Receivables alert (overdue debt by age) | 08:00 daily | Director | — |
+| — | Receivables alert (overdue debt by age) — complete (paid part taken off) once the SAP push runs in database mode | 08:00 daily | Director | — |
 | F2 | Lead Agent: tender and lead search (Londry, Garmin/Tanita), to the leads sheet | 08:00 daily (resumed 2026-09-30) | Director (summary) + Google leads sheet | `LEAD_AGENT_ENABLED` (**true**) |
 | — | Q&A — the Director asks about reports, tasks, KPI, permissions, debt, cash plan, SAP data | on question | Director | — |
 | — | Tasks: the Director ticks who gets each one (the bot's guess pre-ticked), nothing goes out before Юбориш | on message | employees, Director | — |
@@ -27,7 +27,8 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | — | Team cheer: one friendly line, sent silently — a wish, "how was your day" (tap answers, not shown to anyone; off per person: /xodimlar → 💬) | 10:00 · 17:35 (weekends: weekend workers) | employees (not the Director) | `TEAM_CHEER_ENABLED` |
 | — | Days off and announcements: Admin Bot `/dam` stops everything employee-facing on a holiday; `/elon` tells everyone (e.g. a technical error) | on demand | employees | — |
 | A2+ | Cash in the brief from 1C (bank + cash desk, change since yesterday); "hisobda qancha pul?" | 08:00 · any time · `/1c` check | Director | `ONEC_ODATA_URL` / `ONEC_LOGIN` / `ONEC_PASSWORD` |
-| — | Shop sales from BILLZ: yesterday per shop in the brief; shops, sellers, top products on question | 08:00 · any time: "do'konlarda savdo" · `/billz` check | Director | `BILLZ_SECRET_TOKEN` (**not set yet**) |
+| — | Shop sales from BILLZ: yesterday per shop in the brief; shops, sellers, top products on question | 08:00 · any time: "do'konlarda savdo" · `/billz` check | Director | `BILLZ_SECRET_TOKEN` (set, working since 2026-10-02) |
+| B3− | Billz → SAP check: every shop cheque must be in SAP the same day — not entered, wrong amount, entered late, in SAP but not in Billz (`docs/agent-specs/17-billz-sap-check.md`) | 08:00 daily (yesterday; missing cheques repeated until entered) | Director (+ `BILLZ_SAP_CHECK_ROLES`) | `BILLZ_SAP_CHECK_ENABLED`; **waits for the SAP push in database mode** |
 | — | Work AI: every employee's message about their work and tasks is answered by the AI (honest, no company data); the bot carries no text between people — only files, after "what is it for?" | on message, 60 a day | employees | Admin Bot `/xodimlar` → 🤖 (off for one person) |
 | — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
@@ -46,21 +47,22 @@ None. The Lead Agent (F2), paused on 2026-09-16, was switched back on on
 
 | Plan | Agent | What unblocks it |
 | ---- | ----- | ---------------- |
-| C3 | Dead-stock sales | Full stock from SAP (the gateway push sends only 100 rows) + stock receipt dates |
-| D1 | Stock & reorder signal | Full stock and sales from SAP (same push limit) |
-| C2 | Sales forecast & targets | Full sales history per sales person from SAP |
+| C3 | Dead-stock sales | The SAP push in database mode (full stock + last purchase dates) |
+| D1 | Stock & reorder signal | The SAP push in database mode (full stock, sales lines, open purchase orders) |
+| C2 | Sales forecast & targets | The SAP push in database mode (invoices per sales person; 45 days now, longer for a forecast) |
 | B3 | Reconciliation bank ↔ SAP ↔ 1C ↔ Didox | Access to the bank, 1C and Didox |
 | C1 | Lead collector (Telegram, WhatsApp, Instagram) — **in progress**: the Garmin AI bot (separate repo emjiemai/Garmin-AI-bot: Instagram Reels → web catalog → AI Telegram bot → manager) is live; since 2026-10-01 its leads are stored in the Command Center (`garmin_leads`, the Director asks "garmin lidlari") — `docs/agent-specs/14-garmin-leads.md` | WhatsApp Business API and Instagram access |
-| C4 | Service & contract reminders | A list of machines installed at each customer |
-| C5 | Customer win-back | Customer purchase history (SAP, complete) |
+| C4 | Service & contract reminders | The SAP push in database mode: equipment cards (OINS, 1,678 machines), service calls (OSCL), contracts (OCTR) |
+| C5 | Customer win-back | The SAP push in database mode (complete invoices per customer) |
 | F1 | Marketing & content plan | Instagram access (a plan-only version could be built without it) |
 | G1 | Owner's personal assistant (email) | Outlook access |
 | D2 | Documents & certificates | Nothing technical — rare work, the plan puts it later |
 | E2 | AI operations manager | The plan says build it last, on top of A1, A2, A3, B1, B2; OPS Manager Bot already covers part of it |
 
-**The cheapest unblock:** raising the SAP gateway push limit (or adding date
-filters) on the gateway machine. It makes A2's stock and sales complete and
-opens C3, D1 and C2.
+**The cheapest unblock:** the SAP push in database mode (2026-10-03,
+`scripts/sap-gateway-push/README.md`): a read-only HANA user and the HANA
+ODBC driver on the gateway machine. It makes the brief's sales, stock and
+debt complete, starts the Billz → SAP check, and opens C3, D1, C2, C4, C5.
 
 ## Keeping this current
 

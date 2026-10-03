@@ -3384,6 +3384,249 @@ def test_garmin_leads() -> None:
     check_true("garmin_lidlar is a data source the Director can ask", "garmin_lidlar" in AGENT_SLUGS)
 
 
+def test_sap_full_push() -> None:
+    """The push script's database mode: its SQL, the receiver, and what reads it."""
+    print("SAP full push (database mode)")
+    import asyncio
+    import json
+    import re
+    import uuid
+
+    from integrations.api import app as api_app
+    from integrations.common.agent_loader import load_agent
+    from integrations.sap import figures, push_handler
+
+    folder = Path(__file__).resolve().parent / "sap-gateway-push"
+    script = (folder / "push-ar-aging.ps1").read_text(encoding="utf-8")
+    columns = json.loads((folder / "sap_columns.json").read_text(encoding="utf-8"))["tables"]
+    blocks = dict(re.findall(r'"(\w+)" = @\'\n(.*?)\n\'@', script, flags=re.S))
+    check("the script sends exactly the kinds the receiver stores", sorted(blocks), sorted(push_handler.FULL_DATASETS))
+    check_true("sales people go first (open invoices are labelled with them)", list(blocks)[0] == "sales_people")
+    wrong = []
+    for name, sql in blocks.items():
+        alias = {a: t for t, a in re.findall(r'"\{S\}"\."(\w+)"\s+(T\d)', sql)}
+        for a, col in re.findall(r'\b(T\d)\."(\w+)"', sql):
+            if a not in alias or col not in columns.get(alias[a], []):
+                wrong.append(f"{name}: {alias.get(a, a)}.{col}")
+    check("every column the SQL reads exists in SAP (export of 2026-10-02)", wrong, [])
+    check_true("every kind's key columns are selected",
+               all(all(f'"{k}"' in blocks[n] for k in keys) for n, keys in push_handler.FULL_DATASETS.items()))
+    check_true("no phones or e-mails leave SAP", not re.search(r'"(Phone1|Phone2|Cellular|E_Mail)"', script))
+    check_true("credentials are placeholders in the repo",
+               all(re.search(rf'\${v}\s*=\s*"PASTE_', script)
+                   for v in ("HanaServer", "HanaUser", "HanaPassword", "MgmgApiHost", "PushSecret", "GatewayToken")))
+    check_true("database mode posts to /webhooks/sap-data/", "/webhooks/sap-data/$Name/$PushSecret" in script)
+    check_true("the gateway stays as the fallback", "/webhooks/sap-gateway-push/$tool/$PushSecret" in script)
+    check_true("the receiving route exists",
+               any(getattr(r, "path", "") == "/webhooks/sap-data/{dataset}/{secret}" for r in api_app.app.routes))
+
+    # the receiver refuses bad input before touching the database
+    check_true("unknown kind refused", "unknown dataset" in asyncio.run(
+        push_handler.handle_full_push("salaries", {"rows": []}, uuid.uuid4()))["error"])
+    check_true("a body without a row list refused", not asyncio.run(
+        push_handler.handle_full_push("inventory", {"rows": "x"}, uuid.uuid4()))["ok"])
+    too_many = {"rows": [{}] * (push_handler.MAX_FULL_ROWS + 1)}
+    check_true("too many rows refused", "too many" in asyncio.run(
+        push_handler.handle_full_push("inventory", too_many, uuid.uuid4()))["error"])
+    check("an inventory row's key", push_handler.full_key("inventory", {"ItemCode": "010-1", "WhsCode": "G.A._01"}),
+          "010-1:G.A._01")
+    check_true("a row without its key columns still gets a stable key",
+               push_handler.full_key("products", {"x": 1}) == push_handler.full_key("products", {"x": 1})
+               and push_handler.full_key("products", {"x": 1}).startswith("unrecognized:"))
+
+    # open invoices -> receivables, with what's already paid taken off
+    as_of = date(2026, 10, 2)
+    base = {"DocEntry": 7, "DocNum": 2300, "CardCode": "C1", "CardName": "Holiday Inn", "DocDate": "2026-08-01",
+            "DocDueDate": "2026-09-01", "DocStatus": "O", "CANCELED": "N", "DocTotal": "1000.50",
+            "PaidToDate": "400.25", "SlpCode": 3}
+    row = push_handler.aging_row(base, as_of, {3: "Алишер"})
+    check("balance = total − paid (tiyin), 31 days late, its bucket, the seller",
+          (row[12], row[7], row[8], row[14]), (60025, 31, "31_60", "Алишер"))
+    check_true("paid in full: not a debt", push_handler.aging_row({**base, "PaidToDate": "1000.50"}, as_of, {}) is None)
+    check_true("cancelled: not a debt", push_handler.aging_row({**base, "CANCELED": "Y"}, as_of, {}) is None)
+    check_true("no seller (-1): left empty", push_handler.aging_row({**base, "SlpCode": -1}, as_of, {})[13] is None)
+
+    # a complete push is never "камида"
+    check_true("a complete push isn't capped", not figures.push_capped("invoices", {"rows_received": 100, "complete": True}))
+    check_true("a gateway push at its limit is", figures.push_capped("invoices", {"rows_received": 100}))
+    check_true("no push yet: nothing to flag", not figures.push_capped("invoices", None))
+    stock = [{"ItemCode": str(i), "WhsCode": "01", "OnHand": 1, "AvgPrice": 2, "StockValue": 2} for i in range(150)]
+    check_true("150 stock rows from the database: the whole value",
+               not figures.inventory_value(stock, "USD", as_of=as_of, complete=True).capped)
+    check_true("150 rows from the gateway would be a lower bound", figures.inventory_value(stock, "USD", as_of=as_of).capped)
+
+    # yesterday's sales = invoices − credit notes, cancelled ones left out
+    sales = [
+        {"ObjType": 13, "DocDate": "2026-10-01", "DocTotal": "280.61", "CANCELED": "N"},
+        {"ObjType": 13, "DocDate": "2026-10-01 00:00:00", "DocTotal": "73.99", "CANCELED": "N"},
+        {"ObjType": 13, "DocDate": "2026-10-01", "DocTotal": "500", "CANCELED": "Y"},
+        {"ObjType": 13, "DocDate": "2026-10-01", "DocTotal": "500", "CANCELED": "C"},
+        {"ObjType": "14", "DocDate": "2026-10-01", "DocTotal": "73.99", "CANCELED": "N"},
+        {"ObjType": 13, "DocDate": "2026-09-30", "DocTotal": "999", "CANCELED": "N"},
+    ]
+    fig = figures.invoices_on(sales, date(2026, 10, 1), "USD", as_of=as_of)
+    check("two invoices, one credit note off, cancellations ignored", (fig.totals, fig.count, fig.capped),
+          ({"USD": 28061}, 2, False))
+
+    brief = load_agent("ceo-daily-brief")
+    data = brief.BriefData(report_rows=[], sales=fig, sales_unit="ҳисоб-фактура")
+    five = brief.render_five(data)
+    check_true("the brief counts invoices, with no 'камида'",
+               "(2 та ҳисоб-фактура)" in five and "камида" not in five.split("Захира")[0])
+
+
+def test_billz_sap_check() -> None:
+    """Billz → SAP: every shop cheque must reach SAP the same day."""
+    print("Billz → SAP check")
+    from datetime import datetime
+
+    from integrations.billz import sap_check as sc
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.timeutil import TASHKENT
+
+    check("one list for every shop", sc.warehouse_map("G.A._01, 05"), {"": {"G.A._01", "05"}})
+    mapping = sc.warehouse_map("GARMIN ABAY=G.A._01,05; Garmin Malika=21")
+    check("per shop, by BILLZ name", (sc.warehouses_for("garmin abay", mapping), sc.warehouses_for("GARMIN MALIKA", mapping)),
+          (frozenset({"G.A._01", "05"}), frozenset({"21"})))
+    check("a shop not listed and no default: not checked", sc.warehouses_for("Склад", mapping), frozenset())
+
+    day = date(2026, 10, 1)
+    rows = [  # BILLZ lines: two cheques, one with two products
+        {"order_id": "o1", "order_number": "1201", "shop_name": "GARMIN ABAY", "product_sku": "010-04675-01",
+         "product_barcode": "", "product_name": "CIRQA Smart Band", "net_sold_measurement_value": 1,
+         "net_sales": 3300000, "seller_full_name": "Абдурашид"},
+        {"order_id": "o2", "order_number": "1202", "shop_name": "GARMIN ABAY", "product_sku": "010-13280-00",
+         "product_name": "Acc,epixPRO", "net_sold_measurement_value": 1, "net_sales": 500000},
+        {"order_id": "o2", "order_number": "1202", "shop_name": "GARMIN ABAY", "product_barcode": "753759319526",
+         "product_name": "Band", "net_sold_measurement_value": 1, "net_sales": 370000},
+    ]
+    cheques, unkeyed = sc.cheques_from_billz(rows, day)
+    check("lines grouped into cheques", sorted((c.number, c.amount, len(c.items)) for c in cheques),
+          [("1201", 3300000, 1), ("1202", 870000, 2)])
+    check_true("every line had a cheque id", not unkeyed)
+    check_true("a line with money but no cheque id is flagged",
+               sc.cheques_from_billz([{"net_sales": 100, "product_name": "x"}], day)[1])
+
+    def header(entry, num, docdate, created, total, *, obj=13, canc="N", ts=190516):
+        return {"ObjType": obj, "DocEntry": entry, "DocNum": num, "CardName": "B2C клиенты", "DocDate": docdate,
+                "CreateDate": created, "CreateTS": ts, "CANCELED": canc, "DocCur": "UZS",
+                "DocTotalFC": str(total), "DocTotalSy": str(total)}
+
+    def line(entry, code, whs="G.A._01", obj=13, bar=None):
+        return {"ObjType": obj, "DocEntry": entry, "ItemCode": code, "CodeBars": bar, "Dscription": code,
+                "Quantity": "1.000000", "WhsCode": whs}
+
+    sales = [
+        header(1, 2411, "2026-10-01", "2026-10-01", "3300000.000000"),
+        header(2, 2412, "2026-10-01", "2026-10-01", 870000),
+        header(3, 2413, "2026-10-01", "2026-10-01", 8100000),           # B2B, other warehouse
+        header(4, 2414, "2026-10-01", "2026-10-01", 450000, canc="Y"),  # cancelled
+        header(5, 33, "2026-10-01", "2026-10-01", 450000, obj=14),      # credit note
+    ]
+    lines = [line(1, "010-04675-01"), line(2, "010-13280-00"), line(3, "A39-525N", whs="08"),
+             line(4, "x"), line(5, "010-13392-06", whs="05", obj=14)]
+    docs = sc.docs_from_sap(sales, lines, frozenset({"G.A._01", "05"}))
+    check("shop documents only, cancelled out, credit note negative",
+          sorted((d.number, d.amount) for d in docs), [("2411", 3300000), ("2412", 870000), ("33", -450000)])
+    check("entry time read", next(d for d in docs if d.number == "2411").created_time, "19:05")
+
+    r = sc.check(cheques, [d for d in docs if d.amount > 0], day)
+    check_true("all entered: ok", r.ok and r.status == "ok")
+    ok_text = sc.render(r)
+    check_true("one ✅ line", "✅" in ok_text and "2 та чек" in ok_text and ok_text.count("\n") == 1)
+
+    # 1202 not entered; 2411 entered a day late; an invoice with no cheque
+    late_doc = sc.Doc(key="13:9", number="2420", day=day, created=date(2026, 10, 2), created_time="09:10",
+                      amount=3300000, items=[sc.Item("010-04675-01", "", "CIRQA", 1)])
+    extra = sc.Doc(key="13:10", number="2421", day=day, created=day, created_time="", amount=1500000, customer="Sherzod Ganiyev")
+    r = sc.check(cheques, [late_doc, extra], day)
+    check("missing cheque", [c.number for c in r.missing], ["1202"])
+    check("entered late, reported", [p.doc.number for p in r.late], ["2420"])
+    check("in SAP, not in Billz", [d.number for d in r.extra], ["2421"])
+    r_next = sc.check(cheques, [late_doc, extra], date(2026, 10, 3))
+    check_true("a late entry is reported once, not every day", not r_next.late)
+    text = sc.render(r)
+    check_true("each section is there",
+               all(s in text for s in ("SAP'га киритилмаган", "Кечикиб киритилган", "SAP'да бор, Billz'да йўқ", "1202",
+                                       "01.10 сотуви 02.10 куни киритилди")))
+    check_true("the message is Uzbek Cyrillic (names, products aside)",
+               latin_words(text, allow={"Billz", "CIRQA", "Smart", "Band", "Acc", "epixPRO", "Sherzod", "Ganiyev"}) == [])
+
+    # a different amount for the same product the same day
+    wrong = sc.Doc(key="13:11", number="2430", day=day, created=day, created_time="", amount=3000000,
+                   items=[sc.Item("010-04675-01", "", "CIRQA", 1)])
+    r = sc.check([c for c in cheques if c.number == "1201"], [wrong], day)
+    check("amount differs, not 'missing'", ([p.doc.number for p in r.amount_diff], r.missing), (["2430"], []))
+    check_true("within the tolerance it's the same sale",
+               sc.check([c for c in cheques if c.number == "1201"],
+                        [sc.Doc(key="13:12", number="2431", day=day, created=day, created_time="", amount=3300000.03 // 1)],
+                        day).ok)
+
+    # sold then returned in the shop, never in SAP: nothing to report
+    sold = sc.Cheque(key="a", number="1300", day=day, shop="GARMIN ABAY", amount=870000,
+                     items=[sc.Item("010-13280-00", "", "Acc", 1)])
+    back = sc.Cheque(key="b", number="1301", day=date(2026, 10, 2), shop="GARMIN ABAY", amount=-870000,
+                     items=[sc.Item("010-13280-00", "", "Acc", -1)])
+    r = sc.check([sold, back], [], date(2026, 10, 2))
+    check("a sale and its return cancel out", (r.missing, r.returned), ([], 1))
+
+    pushed = datetime(2026, 10, 1, 19, 30, tzinfo=TASHKENT)
+    noted = sc.render(sc.check(cheques[:1], [], day), pushed_at=pushed,
+                      day_end=datetime(2026, 10, 2, 0, 0, tzinfo=TASHKENT))
+    check_true("an evening push says entries after it aren't seen", "01.10 19:30 ҳолатига" in noted)
+    check_true("stale SAP data: says so, compares nothing",
+               "янгиланмаган" in sc.render_stale(day, pushed) and "киритилмаган" not in sc.render_stale(day, pushed))
+
+    # the agent: shops grouped by the warehouses they sell from
+    agent = load_agent("billz-sap-check")
+    malika = sc.Cheque(key="m", number="77", day=day, shop="GARMIN MALIKA", amount=999000)
+    merged = agent.compare(cheques + [malika], sales, lines, day, sc.warehouse_map("GARMIN ABAY=G.A._01,05;GARMIN MALIKA=21"))
+    check("each shop against its own warehouses", sorted(c.number for c in merged.missing), ["77"])
+    check_true("...and the Abay cheques matched", len(merged.cheques_day) == 3)
+    summary = sc.summary(merged)
+    check_true("stored summary", summary["missing"][0]["number"] == "77" and summary["billz"]["cheques"] == 3)
+
+    # what is asked from BILLZ: one day, cheque lines, every shop
+    import asyncio
+    import contextlib
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.billz import client as bz
+    from integrations.common.config import settings
+
+    seen: list = []
+
+    def handler(request):
+        if request.url.path == "/v1/auth/login":
+            return httpx.Response(200, json={"data": {"access_token": "A"}})
+        seen.append(request)
+        return httpx.Response(200, json={"count": 1, "products_stats_by_date": [rows[0]]})
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"payload": {}}
+
+    async def read():
+        async with bz.BillzClient(agent="test", transport=httpx.MockTransport(handler)) as client:
+            return await client.positions(day, ["s1", "s2"])
+
+    saved = [(bz, "audited", bz.audited), (settings, "billz_secret_token", settings.billz_secret_token),
+             (settings, "billz_enabled", settings.billz_enabled)]
+    bz.audited, settings.billz_secret_token, settings.billz_enabled = no_audit, SecretStr("key"), True
+    try:
+        got = asyncio.run(read())
+        params = seen[0].url.params
+        check_true("one day, by cheque line, every shop",
+                   params["start_date"] == params["end_date"] == "2026-10-01"
+                   and params["detalization_by_position"] == "true" and params["shop_ids"] == "s1,s2")
+        check("the lines come back", len(got), 1)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_billz() -> None:
     """BILLZ shop sales: the client against a fake BILLZ, the brief block, the bot, /billz."""
     print("BILLZ (shop tills)")
@@ -3729,6 +3972,8 @@ def main() -> int:
         test_kpi,
         test_garmin_leads,
         test_billz,
+        test_sap_full_push,
+        test_billz_sap_check,
         test_onec,
         test_onec_cash,
         test_plan_agents,

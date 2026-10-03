@@ -42,11 +42,20 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   `/webhooks/garmin-lead/{GARMIN_LEADS_SECRET}` → table `garmin_leads`; Q&A agent `garmin_lidlar`.
 - 1C «Бухгалтерия для Узбекистана» on Clobus, OData read-only (`integrations/onec/`, `docs/agent-specs/16-1c.md`):
   Admin `/1c` check; brief «💰 Касса» = 1C class-5000 balances (bank / нақд); Q&A `pul_qoldigi`.
-- Verifix logs in with VERIFIX_LOGIN/PASSWORD/FILIAL_ID (works since 2026-10-01).
+- Verifix logs in with VERIFIX_LOGIN/PASSWORD/FILIAL_ID (works since 2026-10-01). Most staff are on
+  "эркин график" (come when needed / when the Director calls), so its late/absent list is mostly noise
+  for them (the owner, 2026-10-03) — a per-person flexible-schedule mark is not built yet.
 - BILLZ (shop tills, read-only, `integrations/billz/`, `docs/agent-specs/15-billz.md`): brief block,
-  Q&A agent `billz_savdo`, Admin `/billz`; waits for `BILLZ_SECRET_TOKEN` in Render.
+  Q&A agent `billz_savdo`, Admin `/billz`. `BILLZ_SECRET_TOKEN` is set in Render and works
+  (one shop sells: GARMIN ABAY) — don't list it as missing.
+- **Billz → SAP check** (2026-10-03, `docs/agent-specs/17-billz-sap-check.md`): 08:00, cheque by cheque —
+  not entered / wrong amount / entered late / in SAP but not Billz. The shop enters one A/R invoice per
+  cheque (warehouses G.A._01, 05; SAP user "Гармин (филиал Абай)"), often a day or more late.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
-- SAP data arrives only by push (row-capped → "камида" lower bounds).
+- SAP is B1 on **HANA, schema `MGM`**; local currency USD, system currency UZS. Data arrives only by
+  push from the gateway machine (`scripts/sap-gateway-push/push-ar-aging.ps1`): **database mode**
+  (read-only HANA user over ODBC, 16 kinds, every row, `/webhooks/sap-data/...`) or the old gateway
+  tools (100-row cap → "камида"). Abdulbosit (IT) runs the gateway.
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).
 
 Status of the owner's 21-agent plan: `docs/agents-status.md` (running: H0, A1,
@@ -100,6 +109,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
 
 ## Open items
-- Verifix (A4) built, waiting for `VERIFIX_CLIENT_ID`/`VERIFIX_CLIENT_SECRET`
-  (see `docs/agent-specs/11-attendance.md`); check with Admin Bot `/verifix`.
-- `PERMISSION_APPROVAL_TIERS` not set; SAP push cap (100 rows) limits stock/sales agents.
+- SAP push in database mode: needs a read-only HANA user + the HANA ODBC driver on the gateway machine,
+  filled into the new `push-ar-aging.ps1` (the owner updates it; README has the steps). Until then the
+  brief's SAP numbers stay "камида" and the Billz → SAP check stays silent.
+- `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

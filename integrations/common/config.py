@@ -122,6 +122,16 @@ class Settings(BaseSettings):
     billz_enabled: bool = True
     billz_secret_token: SecretStr = SecretStr("")
 
+    # --- Billz → SAP check (agents/billz-sap-check, 2026-10-03) ---
+    # Every shop cheque must reach SAP as an A/R invoice the same day. The SAP
+    # warehouses the shops sell from: "G.A._01,05" for every shop, or per shop
+    # "GARMIN ABAY=G.A._01,05;GARMIN MALIKA=21" (shop names as in BILLZ).
+    billz_sap_check_enabled: bool = True
+    billz_sap_warehouses: str = "G.A._01,05"
+    # Who else gets it besides the Director: role slugs, comma-separated
+    # (e.g. "garmin_sotuv,buxgalteriya"). Empty = the Director only.
+    billz_sap_check_roles: str = ""
+
     # --- Garmin AI bot leads (POST /webhooks/garmin-lead/{secret}) ---
     # The same long random value goes into the Garmin bot's COMMAND_CENTER_SECRET.
     garmin_leads_secret: SecretStr = SecretStr("")

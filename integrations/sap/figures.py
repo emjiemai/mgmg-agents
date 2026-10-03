@@ -77,8 +77,20 @@ def is_capped(tool: str, rows_received: int | None) -> bool:
     return bool(cap and rows_received is not None and rows_received >= cap)
 
 
+def push_capped(tool: str, payload: dict[str, Any] | None) -> bool:
+    """Whether the latest push (its audit payload) was cut off at the gateway's limit.
+
+    A push read straight from SAP's database (2026-10-03) is marked
+    ``complete`` and is never a lower bound, however many rows it has.
+    """
+    if not payload or payload.get("complete"):
+        return False
+    received = payload.get("rows_received")
+    return is_capped(tool, int(received) if received is not None else None)
+
+
 def documents_on(
-    rows: list[dict[str, Any]], day: date, currency: str, *, tool: str, as_of: date | None
+    rows: list[dict[str, Any]], day: date, currency: str, *, tool: str, as_of: date | None, complete: bool = False
 ) -> Figure:
     """Total of the documents (orders, incoming payments) dated ``day``.
 
@@ -88,15 +100,17 @@ def documents_on(
         currency: Currency the amounts are in (SAP's local currency).
         tool: Gateway tool name, for the cap check.
         as_of: Snapshot day.
+        complete: The push carried every row (read from SAP's database).
 
     Returns:
         The figure; ``unknown_format`` if no row has a date and a total.
     """
     if not rows:
         return Figure(status="no_data", as_of=as_of)
+    capped = not complete and is_capped(tool, len(rows))
     readable = [r for r in rows if _pick(r, "DocDate") is not None and _pick(r, "DocTotal") is not None]
     if not readable:
-        return Figure(status="unknown_format", as_of=as_of, capped=is_capped(tool, len(rows)))
+        return Figure(status="unknown_format", as_of=as_of, capped=capped)
 
     total, count = 0, 0
     for row in readable:
@@ -108,19 +122,58 @@ def documents_on(
         status="ok",
         totals={currency: total} if count else {},
         count=count,
-        capped=is_capped(tool, len(rows)),
+        capped=capped,
         as_of=as_of,
     )
 
 
-def inventory_value(rows: list[dict[str, Any]], currency: str, *, as_of: date | None) -> Figure:
+def invoices_on(rows: list[dict[str, Any]], day: date, currency: str, *, as_of: date | None) -> Figure:
+    """Sales on ``day`` from a complete ``sales`` push: A/R invoices less credit notes.
+
+    Sales are invoices (SAP OINV), not orders (2026-10-03: on 02.10 the shops
+    sold through invoices while no order was written). Cancelled documents
+    and their cancellations (``CANCELED`` "Y"/"C") are left out; a credit
+    note (``ObjType`` 14) is subtracted. ``DocTotal`` is SAP's local currency
+    (USD here) even for a document written in so'm.
+
+    Returns:
+        The figure (``count`` = invoices); ``unknown_format`` if no row has a date and a total.
+    """
+    if not rows:
+        return Figure(status="no_data", as_of=as_of)
+    readable = [r for r in rows if _pick(r, "DocDate") is not None and _pick(r, "DocTotal") is not None]
+    if not readable:
+        return Figure(status="unknown_format", as_of=as_of)
+    total, count = 0, 0
+    for row in readable:
+        if str(_pick(row, "CANCELED", "Canceled") or "N").upper() != "N":
+            continue
+        if parse_sap_date(str(_pick(row, "DocDate"))) != day:
+            continue
+        amount = to_tiyin(_pick(row, "DocTotal"))
+        if str(row.get("ObjType")) == "14":
+            total -= amount
+        else:
+            total += amount
+            count += 1
+    return Figure(status="ok", totals={currency: total} if (count or total) else {}, count=count, as_of=as_of)
+
+
+def inventory_value(
+    rows: list[dict[str, Any]], currency: str, *, as_of: date | None, complete: bool = False
+) -> Figure:
     """Stock value: SAP's own ``StockValue`` per row, else ``OnHand × AvgPrice``.
+
+    Args:
+        complete: The push carried every row (read from SAP's database), so
+            however many rows it has, the total is not a lower bound.
 
     Returns:
         The figure; ``unknown_format`` if rows carry neither form.
     """
     if not rows:
         return Figure(status="no_data", as_of=as_of)
+    capped = not complete and is_capped("inventory", len(rows))
     total, count = 0, 0
     for row in rows:
         value = _pick(row, "StockValue")
@@ -135,10 +188,8 @@ def inventory_value(rows: list[dict[str, Any]], currency: str, *, as_of: date | 
         total += to_tiyin(value)
         count += 1
     if not count:
-        return Figure(status="unknown_format", as_of=as_of, capped=is_capped("inventory", len(rows)))
-    return Figure(
-        status="ok", totals={currency: total}, count=count, capped=is_capped("inventory", len(rows)), as_of=as_of
-    )
+        return Figure(status="unknown_format", as_of=as_of, capped=capped)
+    return Figure(status="ok", totals={currency: total}, count=count, capped=capped, as_of=as_of)
 
 
 def change(today: dict[str, int], previous: dict[str, int]) -> dict[str, int]:

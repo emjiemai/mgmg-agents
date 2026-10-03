@@ -1,0 +1,101 @@
+# Billz → SAP check — did every shop cheque reach SAP, on time?
+
+**Code:** `integrations/billz/sap_check.py` (the rules, the message),
+`agents/billz-sap-check/agent.py` (reads both sides, sends)
+**Runs:** 08:00 with the morning agents, right after the brief, for yesterday
+**Stored in:** `billz_sap_checks` (one row per checked day: status, what was found)
+**Switches:** `BILLZ_SAP_CHECK_ENABLED` (default on), `BILLZ_SAP_WAREHOUSES`,
+`BILLZ_SAP_CHECK_ROLES`
+**Needs:** BILLZ (`BILLZ_SECRET_TOKEN`) and the SAP push in **database mode**
+(`scripts/sap-gateway-push/`) — the gateway's capped tools carry no invoice
+lines. Until that push has run once, the agent exits quietly.
+
+## Why (the owner, 2026-10-03)
+
+A watch sold in the Garmin shop is rung up in the BILLZ till; at the end of
+the day the shop enters the same sale into SAP. When that's late or
+forgotten, SAP's stock, sales and debts are wrong — the Director says it has
+cost thousands of dollars. People make mistakes, so the system checks.
+
+## What SAP looks like (the export of 2026-10-02)
+
+- One **A/R invoice per cheque** (OINV), mostly to the customer "B2C клиенты",
+  written in so'm.
+- From the warehouses **G.A._01** (Garmin Abay) and **05** (Garmin-Minor).
+- Entered by the shop's own SAP user, "Гармин (филиал Абай)", usually
+  18:00–20:00 the same day — and sometimes later: 20.09's sales were entered
+  on 24.09, 29.09's on 30.09.
+
+## How a cheque is matched
+
+- **A cheque** = one BILLZ order (`product-general-table` by position, one
+  day at a time, every shop): its lines' `net_sales` added up — so'm, after
+  discounts; a return is negative.
+- **An SAP document** = a non-cancelled A/R invoice (a credit note counts
+  negative) with a line in the shop's warehouses. Its so'm amount is
+  `DocTotalSy` (SAP's system currency is so'm; equal to `DocTotalFC` on every
+  so'm invoice in the export).
+- **Same amount** (± 1,000 so'm or 0.2%) pairs them — the nearest date first,
+  a shared product code (SKU = SAP item code, or the barcode) breaking ties.
+  An SAP date up to 7 days after the sale still pairs (entered late, dated
+  the day of entry).
+- Left over, same day, same product, different amount → **"суммаси фарқ
+  қилади"**.
+- A sale and its later return that both never reached SAP cancel out.
+
+## What the Director gets
+
+All matched — one line:
+
+    🧾 Billz ↔ SAP — 02.10.2026
+    ✅ Кечаги 5 та чекнинг ҳаммаси SAP'га киритилган (23,54 млн сўм).
+
+Otherwise:
+
+    🧾 Billz ↔ SAP — 02.10.2026
+    Billz: 5 та чек — 23,54 млн сўм
+    SAP: 3 та ҳужжат — 14,2 млн сўм
+
+    🔴 SAP'га киритилмаган — 2 та, 9,34 млн сўм:
+       • 02.10 · чек 1234 · 8,7 млн сўм — Venu 4 (41mm) · сотувчи Абдурашид
+    🟡 Суммаси фарқ қилади — 1 та:
+       • 02.10 · чек 1236: Billz 3,3 млн сўм, SAP 3 млн сўм (№2411)
+    🟠 Кечикиб киритилган — 1 та:
+       • 29.09 сотуви 30.09 куни киритилди (№2404, 9,5 млн сўм)
+    ⚪ SAP'да бор, Billz'да йўқ — 1 та:
+       • №2410 · 3,3 млн сўм · Sherzod Ganiyev
+
+- **Not entered** cheques of the last 14 days are repeated every morning
+  until they reach SAP.
+- **Late** entries are told once — the morning after they were entered.
+- **In SAP, not in Billz** — only yesterday's documents.
+- When SAP's last push was before midnight, a line says entries made after
+  it aren't seen. When SAP's data is more than a day old: "SAP маълумоти …
+  дан бери янгиланмаган — солиштирилмади", nothing else.
+
+Who: the Director; more roles with `BILLZ_SAP_CHECK_ROLES` (e.g.
+`garmin_sotuv` so the shop sees what it must enter).
+
+## Settings
+
+- `BILLZ_SAP_WAREHOUSES` (default `G.A._01,05`): the SAP warehouses the shops
+  sell from — one list for every shop, or per shop by its BILLZ name:
+  `GARMIN ABAY=G.A._01,05;GARMIN MALIKA=21`. Lists must not overlap.
+- If warehouse 05 turns out to carry sales that never go through BILLZ, they
+  show up under "SAP'да бор, Billz'да йўқ" — then set the list to `G.A._01`.
+
+## Checks
+
+`selfcheck.py` (`test_billz_sap_check`, `test_sap_full_push`): grouping lines
+into cheques; cancelled and other-warehouse documents left out; credit notes
+negative; matching, tolerance, amount differs, late entry told once, extra
+only for yesterday, sale + return cancel out; per-shop warehouses; the
+message (✅ line, sections, Uzbek Cyrillic); stale SAP; the BILLZ request.
+Checked on the real SAP export too: it finds the 29.09 → 30.09 late entries.
+
+## Runbook
+
+```bash
+python agents/billz-sap-check/agent.py --dry-run   # print, send nothing, store nothing
+python agents/billz-sap-check/agent.py --force     # send again today
+```

@@ -216,11 +216,10 @@ async def load(today: date) -> Calendar:
         "SELECT payload FROM agent_actions WHERE agent = 'sap-gateway-push' AND action = 'ar_aging_push' "
         "ORDER BY occurred_at DESC LIMIT 1"
     )
-    received = None
+    payload = None
     if row is not None:
         payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")
-        received = payload.get("rows_received")
-    return build(invoices, payments, today, figures.is_capped("invoices", received))
+    return build(invoices, payments, today, figures.push_capped("invoices", payload))
 
 
 async def send(run_id: uuid.UUID) -> int:

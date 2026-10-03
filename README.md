@@ -50,9 +50,12 @@ Telegram ◀──▶ mgmg-api (FastAPI) ──▶ PostgreSQL ◀── cron: 08
   the admin marked as weekend workers (`/xodimlar` → the person's card).
 
 SAP data arrives **only by push** from the gateway's own machine
-(`scripts/sap-gateway-push/`); nothing reaches into SAP. Each tool is pushed
-with a row limit, so totals built from a capped push are shown as lower
-bounds ("камида") — see the brief spec.
+(`scripts/sap-gateway-push/`); nothing reaches into SAP. In **database mode**
+(2026-10-03) the script reads SAP's HANA database with a read-only user and
+sends every row of 16 kinds (open invoices, sales and their lines, stock,
+purchase invoices and orders, equipment cards, service calls…); with the old
+gateway tools each kind is capped at 100 rows, and totals built from a capped
+push are shown as lower bounds ("камида") — see the brief spec.
 
 Money is stored as integer minor units (tiyin/cents) everywhere; time is
 stored in UTC and shown in Asia/Tashkent (`integrations/common/money.py`,
@@ -81,6 +84,9 @@ Director through OPS Manager Bot, marked 🔴 with the business. Admin Bot
 Read-only from the BILLZ 2.0 API: yesterday's sales per shop in the 08:00 brief,
 and "do'konlarda savdo qanday?" in OPS Manager Bot. Off until `BILLZ_SECRET_TOKEN`
 is set; Admin Bot `/billz` checks it. See `docs/agent-specs/15-billz.md`.
+At 08:00 the **Billz → SAP check** compares every shop cheque with SAP's
+invoices: not entered, wrong amount, entered late
+(`docs/agent-specs/17-billz-sap-check.md`).
 
 ## Garmin AI bot leads
 

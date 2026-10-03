@@ -68,6 +68,7 @@ FEED_LABELS = {
     "customers": "мижозлар",
     "warehouses": "омборлар",
     "products": "маҳсулотлар",
+    "sales": "сотув ҳужжатлари (тўлиқ)",
 }
 
 
@@ -131,7 +132,7 @@ def sap_findings(inp: Inputs) -> list[str]:
         age = (inp.today - to_local(feed["at"]).date()).days
         if age > STALE_FEED_DAYS:
             feed_notes.append(f"{label} — {age} кун олдин келган")
-        elif figures.is_capped(tool, feed.get("rows")):
+        elif not feed.get("complete") and figures.is_capped(tool, feed.get("rows")):
             feed_notes.append(f"{label} — чекланган ({feed.get('rows')} та, тўлиқ эмас)")
     if feed_notes:
         found.append("SAP оқимлари: " + "; ".join(feed_notes))
@@ -145,7 +146,9 @@ def sap_findings(inp: Inputs) -> list[str]:
         r for r in inp.inventory
         if (_number(r.get("OnHand")) or 0) > 0 and not _number(r.get("StockValue")) and not _number(r.get("AvgPrice"))
     ]
-    sample = " (келган қисмида)" if figures.is_capped("inventory", len(inp.inventory)) else ""
+    inventory_feed = inp.feeds.get("inventory") or {}
+    partial = not inventory_feed.get("complete") and figures.is_capped("inventory", len(inp.inventory))
+    sample = " (келган қисмида)" if partial else ""
     if negative:
         found.append(f"Манфий қолдиқ: {len(negative)} та позиция{sample}{escape(_items(negative))}")
     if no_cost:
@@ -217,7 +220,9 @@ async def gather_inputs(today: date) -> Inputs:
         action = row["action"]
         tool = "invoices" if action == "ar_aging_push" else action.removeprefix("gateway_push_")
         payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")
-        inp.feeds[tool] = {"at": row["occurred_at"], "rows": payload.get("rows_received")}
+        inp.feeds[tool] = {
+            "at": row["occurred_at"], "rows": payload.get("rows_received"), "complete": bool(payload.get("complete")),
+        }
 
     for row in await fetch_all(
         "SELECT tool, count(*) AS n FROM v_sap_gateway_latest WHERE natural_key LIKE 'unrecognized:%%' GROUP BY tool"

@@ -553,6 +553,28 @@ WHERE s.snapshot_date = (
     SELECT max(snapshot_date) FROM sap_gateway_snapshots s2 WHERE s2.tool = s.tool
 );
 
+-- Full pushes (2026-10-03): the push script can read SAP's database directly
+-- (scripts/sap-gateway-push/), with no row cap, and sends more kinds of data
+-- into the same table (push_handler.FULL_DATASETS). A full push replaces
+-- that day's rows for its kind; only a few days are kept.
+ALTER TABLE sap_gateway_snapshots DROP CONSTRAINT IF EXISTS sap_gateway_snapshots_tool_check;
+ALTER TABLE sap_gateway_snapshots ADD CONSTRAINT sap_gateway_snapshots_tool_check CHECK (tool IN (
+    'orders', 'products', 'customers', 'warehouses', 'inventory', 'payments',
+    'sales', 'sales_lines', 'payments_out', 'ap_open', 'po_open', 'sales_people',
+    'equipment', 'service_calls', 'service_contracts'
+));
+
+-- Billz → SAP check (2026-10-03, docs/agent-specs/17-billz-sap-check.md):
+-- every cheque in the shops' Billz tills must reach SAP as an A/R invoice the
+-- same day. One row per checked day.
+CREATE TABLE IF NOT EXISTS billz_sap_checks (
+    check_date  DATE         PRIMARY KEY,
+    checked_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    status      TEXT         NOT NULL,  -- ok | problems | no_sap | stale_sap | no_billz
+    result      JSONB        NOT NULL,
+    sent_at     TIMESTAMPTZ
+);
+
 -- ---------------------------------------------------------------------------
 -- daily_reports — one row per employee per working day. Created by
 -- agents/daily-reports at 16:00 Tashkent (status 'asked') and filled in when

@@ -9,6 +9,7 @@ Endpoints:
     POST /webhooks/telegram/ops/{secret}              OPS Manager Bot (task routing)
     POST /webhooks/sap-push/{secret}                  AR-aging snapshot pushed from the SAP gateway's machine
     POST /webhooks/sap-gateway-push/{tool}/{secret}   every other SAP gateway tool's raw snapshot
+    POST /webhooks/sap-data/{dataset}/{secret}        a complete push read straight from SAP's database
     POST /webhooks/garmin-lead/{secret}               a lead from the Garmin AI bot (integrations/garmin/leads.py)
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
     GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
@@ -245,6 +246,30 @@ async def sap_gateway_push_webhook(tool: str, secret: str, request: Request) -> 
 
     payload = await request.json()
     return await sap_push_handler.handle_gateway_push(tool, payload, uuid.uuid4())
+
+
+@app.post("/webhooks/sap-data/{dataset}/{secret}")
+async def sap_data_webhook(dataset: str, secret: str, request: Request) -> dict[str, Any]:
+    """Receive every row of one kind, read straight from SAP's database (2026-10-03).
+
+    The push script (``scripts/sap-gateway-push/``) sends one POST per kind —
+    open invoices, stock, sales lines… (``push_handler.FULL_DATASETS``) —
+    with no row cap; each replaces today's rows of that kind. Same secret as
+    the other SAP routes.
+
+    Returns:
+        ``{"ok": bool, "written": int, "skipped": int}``, or
+        ``{"ok": False, "error": "..."}`` on a wrong secret, unknown kind or bad body.
+    """
+    if not _secret_ok(secret, settings.sap_push_webhook_secret.get_secret_value(), "SAP_PUSH_WEBHOOK_SECRET"):
+        return {"ok": False, "error": "unauthorized"}
+    try:
+        payload = await request.json()
+    except ValueError:
+        return {"ok": False, "error": "body is not JSON"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "body must be {\"rows\": [...]}"}
+    return await sap_push_handler.handle_full_push(dataset, payload, uuid.uuid4())
 
 
 @app.post("/webhooks/garmin-lead/{secret}")

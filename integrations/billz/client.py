@@ -144,6 +144,22 @@ class BillzClient:
             "seller_stats_by_date",
         )
 
+    async def positions(self, day: date, shop_ids: list[str]) -> list[dict[str, Any]]:
+        """Every cheque line of one day (``product-general-table`` by position).
+
+        Each row is one sold or returned product of one cheque: ``order_id`` /
+        ``order_number``, ``shop_name``, ``product_sku`` / ``product_barcode``
+        / ``product_name``, ``net_sold_measurement_value``, ``net_sales``
+        (so'm, after discounts and returns), ``seller_full_name``. Asked one
+        day at a time so each line's day is known for certain.
+        """
+        return await self._pages(
+            "/v1/product-general-table",
+            {"start_date": _day(day), "end_date": _day(day), "shop_ids": ",".join(shop_ids), "currency": "UZS",
+             "detalization": "day", "detalization_by_position": "true"},
+            "products_stats_by_date",
+        )
+
     async def products(self, start: date, end: date, shop_ids: list[str]) -> list[dict[str, Any]]:
         """Sales per product over the period, all shops together (shop_ids is required here)."""
         return await self._pages(

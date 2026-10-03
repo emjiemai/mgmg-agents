@@ -6,6 +6,7 @@ and Admin Bot (`/billz`)
 **Switch:** `BILLZ_SECRET_TOKEN` (empty = everything Billz is hidden);
 `BILLZ_ENABLED=false` hides it again
 **Mode:** read-only — no sale, transfer or catalogue change is ever sent
+**Also:** the 08:00 Billz → SAP check, cheque by cheque (`17-billz-sap-check.md`)
 
 ## What the Director sees
 

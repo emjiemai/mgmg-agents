@@ -2119,6 +2119,9 @@ async def _fetch_finance_agent_data() -> str:
     return "\n".join(lines)
 
 
+SAP_ANSWER_ROWS = 3000
+
+
 async def _fetch_sap_gateway_data(tool: str) -> str:
     """The latest pushed snapshot for one SAP gateway tool (see push_handler.py).
 
@@ -2135,10 +2138,12 @@ async def _fetch_sap_gateway_data(tool: str) -> str:
         Plain-text listing, or a message saying nothing's been pushed yet
         for this tool.
     """
+    # A push read straight from SAP's database has every row (2026-10-03):
+    # stock is ~1,000 rows, the partner list ~2,100 — all of it is shown.
     rows = await fetch_all(
         "SELECT natural_key, raw, captured_at FROM v_sap_gateway_latest WHERE tool = %s "
-        "ORDER BY captured_at DESC LIMIT 100",
-        (tool,),
+        "ORDER BY captured_at DESC LIMIT %s",
+        (tool, SAP_ANSWER_ROWS),
     )
     if not rows:
         return (
@@ -2147,7 +2152,8 @@ async def _fetch_sap_gateway_data(tool: str) -> str:
             f"to /webhooks/sap-gateway-push/{tool}/<secret> at least once."
         )
 
-    lines = [f"{len(rows)} {tool} record(s), most recently captured {rows[0]['captured_at']}:"]
+    lines = [f"{len(rows)} {tool} record(s), most recently captured {rows[0]['captured_at']}"
+             + (f" (only the first {SAP_ANSWER_ROWS} shown):" if len(rows) >= SAP_ANSWER_ROWS else ":")]
     for r in rows:
         raw = r["raw"] if isinstance(r["raw"], dict) else {}
         fields = ", ".join(f"{k}={v}" for k, v in raw.items() if v is not None)

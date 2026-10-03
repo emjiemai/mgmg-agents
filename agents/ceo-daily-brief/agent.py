@@ -103,6 +103,9 @@ class BriefData:
     aging: ARAging | None = None
     aging_capped: bool = False
     sales: Figure | None = None
+    # What "sales" counts: A/R invoices from the full SAP push (2026-10-03),
+    # or sales orders from the gateway's capped feed until that push runs.
+    sales_unit: str = "буюртма"
     inventory: Figure | None = None
     payments: PaymentsDue | None = None
     # Rows from the last day employees were asked for a daily report (see
@@ -135,14 +138,16 @@ async def collect() -> BriefData:
     data = BriefData()
     today = today_local()
     names = [
-        "sap_aging", "sap_invoice_cap", "sap_orders", "sap_inventory", "payments", "daily_reports", "previous",
-        "attendance", "billz", "cash",
+        "sap_aging", "sap_invoice_push", "sap_orders", "sap_inventory", "sap_inventory_push", "sap_sales",
+        "payments", "daily_reports", "previous", "attendance", "billz", "cash",
     ]
     results = await asyncio.gather(
         _fetch_aging(),
-        _fetch_rows_received("ar_aging_push"),
+        _fetch_push("ar_aging_push"),
         _fetch_gateway("orders"),
         _fetch_gateway("inventory"),
+        _fetch_push("gateway_push_inventory"),
+        _fetch_gateway("sales"),
         _fetch_payments_due(today),
         _fetch_report_results(),
         _fetch_previous(today),
@@ -159,14 +164,22 @@ async def collect() -> BriefData:
     currency = settings.sap_default_currency
     if not isinstance(by_name["sap_aging"], BaseException):
         data.aging = by_name["sap_aging"]
-    if not isinstance(by_name["sap_invoice_cap"], BaseException):
-        data.aging_capped = figures.is_capped("invoices", by_name["sap_invoice_cap"])
-    if not isinstance(by_name["sap_orders"], BaseException):
+    if not isinstance(by_name["sap_invoice_push"], BaseException):
+        data.aging_capped = figures.push_capped("invoices", by_name["sap_invoice_push"])
+    yesterday = today - timedelta(days=1)
+    sales_feed = by_name["sap_sales"]
+    if not isinstance(sales_feed, BaseException) and sales_feed[1] and _fresh(sales_feed[0]):
+        # The full push's invoices (2026-10-03) — what was actually sold.
+        data.sales = figures.invoices_on(sales_feed[1], yesterday, currency, as_of=sales_feed[0])
+        data.sales_unit = "ҳисоб-фактура"
+    elif not isinstance(by_name["sap_orders"], BaseException):
         as_of, rows = by_name["sap_orders"]
-        data.sales = _dated(figures.documents_on(rows, today - timedelta(days=1), currency, tool="orders", as_of=as_of))
+        data.sales = _dated(figures.documents_on(rows, yesterday, currency, tool="orders", as_of=as_of))
     if not isinstance(by_name["sap_inventory"], BaseException):
         as_of, rows = by_name["sap_inventory"]
-        data.inventory = _dated(figures.inventory_value(rows, currency, as_of=as_of))
+        push = by_name["sap_inventory_push"]
+        complete = not isinstance(push, BaseException) and bool((push or {}).get("complete"))
+        data.inventory = _dated(figures.inventory_value(rows, currency, as_of=as_of, complete=complete))
     if not isinstance(by_name["payments"], BaseException):
         data.payments = by_name["payments"]
     if not isinstance(by_name["daily_reports"], BaseException):
@@ -211,9 +224,14 @@ async def _fetch_attendance(today: date) -> attendance.DaySummary | None:
     return attendance.summarize(recs, yesterday)
 
 
+def _fresh(as_of: date | None) -> bool:
+    """Whether a feed pushed on ``as_of`` is recent enough to show as today's number."""
+    return as_of is not None and (today_local() - as_of).days <= STALE_AFTER_DAYS
+
+
 def _dated(figure: Figure) -> Figure:
     """Mark a figure stale when its feed hasn't been pushed for days."""
-    if figure.as_of and (today_local() - figure.as_of).days > STALE_AFTER_DAYS:
+    if figure.as_of and not _fresh(figure.as_of):
         figure.status = "stale"
     return figure
 
@@ -269,8 +287,9 @@ async def _fetch_aging() -> ARAging:
     return aging
 
 
-async def _fetch_rows_received(action: str) -> int | None:
-    """How many rows the latest push of one kind carried (from the audit log)."""
+async def _fetch_push(action: str) -> dict[str, Any] | None:
+    """The audit payload of the latest push of one kind: rows received, and
+    ``complete`` when it was read straight from SAP's database."""
     row = await fetch_one(
         "SELECT payload FROM agent_actions WHERE agent = 'sap-gateway-push' AND action = %s "
         "ORDER BY occurred_at DESC LIMIT 1",
@@ -278,9 +297,7 @@ async def _fetch_rows_received(action: str) -> int | None:
     )
     if row is None:
         return None
-    payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")
-    received = payload.get("rows_received")
-    return int(received) if received is not None else None
+    return row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")
 
 
 async def _fetch_gateway(tool: str) -> tuple[date | None, list[dict[str, Any]]]:
@@ -393,9 +410,9 @@ def render_five(data: BriefData) -> str:
     lines = ["📊 <b>5 рақам</b>", f"💰 Касса: {_cash_value(data)}"]
     lower_bound = False
 
-    sales, capped = _figure_value(data.sales, "sales", data, what="буюртма")
+    sales, capped = _figure_value(data.sales, "sales", data, what=data.sales_unit)
     if data.sales is not None and data.sales.ok and data.sales.count:
-        sales += f" ({data.sales.count} та буюртма)"
+        sales += f" ({data.sales.count} та {data.sales_unit})"
     lines.append(f"📈 Кечаги сотув: {sales}")
     lower_bound |= capped
 

@@ -1,121 +1,110 @@
-# SAP gateway push script
+# SAP push script
 
-Pushes data from the SAP gateway (the local Node.js tool documented in
-`SAP_B1_AI_AGENT_TEACHING.md`) to the Command Center's API, which does the
-actual database write. This runs on the same machine as the gateway, and
-needs **nothing installed** — it's plain PowerShell, using
-`Invoke-RestMethod` the same way Abdulbosit's own test snippet already
-does. No Node.js project, no npm install, no database driver.
+`push-ar-aging.ps1` sends SAP Business One data to the Command Center
+(`mgmg-api`), which stores it for the brief, the receivables alert, the
+Billz → SAP check and the Director's questions. It runs on the machine next
+to SAP (the "server laptop"), on a schedule, and only makes **outbound**
+connections. Plain Windows PowerShell 5.1 — nothing to install for the
+script itself.
 
-Covers 7 of the gateway's 8 tools in one run: `get_invoices`, `get_orders`,
-`get_products`, `get_customers`, `get_warehouses`, `get_inventory`,
-`get_payments`. `get_sales` is skipped deliberately — it reads the exact
-same source table as `get_invoices` (`OINV`) with a smaller interface, so
-pulling both would just push the same data twice.
+## Two modes
 
-The gateway itself is completely untouched: still loopback-only, still
-needs its Bearer token, still only exposes its existing predefined
-read-only tools. This script only ever makes *outbound* connections — to
-the gateway (local) and to the Command Center's API (a normal HTTPS call)
-— so nothing on this machine needs to accept inbound traffic for this to
-work.
+| Mode | Reads | Limits |
+| ---- | ----- | ------ |
+| **Database** (2026-10-03) | SAP's HANA database (schema `MGM`) with a read-only user, through the SAP HANA ODBC driver | every row; 16 kinds of data |
+| **Gateway** (the old way) | the local SAP gateway's tools (`localhost:3000`) | at most 100 rows a kind (products 20) — receivables, stock and sales come out as "камида" |
 
-## ⚠️ If you already had this script set up (config format changed)
+The script uses the database when `$HanaServer`, `$HanaUser` and
+`$HanaPassword` are filled in, and the gateway otherwise.
 
-The three config variables at the top changed shape to support pushing
-multiple tools — `$PushUrl` (one full URL) became `$MgmgApiHost` +
-`$PushSecret` (host and secret separately, so the script can build a
-different URL per tool). **If you already filled in the old `$PushUrl`
-version, you need to re-open the script and fill in the new variables** —
-the old value won't carry over automatically. Your existing Task Scheduler
-job doesn't need any changes; it already points at this same file and will
-pick up the new behavior on its next run once the file itself is updated.
+## What the database mode sends
 
-## Setup
+| Name in the Command Center | SAP tables | What it is |
+| -------------------------- | ---------- | ---------- |
+| `sales_people` | OSLP | sales people |
+| `ar_open` | OINV | open A/R invoices (customer debt) with what's paid so far |
+| `sales` | OINV + ORIN | A/R invoices and credit notes, last 45 days |
+| `sales_lines` | INV1 + RIN1 | their lines: item, quantity, warehouse |
+| `inventory` | OITW + OITM | stock per item and warehouse (non-zero rows) |
+| `products` | OITM + OITB | every item, with its group |
+| `customers` | OCRD + OCRG | every business partner (no phones or e-mails) |
+| `warehouses` | OWHS | warehouses |
+| `payments` | ORCT | incoming payments, last 45 days |
+| `payments_out` | OVPM | outgoing payments, last 45 days |
+| `orders` | ORDR | open sales orders |
+| `ap_open` | OPCH | open purchase invoices (what we owe suppliers) |
+| `po_open` | OPOR + POR1 | open purchase order lines |
+| `equipment` | OINS | customer equipment cards (serial numbers) |
+| `service_calls` | OSCL | service calls |
+| `service_contracts` | OCTR | service contracts |
 
-1. Copy `push-ar-aging.ps1` onto the machine the gateway runs on (or run it
-   straight from a synced/uploaded copy of this repo — either is fine, it's
-   one self-contained file).
-2. Open it in Notepad (or any editor) and fill in the four placeholders
-   near the top:
-   - `$GatewayToken` — the gateway's Bearer token (the same `API_TOKEN`
-     value from its own `.env`)
-   - `$MgmgApiHost` — the Command Center's API host, e.g.
-     `mgmg-api-eeky.onrender.com` (no `https://` prefix, no trailing slash)
-   - `$PushSecret` — `SAP_PUSH_WEBHOOK_SECRET` from Render's env group (not
-     committed anywhere in this repo — get it from whoever manages the
-     Render deployment)
-3. Test it once by hand, from a PowerShell prompt on that machine:
+Each kind is one POST to `/webhooks/sap-data/<name>/<secret>` and replaces
+today's rows of that kind. Every column was checked against the SAP export
+of 2026-10-02 — `sap_columns.json` keeps those tables' column names, and
+`scripts/selfcheck.py` re-checks the SQL against it on every change.
+
+## Setup (database mode)
+
+1. **ODBC driver.** On the machine that runs the script: Windows → "ODBC
+   Data Sources (64-bit)" → Drivers. `HDBODBC` must be there. It comes with
+   the **SAP HANA client** (the SAP B1 client needs it too, so it's usually
+   already installed). If it's missing, install SAP HANA Client 2.0 (64-bit)
+   from SAP Development Tools.
+2. **A read-only database user.** Whoever administers HANA (the same person
+   who set up the gateway) creates it once, in HANA Studio or hdbsql:
+   ```sql
+   CREATE USER MGMG_READER PASSWORD "a-long-password" NO FORCE_FIRST_PASSWORD_CHANGE;
+   GRANT SELECT ON SCHEMA "MGM" TO MGMG_READER;
+   ```
+   It can only read. Don't use SYSTEM or the SAP B1 admin user.
+3. **Fill in the top of `push-ar-aging.ps1`:**
+   - `$MgmgApiHost` — `mgmg-api-eeky.onrender.com`
+   - `$PushSecret` — `SAP_PUSH_WEBHOOK_SECRET` from Render (`mgmg-shared`)
+   - `$HanaServer` — host and SQL port, e.g. `192.168.1.10:30015` (the
+     gateway's own `.env` has the same server)
+   - `$HanaUser` / `$HanaPassword` — the read-only user from step 2
+   - `$HanaSchema` — `MGM` (the company database)
+4. **Run it once by hand:**
    ```powershell
    powershell -ExecutionPolicy Bypass -File push-ar-aging.ps1
    ```
-   A successful run prints one block per tool, ending with `All done.`:
+   A good run prints one line per kind, ending with `All done.`:
    ```
-   Fetching open invoices from http://localhost:3000 ...
-   Got 23 invoice(s), pushing to Command Center ...
-     invoices: 20 written, 3 skipped.
-   Fetching from http://localhost:3000/tools/get_orders ...
-     got 10 row(s), pushing to Command Center (orders) ...
-     orders: 10 row(s) written.
-   ...
+   Reading SAP's database (192.168.1.10:30015, MGM) ...
+     sales_people: 18 read, 18 stored.
+     ar_open: 52 read, 52 stored.
+     sales: 380 read, 380 stored.
+     ...
    All done.
    ```
-   If `http://localhost:3000` doesn't connect, try changing `$GatewayUrl`
-   at the top of the script to `http://[::1]:3000` instead — some machines
-   resolve `localhost` to an address the gateway isn't actually listening
-   on.
-4. **One tool failing doesn't stop the others** — each tool's fetch/push is
-   wrapped independently, so if e.g. `get_warehouses` errors, you'll see a
-   yellow warning for just that one and every other tool still runs and
-   still pushes. Worth checking the output for any warnings even on an
-   overall successful run.
+   The same lines go to `push-ar-aging.log` next to the script.
+5. **Schedule it** (if it isn't already): Task Scheduler → Create Task →
+   Trigger: Daily, repeat every **30 minutes**, indefinitely → Action:
+   `powershell.exe` with `-ExecutionPolicy Bypass -File "C:\path\to\push-ar-aging.ps1"`
+   → Settings: "If the task is already running" → **Do not start a new
+   instance**. An existing task needs no change — the file name is the same.
 
-## Schedule it (Windows Task Scheduler)
+The machine should stay on in the evening: the shop enters the day's sales
+into SAP around 18:00–20:00, and the 08:00 Billz → SAP check can only see
+what the last push carried (its message says so when the last push was
+before midnight).
 
-Already covered if you followed the earlier setup — the scheduled task
-points at this same file, so it automatically picks up all 7 tools on its
-next scheduled run. No changes needed in Task Scheduler itself.
+## Troubleshooting
 
-If setting this up fresh:
-1. Open Task Scheduler → Create Task
-2. Trigger: **Daily**, repeat every **30 minutes**, indefinitely
-3. Action:
-   - Program: `powershell.exe`
-   - Arguments: `-ExecutionPolicy Bypass -File "C:\path\to\push-ar-aging.ps1"`
-4. Settings tab: "If the task is already running" → **Do not start a new
-   instance**
+- **"Could not connect to SAP's database"** — the driver name (`HDBODBC`;
+  the 32-bit one is `HDBODBC32`), the server/port, or the user/password.
+- **"SAP query failed: … invalid column name"** — the SAP version differs
+  from the 2026-10-02 export; send the line from the log.
+- **"rejected by the Command Center: unauthorized"** — `$PushSecret` doesn't
+  match Render's `SAP_PUSH_WEBHOOK_SECRET`.
+- One kind failing doesn't stop the others; the run ends with "Done with N
+  problem(s)" and exit code 1, which Task Scheduler shows as a failure.
 
-## Known gaps
+## Security
 
-- **`get_invoices` doesn't return `PaidToDate`** yet, so the Command Center
-  sets `balance_due` equal to `doc_total` for every invoice — correct for
-  a fully-unpaid open invoice, an overstatement for one that's been
-  partially paid.
-- **The other 6 tools' exact response field names aren't confirmed** the
-  way `get_sales`/`get_invoices`' were (verified against a real documented
-  example response). The Command Center stores each tool's raw response in
-  full regardless of field names, so nothing is lost — but the specific
-  fields it tries to use as a natural key (`ItemCode`, `CardCode`,
-  `WhsCode`, etc. — SAP Business One's standard names) might not match
-  exactly what this particular gateway returns. If a tool's data looks
-  wrong or duplicated once queried through OPS Manager Bot, that's the
-  first thing to check — the raw JSON is always preserved regardless, so
-  it's a quick fix, not a re-push.
-
-Ask whoever maintains the gateway to add `PaidToDate` to `get_invoices`'
-response to fix the first gap properly; it's a small addition on that
-side, not something this script can work around.
-
-## Security notes
-
-- Both webhook endpoints (`/webhooks/sap-push/<secret>` and
-  `/webhooks/sap-gateway-push/<tool>/<secret>`) only accept requests with
-  the exact right secret in the URL, checked in constant time — same
-  pattern every other webhook in this project uses. Both use the same
-  `SAP_PUSH_WEBHOOK_SECRET`.
-- These endpoints can only write to two tables (`ar_aging_snapshots` and
-  `sap_gateway_snapshots`) — there is no path from this script to any
-  other data in the Command Center.
-- If this script or the token/secret inside it is ever exposed, the blast
-  radius is "someone can push fake rows into those two tables" — not
-  access to any other system.
+- The script reads with a user that can only `SELECT`, and sends only the
+  columns listed in its SQL — no phones, e-mails or document comments.
+- The webhook only accepts the right secret (constant-time check) and can
+  only write SAP snapshot rows (`ar_aging_snapshots`, `sap_gateway_snapshots`).
+- The password sits in this file on that machine, like the gateway's own
+  `.env`: keep the folder readable only by the account that runs the task.
