@@ -55,6 +55,11 @@ exists only to receive the admin's own Accept/Reject tap.
 7. Accept → the `employees` row is created with that role and the requester
    is told they're registered. Reject → the requester is told and gets the
    role picker again (the admin turned down the role, not the person).
+8. **Typing between the steps** (2026-10-03): a message from someone already
+   accepted but not registered yet — often their name — is not a new join
+   request (that used to send the admin a duplicate card). No role picked →
+   the role picker again; role picked → "админ тасдиқлашини кутинг"
+   (`store.registration_in_progress`).
 
 The second approval exists because a picked role took effect immediately
 before 2026-09-16: anyone past step 3 could choose Operatsion Direktor and
@@ -173,6 +178,10 @@ once — `integrations/org_bot/names.py`:
   one, or on demand with **`/ismlar`** in Admin Bot.
 - Until the bot has it, any message from that employee gets the question
   instead (and "хабарингиз ҳали юборилмади — қайта юборинг").
+- Someone removed and registered again keeps the name they gave before:
+  the welcome shows it ("Исмингиз: … Хато бўлса, /ism") instead of asking
+  — asking was the 2026-10-03 bug: the bot asked, but their answer went to
+  the work AI as a question because a name was already on file.
 - The answer is AI-checked like the permission form's answers (a real first
   name and surname, not "alo"), written in Cyrillic, and stored in
   `employees.full_name`. It's used everywhere a person is named:

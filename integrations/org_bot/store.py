@@ -308,6 +308,29 @@ async def get_pending_access_request(telegram_user_id: int) -> dict[str, Any] | 
     )
 
 
+async def registration_in_progress(telegram_user_id: int) -> dict[str, Any] | None:
+    """This person's latest join request if they're between the admin's two
+    approvals: accepted as a person, role not yet picked or not yet confirmed.
+
+    Without this, a message typed in that window (often their name) was
+    taken for a brand-new join request and the admin got a duplicate card.
+    A role already approved means a finished registration (a removed
+    employee writing again starts over), so it isn't returned.
+    """
+    return await fetch_one(
+        """
+        SELECT * FROM (
+            SELECT * FROM access_requests
+            WHERE telegram_user_id = %s AND requested_at > now() - INTERVAL '30 days'
+            ORDER BY requested_at DESC
+            LIMIT 1
+        ) latest
+        WHERE status = 'approved' AND (role_status IS NULL OR role_status IN ('pending', 'rejected'))
+        """,
+        (telegram_user_id,),
+    )
+
+
 async def create_access_request(
     *, telegram_user_id: int, telegram_username: str | None, display_name: str | None
 ) -> dict[str, Any] | None:

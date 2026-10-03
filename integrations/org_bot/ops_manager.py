@@ -103,6 +103,11 @@ def parse_role_and_request(rest: str) -> tuple[str, str] | None:
     return role_slug, request_id
 
 
+def asks_something(text: str) -> bool:
+    """Whether a message asks a question (a "?" — Latin or Arabic)."""
+    return "?" in text or "؟" in text
+
+
 def report_message_kind(replied_to_ask: bool, replied_to_task: bool, is_question: bool) -> str:
     """What a message sent while today's report is still owed should be.
 
@@ -331,18 +336,27 @@ async def send_role_picker(access_request: dict[str, Any], run_id: uuid.UUID, *,
         await bot.send_message(text, chat_id=str(access_request["telegram_user_id"]), reply_markup=keyboard)
 
 
-async def send_registration_confirmed(access_request: dict[str, Any], run_id: uuid.UUID) -> None:
+async def send_registration_confirmed(
+    access_request: dict[str, Any], run_id: uuid.UUID, employee: dict[str, Any] | None = None
+) -> None:
     """Tell the requester the admin confirmed their role and they're registered.
 
     Args:
         access_request: The ``access_requests`` row, role now approved.
         run_id: UUID grouping this webhook call's audit rows.
+        employee: Their ``employees`` row as just saved. Someone removed and
+            registered again keeps the name they gave before — they're not
+            asked for it, since their answer would no longer be read as a
+            name and would go to the work AI as a question.
     """
     role = ROLE_LABELS.get(access_request["requested_role"], access_request["requested_role"])
     text = f"✅ Сиз <b>{escape(role)}</b> сифатида рўйхатдан ўтдингиз."
+    known_name = ((employee or {}).get("full_name") or "").strip()
     # Everyone except the Director gives their real name straight away, so
     # the Director can address them by it (see names.py).
-    if access_request["requested_role"] != DIRECTOR_ROLE:
+    if access_request["requested_role"] != DIRECTOR_ROLE and known_name:
+        text += f"\n\nИсмингиз: <b>{escape(known_name)}</b>. Хато бўлса, /ism деб ёзинг."
+    elif access_request["requested_role"] != DIRECTOR_ROLE:
         text += f"\n\n{names.ASK_TEXT}"
         await store.mark_name_asked(access_request["telegram_user_id"])
     await _reply(access_request["telegram_user_id"], run_id, text)
@@ -735,6 +749,28 @@ async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> s
 
 async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, Any], run_id: uuid.UUID) -> str:
     """Start or acknowledge a join request for a never-seen sender."""
+    # Accepted by the admin but not registered yet (role to pick, or picked
+    # and waiting): whatever they type — often their name — is not a new
+    # join request. Point them at the one step left.
+    halfway = await store.registration_in_progress(telegram_user_id)
+    if halfway is not None:
+        if halfway.get("role_status") == "pending":
+            role = ROLE_LABELS.get(halfway.get("requested_role") or "", "")
+            await _reply(
+                telegram_user_id,
+                run_id,
+                f"⏳ <b>{escape(role)}</b> ролини танладингиз, админ тасдиқлашини кутинг. "
+                "Тасдиқлангач, исмингизни сўрайман.",
+            )
+            return "role_pending"
+        await _reply(
+            telegram_user_id,
+            run_id,
+            "👇 Аввал ролингизни танланг — танловингизни админ тасдиқлайди. Исмингизни ундан кейин сўрайман.",
+            reply_markup=role_picker_keyboard(str(halfway["id"])),
+        )
+        return "role_picker_resent"
+
     existing = await store.get_pending_access_request(telegram_user_id)
     if existing is not None:
         await _reply(
@@ -879,7 +915,8 @@ async def _try_daily_report(
         # The answer to the one follow-up question on a vague report. It is
         # added to the report and the conversation ends there — no further
         # questions, whatever it says.
-        followup = await store.open_report_followup(employee["telegram_user_id"], day)
+        # A question asked in that window is a question, not the answer.
+        followup = None if asks_something(text) else await store.open_report_followup(employee["telegram_user_id"], day)
         if followup is not None:
             if await store.answer_report_followup(str(followup["id"]), text) is not None:
                 fresh = kpi.parse_metrics(text, metrics_def) if metrics_def else {}
@@ -931,7 +968,7 @@ async def _try_daily_report(
         and reply_to_message_id is not None
         and await store.find_task_by_message_id(reply_to_message_id, telegram_user_id) is not None
     )
-    kind = report_message_kind(replied_to_ask, replied_to_task, "?" in text)
+    kind = report_message_kind(replied_to_ask, replied_to_task, asks_something(text))
     if kind == "task_question":
         return None
     if kind == "ask":
@@ -1219,7 +1256,9 @@ async def _handle_employee_message(
     question = None
     if reply_to.get("message_id"):
         question = await store.lead_question_by_message(telegram_user_id, reply_to["message_id"])
-    if question is None:
+    # A message that asks something isn't taken as the answer just for
+    # arriving soon after — only a Reply to the question is (it goes to the AI).
+    if question is None and not asks_something(text):
         question = await store.pending_lead_question(telegram_user_id, leads.ANSWER_WINDOW_MINUTES)
         if question is not None:
             report = await store.pending_report(telegram_user_id, today_local())

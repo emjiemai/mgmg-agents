@@ -21,7 +21,9 @@ In order: a Reply to a cheer → a friendly line; a lead's follow-up → saved
 on the lead; today's report → saved (a message that asks something during the
 report window gets "бу бугунги ҳисоботингизми ёки савол?" — **ҳа, ҳисобот /
 йўқ, бу савол**); everything else → **the work AI**. A Reply to a task card
-brings that task into the question. No command is needed (`/ai` just gets a
+brings that task into the question. A message with "?" is never taken
+as a lead's follow-up or the report's one follow-up answer just for arriving
+soon after them — only a Reply to that question is (2026-10-03). No command is needed (`/ai` just gets a
 hint); other unknown commands are ignored. The answer runs in the background.
 
 Nothing an employee writes reaches the Director or anyone else. Old "📨 send

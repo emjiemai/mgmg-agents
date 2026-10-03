@@ -1012,7 +1012,7 @@ async def _handle_role_decision(
             role=request["requested_role"],
             approved_by=decided_by,
         )
-        await ops_manager.send_registration_confirmed(request, run_id)
+        await ops_manager.send_registration_confirmed(request, run_id, employee)
         target_ref, action = str(employee["id"]), "employee_registered"
     else:
         await ops_manager.send_role_picker(request, run_id, retry=True)

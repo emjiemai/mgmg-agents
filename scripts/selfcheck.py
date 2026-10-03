@@ -1080,6 +1080,82 @@ def test_names_and_routing() -> None:
     check("preview drops the AI's tags", _plain("<b>Отчёт</b>  тайёрланг"), "Отчёт тайёрланг")
 
 
+def test_registration_states() -> None:
+    """Between the two approvals, re-registration, and questions in answer windows."""
+    print("registration and answer windows")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import names, ops_manager, store
+
+    replies: list = []
+    requests: list = []
+    marked: list = []
+    halfway = {"row": None}
+    saved = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+        replies.append((text, reply_markup))
+        return [1]
+
+    async def in_progress(user):
+        return halfway["row"]
+
+    async def none(*args, **kwargs):
+        return None
+
+    async def new_request(**kwargs):
+        requests.append(kwargs)
+        return "access_requested"
+
+    async def mark(user):
+        marked.append(user)
+
+    patch(store, "registration_in_progress", in_progress)
+    patch(store, "get_pending_access_request", none)
+    patch(store, "mark_name_asked", mark)
+    patch(ops_manager.admin, "request_access", new_request)
+    patch(ops_manager, "_reply", fake_reply)
+    sender = {"id": 9, "first_name": "Ali"}
+    try:
+        # accepted, no role picked yet: the typed name is not a new join request
+        halfway["row"] = {"id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "status": "approved", "role_status": None}
+        outcome = asyncio.run(ops_manager._handle_unregistered_sender(9, sender, uuid.uuid4()))
+        check("role not picked: the picker again, no new request", (outcome, requests), ("role_picker_resent", []))
+        check_true("...with the role buttons", bool(replies[-1][1] and replies[-1][1]["inline_keyboard"]))
+        check_true("...in Uzbek Cyrillic", latin_words(replies[-1][0]) == [])
+        halfway["row"] = {**halfway["row"], "role_status": "pending", "requested_role": "it"}
+        outcome = asyncio.run(ops_manager._handle_unregistered_sender(9, sender, uuid.uuid4()))
+        check("role picked, admin not yet: told to wait, no new request", (outcome, requests), ("role_pending", []))
+        halfway["row"] = None
+        asyncio.run(ops_manager._handle_unregistered_sender(9, sender, uuid.uuid4()))
+        check("a stranger still makes a join request", len(requests), 1)
+
+        # role approved: a new person is asked for their name; someone
+        # registered again keeps theirs (their answer would go to the AI)
+        request = {"telegram_user_id": 9, "requested_role": "it"}
+        asyncio.run(ops_manager.send_registration_confirmed(request, uuid.uuid4(), {"full_name": None}))
+        check_true("new person: asked for the name", names.ASK_TEXT in replies[-1][0] and marked == [9])
+        marked.clear()
+        asyncio.run(ops_manager.send_registration_confirmed(request, uuid.uuid4(), {"full_name": "Алишер Каримов"}))
+        check_true("registered again: the saved name is shown, not asked",
+                   names.ASK_TEXT not in replies[-1][0] and "Алишер Каримов" in replies[-1][0] and marked == [])
+        director = {"telegram_user_id": 9, "requested_role": "operatsion_direktor"}
+        asyncio.run(ops_manager.send_registration_confirmed(director, uuid.uuid4(), {"full_name": None}))
+        check_true("the Director is never asked", names.ASK_TEXT not in replies[-1][0] and marked == [])
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+    check_true("a question mark is a question", ops_manager.asks_something("КП қачон?"))
+    check_true("Arabic question mark too", ops_manager.asks_something("қачон؟"))
+    check_true("a plain answer isn't", not ops_manager.asks_something("эртага учрашамиз"))
+
+
 def test_report_or_message() -> None:
     """A report never needs Telegram's reply; an unclear message gets one tap."""
     print("report or message")
@@ -3658,6 +3734,7 @@ def main() -> int:
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,
+        test_registration_states,
         test_report_or_message,
         test_daily_report_kpi,
         test_brief_rendering,
