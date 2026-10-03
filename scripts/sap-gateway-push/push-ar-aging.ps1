@@ -150,6 +150,11 @@ function Push-Invoices {
         }
         $body = @{ invoices = $result.data } | ConvertTo-Json -Depth 10
         $push = Invoke-PushRequest -Uri "https://$MgmgApiHost/webhooks/sap-push/$PushSecret" -JsonBody $body
+        if (-not $push.ok) {
+            Write-Log "  get_invoices: rejected by the Command Center: $($push.error)" -Warn
+            $script:Failures++
+            return
+        }
         Write-Log "  get_invoices: $($push.written) written, $($push.skipped) skipped."
     } catch {
         Write-Log "  get_invoices failed: $($_.Exception.Message)" -Warn
@@ -169,6 +174,11 @@ function Push-GatewayTool {
         }
         $body = @{ rows = $result.data } | ConvertTo-Json -Depth 10
         $push = Invoke-PushRequest -Uri "https://$MgmgApiHost/webhooks/sap-gateway-push/$Tool/$PushSecret" -JsonBody $body
+        if (-not $push.ok) {
+            Write-Log "  get_${Tool}: rejected by the Command Center: $($push.error)" -Warn
+            $script:Failures++
+            return
+        }
         Write-Log "  get_${Tool}: $(@($result.data).Count) read, $($push.written) written."
     } catch {
         Write-Log "  get_${Tool} failed: $($_.Exception.Message)" -Warn
