@@ -6,9 +6,10 @@
 **Stored in:** `billz_sap_checks` (one row per checked day: status, what was found)
 **Switches:** `BILLZ_SAP_CHECK_ENABLED` (default on), `BILLZ_SAP_WAREHOUSES`,
 `BILLZ_SAP_CHECK_ROLES`
-**Needs:** BILLZ (`BILLZ_SECRET_TOKEN`) and the SAP push in **database mode**
-(`scripts/sap-gateway-push/`) — the gateway's capped tools carry no invoice
-lines. Until that push has run once, the agent exits quietly.
+**Needs:** BILLZ (`BILLZ_SECRET_TOKEN`) and SAP's invoice lines from the
+gateway tool **`get_sales_by_date`** (`docs/sap-gateway-tools.md`, to be added
+by the gateway's maintainer) — today's capped tools carry no lines, warehouse
+or so'm total. Until its data has arrived once, the agent exits quietly.
 
 ## Why (the owner, 2026-10-03)
 

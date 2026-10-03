@@ -11,10 +11,10 @@ days that never reached SAP are repeated until they do). The Director gets
 one message: a ✅ line when everything matches, the list when not. Other
 roles can be added with ``BILLZ_SAP_CHECK_ROLES``.
 
-Needs both sides: BILLZ (``BILLZ_SECRET_TOKEN``) and the full SAP push
-(``scripts/sap-gateway-push/`` in database mode — the gateway's own capped
-tools carry no invoice lines). Until that push has run once, this exits
-quietly.
+Needs both sides: BILLZ (``BILLZ_SECRET_TOKEN``) and SAP's invoice lines from
+the gateway tool ``get_sales_by_date`` (``docs/sap-gateway-tools.md``; today's
+capped tools carry no lines, warehouse or so'm total). Until that tool's data
+has arrived once, this exits quietly.
 
 Run:
     python agents/billz-sap-check/agent.py             # yesterday, once a day
@@ -194,8 +194,8 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
 
     pushed_at = await last_sales_push()
     if pushed_at is None:
-        # The database-mode push hasn't run yet: SAP's invoices aren't here at all.
-        log.info("No complete SAP sales push yet (scripts/sap-gateway-push in database mode) — nothing to compare")
+        # get_sales_by_date isn't in the gateway yet: SAP's invoice lines aren't here at all.
+        log.info("No SAP invoice lines yet (gateway tool get_sales_by_date, docs/sap-gateway-tools.md) — nothing to compare")
         return 0
     if now_local() - pushed_at > STALE_AFTER:
         text = sap_check.render_stale(day, pushed_at)

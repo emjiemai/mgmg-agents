@@ -7,13 +7,15 @@ PowerShell script (no runtime install needed beyond what's already on any
 Windows machine — see ``scripts/sap-gateway-push/``).
 
 Three paths:
-  handle_full_push — (2026-10-03) the push script reads SAP's own database
-      directly and sends every row of each kind (``FULL_DATASETS``), with
+  handle_full_push — (2026-10-03) the complete gateway tools
+      (docs/sap-gateway-tools.md: get_open_invoices, get_sales_by_date,
+      get_stock_value) send every row of a kind (``FULL_DATASETS``), with
       no row cap. Open invoices replace today's ``ar_aging_snapshots``;
       everything else replaces today's rows in ``sap_gateway_snapshots``.
-      Field names are the database's own columns, checked against the SAP
-      export of 2026-10-02. Each push is marked ``complete`` in its audit
-      row, so no figure built from it is shown as "камида".
+      Field names are SAP's own columns, checked against the SAP export of
+      2026-10-02. Each push is marked ``complete`` in its audit row (unless
+      the script says a limited tool filled its limit), so no figure built
+      from it is shown as "камида".
   handle_ar_aging_push — get_invoices specifically, into the richer,
       bucketed ``ar_aging_snapshots`` table. Reuses the exact same
       bucketing/currency-conversion logic ``integrations/sap/client.py``
@@ -290,11 +292,13 @@ async def handle_gateway_push(tool: str, payload: dict[str, Any], run_id: uuid.U
 
 # ------------------------------------------------- full pushes (2026-10-03)
 
-# Every kind of data the push script sends straight from SAP's database, and
-# the columns that identify one row of it (the script's SELECTs use these
-# exact names). "ar_open" goes to ar_aging_snapshots; the rest are stored
-# under the same name as a sap_gateway_snapshots tool — the six names the
-# gateway already used keep their meaning, so every reader keeps working.
+# Every kind of complete data the push script may send, and the columns that
+# identify one row of it (SAP's own column names). "ar_open" goes to
+# ar_aging_snapshots; the rest are stored under the same name as a
+# sap_gateway_snapshots tool — the six names the gateway already used keep
+# their meaning, so every reader keeps working. Today the gateway's complete
+# tools fill ar_open, sales, sales_lines and stock_value; the other kinds are
+# ready for tools added later (docs/sap-gateway-tools.md, "Later").
 FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "ar_open": ("DocEntry",),                      # OINV, open
     "sales": ("ObjType", "DocEntry"),              # OINV + ORIN, last 45 days
@@ -312,6 +316,7 @@ FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "equipment": ("insID",),                       # OINS
     "service_calls": ("callID",),                  # OSCL
     "service_contracts": ("ContractID",),          # OCTR
+    "stock_value": ("WhsCode",),                   # OITW summed per warehouse (gateway get_stock_value)
 }
 
 # A full push is one POST per kind; the biggest today is ~2,100 rows.
@@ -352,11 +357,12 @@ def aging_row(row: dict[str, Any], as_of: date, slp_names: dict[int, str]) -> tu
         slp = int(row.get("SlpCode"))
     except (TypeError, ValueError):
         slp = -1
+    seller = str(row.get("SlpName") or "").strip() or slp_names.get(slp)
     return (
         as_of, int(doc_entry), row.get("DocNum"), str(card_code), row.get("CardName"),
         parse_sap_date(str(row.get("DocDate") or "")), due, overdue, aging_bucket(overdue),
         settings.sap_default_currency, total, paid, total - paid,
-        slp if slp >= 0 else None, slp_names.get(slp) if slp >= 0 else None,
+        slp if slp >= 0 else None, seller if slp >= 0 else None,
     )
 
 
@@ -396,6 +402,8 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
         return {"ok": False, "error": f"too many rows ({len(rows)} > {MAX_FULL_ROWS})"}
     rows = [r for r in rows if isinstance(r, dict)]
     today = today_local()
+    # The script says when a limited tool filled its limit (more may exist).
+    complete = payload.get("complete") is not False
 
     if dataset == "ar_open":
         slp_names = await _sales_people()
@@ -403,7 +411,7 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
         async with audited(
             agent="sap-gateway-push", action="ar_aging_push", target_system="postgres", run_id=run_id,
             target_ref="ar_aging_snapshots", mode="write",
-            payload={"rows_received": len(rows), "complete": True, "source": "database"},
+            payload={"rows_received": len(rows), "complete": complete, "source": "gateway_full"},
         ) as ctx:
             async with connection() as conn:
                 async with conn.cursor() as cur:
@@ -429,7 +437,7 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
     async with audited(
         agent="sap-gateway-push", action=f"gateway_push_{dataset}", target_system="postgres", run_id=run_id,
         target_ref="sap_gateway_snapshots", mode="write",
-        payload={"tool": dataset, "rows_received": len(rows), "complete": True, "source": "database"},
+        payload={"tool": dataset, "rows_received": len(rows), "complete": complete, "source": "gateway_full"},
     ) as ctx:
         async with connection() as conn:
             async with conn.cursor() as cur:

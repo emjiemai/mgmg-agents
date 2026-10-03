@@ -139,7 +139,7 @@ async def collect() -> BriefData:
     today = today_local()
     names = [
         "sap_aging", "sap_invoice_push", "sap_orders", "sap_inventory", "sap_inventory_push", "sap_sales",
-        "payments", "daily_reports", "previous", "attendance", "billz", "cash",
+        "sap_stock_value", "payments", "daily_reports", "previous", "attendance", "billz", "cash",
     ]
     results = await asyncio.gather(
         _fetch_aging(),
@@ -148,6 +148,7 @@ async def collect() -> BriefData:
         _fetch_gateway("inventory"),
         _fetch_push("gateway_push_inventory"),
         _fetch_gateway("sales"),
+        _fetch_gateway("stock_value"),
         _fetch_payments_due(today),
         _fetch_report_results(),
         _fetch_previous(today),
@@ -175,7 +176,11 @@ async def collect() -> BriefData:
     elif not isinstance(by_name["sap_orders"], BaseException):
         as_of, rows = by_name["sap_orders"]
         data.sales = _dated(figures.documents_on(rows, yesterday, currency, tool="orders", as_of=as_of))
-    if not isinstance(by_name["sap_inventory"], BaseException):
+    stock_feed = by_name["sap_stock_value"]
+    if not isinstance(stock_feed, BaseException) and stock_feed[1] and _fresh(stock_feed[0]):
+        # get_stock_value: SAP's own stock value summed per warehouse — the whole of it.
+        data.inventory = figures.inventory_value(stock_feed[1], currency, as_of=stock_feed[0], complete=True)
+    elif not isinstance(by_name["sap_inventory"], BaseException):
         as_of, rows = by_name["sap_inventory"]
         push = by_name["sap_inventory_push"]
         complete = not isinstance(push, BaseException) and bool((push or {}).get("complete"))
@@ -289,7 +294,7 @@ async def _fetch_aging() -> ARAging:
 
 async def _fetch_push(action: str) -> dict[str, Any] | None:
     """The audit payload of the latest push of one kind: rows received, and
-    ``complete`` when it was read straight from SAP's database."""
+    ``complete`` when it came from a complete gateway tool (docs/sap-gateway-tools.md)."""
     row = await fetch_one(
         "SELECT payload FROM agent_actions WHERE agent = 'sap-gateway-push' AND action = %s "
         "ORDER BY occurred_at DESC LIMIT 1",

@@ -553,15 +553,15 @@ WHERE s.snapshot_date = (
     SELECT max(snapshot_date) FROM sap_gateway_snapshots s2 WHERE s2.tool = s.tool
 );
 
--- Full pushes (2026-10-03): the push script can read SAP's database directly
--- (scripts/sap-gateway-push/), with no row cap, and sends more kinds of data
--- into the same table (push_handler.FULL_DATASETS). A full push replaces
--- that day's rows for its kind; only a few days are kept.
+-- Complete pushes (2026-10-03): gateway tools without the 100-row cap
+-- (docs/sap-gateway-tools.md) send more kinds of data into the same table
+-- (push_handler.FULL_DATASETS). A complete push replaces that day's rows for
+-- its kind; only a few days are kept.
 ALTER TABLE sap_gateway_snapshots DROP CONSTRAINT IF EXISTS sap_gateway_snapshots_tool_check;
 ALTER TABLE sap_gateway_snapshots ADD CONSTRAINT sap_gateway_snapshots_tool_check CHECK (tool IN (
     'orders', 'products', 'customers', 'warehouses', 'inventory', 'payments',
     'sales', 'sales_lines', 'payments_out', 'ap_open', 'po_open', 'sales_people',
-    'equipment', 'service_calls', 'service_contracts'
+    'equipment', 'service_calls', 'service_contracts', 'stock_value'
 ));
 
 -- Billz → SAP check (2026-10-03, docs/agent-specs/17-billz-sap-check.md):

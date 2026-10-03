@@ -50,12 +50,11 @@ Telegram ◀──▶ mgmg-api (FastAPI) ──▶ PostgreSQL ◀── cron: 08
   the admin marked as weekend workers (`/xodimlar` → the person's card).
 
 SAP data arrives **only by push** from the gateway's own machine
-(`scripts/sap-gateway-push/`); nothing reaches into SAP. In **database mode**
-(2026-10-03) the script reads SAP's HANA database with a read-only user and
-sends every row of 16 kinds (open invoices, sales and their lines, stock,
-purchase invoices and orders, equipment cards, service calls…); with the old
-gateway tools each kind is capped at 100 rows, and totals built from a capped
-push are shown as lower bounds ("камида") — see the brief spec.
+(`scripts/sap-gateway-push/`), through the gateway's fixed tools; nothing
+reaches into SAP and no database password leaves that machine. Today's tools
+cap each kind at 100 rows, so totals built from them are shown as lower
+bounds ("камида"); three complete tools (`docs/sap-gateway-tools.md`) make
+debt, sales and stock whole as soon as the gateway has them.
 
 Money is stored as integer minor units (tiyin/cents) everywhere; time is
 stored in UTC and shown in Asia/Tashkent (`integrations/common/money.py`,

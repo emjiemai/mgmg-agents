@@ -53,9 +53,12 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   cheque (warehouses G.A._01, 05; SAP user "Гармин (филиал Абай)"), often a day or more late.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
 - SAP is B1 on **HANA, schema `MGM`**; local currency USD, system currency UZS. Data arrives only by
-  push from the gateway machine (`scripts/sap-gateway-push/push-ar-aging.ps1`): **database mode**
-  (read-only HANA user over ODBC, 16 kinds, every row, `/webhooks/sap-data/...`) or the old gateway
-  tools (100-row cap → "камида"). Abdulbosit (IT) runs the gateway.
+  push from the gateway machine (`scripts/sap-gateway-push/push-ar-aging.ps1`) **through the
+  gateway's fixed tools** — never direct DB access or HANA credentials (the gateway owner's rules,
+  `SAP_B1_AI_AGENT_TEACHING_UPDATED.md`; Abdulbosit (IT) runs it). Today's tools: 100-row cap →
+  "камида". New data = a new gateway tool: `docs/sap-gateway-tools.md` specifies
+  `get_open_invoices`, `get_sales_by_date`, `get_stock_value` (→ `/webhooks/sap-data/...`); the
+  script uses each as soon as it exists.
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).
 
 Status of the owner's 21-agent plan: `docs/agents-status.md` (running: H0, A1,
@@ -109,7 +112,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
 
 ## Open items
-- SAP push in database mode: needs a read-only HANA user + the HANA ODBC driver on the gateway machine,
-  filled into the new `push-ar-aging.ps1` (the owner updates it; README has the steps). Until then the
-  brief's SAP numbers stay "камида" and the Billz → SAP check stays silent.
+- SAP: Abdulbosit to add the three gateway tools in `docs/sap-gateway-tools.md`; the owner swaps in
+  the new `push-ar-aging.ps1` (same 4 values). Until then the brief's SAP numbers stay "камида" and
+  the Billz → SAP check stays silent.
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

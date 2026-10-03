@@ -80,8 +80,8 @@ def is_capped(tool: str, rows_received: int | None) -> bool:
 def push_capped(tool: str, payload: dict[str, Any] | None) -> bool:
     """Whether the latest push (its audit payload) was cut off at the gateway's limit.
 
-    A push read straight from SAP's database (2026-10-03) is marked
-    ``complete`` and is never a lower bound, however many rows it has.
+    A push from a complete gateway tool (2026-10-03, docs/sap-gateway-tools.md)
+    is marked ``complete`` and is never a lower bound, however many rows it has.
     """
     if not payload or payload.get("complete"):
         return False

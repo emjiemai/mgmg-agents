@@ -2138,8 +2138,8 @@ async def _fetch_sap_gateway_data(tool: str) -> str:
         Plain-text listing, or a message saying nothing's been pushed yet
         for this tool.
     """
-    # A push read straight from SAP's database has every row (2026-10-03):
-    # stock is ~1,000 rows, the partner list ~2,100 — all of it is shown.
+    # A complete gateway tool (2026-10-03, docs/sap-gateway-tools.md) can send
+    # more than 100 rows of a kind — all of it is shown.
     rows = await fetch_all(
         "SELECT natural_key, raw, captured_at FROM v_sap_gateway_latest WHERE tool = %s "
         "ORDER BY captured_at DESC LIMIT %s",

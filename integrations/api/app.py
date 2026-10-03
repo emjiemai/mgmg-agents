@@ -9,7 +9,7 @@ Endpoints:
     POST /webhooks/telegram/ops/{secret}              OPS Manager Bot (task routing)
     POST /webhooks/sap-push/{secret}                  AR-aging snapshot pushed from the SAP gateway's machine
     POST /webhooks/sap-gateway-push/{tool}/{secret}   every other SAP gateway tool's raw snapshot
-    POST /webhooks/sap-data/{dataset}/{secret}        a complete push read straight from SAP's database
+    POST /webhooks/sap-data/{dataset}/{secret}        a complete gateway tool's rows (docs/sap-gateway-tools.md)
     POST /webhooks/garmin-lead/{secret}               a lead from the Garmin AI bot (integrations/garmin/leads.py)
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
     GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
@@ -250,12 +250,12 @@ async def sap_gateway_push_webhook(tool: str, secret: str, request: Request) -> 
 
 @app.post("/webhooks/sap-data/{dataset}/{secret}")
 async def sap_data_webhook(dataset: str, secret: str, request: Request) -> dict[str, Any]:
-    """Receive every row of one kind, read straight from SAP's database (2026-10-03).
+    """Receive every row of one kind from a complete gateway tool (2026-10-03).
 
     The push script (``scripts/sap-gateway-push/``) sends one POST per kind —
-    open invoices, stock, sales lines… (``push_handler.FULL_DATASETS``) —
-    with no row cap; each replaces today's rows of that kind. Same secret as
-    the other SAP routes.
+    open invoices, sales lines, stock value… (``push_handler.FULL_DATASETS``,
+    the tools in ``docs/sap-gateway-tools.md``) — with no row cap; each
+    replaces today's rows of that kind. Same secret as the other SAP routes.
 
     Returns:
         ``{"ok": bool, "written": int, "skipped": int}``, or

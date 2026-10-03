@@ -3385,9 +3385,10 @@ def test_garmin_leads() -> None:
 
 
 def test_sap_full_push() -> None:
-    """The push script's database mode: its SQL, the receiver, and what reads it."""
-    print("SAP full push (database mode)")
+    """Complete SAP data through new gateway tools: the spec, the script, the receiver."""
+    print("SAP complete gateway tools")
     import asyncio
+    import contextlib
     import json
     import re
     import uuid
@@ -3396,29 +3397,47 @@ def test_sap_full_push() -> None:
     from integrations.common.agent_loader import load_agent
     from integrations.sap import figures, push_handler
 
-    folder = Path(__file__).resolve().parent / "sap-gateway-push"
+    root = Path(__file__).resolve().parents[1]
+    folder = root / "scripts" / "sap-gateway-push"
     script = (folder / "push-ar-aging.ps1").read_text(encoding="utf-8")
+    spec = (root / "docs" / "sap-gateway-tools.md").read_text(encoding="utf-8")
     columns = json.loads((folder / "sap_columns.json").read_text(encoding="utf-8"))["tables"]
-    blocks = dict(re.findall(r'"(\w+)" = @\'\n(.*?)\n\'@', script, flags=re.S))
-    check("the script sends exactly the kinds the receiver stores", sorted(blocks), sorted(push_handler.FULL_DATASETS))
-    check_true("sales people go first (open invoices are labelled with them)", list(blocks)[0] == "sales_people")
-    wrong = []
-    for name, sql in blocks.items():
-        alias = {a: t for t, a in re.findall(r'"\{S\}"\."(\w+)"\s+(T\d)', sql)}
-        for a, col in re.findall(r'\b(T\d)\."(\w+)"', sql):
-            if a not in alias or col not in columns.get(alias[a], []):
-                wrong.append(f"{name}: {alias.get(a, a)}.{col}")
-    check("every column the SQL reads exists in SAP (export of 2026-10-02)", wrong, [])
-    check_true("every kind's key columns are selected",
-               all(all(f'"{k}"' in blocks[n] for k in keys) for n, keys in push_handler.FULL_DATASETS.items()))
-    check_true("no phones or e-mails leave SAP", not re.search(r'"(Phone1|Phone2|Cellular|E_Mail)"', script))
+
+    # The gateway owner's rules (SAP_B1_AI_AGENT_TEACHING_UPDATED.md): the
+    # gateway is the only thing that talks to HANA — no SQL, no DB password here.
+    check_true("the script holds no SQL and no database connection",
+               not re.search(r"\bSELECT\b|OdbcConnection|HanaPassword", script))
+    check_true("the script is plain ASCII (Windows PowerShell 5.1 reads it as ANSI)",
+               all(ord(ch) < 128 for ch in script))
     check_true("credentials are placeholders in the repo",
-               all(re.search(rf'\${v}\s*=\s*"PASTE_', script)
-                   for v in ("HanaServer", "HanaUser", "HanaPassword", "MgmgApiHost", "PushSecret", "GatewayToken")))
-    check_true("database mode posts to /webhooks/sap-data/", "/webhooks/sap-data/$Name/$PushSecret" in script)
-    check_true("the gateway stays as the fallback", "/webhooks/sap-gateway-push/$tool/$PushSecret" in script)
+               all(re.search(rf'\${v}\s*=\s*"PASTE_', script) for v in ("GatewayToken", "MgmgApiHost", "PushSecret")))
+    pushed = re.findall(r'Push-CompleteTool -Tool "(\w+)".*?-Kinds @\(([^)]*)\)', script)
+    tools = {tool: re.findall(r'"(\w+)"', kinds) for tool, kinds in pushed}
+    check("the complete tools the script uses", sorted(tools), ["get_open_invoices", "get_sales_by_date", "get_stock_value"])
+    check_true("...each one is specified for the gateway", all(f"### " in spec and f"`{t}`" in spec for t in tools))
+    check_true("...and every kind they fill is one the receiver stores",
+               all(k in push_handler.FULL_DATASETS for kinds in tools.values() for k in kinds))
+    check_true("complete data posts to /webhooks/sap-data/", "/webhooks/sap-data/$kind/$PushSecret" in script)
+    check_true("today's capped tools stay", all(f'-Tool "{t}"' in script for t in ("orders", "inventory", "payments")))
     check_true("the receiving route exists",
                any(getattr(r, "path", "") == "/webhooks/sap-data/{dataset}/{secret}" for r in api_app.app.routes))
+
+    # The SQL proposed to the gateway's maintainer reads only columns SAP has.
+    blocks = re.findall(r"### \d+\. `(\w+)`.*?```sql\n(.*?)```", spec, flags=re.S)
+    check("one SQL template per tool", sorted(t for t, _ in blocks), sorted(tools))
+    wrong = []
+    selected: dict[str, set[str]] = {}
+    for tool, sql in blocks:
+        alias = {a: t for t, a in re.findall(r'"MGM"\."(\w+)"\s+(T\d)', sql)}
+        for a, col in re.findall(r'\b(T\d)\."(\w+)"', sql):
+            if a not in alias or col not in columns.get(alias[a], []):
+                wrong.append(f"{tool}: {alias.get(a, a)}.{col}")
+        selected[tool] = set(re.findall(r'(?:\.|AS )"(\w+)"', sql))
+    check("every column in the proposed SQL exists in SAP (export of 2026-10-02)", wrong, [])
+    check_true("each tool returns the key columns of the kinds it fills",
+               all(set(push_handler.FULL_DATASETS[k]) <= selected[t] for t, kinds in tools.items() for k in kinds))
+    check_true("Billz needs so'm totals, entry dates and warehouses: they're in get_sales_by_date",
+               {"DocTotalSy", "CreateDate", "CreateTS", "WhsCode", "ItemCode", "CodeBars"} <= selected["get_sales_by_date"])
 
     # the receiver refuses bad input before touching the database
     check_true("unknown kind refused", "unknown dataset" in asyncio.run(
@@ -3433,6 +3452,57 @@ def test_sap_full_push() -> None:
     check_true("a row without its key columns still gets a stable key",
                push_handler.full_key("products", {"x": 1}) == push_handler.full_key("products", {"x": 1})
                and push_handler.full_key("products", {"x": 1}).startswith("unrecognized:"))
+
+    # open invoices replace today's receivables; "complete" comes from the script
+    audits: list[dict] = []
+    written: list = []
+
+    @contextlib.asynccontextmanager
+    async def fake_audited(**kwargs):
+        ctx = {"payload": dict(kwargs.get("payload") or {})}
+        audits.append(ctx)
+        yield ctx
+
+    class FakeCursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def execute(self, query, params=None):
+            written.append(("execute", query.split()[0]))
+
+        async def executemany(self, query, seq):
+            written.append(("executemany", list(seq)))
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+    @contextlib.asynccontextmanager
+    async def fake_connection():
+        yield FakeConn()
+
+    async def no_names():
+        return {}
+
+    saved = [(push_handler, n, getattr(push_handler, n)) for n in ("audited", "connection", "_sales_people")]
+    push_handler.audited, push_handler.connection, push_handler._sales_people = fake_audited, fake_connection, no_names
+    try:
+        rows = [{"DocEntry": 1, "DocNum": 2290, "CardCode": "C1", "CardName": "Hyatt", "DocDate": "2026-01-02",
+                 "DocDueDate": "2026-01-29", "DocStatus": "O", "CANCELED": "N", "DocTotal": "900", "PaidToDate": "0",
+                 "SlpCode": 2, "SlpName": "Ғиёсиддин"}]
+        result = asyncio.run(push_handler.handle_full_push("ar_open", {"rows": rows, "complete": False}, uuid.uuid4()))
+        check("one open invoice stored", (result["ok"], result["written"]), (True, 1))
+        check_true("today's snapshot is replaced, not added to", written[0] == ("execute", "DELETE"))
+        check("the seller's name comes with the invoice", written[1][1][0][14], "Ғиёсиддин")
+        check_true("a tool that filled its limit is not marked complete", audits[-1]["payload"]["complete"] is False)
+        asyncio.run(push_handler.handle_full_push("stock_value", {"rows": [{"WhsCode": "01", "StockValue": 5}]}, uuid.uuid4()))
+        check_true("a full answer is marked complete", audits[-1]["payload"]["complete"] is True)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
 
     # open invoices -> receivables, with what's already paid taken off
     as_of = date(2026, 10, 2)
@@ -3451,9 +3521,12 @@ def test_sap_full_push() -> None:
     check_true("a gateway push at its limit is", figures.push_capped("invoices", {"rows_received": 100}))
     check_true("no push yet: nothing to flag", not figures.push_capped("invoices", None))
     stock = [{"ItemCode": str(i), "WhsCode": "01", "OnHand": 1, "AvgPrice": 2, "StockValue": 2} for i in range(150)]
-    check_true("150 stock rows from the database: the whole value",
+    check_true("150 stock rows from a complete push: the whole value",
                not figures.inventory_value(stock, "USD", as_of=as_of, complete=True).capped)
     check_true("150 rows from the gateway would be a lower bound", figures.inventory_value(stock, "USD", as_of=as_of).capped)
+    per_warehouse = [{"WhsCode": "01", "StockValue": "300000.50"}, {"WhsCode": "08", "StockValue": "213344.65"}]
+    whole = figures.inventory_value(per_warehouse, "USD", as_of=as_of, complete=True)
+    check("stock value per warehouse adds up to the whole", (whole.totals, whole.capped), ({"USD": 51334515}, False))
 
     # yesterday's sales = invoices − credit notes, cancelled ones left out
     sales = [
