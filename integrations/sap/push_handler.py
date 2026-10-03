@@ -319,6 +319,28 @@ FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "stock_value": ("WhsCode",),                   # OITW summed per warehouse (gateway get_stock_value)
 }
 
+# The columns each complete gateway tool must send (docs/sap-gateway-tools.md).
+# A push without some of them is still stored, and the missing names go into
+# its audit row — the data-quality check (/sifat) and the push log show them.
+EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "ar_open": ("DocEntry", "DocNum", "CardCode", "CardName", "DocDate", "DocDueDate", "DocStatus", "CANCELED",
+                "DocCur", "DocTotal", "PaidToDate", "DocTotalFC", "PaidFC", "SlpCode", "SlpName"),
+    "sales": ("ObjType", "DocEntry", "DocNum", "CardCode", "CardName", "DocDate", "CreateDate", "CreateTS",
+              "CANCELED", "DocCur", "DocTotal", "DocTotalFC", "DocTotalSy", "SlpCode", "UserSign"),
+    "sales_lines": ("ObjType", "DocEntry", "LineNum", "ItemCode", "Dscription", "Quantity", "WhsCode", "CodeBars",
+                    "LineTotal"),
+    "stock_value": ("WhsCode", "WhsName", "Items", "OnHand", "StockValue"),
+}
+
+
+def missing_columns(dataset: str, rows: list[dict[str, Any]]) -> list[str]:
+    """Expected columns that no row carries (or that are empty in every row)."""
+    expected = EXPECTED_COLUMNS.get(dataset, ())
+    if not rows:
+        return []
+    return [c for c in expected if all(r.get(c) in (None, "") for r in rows)]
+
+
 # A full push is one POST per kind; the biggest today is ~2,100 rows.
 MAX_FULL_ROWS = 20_000
 # Older days of a fully pushed kind are deleted (the brief keeps its own
@@ -404,6 +426,9 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
     today = today_local()
     # The script says when a limited tool filled its limit (more may exist).
     complete = payload.get("complete") is not False
+    missing = missing_columns(dataset, rows)
+    if missing:
+        log.warning("{} arrived without {}", dataset, ", ".join(missing))
 
     if dataset == "ar_open":
         slp_names = await _sales_people()
@@ -411,7 +436,8 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
         async with audited(
             agent="sap-gateway-push", action="ar_aging_push", target_system="postgres", run_id=run_id,
             target_ref="ar_aging_snapshots", mode="write",
-            payload={"rows_received": len(rows), "complete": complete, "source": "gateway_full"},
+            payload={"rows_received": len(rows), "complete": complete, "source": "gateway_full",
+                     "missing_columns": missing},
         ) as ctx:
             async with connection() as conn:
                 async with conn.cursor() as cur:
@@ -431,13 +457,14 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
                             params,
                         )
             ctx["payload"].update(written=len(params), skipped=len(rows) - len(params))
-        return {"ok": True, "written": len(params), "skipped": len(rows) - len(params)}
+        return {"ok": True, "written": len(params), "skipped": len(rows) - len(params), "missing_columns": missing}
 
     keyed = {full_key(dataset, r): r for r in rows}  # a repeated key keeps its last row
     async with audited(
         agent="sap-gateway-push", action=f"gateway_push_{dataset}", target_system="postgres", run_id=run_id,
         target_ref="sap_gateway_snapshots", mode="write",
-        payload={"tool": dataset, "rows_received": len(rows), "complete": complete, "source": "gateway_full"},
+        payload={"tool": dataset, "rows_received": len(rows), "complete": complete, "source": "gateway_full",
+                 "missing_columns": missing},
     ) as ctx:
         async with connection() as conn:
             async with conn.cursor() as cur:
@@ -454,4 +481,4 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
                         ],
                     )
         ctx["payload"]["written"] = len(keyed)
-    return {"ok": True, "written": len(keyed), "skipped": len(rows) - len(keyed)}
+    return {"ok": True, "written": len(keyed), "skipped": len(rows) - len(keyed), "missing_columns": missing}

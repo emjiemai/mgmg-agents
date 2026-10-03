@@ -23,7 +23,8 @@ cost thousands of dollars. People make mistakes, so the system checks.
 
 - One **A/R invoice per cheque** (OINV), mostly to the customer "B2C клиенты",
   written in so'm.
-- From the warehouses **G.A._01** (Garmin Abay) and **05** (Garmin-Minor).
+- From the warehouses **G.A._01** (Garmin Abay), **05** (Garmin-Minor) and,
+  for the Tanita scales the shop also sells, **G.A._02** (Garmin Tanita).
 - Entered by the shop's own SAP user, "Гармин (филиал Абай)", usually
   18:00–20:00 the same day — and sometimes later: 20.09's sales were entered
   on 24.09, 29.09's on 30.09.
@@ -37,10 +38,16 @@ cost thousands of dollars. People make mistakes, so the system checks.
   negative) with a line in the shop's warehouses. Its so'm amount is
   `DocTotalSy` (SAP's system currency is so'm; equal to `DocTotalFC` on every
   so'm invoice in the export).
-- **Same amount** (± 1,000 so'm or 0.2%) pairs them — the nearest date first,
-  a shared product code (SKU = SAP item code, or the barcode) breaking ties.
-  An SAP date up to 7 days after the sale still pairs (entered late, dated
-  the day of entry).
+- **Same amount** (± 1,000 so'm or 0.2%) pairs them — a shared product code
+  first (BILLZ's SKU is SAP's item code; the barcode too), then the nearest
+  date. "Date" is the document's date **or the day it was entered**, within
+  7 days: the shop sometimes types an old date (22.09's sale entered on 22.09
+  under 07.09; 30.09's under 25.09).
+- If the gateway sends no so'm total for a document, its amount is
+  "unknown", not 0: it pairs by shared product and date only, and the
+  message says the amounts didn't come (the first test run, 2026-10-03).
+  Checked on the 2026-10-02 export: 52 shop sales, all paired right, with and
+  without so'm totals.
 - Left over, same day, same product, different amount → **"суммаси фарқ
   қилади"**.
 - A sale and its later return that both never reached SAP cancel out.
@@ -69,7 +76,8 @@ Otherwise:
 
 - **Not entered** cheques of the last 14 days are repeated every morning
   until they reach SAP.
-- **Late** entries are told once — the morning after they were entered.
+- **Late** entries, and entries made on time under another date, are told
+  once — the morning after they were entered.
 - **In SAP, not in Billz** — only yesterday's documents.
 - When SAP's last push was before midnight, a line says entries made after
   it aren't seen. When SAP's data is more than a day old: "SAP маълумоти …
@@ -90,7 +98,7 @@ false "not entered" list.
 
 ## Settings
 
-- `BILLZ_SAP_WAREHOUSES` (default `G.A._01,05`): the SAP warehouses the shops
+- `BILLZ_SAP_WAREHOUSES` (default `G.A._01,05,G.A._02`): the SAP warehouses the shops
   sell from — one list for every shop, or per shop by its BILLZ name:
   `GARMIN ABAY=G.A._01,05;GARMIN MALIKA=21`. Lists must not overlap.
 - If warehouse 05 turns out to carry sales that never go through BILLZ, they

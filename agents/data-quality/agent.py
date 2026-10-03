@@ -69,6 +69,8 @@ FEED_LABELS = {
     "warehouses": "омборлар",
     "products": "маҳсулотлар",
     "sales": "сотув ҳужжатлари (тўлиқ)",
+    "sales_lines": "сотув қаторлари (тўлиқ)",
+    "stock_value": "омбор қиймати (тўлиқ)",
 }
 
 
@@ -134,6 +136,8 @@ def sap_findings(inp: Inputs) -> list[str]:
             feed_notes.append(f"{label} — {age} кун олдин келган")
         elif not feed.get("complete") and figures.is_capped(tool, feed.get("rows")):
             feed_notes.append(f"{label} — чекланган ({feed.get('rows')} та, тўлиқ эмас)")
+        if feed.get("missing"):
+            feed_notes.append(f"{label} — устунлари келмади: {escape(', '.join(feed['missing']))}")
     if feed_notes:
         found.append("SAP оқимлари: " + "; ".join(feed_notes))
 
@@ -222,6 +226,7 @@ async def gather_inputs(today: date) -> Inputs:
         payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"] or "{}")
         inp.feeds[tool] = {
             "at": row["occurred_at"], "rows": payload.get("rows_received"), "complete": bool(payload.get("complete")),
+            "missing": payload.get("missing_columns") or [],
         }
 
     for row in await fetch_all(

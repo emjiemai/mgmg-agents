@@ -180,7 +180,10 @@ async def collect() -> BriefData:
     if not isinstance(stock_feed, BaseException) and stock_feed[1] and _fresh(stock_feed[0]):
         # get_stock_value: SAP's own stock value summed per warehouse — the whole of it.
         data.inventory = figures.inventory_value(stock_feed[1], currency, as_of=stock_feed[0], complete=True)
-    elif not isinstance(by_name["sap_inventory"], BaseException):
+    capped_feed = by_name["sap_inventory"]
+    if (data.inventory is None or not data.inventory.ok) and not isinstance(capped_feed, BaseException) \
+            and (data.inventory is None or capped_feed[1]):
+        # No usable summary: the capped item rows ("камида") rather than nothing.
         as_of, rows = by_name["sap_inventory"]
         push = by_name["sap_inventory_push"]
         complete = not isinstance(push, BaseException) and bool((push or {}).get("complete"))

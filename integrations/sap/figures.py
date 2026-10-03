@@ -187,7 +187,9 @@ def inventory_value(
                 continue
         total += to_tiyin(value)
         count += 1
-    if not count:
+    if not count or not total:
+        # Stock worth exactly nothing while rows exist is a feed problem (a
+        # column missing or empty, 2026-10-03), never a real "$0.00".
         return Figure(status="unknown_format", as_of=as_of, capped=capped)
     return Figure(status="ok", totals={currency: total}, count=count, capped=capped, as_of=as_of)
 

@@ -42,6 +42,16 @@ $script:Failures = 0
 # looks two weeks back (a cheque never entered is reported until it is).
 $SalesDays = 14
 
+# The columns each complete tool must return (docs/sap-gateway-tools.md).
+$ExpectedColumns = @{
+    "get_open_invoices" = @("DocEntry", "DocNum", "CardCode", "CardName", "DocDate", "DocDueDate", "DocStatus",
+        "CANCELED", "DocCur", "DocTotal", "PaidToDate", "DocTotalFC", "PaidFC", "SlpCode", "SlpName")
+    "get_sales_by_date" = @("ObjType", "DocEntry", "DocNum", "CardCode", "CardName", "DocDate", "CreateDate",
+        "CreateTS", "CANCELED", "DocCur", "DocTotal", "DocTotalFC", "DocTotalSy", "SlpCode", "UserSign", "LineNum",
+        "ItemCode", "Dscription", "Quantity", "WhsCode", "CodeBars", "LineTotal")
+    "get_stock_value" = @("WhsCode", "WhsName", "Items", "OnHand", "StockValue")
+}
+
 function Write-Log {
     param([string]$Text, [switch]$Warn)
     $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Text
@@ -124,6 +134,9 @@ function Push-CompleteTool {
             $push = Invoke-PushRequest -Uri "https://$MgmgApiHost/webhooks/sap-data/$kind/$PushSecret" -JsonBody $body
             if ($push.ok) {
                 Write-Log "  ${Tool} -> ${kind}: $($rows.Count) read, $($push.written) stored."
+                if (@($push.missing_columns).Count -gt 0) {
+                    Write-Log "  ${Tool} -> ${kind}: arrived WITHOUT $(@($push.missing_columns) -join ', ') (docs/sap-gateway-tools.md)" -Warn
+                }
             } else {
                 Write-Log "  ${Tool} -> ${kind}: rejected: $($push.error)" -Warn
                 $script:Failures++
@@ -206,15 +219,36 @@ function Test-Setup {
     foreach ($tool in @("get_open_invoices", "get_sales_by_date", "get_stock_value")) {
         $body = '{}'
         if ($tool -eq "get_sales_by_date") {
+            $first = (Get-Date).AddDays(-3).ToString("yyyy-MM-dd")
             $day = (Get-Date).ToString("yyyy-MM-dd")
-            $body = '{"from":"' + $day + '","to":"' + $day + '"}'
+            $body = '{"from":"' + $first + '","to":"' + $day + '"}'
         }
         try {
             $result = Invoke-GatewayTool -Tool $tool -Body $body
             if ($null -eq $result) {
                 Write-Host "  ${tool}: not added yet (docs/sap-gateway-tools.md)."
             } elseif ($result.ok) {
-                Write-Host "  ${tool}: works ($(@($result.data).Count) rows)."
+                $rows = @()
+                if ($null -ne $result.data) { $rows = @($result.data) }
+                Write-Host "  ${tool}: works ($($rows.Count) rows)."
+                if ($rows.Count -gt 0) {
+                    # Column names and the amount columns of the first row -- no names of customers.
+                    $names = @($rows[0].PSObject.Properties | ForEach-Object { $_.Name })
+                    $missing = @($ExpectedColumns[$tool] | Where-Object { $names -notcontains $_ })
+                    if ($missing.Count -gt 0) {
+                        Write-Warning "    missing columns: $($missing -join ', ')"
+                    } else {
+                        Write-Host "    all expected columns are there."
+                    }
+                    foreach ($col in @("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "OnHand", "StockValue")) {
+                        if ($names -contains $col) {
+                            $value = $rows[0].$col
+                            $kind = "empty"
+                            if ($null -ne $value) { $kind = $value.GetType().Name }
+                            Write-Host "    $col = $value ($kind)"
+                        }
+                    }
+                }
             } else {
                 Write-Warning "  ${tool}: gateway error: $($result.error)"
             }

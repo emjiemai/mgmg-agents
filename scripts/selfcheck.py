@@ -3627,6 +3627,21 @@ def test_sap_full_push() -> None:
     check_true("150 stock rows from a complete push: the whole value",
                not figures.inventory_value(stock, "USD", as_of=as_of, complete=True).capped)
     check_true("150 rows from the gateway would be a lower bound", figures.inventory_value(stock, "USD", as_of=as_of).capped)
+    zero = figures.inventory_value([{"WhsCode": "01", "StockValue": "0"}], "USD", as_of=as_of, complete=True)
+    check("stock worth exactly nothing is a feed problem, never '$0.00'", zero.status, "unknown_format")
+    check("a tool that left a column out is noticed",
+          push_handler.missing_columns("stock_value", [{"WhsCode": "01", "WhsName": "A", "Items": 3, "OnHand": 5}]),
+          ["StockValue"])
+    check("...and so is a column that's always empty",
+          push_handler.missing_columns("sales", [{c: 1 for c in push_handler.EXPECTED_COLUMNS["sales"]} | {"DocTotalSy": None}]),
+          ["DocTotalSy"])
+    script_expected = dict(re.findall(r'"(get_\w+)" = @\(([^)]*)\)', script, flags=re.S))
+    script_cols = {t: re.findall(r'"(\w+)"', cols) for t, cols in script_expected.items()}
+    check_true("the script's -Check expects what the receiver expects",
+               set(script_cols["get_open_invoices"]) == set(push_handler.EXPECTED_COLUMNS["ar_open"])
+               and set(script_cols["get_sales_by_date"]) == set(push_handler.EXPECTED_COLUMNS["sales"])
+               | set(push_handler.EXPECTED_COLUMNS["sales_lines"])
+               and set(script_cols["get_stock_value"]) == set(push_handler.EXPECTED_COLUMNS["stock_value"]))
     per_warehouse = [{"WhsCode": "01", "StockValue": "300000.50"}, {"WhsCode": "08", "StockValue": "213344.65"}]
     whole = figures.inventory_value(per_warehouse, "USD", as_of=as_of, complete=True)
     check("stock value per warehouse adds up to the whole", (whole.totals, whole.capped), ({"USD": 51334515}, False))
@@ -3724,10 +3739,32 @@ def test_billz_sap_check() -> None:
     check_true("a late entry is reported once, not every day", not r_next.late)
     text = sc.render(r)
     check_true("each section is there",
-               all(s in text for s in ("SAP'га киритилмаган", "Кечикиб киритилган", "SAP'да бор, Billz'да йўқ", "1202",
+               all(s in text for s in ("SAP'га киритилмаган", "Кечикиб ёки бошқа сана", "SAP'да бор, Billz'да йўқ", "1202",
                                        "01.10 сотуви 02.10 куни киритилди")))
     check_true("the message is Uzbek Cyrillic (names, products aside)",
                latin_words(text, allow={"Billz", "CIRQA", "Smart", "Band", "Acc", "epixPRO", "Sherzod", "Ganiyev"}) == [])
+
+    # the 2026-10-03 test run: a sale typed in on the day but under an old date
+    # (22.09's CIRQA entered on 22.09 as 07.09), a Tanita scale from G.A._02,
+    # and the gateway at first sending no so'm totals
+    old_date = sc.Doc(key="13:20", number="2348", day=date(2026, 9, 7), created=date(2026, 9, 22), created_time="",
+                      amount=3300000, items=[sc.Item("010-04675-00", "", "CIRQA", 1)])
+    sold = sc.Cheque(key="c22", number="000902010236", day=date(2026, 9, 22), shop="GARMIN ABAY", amount=3300000,
+                     items=[sc.Item("010-04675-00", "", "CIRQA Smart Band, WW, L-XL, Black", 1)])
+    r = sc.check([sold], [old_date], date(2026, 9, 22))
+    check("matched by the day it was entered, not its (wrong) date", (r.missing, [p.doc.number for p in r.late]),
+          ([], ["2348"]))
+    check_true("...and told as 'entered under another date', not as late",
+               "22.09 сотуви SAP'га 07.09 санаси билан киритилган (№2348" in sc.render(r))
+    check_true("the default warehouses include Garmin Tanita (G.A._02)", "G.A._02" in settings.billz_sap_warehouses)
+    no_som = sc.docs_from_sap([{**header(1, 2411, "2026-10-01", "2026-10-01", 0), "DocTotalSy": None, "DocTotalFC": None}],
+                              [line(1, "010-04675-01")], frozenset({"G.A._01"}))
+    check("no so'm total from the gateway: the amount is unknown, not 0", [d.amount_known for d in no_som], [False])
+    r = sc.check([c for c in cheques if c.number == "1201"], no_som, day)
+    check_true("...matched by product and date, nothing 'differs' or 'missing'", r.ok and not r.amount_diff)
+    unknown_text = sc.render(sc.check(cheques, no_som, day))
+    check_true("...and the message says the amounts didn't come",
+               "сўмдаги сумма келмади" in unknown_text and "SAP 0 сўм" not in unknown_text)
 
     # a different amount for the same product the same day
     wrong = sc.Doc(key="13:11", number="2430", day=day, created=day, created_time="", amount=3000000,

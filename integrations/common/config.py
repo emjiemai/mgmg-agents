@@ -124,14 +124,15 @@ class Settings(BaseSettings):
 
     # --- Billz → SAP check (agents/billz-sap-check, 2026-10-03) ---
     # Every shop cheque must reach SAP as an A/R invoice the same day. The SAP
-    # warehouses the shops sell from: "G.A._01,05" for every shop, or per shop
-    # "GARMIN ABAY=G.A._01,05;GARMIN MALIKA=21" (shop names as in BILLZ).
+    # warehouses the shops sell from: "G.A._01,05,G.A._02" for every shop, or
+    # per shop "GARMIN ABAY=G.A._01,05;GARMIN MALIKA=21" (names as in BILLZ).
+    # G.A._02 ("Garmin Tanita"): the shop's Tanita scales (2026-10-03 test run).
     billz_sap_check_enabled: bool = True
     # Trial (2026-10-03): until the owner confirms the first results match the
     # shop, the check goes to the admin in Admin Bot, not the Director.
     # BILLZ_SAP_CHECK_TRIAL=false sends it to the Director (+ the roles below).
     billz_sap_check_trial: bool = True
-    billz_sap_warehouses: str = "G.A._01,05"
+    billz_sap_warehouses: str = "G.A._01,05,G.A._02"
     # Who else gets it besides the Director: role slugs, comma-separated
     # (e.g. "garmin_sotuv,buxgalteriya"). Empty = the Director only.
     billz_sap_check_roles: str = ""

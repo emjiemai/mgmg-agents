@@ -44,7 +44,7 @@ from integrations.common.timeutil import fmt_date, parse_sap_date
 from integrations.telegram.bot import escape
 
 WINDOW_DAYS = 14  # cheques this old are still checked (a missing one is repeated daily)
-MAX_LAG_DAYS = 7  # an SAP document dated up to this many days after its cheque can be its pair
+MAX_LAG_DAYS = 7  # an SAP document dated or entered within this many days of its cheque can be its pair
 MAX_LINES = 8  # bullets per section before "+N more"
 
 
@@ -76,6 +76,7 @@ class Doc:
     created_time: str  # "19:05", or ""
     amount: int  # so'm, a credit note negative
     customer: str = ""
+    amount_known: bool = True  # False when the gateway sent no so'm total (DocTotalSy / DocTotalFC)
     items: list[Item] = field(default_factory=list)
 
 
@@ -95,6 +96,7 @@ class Result:
     late: list[Pair] = field(default_factory=list)
     extra: list[Doc] = field(default_factory=list)
     returned: int = 0  # sale + return pairs that cancelled out
+    sap_amounts_missing: bool = False  # some SAP documents came without a so'm total: matched by product and date
     no_cheque_numbers: bool = False  # BILLZ gave lines without a cheque id: only totals compared
     billz_total: int | None = None  # set when only totals are compared (cheques unknown)
 
@@ -200,13 +202,17 @@ def cheques_from_billz(rows: list[dict[str, Any]], day: date) -> tuple[list[Cheq
     return [c for c in cheques.values() if c.amount or c.items], round(unkeyed)
 
 
-def _som_amount(header: dict[str, Any]) -> int:
-    """A document's total in so'm: SAP's system currency, else the so'm document total."""
-    if header.get("DocTotalSy") not in (None, ""):
-        return round(_num(header.get("DocTotalSy")))
+def _som_amount(header: dict[str, Any]) -> tuple[int, bool]:
+    """A document's total in so'm and whether it is known: SAP's system
+    currency (``DocTotalSy``), else the so'm document total (``DocTotalFC``)."""
+    system = round(_num(header.get("DocTotalSy")))
+    if system:
+        return system, True
     if str(header.get("DocCur") or "").upper() == "UZS":
-        return round(_num(header.get("DocTotalFC")))
-    return 0
+        foreign = round(_num(header.get("DocTotalFC")))
+        if foreign:
+            return foreign, True
+    return 0, False
 
 
 def _created_time(value: Any) -> str:
@@ -240,10 +246,11 @@ def docs_from_sap(
         if not own or day is None:
             continue
         sign = -1 if obj == "14" else 1
+        amount, known = _som_amount(header)
         docs.append(Doc(
             key=f"{obj}:{header.get('DocEntry')}", number=str(header.get("DocNum") or header.get("DocEntry")),
             day=day, created=parse_sap_date(str(header.get("CreateDate") or "")),
-            created_time=_created_time(header.get("CreateTS")), amount=sign * _som_amount(header),
+            created_time=_created_time(header.get("CreateTS")), amount=sign * amount, amount_known=known,
             customer=str(header.get("CardName") or "").strip(),
             items=[Item(code=_code(ln.get("ItemCode")), barcode=_code(ln.get("CodeBars")),
                         name=str(ln.get("Dscription") or "").strip(), qty=_num(ln.get("Quantity")))
@@ -261,8 +268,28 @@ def shares_item(cheque: Cheque, doc: Doc) -> bool:
     return any(c in codes for i in cheque.items for c in (i.code, i.barcode) if c)
 
 
+def date_gap(cheque: Cheque, doc: Doc) -> int | None:
+    """Days between a sale and an SAP document — by the document's date, or by
+    when it was entered; None when neither is within ``MAX_LAG_DAYS``.
+
+    The shop sometimes dates an entry wrongly (22.09's sale entered on 22.09
+    under 07.09; 30.09's under 25.09), so either date near the sale counts.
+    """
+    gaps = []
+    dated = (doc.day - cheque.day).days
+    if -MAX_LAG_DAYS <= dated <= MAX_LAG_DAYS:
+        gaps.append(abs(dated))
+    if doc.created is not None and 0 <= (doc.created - cheque.day).days <= MAX_LAG_DAYS:
+        gaps.append((doc.created - cheque.day).days)
+    return min(gaps) if gaps else None
+
+
 def match(cheques: list[Cheque], docs: list[Doc]) -> tuple[list[Pair], list[Pair], list[Cheque], list[Doc]]:
     """Pair cheques with SAP documents.
+
+    Same amount (± ``tolerance``) and a date near the sale make a pair, a
+    shared product first, then the nearest date. A document without a so'm
+    total can only pair through a shared product.
 
     Returns:
         ``(pairs, amount_differs, unmatched_cheques, unmatched_docs)``.
@@ -270,19 +297,24 @@ def match(cheques: list[Cheque], docs: list[Doc]) -> tuple[list[Pair], list[Pair
     candidates = []
     for c in cheques:
         for d in docs:
-            if (c.amount < 0) != (d.amount < 0) or abs(c.amount - d.amount) > tolerance(c.amount):
+            shared = shares_item(c, d)
+            if d.amount_known:
+                if (c.amount < 0) != (d.amount < 0) or abs(c.amount - d.amount) > tolerance(c.amount):
+                    continue
+            elif not shared:
                 continue
-            gap = (d.day - c.day).days
-            if gap < -1 or gap > MAX_LAG_DAYS:
+            gap = date_gap(c, d)
+            if gap is None:
                 continue
-            candidates.append((abs(gap), 0 if shares_item(c, d) else 1, abs(c.amount - d.amount), c.key, d.key))
+            candidates.append((0 if shared else 1, gap, abs((d.day - c.day).days),
+                               abs(c.amount - d.amount) if d.amount_known else 0, c.key, d.key))
     candidates.sort()
     by_c = {c.key: c for c in cheques}
     by_d = {d.key: d for d in docs}
     used_c: set[str] = set()
     used_d: set[str] = set()
     pairs: list[Pair] = []
-    for _gap, _shared, _diff, ck, dk in candidates:
+    for _shared, _gap, _dated, _diff, ck, dk in candidates:
         if ck in used_c or dk in used_d:
             continue
         used_c.add(ck)
@@ -293,8 +325,9 @@ def match(cheques: list[Cheque], docs: list[Doc]) -> tuple[list[Pair], list[Pair
     differs: list[Pair] = []
     for c in sorted((c for c in cheques if c.key not in used_c), key=lambda c: (c.day, c.number)):
         options = sorted(
-            (d for d in docs if d.key not in used_d and 0 <= (d.day - c.day).days <= 1 and shares_item(c, d)),
-            key=lambda d: ((d.day - c.day).days, abs(d.amount - c.amount)),
+            (d for d in docs if d.key not in used_d and d.amount_known and shares_item(c, d)
+             and date_gap(c, d) in (0, 1)),
+            key=lambda d: (date_gap(c, d), abs(d.amount - c.amount)),
         )
         if options:
             used_c.add(c.key)
@@ -366,6 +399,7 @@ def check(
         extra=sorted((d for d in unmatched_docs if d.day == day), key=lambda d: d.number),
         returned=returned,
         no_cheque_numbers=no_cheque_numbers,
+        sap_amounts_missing=any(not d.amount_known for d in docs),
     )
 
 
@@ -425,8 +459,12 @@ def render(result: Result, *, pushed_at: datetime | None = None, day_end: dateti
     lines = [
         title,
         f"Billz: {len(result.cheques_day)} та чек — {som(billz_total)}",
-        f"SAP: {len(result.docs_day)} та ҳужжат — {som(sap_total)}",
+        f"SAP: {len(result.docs_day)} та ҳужжат"
+        + ("" if result.sap_amounts_missing else f" — {som(sap_total)}"),
     ]
+    if result.sap_amounts_missing:
+        lines.append("⚠️ SAP ҳужжатларида сўмдаги сумма келмади — товар ва сана бўйича солиштирилди.")
+    several_shops = len({c.shop for c in result.missing if c.shop}) > 1
     if result.missing:
         total = sum(c.amount for c in result.missing)
         bullets = []
@@ -434,8 +472,9 @@ def render(result: Result, *, pushed_at: datetime | None = None, day_end: dateti
             what = _items(c.items)
             who = f" · сотувчи {escape(c.seller)}" if c.seller else ""
             kind = "қайтариш" if c.amount < 0 else "чек"
+            shop = f" · {escape(c.shop)}" if several_shops and c.shop else ""
             bullets.append(f"{_short_date(c.day)} · {kind} {escape(c.number)} · {som(c.amount)}"
-                           + (f" — {escape(what)}" if what else "") + who)
+                           + (f" — {escape(what)}" if what else "") + who + shop)
         lines += [""] + _section(
             f"🔴 <b>SAP'га киритилмаган — {len(result.missing)} та, {som(total)}:</b>", bullets)
     if result.amount_diff:
@@ -449,15 +488,22 @@ def render(result: Result, *, pushed_at: datetime | None = None, day_end: dateti
         bullets = []
         for p in result.late:
             entered = p.doc.created or p.doc.day
-            text = (f"{_short_date(p.cheque.day)} сотуви {_short_date(entered)} куни киритилди "
-                    f"(№{escape(p.doc.number)}, {som(p.doc.amount)})")
-            if p.doc.day != p.cheque.day:
-                text += f", SAP'даги санаси {_short_date(p.doc.day)}"
+            amount = f", {som(p.doc.amount)}" if p.doc.amount_known else ""
+            if p.doc.created is not None and p.doc.created > p.cheque.day:
+                text = (f"{_short_date(p.cheque.day)} сотуви {_short_date(entered)} куни киритилди "
+                        f"(№{escape(p.doc.number)}{amount})")
+                if p.doc.day != p.cheque.day:
+                    text += f", SAP'даги санаси {_short_date(p.doc.day)}"
+            else:  # on time, under another date
+                text = (f"{_short_date(p.cheque.day)} сотуви SAP'га {_short_date(p.doc.day)} санаси билан "
+                        f"киритилган (№{escape(p.doc.number)}{amount})")
             bullets.append(text)
-        lines += [""] + _section(f"🟠 <b>Кечикиб киритилган — {len(result.late)} та:</b>", bullets)
+        lines += [""] + _section(
+            f"🟠 <b>Кечикиб ёки бошқа сана билан киритилган — {len(result.late)} та:</b>", bullets)
     if result.extra:
         bullets = [
-            f"№{escape(d.number)} · {som(d.amount)}" + (f" · {escape(d.customer)}" if d.customer else "")
+            f"№{escape(d.number)}" + (f" · {som(d.amount)}" if d.amount_known else "")
+            + (f" · {escape(d.customer)}" if d.customer else "")
             for d in result.extra
         ]
         lines += [""] + _section(f"⚪ <b>SAP'да бор, Billz'да йўқ — {len(result.extra)} та:</b>", bullets)
