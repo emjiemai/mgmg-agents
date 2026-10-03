@@ -96,10 +96,21 @@ class Result:
     extra: list[Doc] = field(default_factory=list)
     returned: int = 0  # sale + return pairs that cancelled out
     no_cheque_numbers: bool = False  # BILLZ gave lines without a cheque id: only totals compared
+    billz_total: int | None = None  # set when only totals are compared (cheques unknown)
+
+    @property
+    def billz_amount(self) -> int:
+        return self.billz_total if self.billz_total is not None else sum(c.amount for c in self.cheques_day)
+
+    @property
+    def sap_amount(self) -> int:
+        return sum(d.amount for d in self.docs_day)
 
     @property
     def ok(self) -> bool:
-        return not (self.missing or self.amount_diff or self.late or self.extra or self.no_cheque_numbers)
+        if self.no_cheque_numbers:
+            return abs(self.billz_amount - self.sap_amount) <= tolerance(self.billz_amount)
+        return not (self.missing or self.amount_diff or self.late or self.extra)
 
     @property
     def status(self) -> str:
@@ -151,25 +162,28 @@ def warehouses_for(shop: str, mapping: dict[str, set[str]]) -> frozenset[str]:
 # -------------------------------------------------------------------- inputs
 
 
-def cheques_from_billz(rows: list[dict[str, Any]], day: date) -> tuple[list[Cheque], bool]:
+def _line_amount(row: dict[str, Any]) -> float:
+    if row.get("net_sales") is not None:
+        return _num(row.get("net_sales"))
+    return _num(row.get("gross_sales")) - _num(row.get("returned_sales_sum"))
+
+
+def cheques_from_billz(rows: list[dict[str, Any]], day: date) -> tuple[list[Cheque], int]:
     """One day's BILLZ cheque lines grouped into cheques.
 
     Returns:
-        ``(cheques, lines_without_id)`` — the second is True when some line
-        carried no cheque id, so that day can only be compared in total.
+        ``(cheques, money_without_cheque_id)`` — so'm on lines that carried no
+        cheque id; when that isn't 0 the day can only be compared in total.
     """
     cheques: dict[str, Cheque] = {}
-    unkeyed = False
+    unkeyed = 0.0
     for row in rows:
         number = str(row.get("order_number") or "").strip()
         key = str(row.get("order_id") or number).strip()
+        amount = _line_amount(row)
         if not key:
-            unkeyed = unkeyed or bool(_num(row.get("net_sales")) or _num(row.get("gross_sales")))
+            unkeyed += amount
             continue
-        if row.get("net_sales") is not None:
-            amount = _num(row.get("net_sales"))
-        else:
-            amount = _num(row.get("gross_sales")) - _num(row.get("returned_sales_sum"))
         cheque = cheques.setdefault(
             key,
             Cheque(key=f"{day}:{key}", number=number or key[:8], day=day,
@@ -183,7 +197,7 @@ def cheques_from_billz(rows: list[dict[str, Any]], day: date) -> tuple[list[Cheq
             name=str(row.get("product_name") or "").strip(),
             qty=_num(qty if qty is not None else row.get("sold_measurement_value")),
         ))
-    return [c for c in cheques.values() if c.amount or c.items], unkeyed
+    return [c for c in cheques.values() if c.amount or c.items], round(unkeyed)
 
 
 def _som_amount(header: dict[str, Any]) -> int:
@@ -315,6 +329,12 @@ def cancel_returns(cheques: list[Cheque]) -> tuple[list[Cheque], int]:
     return [c for c in left if c.key not in gone], pairs
 
 
+def totals_only(day: date, billz_total: int, docs: list[Doc]) -> Result:
+    """BILLZ gave lines without cheque ids: only the day's totals can be compared."""
+    return Result(day=day, docs_day=[d for d in docs if d.day == day], no_cheque_numbers=True,
+                  billz_total=billz_total)
+
+
 def check(
     cheques: list[Cheque], docs: list[Doc], day: date, *, no_cheque_numbers: bool = False
 ) -> Result:
@@ -388,21 +408,25 @@ def render(result: Result, *, pushed_at: datetime | None = None, day_end: dateti
     if pushed_at is not None and day_end is not None and pushed_at < day_end:
         note = (f"\n<i>SAP маълумоти {pushed_at.strftime('%d.%m %H:%M')} ҳолатига — "
                 "ундан кейин киритилганлари бу ерда кўринмайди.</i>")
-    billz_total = sum(c.amount for c in result.cheques_day)
+    billz_total = result.billz_amount
+    if result.no_cheque_numbers:
+        diff = billz_total - result.sap_amount
+        verdict = "✅ жами мос" if result.ok else f"🔴 фарқи {som(abs(diff))} ({'Billz кўп' if diff > 0 else 'SAP кўп'})"
+        return (f"{title}\nBillz: {som(billz_total)}\nSAP: {len(result.docs_day)} та ҳужжат — "
+                f"{som(result.sap_amount)}\n⚠️ Billz чек рақамларини бермади — фақат жами солиштирилди: "
+                f"{verdict}.{note}")
     if result.ok:
         if not result.cheques_day:
             return f"{title}\n✅ Кеча дўконларда сотув бўлмаган, SAP'да ҳам ҳужжат йўқ.{note}"
         return (f"{title}\n✅ Кечаги {len(result.cheques_day)} та чекнинг ҳаммаси SAP'га киритилган "
                 f"({som(billz_total)}).{note}")
 
-    sap_total = sum(d.amount for d in result.docs_day)
+    sap_total = result.sap_amount
     lines = [
         title,
         f"Billz: {len(result.cheques_day)} та чек — {som(billz_total)}",
         f"SAP: {len(result.docs_day)} та ҳужжат — {som(sap_total)}",
     ]
-    if result.no_cheque_numbers:
-        lines += ["", "⚠️ Billz чек рақамларини бермади — фақат жами солиштирилди."]
     if result.missing:
         total = sum(c.amount for c in result.missing)
         bullets = []
@@ -459,8 +483,8 @@ def summary(result: Result) -> dict[str, Any]:
 
     return {
         "day": str(result.day),
-        "billz": {"cheques": len(result.cheques_day), "amount": sum(c.amount for c in result.cheques_day)},
-        "sap": {"documents": len(result.docs_day), "amount": sum(d.amount for d in result.docs_day)},
+        "billz": {"cheques": len(result.cheques_day), "amount": result.billz_amount},
+        "sap": {"documents": len(result.docs_day), "amount": result.sap_amount},
         "missing": [cheque(c) for c in result.missing],
         "amount_diff": [{"cheque": cheque(p.cheque), "doc": doc(p.doc)} for p in result.amount_diff],
         "late": [{"cheque": cheque(p.cheque), "doc": doc(p.doc)} for p in result.late],

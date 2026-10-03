@@ -3658,6 +3658,7 @@ def test_billz_sap_check() -> None:
 
     from integrations.billz import sap_check as sc
     from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
     from integrations.common.timeutil import TASHKENT
 
     check("one list for every shop", sc.warehouse_map("G.A._01, 05"), {"": {"G.A._01", "05"}})
@@ -3680,8 +3681,8 @@ def test_billz_sap_check() -> None:
     check("lines grouped into cheques", sorted((c.number, c.amount, len(c.items)) for c in cheques),
           [("1201", 3300000, 1), ("1202", 870000, 2)])
     check_true("every line had a cheque id", not unkeyed)
-    check_true("a line with money but no cheque id is flagged",
-               sc.cheques_from_billz([{"net_sales": 100, "product_name": "x"}], day)[1])
+    check("money on lines without a cheque id is counted apart",
+          sc.cheques_from_billz([{"net_sales": 100, "product_name": "x"}, {"order_id": "o9", "net_sales": 5}], day)[1], 100)
 
     def header(entry, num, docdate, created, total, *, obj=13, canc="N", ts=190516):
         return {"ObjType": obj, "DocEntry": entry, "DocNum": num, "CardName": "B2C клиенты", "DocDate": docdate,
@@ -3762,6 +3763,23 @@ def test_billz_sap_check() -> None:
     summary = sc.summary(merged)
     check_true("stored summary", summary["missing"][0]["number"] == "77" and summary["billz"]["cheques"] == 3)
 
+    # BILLZ without cheque ids: totals only, never a false "missing" or "extra"
+    shop_docs = agent.all_shop_docs(sales, lines, sc.warehouse_map("G.A._01,05"))
+    check("every mapped warehouse's documents, once", sorted(d.number for d in shop_docs), ["2411", "2412", "33"])
+    same = sc.totals_only(day, 3720000, shop_docs)
+    check_true("totals match: ok", same.ok and not same.missing and not same.extra)
+    off = sc.totals_only(day, 9000000, shop_docs)
+    off_text = sc.render(off)
+    check_true("totals differ: said once, with the gap, no cheque lists",
+               not off.ok and "фақат жами солиштирилди" in off_text and "Billz кўп" in off_text
+               and "киритилмаган" not in off_text and "SAP'да бор" not in off_text)
+
+    # on trial the admin gets it first, with a note on how to switch it on for the Director
+    check_true("trial is on until the first results are confirmed", settings.billz_sap_check_trial is True)
+    check_true("the trial copy says how to switch it on",
+               "BILLZ_SAP_CHECK_TRIAL=false" in agent.trial_text("x") and latin_words(agent.trial_text("x"),
+               allow={"Render", "BILLZ", "CHECK", "TRIAL", "false", "x"}) == [])
+
     # what is asked from BILLZ: one day, cheque lines, every shop
     import asyncio
     import contextlib
@@ -3770,7 +3788,6 @@ def test_billz_sap_check() -> None:
     from pydantic import SecretStr
 
     from integrations.billz import client as bz
-    from integrations.common.config import settings
 
     seen: list = []
 

@@ -18,7 +18,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | B2 | 30-day cash calendar | Monday 08:00 · any time: "pul kalendari" | Director, accountants | `CASH_CALENDAR_ENABLED` |
 | B4 | Data quality check | Monday 08:00 · `/sifat` | admin (IT) | `DATA_QUALITY_ENABLED` |
 | E1 | KPI per employee — the Director's 15 criteria as 6 parts (goals/OKR, tasks, rating, volume, process, commitment) | `/maqsad` `/kpi` `/natija` `/baho` · 1st: ratings · final by the 5th | Director, HR, each employee (own card) | `MONTHLY_KPI_ENABLED` |
-| — | Receivables alert (overdue debt by age) — complete (paid part taken off) once the gateway has `get_open_invoices` | 08:00 daily | Director | — |
+| — | Receivables alert (overdue debt by age) — complete, paid part taken off (gateway `get_open_invoices`, 2026-10-03) | 08:00 daily | Director | — |
 | F2 | Lead Agent: tender and lead search (Londry, Garmin/Tanita), to the leads sheet | 08:00 daily (resumed 2026-09-30) | Director (summary) + Google leads sheet | `LEAD_AGENT_ENABLED` (**true**) |
 | — | Q&A — the Director asks about reports, tasks, KPI, permissions, debt, cash plan, SAP data | on question | Director | — |
 | — | Tasks: the Director ticks who gets each one (the bot's guess pre-ticked), nothing goes out before Юбориш | on message | employees, Director | — |
@@ -28,7 +28,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | — | Days off and announcements: Admin Bot `/dam` stops everything employee-facing on a holiday; `/elon` tells everyone (e.g. a technical error) | on demand | employees | — |
 | A2+ | Cash in the brief from 1C (bank + cash desk, change since yesterday); "hisobda qancha pul?" | 08:00 · any time · `/1c` check | Director | `ONEC_ODATA_URL` / `ONEC_LOGIN` / `ONEC_PASSWORD` |
 | — | Shop sales from BILLZ: yesterday per shop in the brief; shops, sellers, top products on question | 08:00 · any time: "do'konlarda savdo" · `/billz` check | Director | `BILLZ_SECRET_TOKEN` (set, working since 2026-10-02) |
-| B3− | Billz → SAP check: every shop cheque must be in SAP the same day — not entered, wrong amount, entered late, in SAP but not in Billz (`docs/agent-specs/17-billz-sap-check.md`) | 08:00 daily (yesterday; missing cheques repeated until entered) | Director (+ `BILLZ_SAP_CHECK_ROLES`) | `BILLZ_SAP_CHECK_ENABLED`; **waits for the gateway tool `get_sales_by_date`** |
+| B3− | Billz → SAP check: every shop cheque must be in SAP the same day — not entered, wrong amount, entered late, in SAP but not in Billz (`docs/agent-specs/17-billz-sap-check.md`) | 08:00 daily (yesterday; missing cheques repeated until entered) | Director (+ `BILLZ_SAP_CHECK_ROLES`) | `BILLZ_SAP_CHECK_ENABLED`; **trial**: to the admin until the first results are confirmed (`BILLZ_SAP_CHECK_TRIAL=false` → Director) |
 | — | Work AI: every employee's message about their work and tasks is answered by the AI (honest, no company data); the bot carries no text between people — only files, after "what is it for?" | on message, 60 a day | employees | Admin Bot `/xodimlar` → 🤖 (off for one person) |
 | — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
@@ -59,12 +59,11 @@ None. The Lead Agent (F2), paused on 2026-09-16, was switched back on on
 | D2 | Documents & certificates | Nothing technical — rare work, the plan puts it later |
 | E2 | AI operations manager | The plan says build it last, on top of A1, A2, A3, B1, B2; OPS Manager Bot already covers part of it |
 
-**The cheapest unblock:** three new tools in the SAP gateway
-(`docs/sap-gateway-tools.md`: `get_open_invoices`, `get_sales_by_date`,
-`get_stock_value` — fixed SQL, small results, per the gateway's own rules).
-The push script already uses them as soon as they exist. They make the
-brief's sales, stock and debt complete and start the Billz → SAP check; more
-tools of the same kind open C3, D1, C2, C4, C5.
+**The cheapest unblock:** more SAP gateway tools of the same kind as the
+three added on 2026-10-03 (`docs/sap-gateway-tools.md`, "Later"): equipment
+cards + service calls open C4; item stock with last purchase dates opens C3
+and D1; open purchase invoices complete B2's money out; longer sales history
+opens C2 and C5.
 
 ## Keeping this current
 

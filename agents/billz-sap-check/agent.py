@@ -9,7 +9,9 @@ morning instead of a person. The rules are in ``integrations/billz/sap_check.py`
 Runs at 08:00 with the morning agents, for yesterday (cheques of the last 14
 days that never reached SAP are repeated until they do). The Director gets
 one message: a ✅ line when everything matches, the list when not. Other
-roles can be added with ``BILLZ_SAP_CHECK_ROLES``.
+roles can be added with ``BILLZ_SAP_CHECK_ROLES``. While
+``BILLZ_SAP_CHECK_TRIAL`` is on (the default until the first results are
+confirmed), it goes to the admin in Admin Bot instead.
 
 Needs both sides: BILLZ (``BILLZ_SECRET_TOKEN``) and SAP's invoice lines from
 the gateway tool ``get_sales_by_date`` (``docs/sap-gateway-tools.md``; today's
@@ -78,30 +80,33 @@ async def _sap_rows(tool: str) -> list[dict[str, Any]]:
     ]
 
 
-async def billz_cheques(start: date, end: date, run_id: uuid.UUID) -> tuple[list[sap_check.Cheque], bool, list[str]]:
+async def billz_cheques(
+    start: date, end: date, run_id: uuid.UUID
+) -> tuple[list[sap_check.Cheque], dict[date, int], list[str]]:
     """Every cheque of every shop, day by day.
 
     Returns:
-        ``(cheques, some_day_without_cheque_ids, shop_names)``.
+        ``(cheques, so'm on lines without a cheque id per day, shop_names)``.
     """
     cheques: list[sap_check.Cheque] = []
-    unkeyed = False
+    unkeyed: dict[date, int] = {}
     async with BillzClient(agent=AGENT, run_id=run_id) as client:
         shops = [s for s in await client.shops() if s.get("id") and not s.get("deleted_at")]
         shop_ids = [str(s["id"]) for s in shops]
         day = start
         while day <= end and shop_ids:
             await asyncio.sleep(PAUSE)
-            found, no_ids = sap_check.cheques_from_billz(await client.positions(day, shop_ids), day)
+            found, without_id = sap_check.cheques_from_billz(await client.positions(day, shop_ids), day)
             cheques += found
-            unkeyed |= no_ids
+            if without_id:
+                unkeyed[day] = without_id
             day += timedelta(days=1)
     return cheques, unkeyed, [str(s.get("name") or "") for s in shops]
 
 
 def compare(
     cheques: list[sap_check.Cheque], sales: list[dict[str, Any]], lines: list[dict[str, Any]], day: date,
-    mapping: dict[str, set[str]], *, no_cheque_numbers: bool = False,
+    mapping: dict[str, set[str]],
 ) -> sap_check.Result:
     """Check each group of shops against the SAP warehouses they sell from, then merge."""
     groups: dict[frozenset[str], list[sap_check.Cheque]] = defaultdict(list)
@@ -113,7 +118,7 @@ def compare(
             groups[codes].append(cheque)
         else:
             log.warning("Billz shop '{}' has no SAP warehouse in BILLZ_SAP_WAREHOUSES — not checked", cheque.shop)
-    merged = sap_check.Result(day=day, no_cheque_numbers=no_cheque_numbers)
+    merged = sap_check.Result(day=day)
     for codes, group in groups.items():
         part = sap_check.check(group, sap_check.docs_from_sap(sales, lines, codes), day)
         merged.cheques_day += part.cheques_day
@@ -124,6 +129,14 @@ def compare(
         merged.extra += part.extra
         merged.returned += part.returned
     return merged
+
+
+def all_shop_docs(
+    sales: list[dict[str, Any]], lines: list[dict[str, Any]], mapping: dict[str, set[str]]
+) -> list[sap_check.Doc]:
+    """SAP documents of every mapped warehouse, each once."""
+    codes = frozenset(c for group in mapping.values() for c in group)
+    return sap_check.docs_from_sap(sales, lines, codes)
 
 
 async def _recipients() -> dict[int, dict[str, Any]]:
@@ -149,7 +162,24 @@ async def _save(day: date, status: str, result: dict[str, Any], sent: bool) -> N
     )
 
 
+def trial_text(text: str) -> str:
+    """The admin's copy while the check is on trial."""
+    return ("🧪 <i>Синов: Директорга ҳали юборилмайди. Тўғри бўлса, Render'да "
+            "BILLZ_SAP_CHECK_TRIAL=false қилинг.</i>\n\n" + text)
+
+
 async def _send(text: str, run_id: uuid.UUID) -> int:
+    if settings.billz_sap_check_trial:
+        async with TelegramBot(
+            agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+            default_chat_id=settings.admin_bot_telegram_chat_id,
+        ) as bot:
+            try:
+                await bot.send_message(trial_text(text))
+                return 1
+            except TelegramError as exc:
+                log.error("Could not send the Billz–SAP trial to the admin: {}", exc)
+                return 0
     sent = 0
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
@@ -204,8 +234,15 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         start = day - timedelta(days=sap_check.WINDOW_DAYS - 1)
         cheques, unkeyed, shops = await billz_cheques(start, day, run_id)
         mapping = sap_check.warehouse_map(settings.billz_sap_warehouses)
-        checked = compare(cheques, await _sap_rows("sales"), await _sap_rows("sales_lines"), day, mapping,
-                          no_cheque_numbers=unkeyed)
+        sales, lines = await _sap_rows("sales"), await _sap_rows("sales_lines")
+        if unkeyed:
+            # BILLZ gave lines without cheque ids: no cheque can be named, so
+            # only yesterday's totals are compared — never a false "missing".
+            log.warning("BILLZ lines without cheque ids on {} — comparing totals only", sorted(unkeyed))
+            billz_total = sum(c.amount for c in cheques if c.day == day) + unkeyed.get(day, 0)
+            checked = sap_check.totals_only(day, billz_total, all_shop_docs(sales, lines, mapping))
+        else:
+            checked = compare(cheques, sales, lines, day, mapping)
         day_end = datetime.combine(today, time.min, tzinfo=TASHKENT)
         text = sap_check.render(checked, pushed_at=pushed_at, day_end=day_end)
         status, result = checked.status, {**sap_check.summary(checked), "shops": shops,
@@ -213,7 +250,8 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
 
     if settings.dry_run:
         print(text)
-        log.info("[dry run] status={}, would go to {} person(s)", status, len(await _recipients()))
+        where = "the admin (trial)" if settings.billz_sap_check_trial else f"{len(await _recipients())} person(s)"
+        log.info("[dry run] status={}, would go to {}", status, where)
         return 0
 
     sent = await _send(text, run_id)

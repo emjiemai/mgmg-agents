@@ -4,6 +4,8 @@ For: whoever maintains the local SAP gateway (Node.js, `localhost:3000`,
 `SAP_B1_AI_AGENT_TEACHING_UPDATED.md`).
 From: the MGMG Command Center (`push-ar-aging.ps1` pushes gateway results to
 `mgmg-api`), 2026-10-03.
+**Status:** added to the gateway by Abdulbosit on 2026-10-03 (the owner's word;
+`push-ar-aging.ps1 -Check` shows each tool's row count).
 
 ## Why
 

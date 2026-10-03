@@ -7,9 +7,10 @@
 **Switches:** `BILLZ_SAP_CHECK_ENABLED` (default on), `BILLZ_SAP_WAREHOUSES`,
 `BILLZ_SAP_CHECK_ROLES`
 **Needs:** BILLZ (`BILLZ_SECRET_TOKEN`) and SAP's invoice lines from the
-gateway tool **`get_sales_by_date`** (`docs/sap-gateway-tools.md`, to be added
-by the gateway's maintainer) — today's capped tools carry no lines, warehouse
-or so'm total. Until its data has arrived once, the agent exits quietly.
+gateway tool **`get_sales_by_date`** (`docs/sap-gateway-tools.md`; added by
+the gateway's maintainer 2026-10-03) — the older capped tools carry no lines,
+warehouse or so'm total. Until its data has arrived once, the agent exits
+quietly.
 
 ## Why (the owner, 2026-10-03)
 
@@ -76,6 +77,16 @@ Otherwise:
 
 Who: the Director; more roles with `BILLZ_SAP_CHECK_ROLES` (e.g.
 `garmin_sotuv` so the shop sees what it must enter).
+
+**Trial first** (`BILLZ_SAP_CHECK_TRIAL`, on by default): BILLZ's per-cheque
+report hasn't been seen with real data yet, so until the admin confirms the
+first mornings match the shop, the message goes to the admin in Admin Bot
+("🧪 Синов…"), not the Director. `BILLZ_SAP_CHECK_TRIAL=false` in Render
+switches it over.
+
+If BILLZ ever gives lines without a cheque id, no cheque can be named:
+only yesterday's totals are compared ("фақат жами солиштирилди"), never a
+false "not entered" list.
 
 ## Settings
 
