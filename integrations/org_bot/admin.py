@@ -47,6 +47,10 @@ BILLZ_COMMAND = "/billz"
 ONEC_COMMANDS = ("/1c", "/1с")
 # "/dam" -> the next two weeks; tap a day to make it a day off (or a working day again).
 DAY_OFF_COMMANDS = ("/dam", "/damolish", "/dayoff")
+# "/grafik" -> who is on "эркин график" (never late/absent in Verifix's reports)
+FLEXIBLE_COMMANDS = ("/grafik", "/erkin")
+# Verifix people seen in this many days are listed on /grafik.
+FLEXIBLE_LOOKBACK_DAYS = 30
 DAY_OFF_DAYS = 14
 # "/elon" (+ text) -> one message to every employee, after a confirm tap.
 ANNOUNCE_COMMAND = "/elon"
@@ -203,6 +207,8 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await load_agent("data-quality").check_now(run_id)
     if text == VERIFIX_COMMAND:
         return await _check_verifix(run_id)
+    if text in FLEXIBLE_COMMANDS:
+        return await _show_flexible(run_id)
     if text == BILLZ_COMMAND:
         return await _check_billz(run_id)
     if text in ONEC_COMMANDS:
@@ -267,7 +273,8 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
         else:
             grace = settings.verifix_late_grace_minutes
             recs = attendance.records(
-                rows, attendance.classify_kinds(raw_kinds), grace=grace, now=now_local().replace(tzinfo=None)
+                rows, attendance.classify_kinds(raw_kinds), grace=grace, now=now_local().replace(tzinfo=None),
+                flexible=await attendance.flexible_ids(),
             )
             day = attendance.summarize(recs, today)
             text, outcome = (
@@ -461,7 +468,8 @@ def employee_list_view(employees: list[dict[str, Any]]) -> tuple[str, dict[str, 
         buttons.append([{"text": f"👤 {full_name or emp['display_name']} ({label})", "callback_data": f"emp:{emp['id']}"}])
     lines.append(
         "\n<i>Ходимни танланг: исм, роль ёки ўчириш. "
-        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat · QR код: /qr · Давомат: /verifix</i>"
+        "Исм ёзмаганлардан сўраш: /ismlar · Маълумот сифати: /sifat · QR код: /qr · Давомат: /verifix · "
+        "Эркин график: /grafik</i>"
     )
     return "\n".join(lines), {"inline_keyboard": buttons}
 
@@ -603,6 +611,90 @@ async def _show_days_off(run_id: uuid.UUID) -> str:
     ) as bot:
         await bot.send_message(text, reply_markup=keyboard)
     return "days_off_shown"
+
+
+def flexible_view(people: dict[str, str], flexible: set[str]) -> tuple[str, dict[str, Any]]:
+    """/grafik: everyone Verifix knows, a tap marks or unmarks "эркин график".
+
+    Args:
+        people: Verifix id -> name (Cyrillic).
+        flexible: The ids marked now.
+    """
+    marked = sum(1 for pid in people if pid in flexible)
+    text = (
+        "🕘 <b>Эркин график</b>\n"
+        "Белгиланганлар брифингда «кечикди» ёки «келмади» деб чиқмайди — фақат сони кўрсатилади.\n"
+        f"<i>Белгиланган: {marked} / {len(people)}. Исмни босинг — белги қўйилади ёки олинади.</i>"
+    )
+    rows = [
+        [{"text": f"{'✅' if pid in flexible else '⬜'} {name}", "callback_data": f"flex:{pid}"}]
+        for pid, name in sorted(people.items(), key=lambda kv: kv[1])
+    ]
+    return text, {"inline_keyboard": rows}
+
+
+def people_on_keyboard(keyboard: dict[str, Any] | None) -> dict[str, str]:
+    """Verifix id -> name, read back from a /grafik keyboard (no Verifix call on a tap)."""
+    people: dict[str, str] = {}
+    for row in (keyboard or {}).get("inline_keyboard") or []:
+        for button in row:
+            data = str(button.get("callback_data") or "")
+            if data.startswith("flex:"):
+                people[data[len("flex:"):]] = str(button.get("text") or "").split(" ", 1)[-1]
+    return people
+
+
+async def _show_flexible(run_id: uuid.UUID) -> str:
+    """/grafik: list the people Verifix knows, with their "эркин график" marks."""
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        if not settings.verifix_configured:
+            await bot.send_message("🕘 Verifix уланмаган — аввал /verifix.")
+            return "flexible_no_verifix"
+        from integrations.common.translit import name_to_cyrillic
+        from integrations.verifix.client import VerifixClient
+
+        today = today_local()
+        try:
+            async with VerifixClient(agent=AGENT, run_id=run_id) as client:
+                rows = await client.timesheet(today - timedelta(days=FLEXIBLE_LOOKBACK_DAYS), today)
+        except Exception as exc:  # noqa: BLE001 — the admin needs the reason
+            log.error("Verifix list for /grafik failed: {}", exc)
+            await bot.send_message(f"❌ Verifix'дан рўйхат олинмади.\n{escape(str(exc)[:300])}")
+            return "flexible_failed"
+        people = {
+            str(r["employee_id"]): name_to_cyrillic(str(r.get("employee_name") or "")) or f"#{r['employee_id']}"
+            for r in rows if r.get("employee_id") is not None
+        }
+        if not people:
+            await bot.send_message("🕘 Verifix'да сўнгги 30 кунда ҳеч ким йўқ.")
+            return "flexible_empty"
+        text, keyboard = flexible_view(people, await store.flexible_schedule_ids())
+        await bot.send_message(text, reply_markup=keyboard)
+    return "flexible_shown"
+
+
+async def _toggle_flexible(
+    verifix_id: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID
+) -> str:
+    people = people_on_keyboard((callback.get("message") or {}).get("reply_markup"))
+    if verifix_id not in people:
+        await _answer(query_id, "Рўйхат эскирган — /grafik ни қайта очинг")
+        return "unrecognized"
+    name = people[verifix_id]
+    now_flexible = await store.toggle_flexible_schedule(verifix_id, name, decided_by)
+    await log_action(
+        agent=AGENT, action="flexible_set" if now_flexible else "flexible_cleared", target_system="postgres",
+        status="success", run_id=run_id, target_ref=verifix_id, mode="write", payload={"by": decided_by, "name": name},
+    )
+    text, keyboard = flexible_view(people, await store.flexible_schedule_ids())
+    await _edit(callback, text, keyboard, run_id)
+    await _answer(query_id, f"{name} — {'эркин график' if now_flexible else 'одатдаги график'}")
+    return "flexible_set" if now_flexible else "flexible_cleared"
 
 
 async def _toggle_day_off(target: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -896,6 +988,9 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action == "doff":
         return await _toggle_day_off(target_id, query_id, decided_by, callback, run_id)
+
+    if action == "flex":
+        return await _toggle_flexible(target_id, query_id, decided_by, callback, run_id)
 
     if action in ("ann", "annx"):
         return await _send_announcement(target_id, action == "ann", query_id, callback, run_id)

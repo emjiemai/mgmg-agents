@@ -45,6 +45,17 @@ From Verifix's own timesheet (`timesheet$export`), per employee per day:
 - **Left early** — noted in the bot's answers (not in the brief).
 - Names are shown in Cyrillic; names typed in Latin in Verifix are converted
   ("G'ofurov Sherzod" → "Ғофуров Шерзод").
+- **Эркин график** (2026-10-03) — most staff come when work needs them or
+  the Director calls, so Verifix's fixed 09:00 start made them "late" or
+  "absent" daily (on 02.10 the Director himself was "келмади"). The admin
+  marks these people in Admin Bot **`/grafik`**: everyone Verifix knows
+  from the last 30 days, one button each (⬜ → ✅), stored by Verifix id in
+  `attendance_flexible`. A marked person is never late or absent: the brief
+  only counts them ("· эркин графикда 7 киши"), the Director's questions
+  still see whether and when they came, and KPI counts no late/absent for
+  them. Marked by Verifix id, not on the `/xodimlar` card: Verifix has
+  people the bot doesn't, and its names carry patronymics ("Исоқов Улуғбек
+  Дониёр ўғли") that don't match the names typed in the bot.
 
 ## Connecting it (once)
 

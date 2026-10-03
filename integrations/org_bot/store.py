@@ -2052,6 +2052,29 @@ async def toggle_day_off(day: date, set_by: str) -> bool:
     return True
 
 
+# ----------------------------------------------------- flexible schedule
+
+
+async def flexible_schedule_ids() -> set[str]:
+    """Verifix ids of the people on "эркин график" (never judged late or absent)."""
+    return {r["verifix_id"] for r in await fetch_all("SELECT verifix_id FROM attendance_flexible")}
+
+
+async def toggle_flexible_schedule(verifix_id: str, name: str, set_by: str) -> bool:
+    """Mark someone as on "эркин график", or take the mark off. Returns True if now marked."""
+    removed = await fetch_one(
+        "DELETE FROM attendance_flexible WHERE verifix_id = %s RETURNING verifix_id", (verifix_id,)
+    )
+    if removed is not None:
+        return False
+    await execute(
+        "INSERT INTO attendance_flexible (verifix_id, name, set_by) VALUES (%s, %s, %s) "
+        "ON CONFLICT (verifix_id) DO NOTHING",
+        (verifix_id, name, set_by),
+    )
+    return True
+
+
 # ----------------------------------------------------------- announcements
 
 

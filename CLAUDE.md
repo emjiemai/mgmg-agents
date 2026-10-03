@@ -43,8 +43,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - 1C «Бухгалтерия для Узбекистана» on Clobus, OData read-only (`integrations/onec/`, `docs/agent-specs/16-1c.md`):
   Admin `/1c` check; brief «💰 Касса» = 1C class-5000 balances (bank / нақд); Q&A `pul_qoldigi`.
 - Verifix logs in with VERIFIX_LOGIN/PASSWORD/FILIAL_ID (works since 2026-10-01). Most staff are on
-  "эркин график" (come when needed / when the Director calls), so its late/absent list is mostly noise
-  for them (the owner, 2026-10-03) — a per-person flexible-schedule mark is not built yet.
+  "эркин график" (come when needed / when the Director calls): Admin Bot **`/grafik`** marks them by
+  Verifix id (2026-10-03) — never late/absent, the brief only counts them, KPI doesn't penalize them.
 - BILLZ (shop tills, read-only, `integrations/billz/`, `docs/agent-specs/15-billz.md`): brief block,
   Q&A agent `billz_savdo`, Admin `/billz`. `BILLZ_SECRET_TOKEN` is set in Render and works
   (one shop sells: GARMIN ABAY) — don't list it as missing.

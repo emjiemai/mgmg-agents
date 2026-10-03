@@ -19,6 +19,10 @@ The rules, stated so nobody has to guess what a number means:
     business trip or a day off for that day; an hourly leave excuses coming
     late. Which fact is which is read from the company's own time-kind
     names (time_kind$list), so a renamed kind still lands right.
+  * **Эркин график** (2026-10-03) = people the admin marked in Admin Bot
+    /grafik: they come when work needs them or the Director calls, so they
+    are never late or absent — the brief only counts them, and the
+    Director's questions still see when they came.
 """
 
 from __future__ import annotations
@@ -29,9 +33,12 @@ from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 from integrations.common.config import settings
+from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import fmt_date
 from integrations.common.translit import name_to_cyrillic
 from integrations.telegram.bot import escape
+
+log = setup_logging("verifix-attendance")
 
 # Category -> how the Director reads it.
 EXCUSES = {
@@ -99,10 +106,11 @@ class DayRecord:
     arrived: datetime | None = None
     left: datetime | None = None
     categories: set[str] = field(default_factory=set)
-    status: str = "off"  # off | on_time | present | late | absent | not_yet | before_start | excused
+    status: str = "off"  # off | on_time | present | late | absent | not_yet | before_start | excused | flexible
     late_minutes: int = 0
     early_minutes: int = 0
     excuse: str | None = None
+    flexible: bool = False  # on "эркин график" (Admin Bot /grafik)
 
 
 def _minutes(later: datetime, earlier: datetime) -> int:
@@ -110,7 +118,8 @@ def _minutes(later: datetime, earlier: datetime) -> int:
 
 
 def records(
-    rows: Iterable[dict[str, Any]], kinds: dict[str, str], *, grace: int, now: datetime | None = None
+    rows: Iterable[dict[str, Any]], kinds: dict[str, str], *, grace: int, now: datetime | None = None,
+    flexible: set[str] | frozenset[str] = frozenset(),
 ) -> list[DayRecord]:
     """Turn timesheet rows into per-day records with a status.
 
@@ -120,6 +129,7 @@ def records(
         grace: Minutes after the start that still count as on time.
         now: Tashkent wall time (naive) when looking at a day still in
             progress; None for finished days.
+        flexible: Verifix ids of the people on "эркин график".
     """
     out: list[DayRecord] = []
     for row in rows:
@@ -143,6 +153,7 @@ def records(
                     for f in day_row.get("facts") or []
                     if _positive(f.get("fact_value"))
                 },
+                flexible=str(row.get("employee_id")) in flexible,
             )
             _judge(rec, grace, now)
             out.append(rec)
@@ -159,6 +170,11 @@ def _positive(value: Any) -> bool:
 def _judge(rec: DayRecord, grace: int, now: datetime | None) -> None:
     if not rec.working:
         rec.status = "off"
+        return
+    if rec.flexible:
+        # Эркин график: no start time to be late for, and a day without
+        # coming in isn't an absence.
+        rec.status = "flexible"
         return
     full_day = next((c for c in FULL_DAY_EXCUSES if c in rec.categories), None)
     if full_day:
@@ -201,6 +217,8 @@ class DaySummary:
     not_yet: list[DayRecord] = field(default_factory=list)
     excused: list[DayRecord] = field(default_factory=list)
     arrived: int = 0
+    flexible: int = 0  # on "эркин график" with a working day — counted, never judged
+    flexible_came: int = 0
 
 
 def summarize(recs: Iterable[DayRecord], day: date) -> DaySummary:
@@ -208,6 +226,10 @@ def summarize(recs: Iterable[DayRecord], day: date) -> DaySummary:
     summary = DaySummary(day=day)
     for rec in recs:
         if rec.day != day or rec.status in ("off", "before_start"):
+            continue
+        if rec.status == "flexible":
+            summary.flexible += 1
+            summary.flexible_came += rec.arrived is not None
             continue
         summary.scheduled += 1
         if rec.arrived is not None:
@@ -226,8 +248,13 @@ def summarize(recs: Iterable[DayRecord], day: date) -> DaySummary:
 
 def render_day(summary: DaySummary, max_lines: int = 5) -> str | None:
     """The brief's attendance block, or None when nobody had a working day."""
+    label = fmt_date(summary.day)
+    flexible = f" · эркин графикда {summary.flexible} киши" if summary.flexible else ""
     if summary.scheduled == 0:
-        return None
+        if not summary.flexible:
+            return None
+        return (f"🕘 <b>Давомат ({label}):</b> фақат эркин графикдагилар — {summary.flexible} киши, "
+                f"{summary.flexible_came} таси келди\n")
     missing = summary.absent + summary.not_yet
     parts = []
     if summary.late:
@@ -238,14 +265,13 @@ def render_day(summary: DaySummary, max_lines: int = 5) -> str | None:
         parts.append(f"{len(summary.not_yet)} киши ҳали келмади")
     if summary.excused:
         parts.append(f"{len(summary.excused)} киши сабабли")
-    label = fmt_date(summary.day)
     if not (summary.late or missing or summary.excused):
-        return f"🟢 <b>Давомат ({label}):</b> ҳамма ўз вақтида келди — {summary.scheduled} киши\n"
+        return f"🟢 <b>Давомат ({label}):</b> ҳамма ўз вақтида келди — {summary.scheduled} киши{flexible}\n"
 
     emoji = "🔴" if missing else "🟡" if summary.late else "🟢"
     if not (summary.late or missing):
         parts.insert(0, "кечиккан ва сабабсиз келмаган йўқ")
-    lines = [f"{emoji} <b>Давомат ({label}):</b> {', '.join(parts)} — {summary.scheduled} кишидан"]
+    lines = [f"{emoji} <b>Давомат ({label}):</b> {', '.join(parts)} — {summary.scheduled} кишидан{flexible}"]
     entries = (
         [f"{escape(r.name)} — келмади" for r in summary.absent]
         + [f"{escape(r.name)} — ҳали келмади" for r in summary.not_yet]
@@ -264,7 +290,9 @@ def describe(recs: list[DayRecord], today: date, now: datetime) -> str:
     lines = [
         "Attendance from Verifix (face-ID terminals). Times are Tashkent local. "
         f"Late = first arrival more than {grace} min after the schedule's start; absent = a working "
-        "day with no arrival and no recorded sick leave/vacation/trip/day off. Days off are not counted.",
+        "day with no arrival and no recorded sick leave/vacation/trip/day off. Days off are not counted. "
+        "People on a flexible schedule (эркин график — they come when work needs them or the Director "
+        "calls) are never late or absent: only whether and when they came.",
     ]
     for label, day in (("TODAY", today), ("YESTERDAY", today - timedelta(days=1))):
         s = summarize(recs, day)
@@ -278,6 +306,13 @@ def describe(recs: list[DayRecord], today: date, now: datetime) -> str:
             f"{'Not arrived yet' if day == today else 'Absent'}: {_names(s.not_yet + s.absent) or 'nobody'}. "
             f"Excused: {', '.join(f'{r.name} ({r.excuse})' for r in s.excused) or 'nobody'}."
         )
+        flex = [r for r in recs if r.day == day and r.status == "flexible"]
+        if flex:
+            lines.append(
+                f"{label} flexible schedule (not judged): "
+                + ", ".join(f"{r.name} ({'came ' + r.arrived.strftime('%H:%M') if r.arrived else 'not in'})" for r in flex)
+                + "."
+            )
 
     by_person: dict[str, list[DayRecord]] = {}
     for rec in recs:
@@ -288,6 +323,12 @@ def describe(recs: list[DayRecord], today: date, now: datetime) -> str:
         lines.append(f"PER EMPLOYEE, {first} to {today} (working days only):")
         for days in sorted(by_person.values(), key=lambda d: d[0].name):
             name = days[0].name
+            if days[0].flexible:
+                came = sum(1 for r in days if r.arrived is not None)
+                job = f" ({days[0].job})" if days[0].job else ""
+                lines.append(f"- {name}{job}: flexible schedule (эркин график) — came on {came} of "
+                             f"{len(days)} working day(s); late/absent not counted")
+                continue
             late = [r for r in days if r.status == "late"]
             absent = [r for r in days if r.status == "absent"]
             excused = [r for r in days if r.status == "excused"]
@@ -330,4 +371,15 @@ async def load(begin: date, end: date, run_id: uuid.UUID | str | None, agent: st
     async with VerifixClient(agent=agent, run_id=run_id) as client:
         kinds = classify_kinds(await client.time_kinds())
         rows = await client.timesheet(begin, end)
-    return records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now)
+    return records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now, flexible=await flexible_ids())
+
+
+async def flexible_ids() -> set[str]:
+    """Who is on "эркин график" (Admin Bot /grafik); empty if it can't be read."""
+    try:
+        from integrations.org_bot import store  # local: keeps this module importable offline
+
+        return await store.flexible_schedule_ids()
+    except Exception as exc:  # noqa: BLE001 — without the marks everyone is judged as before, not nobody
+        log.warning("Could not read the flexible-schedule marks: {}", exc)
+        return set()

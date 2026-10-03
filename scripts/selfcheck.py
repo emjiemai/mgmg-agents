@@ -2879,6 +2879,100 @@ def test_permission_form() -> None:
     check_true("only form lines changed", all(i > title_at for i in changed))
 
 
+def test_flexible_schedule() -> None:
+    """"Эркин график": marked people are never late or absent; /grafik sets the mark."""
+    print("flexible schedule (эркин график)")
+    import asyncio
+    import uuid
+    from datetime import datetime
+
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, store
+    from integrations.verifix import attendance
+
+    def day(d, came=None):
+        return {"date": d, "day_kind": "W", "begin_time": f"{d} 09:00:00", "end_time": f"{d} 18:00:00",
+                "input_time": f"{d} {came}:00" if came else None, "output_time": None, "facts": []}
+
+    d = "02.10.2026"  # Verifix's own date format
+    rows = [
+        {"employee_id": 7, "employee_name": "Isoqov Ulug'bek", "job_name": "IT", "days": [day(d, came="11:40")]},
+        {"employee_id": 8, "employee_name": "Umarov Shuxrat", "job_name": "Директор", "days": [day(d)]},
+        {"employee_id": 9, "employee_name": "Galimov Rushan", "job_name": "", "days": [day(d, came="10:33")]},
+    ]
+    recs = attendance.records(rows, {}, grace=5, flexible={"7", "8"})
+    check("marked people aren't late or absent; the others still are",
+          [(r.employee_id, r.status) for r in recs], [("7", "flexible"), ("8", "flexible"), ("9", "late")])
+    summary = attendance.summarize(recs, date(2026, 10, 2))
+    check("counted apart", (summary.scheduled, len(summary.late), len(summary.absent), summary.flexible,
+                            summary.flexible_came), (1, 1, 0, 2, 1))
+    block = attendance.render_day(summary)
+    check_true("the brief: the late one, and only a count of the flexible",
+               "1 киши кечикди" in block and "эркин графикда 2 киши" in block
+               and "Исоқов" not in block and "Умаров" not in block and "келмади" not in block)
+    only = attendance.render_day(attendance.summarize(recs[:2], date(2026, 10, 2)))
+    check_true("only flexible people that day: one line", "фақат эркин графикдагилар — 2 киши, 1 таси келди" in only)
+    check_true("the brief lines are Uzbek Cyrillic", latin_words(block + only) == [])
+    text = attendance.describe(recs, date(2026, 10, 3), datetime(2026, 10, 3, 9, 0))
+    check_true("the Director's questions still see when they came",
+               "Исоқов Улуғбек (IT): flexible schedule (эркин график) — came on 1 of 1" in text
+               and "Умаров Шухрат (not in)" in text and "late 160 min" not in text and "late 93 min" in text)
+    check_true("unmarked: judged as before", attendance.records(rows, {}, grace=5)[0].status == "late")
+
+    # Admin Bot /grafik
+    people = {"7": "Исоқов Улуғбек", "8": "Умаров Шухрат", "9": "Галимов Рушан"}
+    view, keyboard = admin.flexible_view(people, {"7"})
+    buttons = [b for row in keyboard["inline_keyboard"] for b in row]
+    check("one button per person, by name, marked ✅",
+          [b["text"] for b in buttons], ["⬜ Галимов Рушан", "✅ Исоқов Улуғбек", "⬜ Умаров Шухрат"])
+    check_true("button data fits Telegram's 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in buttons))
+    check_true("the screen says what the mark does, in Uzbek Cyrillic",
+               "1 / 3" in view and "кечикди" in view and latin_words(view) == [])
+    check("names read back from the keyboard", admin.people_on_keyboard(keyboard), people)
+
+    marks = {"7"}
+    edits: list = []
+    toasts: list = []
+
+    async def toggle(verifix_id, name, set_by):
+        if verifix_id in marks:
+            marks.discard(verifix_id)
+            return False
+        marks.add(verifix_id)
+        return True
+
+    async def current():
+        return set(marks)
+
+    async def fake_edit(callback, text, kb, run_id):
+        edits.append(kb)
+
+    async def fake_answer(query_id, text):
+        toasts.append(text)
+
+    async def no_log(**kwargs):
+        return None
+
+    saved = [(store, "toggle_flexible_schedule", store.toggle_flexible_schedule),
+             (store, "flexible_schedule_ids", store.flexible_schedule_ids),
+             (admin, "_edit", admin._edit), (admin, "_answer", admin._answer), (admin, "log_action", admin.log_action),
+             (settings, "admin_bot_admin_user_id", settings.admin_bot_admin_user_id)]
+    store.toggle_flexible_schedule, store.flexible_schedule_ids = toggle, current
+    admin._edit, admin._answer, admin.log_action, settings.admin_bot_admin_user_id = fake_edit, fake_answer, no_log, 0
+    try:
+        tap = {"id": "q", "data": "flex:8", "from": {"id": 1}, "message": {"reply_markup": keyboard}}
+        check("a tap marks", asyncio.run(admin.handle_admin_callback(tap, uuid.uuid4())), "flexible_set")
+        check_true("...the list updates in place and says who",
+                   "✅ Умаров Шухрат" in str(edits[-1]) and toasts[-1] == "Умаров Шухрат — эркин график")
+        check("a second tap unmarks", asyncio.run(admin.handle_admin_callback(tap, uuid.uuid4())), "flexible_cleared")
+        stale = {**tap, "data": "flex:99"}
+        check("someone not on the list: open /grafik again",
+              asyncio.run(admin.handle_admin_callback(stale, uuid.uuid4())), "unrecognized")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_verifix() -> None:
     """A4 attendance: the Verifix client, late/absent/excused rules, brief, bot, /verifix."""
     print("verifix attendance (A4)")
@@ -4040,6 +4134,7 @@ def main() -> int:
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,
         test_verifix,
+        test_flexible_schedule,
         test_verifix_basic_login,
         test_employee_admin,
         test_kpi,

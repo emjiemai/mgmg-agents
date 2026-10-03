@@ -1042,3 +1042,16 @@ CREATE TABLE IF NOT EXISTS employee_files (
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     resolved_at       TIMESTAMPTZ
 );
+
+-- ---------------------------------------------------------------------------
+-- "Эркин график" (2026-10-03): most staff come when work needs them or the
+-- Director calls, so Verifix's fixed start time made them "late" or "absent"
+-- every day. People marked here (Admin Bot /grafik, by their Verifix id) are
+-- never judged late or absent — the brief only counts them.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS attendance_flexible (
+    verifix_id  TEXT         PRIMARY KEY,
+    name        TEXT         NOT NULL,
+    set_by      TEXT,
+    set_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
