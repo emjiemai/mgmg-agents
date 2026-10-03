@@ -3414,7 +3414,7 @@ def test_sap_full_push() -> None:
     pushed = re.findall(r'Push-CompleteTool -Tool "(\w+)".*?-Kinds @\(([^)]*)\)', script)
     tools = {tool: re.findall(r'"(\w+)"', kinds) for tool, kinds in pushed}
     check("the complete tools the script uses", sorted(tools), ["get_open_invoices", "get_sales_by_date", "get_stock_value"])
-    check_true("...each one is specified for the gateway", all(f"### " in spec and f"`{t}`" in spec for t in tools))
+    check_true("...each one is specified for the gateway", all(re.search(rf"### \d+\. `{t}`", spec) for t in tools))
     check_true("...and every kind they fill is one the receiver stores",
                all(k in push_handler.FULL_DATASETS for kinds in tools.values() for k in kinds))
     check_true("complete data posts to /webhooks/sap-data/", "/webhooks/sap-data/$kind/$PushSecret" in script)
