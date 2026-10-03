@@ -48,11 +48,17 @@ the first run after it appears — nothing to change in the script:
    ```
    It prints one line per tool and ends with `All done.` The same lines go
    to `push-ar-aging.log` next to the script.
-4. Schedule: Task Scheduler → Create Task → Trigger: Daily, repeat every
-   **30 minutes**, indefinitely → Action: `powershell.exe` with
-   `-ExecutionPolicy Bypass -File "C:\path\to\push-ar-aging.ps1"` →
-   Settings: "If the task is already running" → **Do not start a new
-   instance**. An existing task needs no change — the file name is the same.
+4. Schedule it every 30 minutes: put `install-task.ps1` in the same folder
+   (e.g. `C:\mgmg-push\`), open PowerShell with **Run as administrator**, and:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\mgmg-push\install-task.ps1
+   ```
+   It creates the task "MGMG SAP push": runs as SYSTEM (no window, works
+   when nobody is logged in), on battery too, never two copies at once, and
+   starts the first run right away. Running it again replaces the task; it
+   warns if an older task also runs the push script. Check a run with
+   `Get-ScheduledTaskInfo -TaskName "MGMG SAP push"` (`LastTaskResult` 0 =
+   good, 1 = see `push-ar-aging.log`, 2 = settings not filled in).
 
 Keep the machine (and `npm start`) running in the evening: the shop enters
 the day's sales into SAP around 18:00–20:00, and the 08:00 Billz → SAP
@@ -67,6 +73,9 @@ check only sees what the last push carried.
   `SAP_PUSH_WEBHOOK_SECRET`.
 - One tool failing doesn't stop the others; the run ends with "Done with N
   problem(s)" and exit code 1, which Task Scheduler shows as a failure.
+- Works by hand but not from the task? The task runs as SYSTEM, which uses
+  the machine's network settings — a proxy set only for your user isn't
+  seen. Re-create the task under your own account in Task Scheduler.
 
 ## Security
 

@@ -3513,6 +3513,12 @@ def test_sap_full_push() -> None:
                all(k in push_handler.FULL_DATASETS for kinds in tools.values() for k in kinds))
     check_true("complete data posts to /webhooks/sap-data/", "/webhooks/sap-data/$kind/$PushSecret" in script)
     check_true("today's capped tools stay", all(f'-Tool "{t}"' in script for t in ("orders", "inventory", "payments")))
+    installer = (folder / "install-task.ps1").read_text(encoding="utf-8")
+    check_true("the scheduled task: the push script every 30 minutes, one copy at a time, on battery too",
+               all(s in installer for s in ("push-ar-aging.ps1", "-Minutes 30", "IgnoreNew", "-AllowStartIfOnBatteries",
+                                            "-DontStopIfGoingOnBatteries", "-ExecutionPolicy Bypass")))
+    check_true("the installer is plain ASCII and stops on a failed check when pasted",
+               all(ord(ch) < 128 for ch in installer) and installer.split("\n& {", 1)[-1].rstrip().endswith("}"))
     check_true("the receiving route exists",
                any(getattr(r, "path", "") == "/webhooks/sap-data/{dataset}/{secret}" for r in api_app.app.routes))
 
