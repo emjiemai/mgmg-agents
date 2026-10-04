@@ -1475,20 +1475,20 @@ def test_client_feedback() -> None:
           ("Навбат узун", "901234567", "complaint", "garmin"))
     check("the business must be chosen", feedback.clean({"message": "Навбат узун"})[1], "place")
     check("an unknown business is refused", feedback.clean({"place": "cafe", "message": "Навбат узун"})[1], "place")
-    check("empty message refused", feedback.clean({"place": "laundry", "branch": "beshqozon", "message": " "})[1], "empty")
+    check("empty message refused", feedback.clean({"place": "laundry", "branch": "yunusobod", "message": " "})[1], "empty")
     check_true("a bad phone is refused, not kept",
-               feedback.clean({"place": "laundry", "branch": "beshqozon", "message": "ёмон", "phone": "abc"})[0] is None)
+               feedback.clean({"place": "laundry", "branch": "yunusobod", "message": "ёмон", "phone": "abc"})[0] is None)
     check("complaints only: an old 'feedback' kind is ignored",
-          feedback.clean({"place": "laundry", "branch": "beshqozon", "message": "ёмон", "kind": "feedback"})[0].kind, "complaint")
-    anon = feedback.clean({"place": "laundry", "branch": "beshqozon", "message": "Кир ювиш машинаси ишламаяпти"})[0]
+          feedback.clean({"place": "laundry", "branch": "yunusobod", "message": "ёмон", "kind": "feedback"})[0].kind, "complaint")
+    anon = feedback.clean({"place": "laundry", "branch": "yunusobod", "message": "Кир ювиш машинаси ишламаяпти"})[0]
     anon_text = feedback.director_text(anon)
     check_true("no name, no phone = anonymous", anon.anonymous and "👤 Аноним" in anon_text)
     check_true("🔴 and the business head the Director's message",
-               anon_text.startswith("🔴 <b>Мижоз шикояти — Londry · Бешқозон</b>"))
+               anon_text.startswith("🔴 <b>Мижоз шикояти — Londry · Юнусобод</b>"))
     check_true("no opinion wording left", "фикр" not in anon_text.lower())
     check("the branch must be picked", feedback.clean({"place": "garmin", "message": "Соат синди"})[1], "branch")
     check("a branch of the other business is refused",
-          feedback.clean({"place": "garmin", "branch": "beshqozon", "message": "Соат синди"})[1], "branch")
+          feedback.clean({"place": "garmin", "branch": "yunusobod", "message": "Соат синди"})[1], "branch")
     check_true("the Director's message is Uzbek Cyrillic", latin_words(anon_text) == [])
     risky = feedback.clean({"place": "garmin", "branch": "abay", "message": "<b>x</b> & y", "name": "<i>"})[0]
     text = feedback.director_text(risky)
@@ -1570,18 +1570,18 @@ def test_client_feedback() -> None:
                    and "name='lang' value='ru'" in ru.text)
         en = client.get("/f/garmin", headers={"Accept-Language": "en-GB,en;q=0.9"})
         check_true("an English phone gets English", "lang='en'" in en.text and ">Send complaint<" in en.text)
-        check_true("Londry's page: Бешқозон and Вузгородок buttons",
-                   "value='beshqozon'" in page.text and "value='vuzgorodok'" in page.text and "Бешқозон" in page.text
+        check_true("Londry's page: Londry Юнусобод and Londry Вузгородок buttons",
+                   "value='yunusobod'" in page.text and "value='vuzgorodok'" in page.text and "Londry Юнусобод" in page.text
                    and "value='abay'" not in page.text)
         check_true("Garmin's page: Абай and Минор buttons",
-                   "value='abay'" in garmin.text and "value='minor'" in garmin.text and "value='beshqozon'" not in garmin.text)
+                   "value='abay'" in garmin.text and "value='minor'" in garmin.text and "value='yunusobod'" not in garmin.text)
         pre = client.get("/f/garmin?branch=abay")
         check_true("?branch=abay preselects it", "value='abay' required checked" in pre.text)
         no_branch = client.post("/f", data={"message": "Машина ишламаяпти"})
         check_true("no branch picked: asked, beside the buttons, text kept",
                    no_branch.status_code == 400 and "Филиални танланг" in no_branch.text and "Машина ишламаяпти" in no_branch.text)
         en_branch = client.get("/f?lang=en")
-        check_true("branch names in English", "Beshqozon" in en_branch.text and "Which branch?" in en_branch.text)
+        check_true("branch names in English", "Londry Yunusobod" in en_branch.text and "Which branch?" in en_branch.text)
         uz = client.get("/f", headers={"Accept-Language": "uz-Latn-UZ"})
         check_true("an Uzbek phone gets Cyrillic", "Шикоятни юбориш" in uz.text)
         for other in ("/f/laundry", "/f/cafe"):

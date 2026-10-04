@@ -38,11 +38,12 @@ page is a few kilobytes and works on any phone.
 ## Branches (2026-10-04)
 
 Each page starts with «Қайси филиал?» and two big buttons — the client must
-pick one before sending:
+pick one before sending — the form can't be sent without it (checked on the
+server, not only in the browser):
 
 | Page | Branches (key) |
 | ---- | -------------- |
-| Londry `/f` | Бешқозон (`beshqozon`) · Вузгородок (`vuzgorodok`) |
+| Londry `/f` | Londry Юнусобод (`yunusobod`) · Londry Вузгородок (`vuzgorodok`) |
 | Garmin `/f/garmin` | Абай (`abay`) · Минор (`minor`) |
 
 The branch is stored in `client_feedback.branch` (NULL on older complaints)

@@ -11,7 +11,7 @@ channel, so the "opinion" choice is gone (older rows may still say
 'feedback'). The QR image itself is drawn by ``qr_card.py``.
 
 Each business has two branches (2026-10-04), and the client picks one with a
-button at the top of the page: Londry — Бешқозон / Вузгородок, Garmin — Абай /
+button at the top of the page: Londry — Юнусобод / Вузгородок, Garmin — Абай /
 Минор. The branch is required, stored with the complaint, and named in the
 Director's message.
 
@@ -48,7 +48,7 @@ PLACES: dict[str, str] = {
 }
 # Each business's branches: key (in the form and the database) -> name for the Director.
 BRANCHES: dict[str, dict[str, str]] = {
-    "laundry": {"beshqozon": "Бешқозон", "vuzgorodok": "Вузгородок"},
+    "laundry": {"yunusobod": "Юнусобод", "vuzgorodok": "Вузгородок"},
     "garmin": {"abay": "Абай", "minor": "Минор"},
 }
 assert set(BRANCHES) == set(PLACES)

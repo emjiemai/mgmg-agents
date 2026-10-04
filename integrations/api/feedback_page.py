@@ -144,9 +144,9 @@ TEXTS: dict[str, dict[str, str]] = {
 
 # The branch buttons, in each language (the Director always gets feedback.BRANCHES).
 BRANCH_LABELS: dict[str, dict[str, str]] = {
-    "uz_cyrl": {"beshqozon": "Бешқозон", "vuzgorodok": "Вузгородок", "abay": "Абай", "minor": "Минор"},
-    "ru": {"beshqozon": "Бешкозон", "vuzgorodok": "Вузгородок", "abay": "Абай", "minor": "Минор"},
-    "en": {"beshqozon": "Beshqozon", "vuzgorodok": "Vuzgorodok", "abay": "Abay", "minor": "Minor"},
+    "uz_cyrl": {"yunusobod": "Londry Юнусобод", "vuzgorodok": "Londry Вузгородок", "abay": "Абай", "minor": "Минор"},
+    "ru": {"yunusobod": "Londry Юнусабад", "vuzgorodok": "Londry Вузгородок", "abay": "Абай", "minor": "Минор"},
+    "en": {"yunusobod": "Londry Yunusobod", "vuzgorodok": "Londry Vuzgorodok", "abay": "Abay", "minor": "Minor"},
 }
 
 # Which field each error belongs next to; the rest go above the button.
