@@ -7,7 +7,8 @@ The form posts back to its own address; the complaint is stored and sent to
 the Director by ``integrations/org_bot/feedback.py``.
 
 Two pages, one per business, each behind its own printed QR code — the
-address decides the business, the client never chooses:
+address decides the business; the client picks the branch with one of two
+big buttons at the top (required; ``?branch=abay`` preselects it):
 
     /f          Londry — the address on the first printed card; keep it
     /f/garmin   Garmin
@@ -44,7 +45,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from integrations.common.config import settings
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import feedback
-from integrations.org_bot.feedback import DEFAULT_LANG, PLACES
+from integrations.org_bot.feedback import BRANCHES, DEFAULT_LANG, PLACES
 
 # Each business's page. "/f" is printed on Londry's cards and can't move.
 PAGES: dict[str, str] = {"laundry": "/f", "garmin": "/f/garmin"}
@@ -72,6 +73,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "switch": "Ўзбекча",
         "title": "Шикоят қолдириш",
         "intro": "Ҳар бир шикоятни раҳбарият ўқийди.",
+        "branch": "Қайси филиал?",
+        "err_branch": "Филиални танланг.",
         "message": "Нима бўлди?",
         "placeholder": "Қачон, қаерда ва нима бўлганини ёзинг",
         "contact": "Сиз билан боғланайликми?",
@@ -94,6 +97,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "switch": "Русский",
         "title": "Оставить жалобу",
         "intro": "Каждую жалобу читает руководство.",
+        "branch": "Какой филиал?",
+        "err_branch": "Выберите филиал.",
         "message": "Что случилось?",
         "placeholder": "Напишите, когда, где и что произошло",
         "contact": "Связаться с вами?",
@@ -116,6 +121,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "switch": "English",
         "title": "Make a complaint",
         "intro": "Every complaint is read by management.",
+        "branch": "Which branch?",
+        "err_branch": "Please choose the branch.",
         "message": "What happened?",
         "placeholder": "Tell us when, where and what happened",
         "contact": "Should we contact you?",
@@ -135,8 +142,15 @@ TEXTS: dict[str, dict[str, str]] = {
     },
 }
 
+# The branch buttons, in each language (the Director always gets feedback.BRANCHES).
+BRANCH_LABELS: dict[str, dict[str, str]] = {
+    "uz_cyrl": {"beshqozon": "Бешқозон", "vuzgorodok": "Вузгородок", "abay": "Абай", "minor": "Минор"},
+    "ru": {"beshqozon": "Бешкозон", "vuzgorodok": "Вузгородок", "abay": "Абай", "minor": "Минор"},
+    "en": {"beshqozon": "Beshqozon", "vuzgorodok": "Vuzgorodok", "abay": "Abay", "minor": "Minor"},
+}
+
 # Which field each error belongs next to; the rest go above the button.
-_ERROR_FIELD = {"empty": "message", "too_long": "message", "phone": "phone"}
+_ERROR_FIELD = {"branch": "branch", "empty": "message", "too_long": "message", "phone": "phone"}
 
 # Drawn icons, one 24-unit grid; colour comes from CSS.
 _SVG = "<svg viewBox='0 0 24 24' aria-hidden='true' focusable='false'>{}</svg>"
@@ -196,6 +210,15 @@ button{display:block;width:100%;margin-top:28px;min-height:60px;padding:16px;bor
 button:hover{background:var(--red-press)}
 button:active{transform:scale(.99)}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.choice{position:relative;display:block}
+.choice input{position:absolute;opacity:0;width:1px;height:1px}
+.choice span{display:flex;align-items:center;justify-content:center;min-height:60px;padding:10px 12px;text-align:center;
+ border:1.5px solid var(--line);border-radius:14px;font-size:19px;font-weight:650;cursor:pointer;transition:border-color .15s,background-color .15s}
+.choice span:hover{border-color:var(--line-strong)}
+.choice input:checked+span{border-color:var(--red);background:var(--tint);color:var(--red);box-shadow:inset 0 0 0 1px var(--red)}
+.choice input:focus-visible+span{outline:3px solid var(--ring);outline-offset:2px}
+fieldset[aria-invalid=true] .choice span{border-color:var(--err)}
 .done{text-align:center;padding:40px 20px 32px}
 .done .mark{display:grid;place-items:center;width:84px;height:84px;margin:0 auto 20px;border-radius:50%;background:var(--tint)}
 .done .mark svg{width:52px;height:52px;fill:none;stroke:var(--red);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
@@ -302,9 +325,17 @@ def form_html(
     def invalid(name: str) -> str:
         return " aria-invalid='true' aria-describedby='err'" if field == name else ""
 
+    chosen = values.get("branch", "")
+    branches = "".join(
+        f"<label class='choice'><input type='radio' name='branch' value='{key}' required"
+        f"{' checked' if key == chosen else ''}><span>{_e(BRANCH_LABELS[lang][key])}</span></label>"
+        for key in BRANCHES[place]
+    )
     return (
         f"<form method='post' action='{PAGES[place]}' novalidate>"
         f"<input type='hidden' name='lang' value='{lang}'>"
+        f"<fieldset class='group'{invalid('branch')}><legend>{_e(t['branch'])}</legend>"
+        f"<div class='choices'>{branches}</div>{err('branch')}</fieldset>"
         "<div class='group'>"
         f"<label class='label' for='m'>{_e(t['message'])}</label>"
         f"<textarea id='m' name='message' maxlength='{feedback.MESSAGE_MAX}' required{invalid('message')} "
@@ -354,7 +385,10 @@ def _show_form(request: Request, place: str, lang: str | None) -> Response:
     if not settings.feedback_enabled:
         return Response(status_code=404)
     chosen = lang_from(lang, request.headers.get("accept-language"))
-    return _page(form_html(lang=chosen, place=place), chosen, place)
+    # A branch's own printed code may carry ?branch=…; it just preselects the button.
+    branch = request.query_params.get("branch", "")
+    values = {"branch": branch} if branch in BRANCHES[place] else {}
+    return _page(form_html(values, lang=chosen, place=place), chosen, place)
 
 
 @router.get("", response_class=HTMLResponse)

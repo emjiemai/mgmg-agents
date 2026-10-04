@@ -10,6 +10,11 @@ Complaints only since 2026-09-28: the page is the company's complaints
 channel, so the "opinion" choice is gone (older rows may still say
 'feedback'). The QR image itself is drawn by ``qr_card.py``.
 
+Each business has two branches (2026-10-04), and the client picks one with a
+button at the top of the page: Londry — Бешқозон / Вузгородок, Garmin — Абай /
+Минор. The branch is required, stored with the complaint, and named in the
+Director's message.
+
 The page speaks three languages (Uzbek Cyrillic, Russian, English); this
 module returns error *keys* the page translates. What the Director gets is
 always Uzbek Cyrillic, marked 🔴 so it stands out in OPS Manager Bot, with the
@@ -41,6 +46,12 @@ PLACES: dict[str, str] = {
     "laundry": "Londry",
     "garmin": "Garmin",
 }
+# Each business's branches: key (in the form and the database) -> name for the Director.
+BRANCHES: dict[str, dict[str, str]] = {
+    "laundry": {"beshqozon": "Бешқозон", "vuzgorodok": "Вузгородок"},
+    "garmin": {"abay": "Абай", "minor": "Минор"},
+}
+assert set(BRANCHES) == set(PLACES)
 # The page's languages, as named to the Director.
 LANGS: dict[str, str] = {
     "uz_cyrl": "ўзбекча",
@@ -58,6 +69,7 @@ class Submission:
     """One validated form: what the client wrote, and how to reach them (if at all)."""
 
     place: str
+    branch: str
     message: str
     name: str
     phone: str
@@ -91,13 +103,16 @@ def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
 
     Returns:
         ``(submission, None)`` when it's acceptable, else ``(None, error)``
-        with an error key — "empty", "too_long" or "phone" — that the page
-        shows in the client's language ("place" means the caller passed no
-        valid business: a bug, not the client's mistake).
+        with an error key — "branch", "empty", "too_long" or "phone" — that
+        the page shows in the client's language ("place" means the caller
+        passed no valid business: a bug, not the client's mistake).
     """
     place = form.get("place", "")
     if place not in PLACES:
         return None, "place"
+    branch = form.get("branch", "")
+    if branch not in BRANCHES[place]:
+        return None, "branch"
     lang = form.get("lang") if form.get("lang") in LANGS else DEFAULT_LANG
     message = " ".join((form.get("message") or "").split())
     if len(message) < MESSAGE_MIN:
@@ -108,12 +123,19 @@ def clean(form: dict[str, str]) -> tuple[Submission | None, str | None]:
     phone = normalize_phone(form.get("phone") or "")
     if phone is None:
         return None, "phone"
-    return Submission(place=place, message=message, name=name, phone=phone, lang=lang), None
+    return Submission(place=place, branch=branch, message=message, name=name, phone=phone, lang=lang), None
+
+
+def where(place: str | None, branch: str | None) -> str:
+    """«Garmin · Абай» — the business, and the branch when known."""
+    business = PLACES.get(place or "", "")
+    branch_name = BRANCHES.get(place or "", {}).get(branch or "", "")
+    return " · ".join(part for part in (business, branch_name) if part)
 
 
 def director_text(sub: Submission) -> str:
     """The message the Director gets (everything the client typed is escaped)."""
-    lines = [f"🔴 <b>Мижоз шикояти — {PLACES[sub.place]}</b>", "", f"«{escape(sub.message)}»", ""]
+    lines = [f"🔴 <b>Мижоз шикояти — {where(sub.place, sub.branch)}</b>", "", f"«{escape(sub.message)}»", ""]
     if sub.anonymous:
         lines.append("👤 Аноним")
     else:
@@ -131,7 +153,7 @@ async def submit(sub: Submission) -> int:
         How many Directors received it (it's stored either way).
     """
     row = await store.save_client_feedback(
-        place=sub.place, kind=sub.kind, message=sub.message,
+        place=sub.place, branch=sub.branch, kind=sub.kind, message=sub.message,
         contact_name=sub.name or None, phone=sub.phone or None,
     )
     delivered = await notify_directors(director_text(sub), agent=AGENT, run_id=uuid.uuid4())
@@ -148,7 +170,7 @@ def describe(rows: list[dict[str, Any]]) -> str:
     lines = [f"Client complaints via the QR code, last 60 days: {len(rows)}, newest first:"]
     for r in rows:
         contact = r.get("phone") or r.get("contact_name") or "anonymous"
-        place = PLACES.get(r.get("place") or "", "not stated")
+        place = where(r.get("place"), r.get("branch")) or "not stated"
         # Rows from before 2026-09-28 may be opinions rather than complaints.
         kind = "" if r["kind"] == KIND else f" ({r['kind']})"
         lines.append(f"- [{to_local(r['created_at']):%Y-%m-%d %H:%M}] {place}{kind} | {r['message']} | contact: {contact}")

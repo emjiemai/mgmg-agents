@@ -35,6 +35,24 @@ and everything typed is kept. Light and dark themes follow the phone; every
 text meets WCAG AA contrast and input borders 3:1. No JavaScript — the whole
 page is a few kilobytes and works on any phone.
 
+## Branches (2026-10-04)
+
+Each page starts with «Қайси филиал?» and two big buttons — the client must
+pick one before sending:
+
+| Page | Branches (key) |
+| ---- | -------------- |
+| Londry `/f` | Бешқозон (`beshqozon`) · Вузгородок (`vuzgorodok`) |
+| Garmin `/f/garmin` | Абай (`abay`) · Минор (`minor`) |
+
+The branch is stored in `client_feedback.branch` (NULL on older complaints)
+and named in the Director's message: «🔴 Мижоз шикояти — Garmin · Абай».
+The names are translated on the Russian/English pages; the Director always
+gets Uzbek Cyrillic. `?branch=abay` preselects a button — so a branch can
+later get its own printed code (`/f/garmin?branch=abay`) without changing
+anything else. Branches live in `feedback.BRANCHES` (and their translations
+in `feedback_page.BRANCH_LABELS`).
+
 ## Languages
 
 **Uzbek Cyrillic, Russian and English** (Uzbek Latin removed 2026-09-28).

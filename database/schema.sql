@@ -769,6 +769,9 @@ CREATE INDEX IF NOT EXISTS idx_client_feedback_created ON client_feedback (creat
 -- 2026-09-28: one QR code for the whole company; rows from that day until the
 -- place picker came back (same day) have no place.
 ALTER TABLE client_feedback ALTER COLUMN place DROP NOT NULL;
+-- 2026-10-04: the branch the client picked (beshqozon / vuzgorodok / abay / minor);
+-- NULL on complaints from before the choice existed.
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS branch TEXT;
 
 -- ---------------------------------------------------------------------------
 -- cheer_messages / cheer_deliveries — the three friendly messages a day

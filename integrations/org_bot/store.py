@@ -1471,16 +1471,16 @@ async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
 
 
 async def save_client_feedback(
-    *, place: str, kind: str, message: str, contact_name: str | None, phone: str | None
+    *, place: str, branch: str | None = None, kind: str, message: str, contact_name: str | None, phone: str | None
 ) -> dict[str, Any] | None:
     """Store one client complaint from the QR code."""
     return await fetch_one(
         """
-        INSERT INTO client_feedback (place, kind, message, contact_name, phone)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO client_feedback (place, branch, kind, message, contact_name, phone)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
-        (place, kind, message, contact_name, phone),
+        (place, branch, kind, message, contact_name, phone),
     )
 
 
