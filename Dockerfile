@@ -6,8 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# libpango*: WeasyPrint lays out the report PDFs/images with Pango
+# (integrations/reports/; the fonts themselves are bundled there).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        tzdata curl fonts-dejavu-core \
+        tzdata curl fonts-dejavu-core libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

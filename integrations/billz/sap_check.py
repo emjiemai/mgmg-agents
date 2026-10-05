@@ -236,10 +236,14 @@ def docs_from_sap(
     for line in lines:
         by_doc[(str(line.get("ObjType") or "13"), str(line.get("DocEntry")))].append(line)
     docs: list[Doc] = []
+    seen: set[tuple[str, str]] = set()
     for header in sales:
         if str(header.get("CANCELED") or "N").upper() != "N":
             continue
         obj = str(header.get("ObjType") or "13")
+        if (obj, str(header.get("DocEntry"))) in seen:  # rows can arrive one per line
+            continue
+        seen.add((obj, str(header.get("DocEntry"))))
         own = [ln for ln in by_doc.get((obj, str(header.get("DocEntry"))), [])
                if str(ln.get("WhsCode") or "").strip() in warehouses]
         day = parse_sap_date(str(header.get("DocDate") or ""))
@@ -508,6 +512,50 @@ def render(result: Result, *, pushed_at: datetime | None = None, day_end: dateti
         ]
         lines += [""] + _section(f"⚪ <b>SAP'да бор, Billz'да йўқ — {len(result.extra)} та:</b>", bullets)
     return "\n".join(lines) + note
+
+
+def pdf_view(result: Result, *, pushed_at: datetime | None = None, day_end: datetime | None = None,
+             trial: bool = False) -> dict[str, Any]:
+    """The PDF template's values (integrations/reports/templates/billz_sap.html)."""
+    plain = lambda amount: som(amount).replace("\u00a0", " ")  # noqa: E731
+    warnings = []
+    if result.sap_amounts_missing:
+        warnings.append("SAP ҳужжатларида сўмдаги сумма келмади — товар ва сана бўйича солиштирилди.")
+    if pushed_at is not None and day_end is not None and pushed_at < day_end:
+        warnings.append(f"SAP маълумоти {pushed_at:%d.%m %H:%M} ҳолатига — ундан кейин киритилганлари бу ерда кўринмайди.")
+    return {
+        "date": fmt_date(result.day),
+        "trial": trial,
+        "billz": {"amount": plain(result.billz_amount), "count": len(result.cheques_day)},
+        "sap": {"amount": "—" if result.sap_amounts_missing else plain(result.sap_amount), "count": len(result.docs_day)},
+        "warnings": warnings,
+        "missing_total": f"{len(result.missing)} та · {plain(sum(c.amount for c in result.missing))}",
+        "missing": [{"day": _short_date(c.day), "number": c.number, "amount": plain(c.amount),
+                     "goods": _items(c.items, 3), "seller": c.seller} for c in result.missing],
+        "differs": [{"day": _short_date(p.cheque.day), "cheque": p.cheque.number, "billz": plain(p.cheque.amount),
+                     "sap": plain(p.doc.amount), "doc": p.doc.number} for p in result.amount_diff],
+        "late": [{"sold": _short_date(p.cheque.day), "entered": _short_date(p.doc.created or p.doc.day),
+                  "dated": _short_date(p.doc.day), "doc": p.doc.number,
+                  "late": p.doc.created is not None and p.doc.created > p.cheque.day,
+                  "other_date": p.doc.day != p.cheque.day,
+                  "amount": plain(p.doc.amount) if p.doc.amount_known else "—"} for p in result.late],
+        "extra": [{"doc": d.number, "amount": plain(d.amount) if d.amount_known else "—", "customer": d.customer}
+                  for d in result.extra],
+    }
+
+
+def caption(result: Result) -> str:
+    """The PDF's caption: what's wrong, in one line."""
+    parts = []
+    if result.missing:
+        parts.append(f"{len(result.missing)} та чек SAP'га киритилмаган ({som(sum(c.amount for c in result.missing))})")
+    if result.amount_diff:
+        parts.append(f"{len(result.amount_diff)} тасида сумма фарқ қилади")
+    if result.late:
+        parts.append(f"{len(result.late)} таси кечикиб ёки бошқа сана билан")
+    if result.extra:
+        parts.append(f"{len(result.extra)} таси SAP'да бор, Billz'да йўқ")
+    return f"🧾 <b>Billz ↔ SAP — {fmt_date(result.day)}</b>\n" + escape(" · ".join(parts).replace("\u00a0", " "))
 
 
 def render_stale(day: date, pushed_at: datetime | None) -> str:

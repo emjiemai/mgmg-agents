@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "_ui.html" import icon, head, masthead %}
+{% block title %}Billz ↔ SAP — {{ date }}{% endblock %}
+{% block style %}
+.compare { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10pt; margin-top: 14pt; }
+.compare > div { padding: 9pt 11pt; background: var(--band); border-radius: 6px; }
+.compare .label { font-size: 8.5pt; color: var(--ink-3); }
+.compare .value { margin-top: 2pt; font-size: 15pt; font-weight: 700; }
+.compare .count { font-size: 9pt; color: var(--ink-2); }
+.trial { margin-top: 10pt; padding: 7pt 10pt; background: var(--warn-wash); color: var(--warn); border-radius: 6px; font-size: 9.5pt; }
+.warning { margin-top: 10pt; color: var(--warn); font-size: 9.5pt; }
+td.items { width: 38%; color: var(--ink-2); }
+td.when { white-space: nowrap; }
+{% endblock %}
+{% block body %}
+{{ masthead("Billz ↔ SAP", "кечаги сотувлар · " ~ date) }}
+{% if trial %}<p class="trial">Синов: бу ҳисобот ҳозирча фақат админга келади. Тўғри бўлса, Render'да BILLZ_SAP_CHECK_TRIAL=false қилинг — Директорга юборилади.</p>{% endif %}
+
+<div class="compare">
+  <div><div class="label">Billz — дўкон кассаси</div><div class="value num">{{ billz.amount }}</div><div class="count">{{ billz.count }} та чек</div></div>
+  <div><div class="label">SAP — ҳисоб-фактуралар</div><div class="value num">{{ sap.amount }}</div><div class="count">{{ sap.count }} та ҳужжат</div></div>
+</div>
+{% for w in warnings %}<p class="warning">{{ w }}</p>{% endfor %}
+
+{% if missing %}
+<section class="block block--alert">
+  {{ head("SAP'га киритилмаган", "охирги 14 кун", missing_total, "alert") }}
+  <table>
+    <thead><tr><th>Сана</th><th>Чек</th><th class="num">Сумма</th><th>Товар</th><th>Сотувчи</th></tr></thead>
+    <tbody>{% for c in missing %}<tr><td class="when tnum">{{ c.day }}</td><td class="tnum">{{ c.number }}</td><td class="num">{{ c.amount }}</td><td class="items">{{ c.goods }}</td><td>{{ c.seller }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if differs %}
+<section class="block block--warn">
+  {{ head("Суммаси фарқ қилади", None, differs|length ~ " та", "warn") }}
+  <table>
+    <thead><tr><th>Сана</th><th>Чек</th><th class="num">Billz</th><th class="num">SAP</th><th>Ҳужжат</th></tr></thead>
+    <tbody>{% for p in differs %}<tr><td class="when tnum">{{ p.day }}</td><td class="tnum">{{ p.cheque }}</td><td class="num">{{ p.billz }}</td><td class="num">{{ p.sap }}</td><td class="tnum">№{{ p.doc }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if late %}
+<section class="block block--warn">
+  {{ head("Кечикиб ёки бошқа сана билан киритилган", None, late|length ~ " та", "warn") }}
+  <table>
+    <thead><tr><th>Сотув</th><th>Киритилган</th><th>SAP'даги сана</th><th>Ҳужжат</th><th class="num">Сумма</th></tr></thead>
+    <tbody>{% for p in late %}<tr><td class="when tnum">{{ p.sold }}</td><td class="when tnum{% if p.late %} warn-text{% endif %}">{{ p.entered }}</td><td class="when tnum{% if p.other_date %} warn-text{% endif %}">{{ p.dated }}</td><td class="tnum">№{{ p.doc }}</td><td class="num">{{ p.amount }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if extra %}
+<section class="block">
+  {{ head("SAP'да бор, Billz'да йўқ", None, extra|length ~ " та", "plain") }}
+  <table>
+    <thead><tr><th>Ҳужжат</th><th class="num">Сумма</th><th>Мижоз</th></tr></thead>
+    <tbody>{% for d in extra %}<tr><td class="tnum">№{{ d.doc }}</td><td class="num">{{ d.amount }}</td><td>{{ d.customer }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+<p class="note">Ҳар бир Billz чеки ўша куни SAP'га ҳисоб-фактура бўлиб киритилиши керак. Солиштириш: сумма ва товар коди, ҳужжат санаси ёки киритилган куни бўйича. Киритилмаган чек 14 кун давомида ҳар куни такрорланади.</p>
+{% endblock %}

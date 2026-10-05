@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_ui.html" import icon, head, masthead %}
+{% block title %}30 кунлик пул календари — {{ period }}{% endblock %}
+{% block style %}
+.balance { display: grid; grid-template-columns: 1fr auto; align-items: baseline; margin-top: 14pt; padding: 9pt 11pt; background: var(--band); border-radius: 6px; }
+.balance .label { font-weight: 700; }
+.balance .label small { display: block; font-weight: 400; font-size: 8.5pt; color: var(--ink-3); }
+.balance .value { font-size: 15pt; font-weight: 700; }
+tr.overdue td { color: var(--alert); font-weight: 700; background: var(--alert-wash); }
+tr.overdue td:first-child { padding-left: 6px; }
+td.span { white-space: nowrap; }
+td.subject { width: 55%; }
+{% endblock %}
+{% block body %}
+{{ masthead("30 кунлик пул календари", period ~ " · " ~ weekday ~ " ҳисоботи") }}
+
+{% if balance %}
+<div class="balance">
+  <div class="label">Ҳозир пул (1C){% if balance.detail %}<small>{{ balance.detail }}</small>{% endif %}</div>
+  <div class="value num">{{ balance.value }}</div>
+</div>
+{% endif %}
+
+<section class="block">
+  {{ head("Келиши кутилаётган", "очиқ ҳисоб-фактуралар, тўлов муддати бўйича", incoming_total, "plain", "debt") }}
+  <table>
+    <thead><tr><th>Ҳафта</th><th class="num">Ҳисоб-фактура</th><th class="num">Сумма</th></tr></thead>
+    <tbody>
+    {% if overdue %}
+      <tr class="overdue"><td>Муддати ўтган, ҳали тушмаган</td><td class="num">{{ overdue.count }}</td><td class="num">{{ overdue.value }}</td></tr>
+    {% endif %}
+    {% for w in weeks %}
+      <tr><td class="span">{{ w.span }}</td><td class="num{% if not w.count %} muted{% endif %}">{{ w.count or "—" }}</td><td class="num{% if not w.count %} muted{% endif %}">{{ w.value or "—" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="block">
+  {{ head("Кетадиган", "тасдиқланган ёзма рухсатлар", outgoing_total, "plain", "payments") }}
+  {% if outgoing %}
+  <table>
+    <thead><tr><th>Сана</th><th>Тўлов</th><th>Рақам</th><th class="num">Сумма</th></tr></thead>
+    <tbody>
+    {% for p in outgoing %}
+      <tr><td class="span num">{{ p.day }}</td><td class="subject">{{ p.subject }}</td><td class="muted">{{ p.no }}</td><td class="num">{{ p.value }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Келгуси 30 кунда тасдиқланган тўлов йўқ.</p>
+  {% endif %}
+  {% if unclear %}<p class="empty warn-text">Яна {{ unclear }} та тасдиқланган тўловнинг санаси ўқилмади — режага тушмади.</p>{% endif %}
+</section>
+
+<p class="note">{% if lower %}«камида» — SAP'дан ҳисоб-фактураларнинг бир қисми келди, кирим бундан кўп бўлиши мумкин. {% endif %}Иш ҳақи ва ёзма рухсатсиз тўловлар бу режада йўқ. Суммалар SAP ва ёзма рухсатлардаги валютада.</p>
+{% endblock %}

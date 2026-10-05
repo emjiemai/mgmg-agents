@@ -39,7 +39,10 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | on request | Written permission requests (B1) with approvals | requester, approvers | `integrations/org_bot/permission_flow.py` |
 | on a QR scan | Client complaints — Londry `/f`, Garmin `/f/garmin` | Director (🔴) | `integrations/api/feedback_page.py` |
 
-Days off set with Admin Bot `/dam` silence everything employee-facing.
+The brief reaches the Director as one designed **picture**; the cash
+calendar, KPI table, Billz → SAP check and data-quality report as **PDFs**
+(`integrations/reports/`, `docs/agent-specs/18-reports.md`). Days off set
+with Admin Bot `/dam` silence everything employee-facing.
 Full status, and the agents still waiting: `docs/agents-status.md`.
 
 ---
@@ -244,6 +247,7 @@ integrations/
   billz/ onec/ verifix/    BILLZ, 1C, Verifix clients and their rules
   google/ search/ tenders/ Lead Agent's sources and the leads sheet
   garmin/                  leads from the Garmin AI bot
+  reports/                 HTML templates → the brief picture and the PDF reports (fonts bundled)
   ai/ telegram/ common/    OpenRouter, Telegram primitives, config / DB / audit / money / time
 database/schema.sql        the whole schema, self-applying
 scripts/                   selfcheck, cron runner, SAP push (sap-gateway-push/)

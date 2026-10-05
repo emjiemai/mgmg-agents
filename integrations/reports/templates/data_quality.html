@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_ui.html" import icon, head, masthead %}
+{% block title %}Маълумот сифати — {{ date }}{% endblock %}
+{% block style %}
+.findings > li { padding: 7pt 0; border-bottom: 1px solid var(--rule); }
+.findings > li:last-child { border-bottom: 0; }
+.findings .what { font-weight: 700; }
+.findings .items { margin-top: 3pt; padding-left: 12pt; }
+.findings .items li { padding: 1.5pt 0; color: var(--ink-2); }
+.findings .items li::before { content: "– "; color: var(--ink-3); }
+.findings i { color: var(--ink-3); }
+{% endblock %}
+{% block body %}
+{{ masthead("Маълумот сифати", date ~ " · IT учун ҳафталик текширув") }}
+<p class="lead">{% for s in sections %}<strong>{{ s.title }}</strong>: {{ s.count ~ " та муаммо" if s.count else "тоза" }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% for s in sections %}
+<section class="block block--{{ 'warn' if s.count else 'ok' }}">
+  {{ head(s.title, None, (s.count ~ " та") if s.count else "тоза", 'warn' if s.count else 'ok') }}
+  {% if s.findings %}
+  <ul class="findings">
+    {% for f in s.findings %}
+    <li><span class="what">{{ f.head }}</span>{% if f.rest %} {{ f.rest }}{% endif %}
+      {% if f.parts %}<ul class="items">{% for x in f.parts %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endfor %}
+<p class="note">Ҳар душанба 08:00 · ҳозир текшириш: Admin Bot'да /sifat.</p>
+{% endblock %}

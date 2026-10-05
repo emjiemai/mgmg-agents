@@ -168,14 +168,23 @@ def trial_text(text: str) -> str:
             "BILLZ_SAP_CHECK_TRIAL=false қилинг.</i>\n\n" + text)
 
 
-async def _send(text: str, run_id: uuid.UUID) -> int:
+async def _send(text: str, run_id: uuid.UUID, document: tuple[bytes, str, str] | None = None) -> int:
+    """The check to the admin (trial) or the Director: a PDF when there's a list, else the short text.
+
+    Args:
+        document: ``(pdf, file name, caption)`` when something is wrong.
+    """
     if settings.billz_sap_check_trial:
         async with TelegramBot(
             agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
             default_chat_id=settings.admin_bot_telegram_chat_id,
         ) as bot:
             try:
-                await bot.send_message(trial_text(text))
+                if document is not None:
+                    pdf, name, cap = document
+                    await bot.send_file(pdf, name, settings.admin_bot_telegram_chat_id, "🧪 Синов · " + cap)
+                else:
+                    await bot.send_message(trial_text(text))
                 return 1
             except TelegramError as exc:
                 log.error("Could not send the Billz–SAP trial to the admin: {}", exc)
@@ -186,7 +195,10 @@ async def _send(text: str, run_id: uuid.UUID) -> int:
     ) as bot:
         for telegram_user_id in await _recipients():
             try:
-                await bot.send_message(text, chat_id=str(telegram_user_id))
+                if document is not None:
+                    await bot.send_file(document[0], document[1], str(telegram_user_id), document[2])
+                else:
+                    await bot.send_message(text, chat_id=str(telegram_user_id))
                 sent += 1
             except TelegramError as exc:
                 log.error("Could not send the Billz–SAP check to {}: {}", telegram_user_id, exc)
@@ -222,6 +234,7 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         log.info("The check for {} was already sent — skipping", day)
         return 0
 
+    document: tuple[bytes, str, str] | None = None
     pushed_at = await last_sales_push()
     if pushed_at is None:
         # get_sales_by_date isn't in the gateway yet: SAP's invoice lines aren't here at all.
@@ -247,6 +260,16 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         text = sap_check.render(checked, pushed_at=pushed_at, day_end=day_end)
         status, result = checked.status, {**sap_check.summary(checked), "shops": shops,
                                           "pushed_at": str(pushed_at)}
+        if not checked.ok and not checked.no_cheque_numbers:
+            # A list to read: a PDF (2026-10-05); the one-line outcomes stay text.
+            try:
+                from integrations.reports import render as reports
+
+                pdf = reports.pdf("billz_sap.html", **sap_check.pdf_view(
+                    checked, pushed_at=pushed_at, day_end=day_end, trial=settings.billz_sap_check_trial))
+                document = (pdf, f"billz-sap-{day:%Y-%m-%d}.pdf", sap_check.caption(checked))
+            except Exception as exc:  # noqa: BLE001 — never lose the check over its layout
+                log.error("Billz–SAP PDF failed, sending text: {}", exc)
 
     if settings.dry_run:
         print(text)
@@ -254,7 +277,7 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         log.info("[dry run] status={}, would go to {}", status, where)
         return 0
 
-    sent = await _send(text, run_id)
+    sent = await _send(text, run_id, document)
     await _save(day, status, result, sent > 0)
     await log_action(
         agent=AGENT, action="checked", target_system="telegram", status="success", run_id=run_id,

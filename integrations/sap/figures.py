@@ -145,11 +145,17 @@ def invoices_on(rows: list[dict[str, Any]], day: date, currency: str, *, as_of: 
     if not readable:
         return Figure(status="unknown_format", as_of=as_of)
     total, count = 0, 0
+    seen: set[tuple[str, str]] = set()
     for row in readable:
         if str(_pick(row, "CANCELED", "Canceled") or "N").upper() != "N":
             continue
         if parse_sap_date(str(_pick(row, "DocDate"))) != day:
             continue
+        # Each document once, even when its rows arrive one per line.
+        identity = (str(row.get("ObjType") or "13"), str(_pick(row, "DocEntry", "DocNum") or id(row)))
+        if identity in seen:
+            continue
+        seen.add(identity)
         amount = to_tiyin(_pick(row, "DocTotal"))
         if str(row.get("ObjType")) == "14":
             total -= amount

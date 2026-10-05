@@ -51,6 +51,11 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **Billz → SAP check** (2026-10-03, `docs/agent-specs/17-billz-sap-check.md`): 08:00, cheque by cheque —
   not entered / wrong amount / entered late / in SAP but not Billz. The shop enters one A/R invoice per
   cheque (warehouses G.A._01, 05; SAP user "Гармин (филиал Абай)"), often a day or more late.
+- **Reports are designed pages** (2026-10-05, `docs/agent-specs/18-reports.md`): the 08:00 brief is
+  one PNG picture (Telegram photo); cash calendar, KPI table, Billz → SAP (when wrong) and data
+  quality are PDFs — Jinja2 templates in `integrations/reports/templates/` → WeasyPrint → pypdfium2.
+  Light page, red only for what needs the Director, drawn icons (no emoji), Uzbek Cyrillic; the text
+  is the fallback. Lead Agent and receivables messages stay text. Website/QR untouched.
 - AI: OpenRouter only (`integrations/ai/openrouter_client.py`).
 - SAP is B1 on **HANA, schema `MGM`**; local currency USD, system currency UZS. Data arrives only by
   push from the gateway machine (`scripts/sap-gateway-push/push-ar-aging.ps1`) **through the

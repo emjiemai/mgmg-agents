@@ -12,3 +12,7 @@ python-docx==1.2.0
 qrcode==8.2
 pillow==12.3.0
 pyjwt[crypto]==2.13.0
+# Report images and PDFs (integrations/reports/): HTML templates -> PDF -> PNG
+Jinja2==3.1.6
+weasyprint==70.0
+pypdfium2==5.14.0

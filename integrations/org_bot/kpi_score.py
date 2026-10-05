@@ -310,6 +310,42 @@ def table_text(month: date, people: list[EmployeeMonth], final: bool) -> str:
     return "\n".join(lines)
 
 
+# Column headings in the PDF table (integrations/reports/templates/kpi.html).
+PART_SHORT = {"results": "Натижа", "tasks": "Топшириқ", "rating": "Баҳо", "volume": "Ҳажм",
+              "process": "Жараён", "commitment": "Садоқат"}
+
+
+def table_view(month: date, people: list[EmployeeMonth], final: bool) -> dict[str, Any]:
+    """The PDF table's values: everyone measured, best first, with the six parts."""
+    measured = [p for p in people if p.total is not None]
+    return {
+        "month": month_title(month),
+        "status": "якуний" if final else "ҳозирча — раҳбар баҳолари ва натижалар киритилмоқда",
+        "parts": [{"label": label, "short": PART_SHORT[k], "weight": w} for k, (_e, label, w) in PARTS.items()],
+        "people": [
+            {
+                "place": place, "name": p.name, "role": p.role_label, "total": round(p.total),
+                "grade": "high" if p.total >= GREEN else "mid" if p.total >= YELLOW else "low",
+                "parts": [None if p.parts.get(k) is None else round(p.parts[k]) for k in PARTS],
+            }
+            for place, p in enumerate(measured, 1)
+        ],
+        "unmeasured": [p.name for p in people if p.total is None],
+        "pending": [p.name for p in measured if not p.rating_complete] if not final else [],
+    }
+
+
+def table_caption(month: date, people: list[EmployeeMonth], final: bool) -> str:
+    """The PDF's caption: the month, and how many are green, yellow, red."""
+    measured = [p.total for p in people if p.total is not None]
+    high = sum(1 for t in measured if t >= GREEN)
+    low = sum(1 for t in measured if t < YELLOW)
+    head = f"📈 <b>KPI — {month_title(month)}</b>" + ("" if final else " (ҳозирча)")
+    if not measured:
+        return head
+    return f"{head}\n{len(measured)} ходим: {high} таси 80+, {len(measured) - high - low} таси 60–79, {low} таси 60 дан паст"
+
+
 def card_text(month: date, p: EmployeeMonth) -> str:
     """One person's month in detail — what they see with /kpi."""
     total = "—" if p.total is None else str(round(p.total))

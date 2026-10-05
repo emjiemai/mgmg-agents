@@ -86,6 +86,10 @@ Otherwise:
 Who: the Director; more roles with `BILLZ_SAP_CHECK_ROLES` (e.g.
 `garmin_sotuv` so the shop sees what it must enter).
 
+When something is wrong the check is a **PDF** (tables per section) with a
+one-line caption; "all entered" and "SAP data too old" stay one text line
+(`18-reports.md`, 2026-10-05).
+
 **Trial first** (`BILLZ_SAP_CHECK_TRIAL`, on by default): BILLZ's per-cheque
 report hasn't been seen with real data yet, so until the admin confirms the
 first mornings match the shop, the message goes to the admin in Admin Bot

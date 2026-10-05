@@ -2,7 +2,10 @@
 
 **Code:** `agents/ceo-daily-brief/agent.py`, figures in `integrations/sap/figures.py`
 **Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily, inside `mgmg-morning-agents`
-**Mode:** read-only; the only writes are one Telegram message and one `daily_briefs` row
+**Mode:** read-only; the only writes are one Telegram photo and one `daily_briefs` row
+**Form (2026-10-05):** a designed **picture** with a short caption, not a long text —
+`18-reports.md`. The text below is still built: it is stored, read by the
+Director's questions, and sent if the picture can't be drawn.
 **Source:** A2 "5 рақам дашборди" in the owner's plan (ЭМЖИЕМ AI Агентлар Тизими)
 
 ## What the Director gets

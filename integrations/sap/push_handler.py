@@ -348,10 +348,17 @@ MAX_FULL_ROWS = 20_000
 KEEP_DAYS = 3
 
 
+# A key column a gateway tool may leave out, and what it means when absent:
+# get_sales_by_date sent no ObjType at first (2026-10-03) — every row an A/R
+# invoice — and without it each line got its own hash key, so one invoice
+# was counted once per line.
+KEY_DEFAULTS: dict[str, str] = {"ObjType": "13"}
+
+
 def full_key(dataset: str, row: dict[str, Any]) -> str:
     """The row's identity from its ``FULL_DATASETS`` columns, else a hash."""
     columns = FULL_DATASETS[dataset]
-    values = [row.get(c) for c in columns]
+    values = [row.get(c) if row.get(c) not in (None, "") else KEY_DEFAULTS.get(c) for c in columns]
     if all(v is not None and v != "" for v in values):
         return ":".join(str(v) for v in values)
     digest = hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()

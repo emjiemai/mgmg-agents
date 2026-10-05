@@ -64,7 +64,7 @@ from integrations.common.timeutil import fmt_date, now_local, now_utc, today_loc
 from integrations.org_bot import permissions
 from integrations.org_bot import store as org_store
 from integrations.org_bot.notify import notify_directors
-from integrations.org_bot.roles import ROLE_LABELS
+from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
 from integrations.sap import figures
 from integrations.sap.figures import Figure
 from integrations.sap.models import ARAging, ARInvoice
@@ -519,6 +519,220 @@ def _render_attendance(data: BriefData) -> str | None:
     return attendance.render_day(data.attendance, MAX_LINES)
 
 
+# ------------------------------------------------------------------ the image
+#
+# 2026-10-05, the owner: the brief as a long text was overwhelming, so the
+# Director gets it as one designed picture (integrations/reports/templates/
+# brief.html) whose layout never changes; ``view`` turns BriefData into that
+# template's values. The text above stays: it is what's stored, what the
+# Director's questions read, and what is sent if the picture can't be drawn.
+
+NBSP = " "
+
+
+def _split(value: str) -> tuple[str, str]:
+    """"4,57 млрд сўм" -> ("4,57", "млрд сўм"): the number large, its unit small."""
+    number, _, unit = value.partition(NBSP)
+    return number, unit.replace(NBSP, " ")
+
+
+def _delta(key: str, totals: dict[str, int], data: BriefData, comparable: bool) -> tuple[str, str] | None:
+    """The change since the last brief as (text, "up"/"down"), or None."""
+    previous = data.previous.get(key) or {}
+    if not comparable or previous.get("status") != "ok" or previous.get("capped"):
+        return None
+    delta = {c: a for c, a in figures.change(totals, previous.get("totals") or {}).items() if a}
+    if len(delta) != 1:
+        return None
+    currency, amount = next(iter(delta.items()))
+    return f"{format_money(abs(amount), currency, short=True)} кечагига", "up" if amount > 0 else "down"
+
+
+def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_word: str, data: BriefData) -> dict[str, Any]:
+    row: dict[str, Any] = {"label": label, "icon": icon, "tone": "plain", "detail": None, "number": "",
+                           "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
+    if figure is None:
+        return {**row, "tone": "muted", "number": "маълумот йўқ"}
+    if figure.status == "no_data":
+        return {**row, "tone": "muted", "number": "SAP'дан келмаган"}
+    if figure.status == "unknown_format":
+        return {**row, "tone": "muted", "number": "SAP маълумоти ўқилмади"}
+    if figure.status == "stale":
+        return {**row, "tone": "muted", "number": f"{fmt_date(figure.as_of)} дан бери янгиланмаган"}
+    if not figure.totals:
+        if figure.capped:
+            return {**row, "tone": "muted", "number": "аниқлаб бўлмади", "lower": True}
+        return {**row, "tone": "quiet", "number": "0", "detail": f"{unit_word} йўқ"}
+    number, unit = _split(_money(figure.totals))
+    row.update(number=number, unit=unit, lower=figure.capped)
+    if figure.count and key == "sales":
+        row["detail"] = f"{figure.count} та {unit_word}"
+    change = _delta(key, figure.totals, data, comparable=not figure.capped)
+    if change:
+        row["sub"], row["sub_dir"] = change
+    return row
+
+
+def _people_block(title: str, icon: str, day: str | None, summary: str, tone: str,
+                  rows: list[dict[str, Any]], empty: str | None = None) -> dict[str, Any]:
+    return {"title": title, "icon": icon, "day": day, "summary": summary, "tone": tone,
+            "rows": rows[:MAX_LINES], "more": max(len(rows) - MAX_LINES, 0), "empty": empty}
+
+
+def view(data: BriefData) -> dict[str, Any]:
+    """The brief template's values: the five numbers, then shops, reports, attendance."""
+    from integrations.org_bot.task_tracker import MONTHS_UZ, WEEKDAYS_UZ
+
+    day, now = today_local(), now_local()
+    when = f"{WEEKDAYS_UZ[day.weekday()].capitalize()}, {day.day} {MONTHS_UZ[day.month - 1]} {day.year} · {now:%H:%M}"
+    lower_bound = False
+
+    # 1. cash (1C)
+    cash: dict[str, Any] = {"label": "Касса", "icon": "cash", "tone": "plain", "detail": None, "number": "",
+                            "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
+    if data.cash_failed:
+        cash.update(tone="muted", number="1C'дан олинмади")
+    elif data.cash is None:
+        cash.update(tone="muted", number="уланмаган")
+    else:
+        number, unit = _split(onec_cash.som(data.cash.total))
+        cash.update(number=number, unit=unit,
+                    detail=f"банк {onec_cash.som(data.cash.bank).replace(NBSP, ' ')} · "
+                           f"нақд {onec_cash.som(data.cash.cash).replace(NBSP, ' ')}")
+        change = _delta("cash", {"UZS": to_tiyin(data.cash.total)}, data, comparable=True)
+        if change:
+            cash["sub"], cash["sub_dir"] = change
+
+    # 2-3. sales and stock (SAP)
+    sales = _figure_row(data.sales, "sales", "Кечаги сотув", "sales", data.sales_unit, data)
+    stock = _figure_row(data.inventory, "inventory", "Захира", "stock", "қолдиқ", data)
+    lower_bound |= sales["lower"] or stock["lower"]
+
+    # 4. customer debt (SAP)
+    debt: dict[str, Any] = {"label": "Мижоз қарзи", "icon": "debt", "tone": "plain", "detail": None, "number": "",
+                            "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
+    if data.aging is None:
+        debt.update(tone="muted", number="маълумот йўқ")
+    else:
+        aging = data.aging
+        open_totals = _totals_by_currency(aging.invoices, overdue_only=False)
+        overdue_totals = _totals_by_currency(aging.invoices, overdue_only=True)
+        number, unit = _split(_money(open_totals)) if open_totals else ("0", "")
+        debt.update(number=number, unit=unit, lower=data.aging_capped)
+        lower_bound |= data.aging_capped
+        if overdue_totals:
+            debt["detail"] = f"муддати ўтгани {_money(overdue_totals).replace(NBSP, ' ')} · {aging.overdue_count} та"
+            debt["tone"] = "alert"
+            old = aging.bucket_counts.get("90_plus", 0)
+            if old:
+                debt.update(sub=f"{old} таси 90 кундан ошган", sub_alert=True)
+        if not debt["sub"]:
+            change = _delta("debt", open_totals, data, comparable=not data.aging_capped)
+            if change:
+                debt["sub"], debt["sub_dir"] = change
+
+    # 5. payments due today (written permissions)
+    pay: dict[str, Any] = {"label": "Бугунги тўловлар", "icon": "payments", "tone": "plain", "detail": None,
+                           "number": "", "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
+    if data.payments is None:
+        pay.update(tone="muted", number="маълумот йўқ")
+    elif data.payments.count:
+        number, unit = _split(_money(data.payments.totals))
+        pay.update(number=number, unit=unit, detail=f"{data.payments.count} та тасдиқланган тўлов")
+    else:
+        pay.update(tone="quiet", number="йўқ", detail="тасдиқланган ёзма рухсатлар бўйича")
+    if data.payments is not None and data.payments.unclear:
+        pay["sub"] = f"{data.payments.unclear} тасида сана аниқ эмас"
+
+    blocks: list[dict[str, Any]] = []
+
+    # shops (BILLZ)
+    if data.shop_sales_failed:
+        blocks.append(_people_block("Дўконлар", "shop", None, "", "warn", [], "Billz'дан маълумот олиб бўлмади"))
+    elif data.shop_sales is not None:
+        s = data.shop_sales
+        selling = [x for x in s.shops if x.net_sales or x.orders or x.returns]
+        rows = [{"who": x.name, "what": f"{onec_cash.som(x.net_sales).replace(NBSP, ' ')} · {x.orders} та чек"
+                 + (f" · {x.returns} қайтариш" if x.returns else ""), "alert": False} for x in selling]
+        summary = f"{onec_cash.som(s.net_sales).replace(NBSP, ' ')} · {s.orders} та чек" if selling else "сотув йўқ"
+        day_label = fmt_date(s.day)
+        if len(selling) == 1:  # one shop: its name beside the day, not a row repeating the total
+            day_label, rows = f"{day_label} · {selling[0].name}", []
+        blocks.append(_people_block("Дўконлар", "shop", day_label, summary, "plain", rows))
+
+    # daily reports
+    if data.report_rows is None:
+        blocks.append(_people_block("Кунлик ҳисоботлар", "report", None, "", "warn", [], "маълумот олиб бўлмади"))
+    elif not data.report_rows:
+        blocks.append(_people_block("Кунлик ҳисоботлар", "report", None, "", "plain", [], "кеча ҳеч кимдан сўралмаган"))
+    else:
+        rows_all = data.report_rows
+        missed = [r for r in rows_all if r["status"] != "submitted"]
+        day_label = fmt_date(rows_all[0]["report_date"])
+        if missed:
+            rows = [{"who": r["display_name"], "what": ROLE_LABELS.get(r["role"], r["role"]), "alert": False} for r in missed]
+            blocks.append(_people_block("Ҳисобот юбормаганлар", "report", day_label,
+                                        f"{len(missed)} / {len(rows_all)}", "alert", rows))
+        else:
+            blocks.append(_people_block("Кунлик ҳисоботлар", "report", day_label,
+                                        f"ҳаммаси юборди · {len(rows_all)}", "ok", []))
+
+    # attendance (Verifix)
+    if data.attendance_failed:
+        blocks.append(_people_block("Давомат", "people", None, "", "warn", [], "Verifix'дан маълумот олиб бўлмади"))
+    elif data.attendance is not None and (data.attendance.scheduled or data.attendance.flexible):
+        a = data.attendance
+        rows = ([{"who": r.name, "what": "келмади", "alert": True} for r in a.absent]
+                + [{"who": r.name, "what": "ҳали келмади", "alert": True} for r in a.not_yet]
+                + [{"who": r.name, "what": f"{r.late_minutes} дақиқа кечикди · {r.arrived:%H:%M}", "alert": False}
+                   for r in a.late]
+                + [{"who": r.name, "what": r.excuse or "сабабли", "alert": False} for r in a.excused])
+        parts = []
+        if a.absent:
+            parts.append(f"{len(a.absent)} келмади")
+        if a.late:
+            parts.append(f"{len(a.late)} кечикди")
+        summary = (", ".join(parts) + f" · {a.scheduled} кишидан") if parts else (
+            f"ҳамма вақтида · {a.scheduled} киши" if a.scheduled else "")
+        if a.flexible:
+            summary = (summary + " · " if summary else "") + f"эркин графикда {a.flexible}"
+        tone = "alert" if (a.absent or a.not_yet) else "warn" if a.late else "ok"
+        blocks.append(_people_block("Давомат", "people", fmt_date(a.day), summary, tone, rows))
+
+    return {"date": fmt_date(day), "when": when, "figures": [cash, sales, stock, debt, pay],
+            "blocks": blocks, "lower_bound": lower_bound}
+
+
+async def send_picture_to_directors(picture: bytes, text: str, run_id: uuid.UUID) -> list[int]:
+    """The brief image to every active Director, as a Telegram photo (shown inline)."""
+    from integrations.telegram.bot import TelegramBot, TelegramError
+
+    if settings.bots_frozen:
+        log.info("Bots frozen (BOTS_FROZEN=true) — brief not sent")
+        return []
+    ids: list[int] = []
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for director in await org_store.active_employees_by_role(DIRECTOR_ROLE):
+            try:
+                message_id = await bot.send_file(picture, f"brief-{today_local():%Y-%m-%d}.png",
+                                                 str(director["telegram_user_id"]), text, photo=True)
+                if message_id:
+                    ids.append(message_id)
+            except TelegramError as exc:
+                log.error("Could not send the brief image to {}: {}", director["telegram_user_id"], exc)
+    return ids
+
+
+def caption(data: BriefData) -> str:
+    """The photo's caption: the day, and the numbers a notification can show."""
+    v = view(data)
+    parts = [f"{f['label']}: {'камида ' if f['lower'] else ''}{f['number']}{(' ' + f['unit']) if f['unit'] else ''}"
+             for f in v["figures"] if f["tone"] != "muted" and f["label"] in ("Касса", "Кечаги сотув", "Мижоз қарзи")]
+    return f"☀️ <b>CEO кунлик ҳисоботи — {v['date']}</b>\n" + escape(" · ".join(parts))
+
+
 # ----------------------------------------------------------------------- store
 
 
@@ -635,10 +849,33 @@ async def run(dry_run: bool = False) -> int:
             "Сервер ва интеграция логларини текширинг."
         )
 
+    # The picture (2026-10-05): the same brief as one designed image; the
+    # text is the fallback when it can't be drawn, and is what's stored.
+    picture: bytes | None = None
+    if not message.startswith("🔴"):
+        try:
+            from integrations.reports import render as reports
+
+            picture = reports.image("brief.html", **view(data))
+        except Exception as exc:  # noqa: BLE001 — never lose the brief over its layout
+            log.error("Brief image failed, sending text: {}", exc)
+
     message_id: int | None = None
     try:
         if settings.dry_run:
             print(message)
+            if picture is not None:
+                import tempfile
+
+                preview = Path(tempfile.gettempdir()) / "brief-preview.png"
+                preview.write_bytes(picture)
+                log.info("[dry run] brief image written to {} ({} KB)", preview, len(picture) // 1024)
+        elif picture is not None:
+            ids = await send_picture_to_directors(picture, caption(data), run_id)
+            if not ids and not settings.bots_frozen:
+                log.warning("Brief image not delivered — sending the text instead")
+                ids = await notify_directors(message, agent=AGENT, run_id=run_id)
+            message_id = ids[0] if ids else None
         else:
             ids = await notify_directors(message, agent=AGENT, run_id=run_id)
             message_id = ids[0] if ids else None

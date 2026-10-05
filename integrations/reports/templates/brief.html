@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "_ui.html" import icon, head %}
+{% block title %}CEO кунлик ҳисоботи — {{ date }}{% endblock %}
+{% block style %}
+.figures { margin-top: 4px; }
+.fig { display: grid; grid-template-columns: 24px 1fr auto; column-gap: 11px; align-items: start; padding: 14px 0 13px; border-bottom: 1px solid var(--rule); }
+.fig:last-child { border-bottom: 0; }
+.fig .ic { color: var(--ink-3); padding-top: 2px; }
+.fig .label { font-size: 15px; font-weight: 700; line-height: 1.25; }
+.fig .detail { margin-top: 3px; font-size: 12.5px; line-height: 1.35; color: var(--ink-2); }
+.fig .value { text-align: right; }
+.fig .number { font-size: 25px; font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; white-space: nowrap; }
+.fig .unit { margin-left: 4px; font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--ink-2); }
+.fig .lower { margin-right: 5px; font-size: 12px; font-weight: 700; letter-spacing: 0; color: var(--warn); }
+.fig .sub { margin-top: 4px; font-size: 12px; line-height: 1.3; color: var(--ink-3); white-space: nowrap; }
+.fig .sub svg.icon { vertical-align: -1px; }
+.fig .sub.alert { color: var(--alert); font-weight: 700; }
+.fig--alert .ic, .fig--alert .number { color: var(--alert); }
+.fig--muted .number { padding-top: 4px; font-size: 14px; font-weight: 400; color: var(--ink-3); }
+.fig--quiet .number { padding-top: 2px; font-size: 18px; font-weight: 400; color: var(--ink-2); }
+.foot { margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 11px; line-height: 1.45; color: var(--ink-3); }
+.foot .lowerbound { color: var(--warn); }
+{% endblock %}
+{% block body %}
+<header class="masthead">
+  <div>
+    <h1>CEO кунлик ҳисоботи</h1>
+    <p class="when">{{ when }}</p>
+  </div>
+  <div class="mark">ЭМЖИЕМ</div>
+</header>
+
+<section class="figures">
+{% for f in figures %}
+  <div class="fig fig--{{ f.tone }}">
+    <div class="ic">{{ icon(f.icon, f.tone) }}</div>
+    <div>
+      <div class="label">{{ f.label }}</div>
+      {% if f.detail %}<div class="detail">{{ f.detail }}</div>{% endif %}
+    </div>
+    <div class="value">
+      <div class="number num">{% if f.lower %}<span class="lower">камида</span>{% endif %}{{ f.number }}{% if f.unit %}<span class="unit">{{ f.unit }}</span>{% endif %}</div>
+      {% if f.sub %}<div class="sub num{% if f.sub_alert %} alert{% endif %}">{% if f.sub_dir %}{{ icon(f.sub_dir, "plain", 12) }} {% endif %}{{ f.sub }}</div>{% endif %}
+    </div>
+  </div>
+{% endfor %}
+</section>
+
+{% for b in blocks %}
+<section class="block block--{{ b.tone }}">
+  {{ head(b.title, b.day, b.summary, b.tone, b.icon) }}
+  {% if b.rows %}
+  <ul class="rows">
+    {% for r in b.rows %}
+    <li><span class="who">{{ r.who }}</span><span class="what num{% if r.alert %} alert{% endif %}">{{ r.what }}</span></li>
+    {% endfor %}
+  </ul>
+  {% if b.more %}<p class="more">+яна {{ b.more }} та</p>{% endif %}
+  {% elif b.empty %}
+  <p class="empty">{{ b.empty }}</p>
+  {% endif %}
+</section>
+{% endfor %}
+
+<footer class="foot">
+  {% if lower_bound %}<p class="lowerbound">«камида» — SAP'дан ёзувларнинг бир қисми келди, ҳақиқий рақам бундан катта.</p>{% endif %}
+  <p>Касса — 1C · сотув, захира, қарз — SAP · дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.</p>
+</footer>
+{% endblock %}

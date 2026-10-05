@@ -222,9 +222,72 @@ async def load(today: date) -> Calendar:
     return build(invoices, payments, today, figures.push_capped("invoices", payload))
 
 
+def view(cal: Calendar, balance: Any = None) -> dict[str, Any]:
+    """The PDF template's values (integrations/reports/templates/cash_calendar.html)."""
+    from integrations.onec import cash as onec_cash
+    from integrations.org_bot.task_tracker import WEEKDAYS_UZ
+
+    lower = cal.invoices_capped
+    weeks = [{"span": f"{b.start:%d.%m}–{b.end:%d.%m}", "count": b.count,
+              "value": (_money(b.totals) if b.count else "")} for b in cal.incoming]
+    incoming_count = sum(b.count for b in cal.incoming)
+    incoming: dict[str, int] = {}
+    for b in cal.incoming:
+        for currency, amount in b.totals.items():
+            _add(incoming, currency, amount)
+    return {
+        "period": f"{cal.start:%d.%m}–{cal.end:%d.%m.%Y}",
+        "weekday": WEEKDAYS_UZ[cal.start.weekday()],
+        "balance": None if balance is None else {
+            "value": onec_cash.som(balance.total).replace("\u00a0", " "),
+            "detail": f"банк {onec_cash.som(balance.bank)} · нақд {onec_cash.som(balance.cash)}".replace("\u00a0", " "),
+        },
+        "weeks": weeks,
+        "incoming_total": (("камида " if lower else "") + _money(incoming)) if incoming_count else "кутилмайди",
+        "overdue": {"count": cal.overdue_count, "value": ("камида " if lower else "") + _money(cal.overdue)}
+                   if cal.overdue_count else None,
+        "outgoing": [{"day": f"{p['day']:%d.%m}", "subject": p["subject"], "no": p.get("no") or "",
+                      "value": _money(p["totals"])} for p in cal.outgoing],
+        "outgoing_total": _money(cal.outgoing_totals) if cal.outgoing else "йўқ",
+        "unclear": cal.unclear,
+        "lower": lower,
+    }
+
+
+def caption(cal: Calendar) -> str:
+    """The PDF's caption: what comes in, what is overdue, what goes out."""
+    parts = []
+    if cal.overdue_count:
+        parts.append(f"муддати ўтган {_money(cal.overdue)} ({cal.overdue_count} та)")
+    parts.append(f"кетадиган {_money(cal.outgoing_totals) if cal.outgoing else 'йўқ'}")
+    return f"📅 <b>30 кунлик пул календари — {cal.start:%d.%m}–{cal.end:%d.%m.%Y}</b>\n" + escape(" · ".join(parts))
+
+
+async def _balance() -> Any:
+    """Money right now from 1C, or None (not set up, or 1C didn't answer)."""
+    if not settings.onec_configured:
+        return None
+    from integrations.common.timeutil import now_local
+    from integrations.onec import cash as onec_cash
+
+    try:
+        return await onec_cash.load(now_local().replace(tzinfo=None), run_id=None, agent=AGENT)
+    except Exception as exc:  # noqa: BLE001 — the calendar goes out without the balance
+        log.warning("1C balance unavailable for the cash calendar: {}", exc)
+        return None
+
+
 async def send(run_id: uuid.UUID) -> int:
-    """Send the calendar to the Director(s) and the accountants."""
-    text = render(await load(today_local()))
+    """Send the calendar to the Director(s) and the accountants — a PDF, or the text if it can't be drawn."""
+    cal = await load(today_local())
+    text = render(cal)
+    document: bytes | None = None
+    try:
+        from integrations.reports import render as reports
+
+        document = reports.pdf("cash_calendar.html", **view(cal, await _balance()))
+    except Exception as exc:  # noqa: BLE001 — never lose the calendar over its layout
+        log.error("Cash calendar PDF failed, sending text: {}", exc)
     recipients = {
         e["telegram_user_id"]: e
         for role in (DIRECTOR_ROLE, ACCOUNTANT_ROLE)
@@ -240,7 +303,11 @@ async def send(run_id: uuid.UUID) -> int:
     ) as bot:
         for telegram_user_id in recipients:
             try:
-                await bot.send_message(text, chat_id=str(telegram_user_id))
+                if document is not None:
+                    await bot.send_file(document, f"pul-kalendari-{cal.start:%Y-%m-%d}.pdf",
+                                        str(telegram_user_id), caption(cal))
+                else:
+                    await bot.send_message(text, chat_id=str(telegram_user_id))
                 sent += 1
             except TelegramError as exc:
                 log.error("Could not send the cash calendar to {}: {}", telegram_user_id, exc)

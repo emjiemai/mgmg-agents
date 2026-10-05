@@ -74,6 +74,22 @@ async def _send(chat_id: int, text: str, run_id: uuid.UUID | None, keyboard: dic
         return await bot.send_message(text, chat_id=str(chat_id), reply_markup=keyboard)
 
 
+async def _send_table(chat_id: int, month: date, people: list[kpi_score.EmployeeMonth], final: bool,
+                      run_id: uuid.UUID | None) -> None:
+    """Everyone's KPI as a PDF table (2026-10-05) — the text table if the PDF can't be drawn."""
+    try:
+        from integrations.reports import render as reports
+
+        document = reports.pdf("kpi.html", **kpi_score.table_view(month, people, final))
+    except Exception as exc:  # noqa: BLE001 — never lose the table over its layout
+        log.error("KPI PDF failed, sending text: {}", exc)
+        await _send(chat_id, kpi_score.table_text(month, people, final), run_id)
+        return
+    async with _bot(run_id) as bot:
+        await bot.send_file(document, f"kpi-{month:%Y-%m}.pdf", str(chat_id),
+                            kpi_score.table_caption(month, people, final))
+
+
 async def _edit(callback: dict[str, Any], text: str, keyboard: dict[str, Any] | None, run_id: uuid.UUID) -> None:
     message = callback.get("message") or {}
     async with _bot(run_id) as bot:
@@ -309,7 +325,7 @@ async def _show_kpi(employee: dict[str, Any], run_id: uuid.UUID) -> str:
     if _is_director(employee):
         period = await store.kpi_period(month)
         final = bool(period and period.get("final_sent_at"))
-        await _send(employee["telegram_user_id"], kpi_score.table_text(month, people, final), run_id)
+        await _send_table(employee["telegram_user_id"], month, people, final, run_id)
         return "kpi_table"
     me = next((p for p in people if p.employee_id == str(employee["id"])), None)
     if me is None:
@@ -435,7 +451,7 @@ async def open_month(month: date, run_id: uuid.UUID) -> None:
     directors = await store.active_employees_by_role(DIRECTOR_ROLE)
     for director in directors:
         try:
-            await _send(director["telegram_user_id"], kpi_score.table_text(month, people, final=False), run_id)
+            await _send_table(director["telegram_user_id"], month, people, False, run_id)
             await _send(
                 director["telegram_user_id"],
                 f"⭐ <b>{kpi_score.month_title(month)}</b>: ҳар бир ходимни 4 мезон бўйича 1–5 баҳоланг "
@@ -466,13 +482,13 @@ async def send_final(month: date, run_id: uuid.UUID | None) -> bool:
     """The final table to the Director(s) and HR — once per month."""
     if not await store.mark_kpi_period(month, "final_sent_at"):
         return False
-    text = kpi_score.table_text(month, await load_month(month), final=True)
+    people = await load_month(month)
     recipients = {
         e["telegram_user_id"] for role in (DIRECTOR_ROLE, HR_ROLE) for e in await store.active_employees_by_role(role)
     }
     for telegram_user_id in recipients:
         try:
-            await _send(telegram_user_id, text, run_id)
+            await _send_table(telegram_user_id, month, people, True, run_id)
         except TelegramError as exc:
             log.error("Could not send the final KPI to {}: {}", telegram_user_id, exc)
     log.info("Final KPI {} sent to {} person(s)", month, len(recipients))

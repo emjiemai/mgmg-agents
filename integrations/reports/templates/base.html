@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="uz-Cyrl">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}{% endblock %}</title>
+<style>
+@font-face { font-family: "Noto Sans"; font-weight: 400; src: url("{{ fonts }}/NotoSans-Regular.ttf"); }
+@font-face { font-family: "Noto Sans"; font-weight: 700; src: url("{{ fonts }}/NotoSans-Bold.ttf"); }
+
+:root {
+  --ink: #15171c;
+  --ink-2: #474d59;
+  --ink-3: #6b7280;
+  --rule: #e4e6ea;
+  --rule-strong: #c9ced6;
+  --ground: #ffffff;
+  --band: #f4f5f7;
+  --alert: #b3261e;
+  --alert-wash: #fcecea;
+  --warn: #8a5300;
+  --warn-wash: #fdf2dd;
+  --ok: #1d6b46;
+  --ok-wash: #e5f3eb;
+}
+
+{% if image %}
+@page { size: {{ page_width }}px {{ page_height }}px; margin: 0; }
+html { background: {{ sentinel }}; }
+body { margin: 0; padding: 30px 28px 26px; }
+{% else %}
+@page {
+  size: A4;
+  margin: 16mm 15mm 18mm;
+  @bottom-left { content: "{{ footer_left|default('') }}"; font: 7.5pt "Noto Sans"; color: #6b7280; }
+  @bottom-right { content: counter(page) " / " counter(pages); font: 7.5pt "Noto Sans"; color: #6b7280; }
+}
+html { background: #ffffff; }
+body { margin: 0; }
+{% endif %}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Noto Sans", sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.num, td.num, .tnum { font-feature-settings: "tnum" 1, "lnum" 1; }
+h1, h2, h3, p, ul { margin: 0; padding: 0; }
+ul { list-style: none; }
+svg.icon { vertical-align: -3px; }
+
+/* Masthead: the report's name and day, one line of identity. */
+.masthead { display: grid; grid-template-columns: 1fr auto; align-items: end; column-gap: 16px; padding-bottom: 14px; border-bottom: 2px solid var(--ink); }
+.masthead h1 { white-space: nowrap; }
+.masthead h1 { font-size: 22px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; }
+.masthead .when { margin-top: 4px; font-size: 13px; color: var(--ink-2); }
+.masthead .mark { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; color: var(--ink-3); }
+
+/* Section blocks */
+.block { margin-top: 22px; }
+.block-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 7px; border-bottom: 1px solid var(--rule-strong); }
+.block-head h2 { font-size: 15px; font-weight: 700; }
+.block-head .day { font-size: 12px; color: var(--ink-3); }
+.block-head .sum { margin-left: auto; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.block--alert .block-head .sum, .block--alert .block-head .state { color: var(--alert); }
+.block--warn .block-head .sum, .block--warn .block-head .state { color: var(--warn); }
+.block--ok .block-head .sum, .block--ok .block-head .state { color: var(--ok); }
+.block-head .state svg.icon { vertical-align: -2px; }
+.rows li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; }
+.rows li:last-child { border-bottom: 0; }
+.rows .who { color: var(--ink); }
+.rows .what { color: var(--ink-2); text-align: right; white-space: nowrap; }
+.rows .what.alert { color: var(--alert); }
+.more { padding-top: 4px; font-size: 12px; color: var(--ink-3); }
+.empty { padding: 8px 0 2px; font-size: 13px; color: var(--ink-2); }
+
+/* Tables (PDF reports) */
+table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+th { text-align: left; font-weight: 700; font-size: 8pt; color: var(--ink-3); padding: 0 6px 5px 0; border-bottom: 1px solid var(--rule-strong); }
+td { padding: 5px 6px 5px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th.num, td.num { text-align: right; white-space: nowrap; }
+td.muted { color: var(--ink-3); }
+tr.total td { font-weight: 700; border-top: 1px solid var(--ink); border-bottom: 0; }
+
+.note { margin-top: 18px; font-size: 11.5px; color: var(--ink-3); }
+.lead { margin-top: 14px; font-size: 13px; color: var(--ink-2); }
+.lead strong { color: var(--ink); }
+{% if not image %}
+/* A4: the same system at print size. */
+body { font-size: 10pt; }
+.masthead h1 { font-size: 19pt; }
+.masthead .when { font-size: 10pt; }
+.block { margin-top: 20pt; break-inside: avoid; }
+.block-head h2 { font-size: 12pt; }
+.block-head .sum { font-size: 10.5pt; }
+.rows li { font-size: 10pt; }
+.note { font-size: 8.5pt; }
+.lead { font-size: 10.5pt; }
+{% endif %}
+.alert-text { color: var(--alert); }
+.warn-text { color: var(--warn); }
+.ok-text { color: var(--ok); }
+{% block style %}{% endblock %}
+</style>
+</head>
+<body>
+{% block body %}{% endblock %}
+</body>
+</html>

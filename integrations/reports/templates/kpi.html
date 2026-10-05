@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_ui.html" import icon, head, masthead %}
+{% block title %}KPI — {{ month }}{% endblock %}
+{% block style %}
+.legend { margin-top: 12pt; font-size: 8.5pt; color: var(--ink-3); }
+.legend b { color: var(--ink-2); font-weight: 700; }
+table.kpi { margin-top: 10pt; }
+table.kpi th { white-space: nowrap; padding-left: 6px; }
+table.kpi td { padding-top: 7pt; padding-bottom: 7pt; vertical-align: middle; }
+td.place { width: 4%; color: var(--ink-3); }
+td.person .name { font-weight: 700; }
+td.person .role { font-size: 8.5pt; color: var(--ink-3); }
+td.total { width: 17%; }
+.score { display: grid; grid-template-columns: 26pt 1fr; align-items: center; column-gap: 6pt; }
+.score .n { font-size: 12.5pt; font-weight: 700; text-align: right; }
+.bar { height: 5pt; background: var(--band); border-radius: 3pt; }
+.bar span { display: block; height: 5pt; border-radius: 3pt; }
+.g-high .n { color: var(--ok); } .g-high .bar span { background: var(--ok); }
+.g-mid .n { color: var(--warn); } .g-mid .bar span { background: #c98a1b; }
+.g-low .n { color: var(--alert); } .g-low .bar span { background: var(--alert); }
+td.part { width: 8.5%; text-align: right; white-space: nowrap; }
+td.part.none { color: var(--rule-strong); }
+tr.unmeasured td { color: var(--ink-3); }
+{% endblock %}
+{% block body %}
+{{ masthead("KPI — " ~ month, status) }}
+
+<p class="legend">
+  {% for p in parts %}<b>{{ p.label }}</b> {{ p.weight }}%{% if not loop.last %} · {% endif %}{% endfor %}
+  — маълумоти йўқ қисм ҳисобга олинмайди, қолганлари қайта тортилади.
+</p>
+
+{% if people %}
+<table class="kpi">
+  <thead>
+    <tr>
+      <th></th><th>Ходим</th><th>Жами</th>
+      {% for p in parts %}<th class="num">{{ p.short }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in people %}
+    <tr>
+      <td class="place num">{{ r.place }}</td>
+      <td class="person"><div class="name">{{ r.name }}</div>{% if r.role %}<div class="role">{{ r.role }}</div>{% endif %}</td>
+      <td class="total">
+        <div class="score g-{{ r.grade }}"><span class="n num">{{ r.total }}</span><div class="bar"><span style="width: {{ r.total }}%"></span></div></div>
+      </td>
+      {% for v in r.parts %}<td class="part num{% if v is none %} none{% endif %}">{{ "—" if v is none else v }}</td>{% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Бу ой учун ҳали ўлчанадиган маълумот йўқ.</p>
+{% endif %}
+
+{% if unmeasured %}<p class="note">Ўлчанадиган маълумоти йўқ: {{ unmeasured|join(", ") }}.</p>{% endif %}
+{% if pending %}<p class="note warn-text">Раҳбар баҳоси қўйилмаган: {{ pending|join(", ") }}.</p>{% endif %}
+<p class="note"><span class="ok-text">■</span> 80 ва юқори · <span class="warn-text">■</span> 60–79 · <span class="alert-text">■</span> 60 дан паст. Ҳар бир ходимнинг тафсилоти: OPS Manager'да /kpi.</p>
+{% endblock %}

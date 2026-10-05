@@ -12,6 +12,10 @@ and sends only on its own day, so no new Render service was needed.
 All three default to on; set the switch to `false` in Render's `mgmg-shared`
 group to pause one. Each accepts `--force` (run on any day) and `--dry-run`.
 
+Since 2026-10-05 the cash calendar, the data-quality report and the KPI
+table go out as **PDFs** with a one-line caption (`18-reports.md`); the cash
+calendar also shows the money on hand from 1C.
+
 ## B2 — 30-day cash calendar
 
     📅 30 кунлик пул календари — 28.09–27.10.2026

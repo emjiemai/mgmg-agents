@@ -3493,6 +3493,145 @@ def test_garmin_leads() -> None:
     check_true("garmin_lidlar is a data source the Director can ask", "garmin_lidlar" in AGENT_SLUGS)
 
 
+def test_reports() -> None:
+    """The brief as a picture and four reports as PDFs (2026-10-05): templates, values, files."""
+    print("report images and PDFs")
+    import re
+    from datetime import datetime
+
+    from integrations.billz import sap_check as sc
+    from integrations.billz.sales import DaySales, ShopDay
+    from integrations.common.agent_loader import load_agent
+    from integrations.onec.cash import CashPosition
+    from integrations.org_bot import kpi_score
+    from integrations.reports import render
+    from integrations.sap import push_handler
+    from integrations.sap.figures import Figure, invoices_on
+    from integrations.sap.models import ARAging, ARInvoice
+    from integrations.verifix import attendance
+
+    def text_of(html: str) -> str:
+        """What a reader sees: no styles, no drawn icons, no tags."""
+        html = re.sub(r"<style.*?</style>|<svg.*?</svg>", " ", html, flags=re.S)
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
+    check_true("fonts are bundled (Noto Sans, Uzbek Cyrillic)",
+               all((render.FONTS / f).exists() for f in ("NotoSans-Regular.ttf", "NotoSans-Bold.ttf")))
+
+    # ---- the brief: values
+    brief = load_agent("ceo-daily-brief")
+    invoices = [ARInvoice(doc_entry=i, doc_num=2000 + i, card_code="C", card_name="X", doc_date=date(2026, 1, 1),
+                          due_date=date(2026, 2, 1), days_overdue=120 if i < 3 else 10,
+                          aging_bucket="90_plus" if i < 3 else "1_30", currency="USD", doc_total_tiyin=100000,
+                          paid_to_date_tiyin=0, balance_due_tiyin=100000, sales_person_code=None,
+                          sales_person_name=None, division=None) for i in range(6)]
+    aging = ARAging(snapshot_date=date(2026, 10, 5), invoices=invoices)
+    aging.bucket_counts = {"90_plus": 3, "1_30": 3}
+    people = [{"report_date": date(2026, 10, 2), "status": "asked", "display_name": f"Ходим {i}", "role": "it"}
+              for i in range(7)]
+    data = brief.BriefData(
+        cash=CashPosition(at=datetime(2026, 10, 5, 8), accounts=[("5110", "Банк", 4_495_000_000), ("5010", "Касса", 76_720_000)]),
+        sales=Figure(status="ok", totals={}, count=0, as_of=date(2026, 10, 5)), sales_unit="ҳисоб-фактура",
+        inventory=Figure(status="unknown_format", as_of=date(2026, 10, 5)), aging=aging,
+        payments=brief.PaymentsDue(),
+        shop_sales=DaySales(day=date(2026, 10, 4), shops=[ShopDay(name="GARMIN ABAY", net_sales=14_320_000, orders=4)]),
+        report_rows=people,
+        attendance=attendance.DaySummary(day=date(2026, 10, 4), scheduled=2, flexible=5, absent=[
+            attendance.DayRecord(employee_id="1", name="Ёркинов Рустам", job="", day=date(2026, 10, 4), working=True,
+                                 status="absent")]),
+    )
+    v = brief.view(data)
+    by_label = {f["label"]: f for f in v["figures"]}
+    check("the five numbers, always in this order", list(by_label),
+          ["Касса", "Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар"])
+    check("cash: the number large, its unit apart", (by_label["Касса"]["number"], by_label["Касса"]["unit"]),
+          ("4,57", "млрд сўм"))
+    check_true("nothing sold / no payments: quiet, not shouted",
+               by_label["Кечаги сотув"]["tone"] == "quiet" and by_label["Бугунги тўловлар"]["tone"] == "quiet")
+    check_true("unreadable stock says so instead of a number",
+               by_label["Захира"]["tone"] == "muted" and "ўқилмади" in by_label["Захира"]["number"])
+    check_true("overdue debt is the one red figure, with how old",
+               by_label["Мижоз қарзи"]["tone"] == "alert" and "90 кундан" in by_label["Мижоз қарзи"]["sub"])
+    blocks = {b["title"]: b for b in v["blocks"]}
+    check("names: five, then '+N'", (len(blocks["Ҳисобот юбормаганлар"]["rows"]), blocks["Ҳисобот юбормаганлар"]["more"]), (5, 2))
+    check_true("one shop: its name beside the day, no repeated row",
+               "GARMIN ABAY" in blocks["Дўконлар"]["day"] and not blocks["Дўконлар"]["rows"])
+    check_true("attendance counts the flexible apart", "эркин графикда 5" in blocks["Давомат"]["summary"])
+    brief_html = render.render_html("brief.html", image=True, page_width=540, page_height=6000, sentinel="#ff00ff", **v)
+    check_true("the brief reads in Uzbek Cyrillic",
+               latin_words(text_of(brief_html), allow={"Billz", "GARMIN", "ABAY", "OPS", "Manager", "Verifix", "C"}) == [])
+    check_true("no emoji in the picture (drawn icons only)", "🔴" not in brief_html and "📈" not in brief_html)
+    check_true("the caption carries the key numbers", "Касса: 4,57 млрд" in brief.caption(data))
+
+    # ---- the reports: values
+    kpi_people = []
+    for name, total in (("Ширин Умматова", 86), ("Отабек Мирпулатов", 53), ("Без маълумот", None)):
+        p = kpi_score.EmployeeMonth(employee_id=name, name=name, role_label="IT")
+        p.parts = dict.fromkeys(kpi_score.PARTS)
+        p.parts["process"] = total
+        p.total = total
+        kpi_people.append(p)
+    kv = kpi_score.table_view(date(2026, 9, 1), kpi_people, final=False)
+    check("KPI: measured people ranked, graded", [(r["name"], r["grade"]) for r in kv["people"]],
+          [("Ширин Умматова", "high"), ("Отабек Мирпулатов", "low")])
+    check_true("...the unmeasured named apart, ratings still to come", kv["unmeasured"] == ["Без маълумот"] and kv["pending"])
+    check_true("KPI caption counts the colours", "1 таси 80+" in kpi_score.table_caption(date(2026, 9, 1), kpi_people, False))
+    dq = load_agent("data-quality")
+    finding = dq._finding("SAP оқимлари: ҳисоб-фактуралар — 2 кун олдин; тўловлар — 2 кун олдин")
+    check("data quality: a joined finding becomes a list", [str(x) for x in finding["parts"]],
+          ["ҳисоб-фактуралар — 2 кун олдин", "тўловлар — 2 кун олдин"])
+    cc = load_agent("cash-calendar")
+    cal = cc.build([{"due_date": date(2026, 9, 1), "balance_due_tiyin": 500000, "currency": "USD"}], [], date(2026, 10, 5), capped=False)
+    cv = cc.view(cal)
+    check_true("cash calendar: overdue first, every week listed", cv["overdue"]["count"] == 1 and len(cv["weeks"]) == 4)
+
+    # ---- the duplicate-line fix (the 2026-10-03 push had no ObjType)
+    line_a, line_b = {"DocEntry": 7, "LineNum": 0}, {"DocEntry": 7, "LineNum": 1}
+    check("one invoice's lines share one key without ObjType",
+          push_handler.full_key("sales", line_a), push_handler.full_key("sales", line_b))
+    rows = [{"DocEntry": 7, "DocDate": "2026-10-04", "DocTotal": "100", "CANCELED": "N"}] * 3
+    check("an invoice that came as three lines counts once", invoices_on(rows, date(2026, 10, 4), "USD", as_of=None).count, 1)
+    docs = sc.docs_from_sap([{"DocEntry": 7, "DocNum": 2430, "DocDate": "2026-10-04", "CANCELED": "N",
+                              "DocTotalSy": "100", "DocCur": "UZS"}] * 3,
+                            [{"DocEntry": 7, "ItemCode": "x", "WhsCode": "G.A._01"}], frozenset({"G.A._01"}))
+    check("...and the Billz check sees it once", len(docs), 1)
+
+    # ---- the files themselves (needs Pango; skipped where it isn't installed)
+    try:
+        import importlib
+
+        importlib.import_module("weasyprint")
+    except Exception as exc:  # noqa: BLE001 — e.g. Windows without GTK/Pango
+        print(f"  skip PDF/PNG rendering: WeasyPrint unavailable ({type(exc).__name__})")
+        return
+    png = render.image("brief.html", **v)
+    from io import BytesIO
+
+    import pypdfium2 as pdfium
+
+    from PIL import Image
+
+    picture = Image.open(BytesIO(png))
+    check_true("the brief is a PNG 1080 px wide, cut to its content",
+               png[:4] == b"\x89PNG" and picture.width == 1080 and 900 < picture.height < 4000)
+    check_true("...no sentinel colour left in it", (255, 0, 255) not in [picture.convert("RGB").getpixel((5, y))
+                                                                         for y in range(0, picture.height, 40)])
+    result = sc.Result(day=date(2026, 10, 4), missing=[sc.Cheque("a", "000903002216", date(2026, 9, 30), "GARMIN ABAY",
+                                                                  725000, "Rustam", [sc.Item("1", "", "Band", 1)])])
+    for name, template, values in (
+        ("cash calendar", "cash_calendar.html", cv),
+        ("KPI", "kpi.html", kv),
+        ("data quality", "data_quality.html", dq.view(dq.Inputs(today=date(2026, 10, 5)))),
+        ("Billz ↔ SAP", "billz_sap.html", sc.pdf_view(result, trial=True)),
+    ):
+        document = render.pdf(template, **values)
+        check_true(f"{name}: a one-page PDF", document[:5] == b"%PDF-" and len(pdfium.PdfDocument(document)) == 1)
+        check_true(f"{name}: reads in Uzbek Cyrillic", latin_words(
+            text_of(render.render_html(template, image=False, **values)),
+            allow={"KPI", "OPS", "Manager", "Admin", "Bot", "IT", "Billz", "SAP", "GARMIN", "ABAY", "Rustam", "Band",
+                   "Render", "BILLZ", "CHECK", "TRIAL", "false", "OKR", "C"}) == [])
+
+
 def test_sap_full_push() -> None:
     """Complete SAP data through new gateway tools: the spec, the script, the receiver."""
     print("SAP complete gateway tools")
@@ -4219,6 +4358,7 @@ def main() -> int:
         test_garmin_leads,
         test_billz,
         test_sap_full_push,
+        test_reports,
         test_billz_sap_check,
         test_onec,
         test_onec_cash,

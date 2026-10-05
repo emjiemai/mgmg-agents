@@ -183,15 +183,24 @@ class TelegramBot:
             log.warning("sendChatAction failed: {}", err)
 
     async def send_document(self, path: str, chat_id: str, caption: str | None = None) -> int | None:
-        """Upload a file to one chat.
+        """Upload a file from disk to one chat (see ``send_file``)."""
+        return await self.send_file(Path(path).read_bytes(), Path(path).name, chat_id, caption)
+
+    async def send_file(
+        self, content: bytes, filename: str, chat_id: str, caption: str | None = None, *, photo: bool = False,
+    ) -> int | None:
+        """Upload bytes to one chat: a document (PDF, PNG kept sharp) or, with
+        ``photo``, a picture shown inline (the morning brief).
 
         Uses multipart rather than ``_call``'s JSON body — Telegram takes an
-        uploaded document only as form data.
+        upload only as form data.
 
         Args:
-            path: Local file to send.
+            content: The file's bytes.
+            filename: The name the chat shows.
             chat_id: Destination chat.
-            caption: Optional HTML caption.
+            caption: Optional HTML caption (Telegram allows 1024 characters).
+            photo: Send with sendPhoto instead of sendDocument.
 
         Returns:
             The Telegram message id, or None in dry-run mode.
@@ -199,8 +208,9 @@ class TelegramBot:
         Raises:
             TelegramError: if Telegram rejects the upload.
         """
+        method, field = ("sendPhoto", "photo") if photo else ("sendDocument", "document")
         if settings.dry_run:
-            log.info("[dry run] telegram.sendDocument -> {} ({})", chat_id, path)
+            log.info("[dry run] telegram.{} -> {} ({}, {} bytes)", method, chat_id, filename, len(content))
             return None
 
         assert self._client is not None
@@ -211,23 +221,18 @@ class TelegramBot:
 
         async with audited(
             agent=self.agent,
-            action="telegram_sendDocument",
+            action=f"telegram_{method}",
             target_system="telegram",
             run_id=self.run_id,
             target_ref=str(chat_id),
             mode="notify",
-            payload={"file": Path(path).name},
+            payload={"file": filename, "bytes": len(content)},
         ) as ctx:
-            with open(path, "rb") as handle:
-                response = await self._client.post(
-                    "/sendDocument", data=payload, files={"document": (Path(path).name, handle)}
-                )
+            response = await self._client.post(f"/{method}", data=payload, files={field: (filename, content)})
             ctx["http_status"] = response.status_code
             body = response.json()
             if not body.get("ok"):
-                raise TelegramError(
-                    f"Telegram sendDocument failed: {body.get('description', response.text[:300])}"
-                )
+                raise TelegramError(f"Telegram {method} failed: {body.get('description', response.text[:300])}")
             return (body.get("result") or {}).get("message_id")
 
     # -------------------------------------------------------------- callbacks

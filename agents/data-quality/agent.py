@@ -203,6 +203,36 @@ def render(inp: Inputs) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _finding(text: str) -> dict:
+    """One finding for the PDF: "Head: a; b; c" becomes a heading and a list."""
+    from markupsafe import Markup
+
+    head, sep, rest = text.partition(": ")
+    if sep and "; " in rest:
+        return {"head": Markup(head + ":"), "rest": "", "parts": [Markup(x) for x in rest.split("; ")]}
+    if sep:
+        return {"head": Markup(head + ":"), "rest": Markup(rest), "parts": []}
+    return {"head": Markup(text), "rest": "", "parts": []}
+
+
+def view(inp: Inputs) -> dict:
+    """The PDF template's values (integrations/reports/templates/data_quality.html).
+
+    The findings are already escaped HTML (their names and codes come from
+    SAP and the bot), so they're passed as markup, not escaped twice.
+    """
+    sections = []
+    for title, found in (("SAP", sap_findings(inp)), ("Бот", bot_findings(inp))):
+        sections.append({"title": title, "count": len(found), "findings": [_finding(f) for f in found]})
+    return {"date": fmt_date(inp.today), "sections": sections}
+
+
+def caption(inp: Inputs) -> str:
+    counts = [f"{title}: {len(found)} та" if found else f"{title}: тоза"
+              for title, found in (("SAP", sap_findings(inp)), ("Бот", bot_findings(inp)))]
+    return f"🧹 <b>Маълумот сифати — {fmt_date(inp.today)}</b>\n" + " · ".join(counts)
+
+
 # ------------------------------------------------------------------ gather
 
 
@@ -262,8 +292,16 @@ async def gather_inputs(today: date) -> Inputs:
 
 
 async def check_now(run_id: uuid.UUID) -> str:
-    """Run every check and send the result to the admin chat (also /sifat)."""
-    text = render(await gather_inputs(today_local()))
+    """Run every check and send the result to the admin chat (also /sifat) — a PDF, or the text."""
+    inp = await gather_inputs(today_local())
+    text = render(inp)
+    document: bytes | None = None
+    try:
+        from integrations.reports import render as reports
+
+        document = reports.pdf("data_quality.html", **view(inp))
+    except Exception as exc:  # noqa: BLE001 — never lose the report over its layout
+        log.error("Data-quality PDF failed, sending text: {}", exc)
     if settings.dry_run:
         print(text)
         return "dry_run"
@@ -277,7 +315,11 @@ async def check_now(run_id: uuid.UUID) -> str:
         default_chat_id=settings.admin_bot_telegram_chat_id,
     ) as bot:
         try:
-            await bot.send_message(text)
+            if document is not None:
+                await bot.send_file(document, f"malumot-sifati-{inp.today:%Y-%m-%d}.pdf",
+                                    settings.admin_bot_telegram_chat_id, caption(inp))
+            else:
+                await bot.send_message(text)
         except TelegramError as exc:
             log.error("Could not send the data-quality report: {}", exc)
             return "failed"
