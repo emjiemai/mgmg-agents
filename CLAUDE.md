@@ -73,8 +73,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   a white square — no text. Logos: `integrations/org_bot/logos/`.
 - No company domain for the QR page — Render's `mgmg-api-eeky.onrender.com` stays.
 - Complaints only (no "fikr"), **two pages, two QR codes**: `/f` = Londry
-  (already printed — never move it), `/f/garmin` = Garmin. No choice buttons
-  on the page. Complaints reach OPS Manager Bot marked 🔴. No Uzbek Latin.
+  (already printed — never move it), `/f/garmin` = Garmin. The only choice on
+  the page is the **branch** (required, 2026-10-04): Londry Юнусобод /
+  Вузгородок, Garmin Абай / Минор (`feedback.BRANCHES`; `?branch=` preselects).
+  Complaints reach OPS Manager Bot marked 🔴 with the branch. No Uzbek Latin.
   Mobile app: not now.
 - **Friendly voice** (2026-09-30) for cheer, motivation and daily-report
   messages: one short lowercase sentence, no line breaks, no bold, one emoji
