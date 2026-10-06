@@ -148,6 +148,22 @@ brief. Stored as `employees.works_saturday` / `works_sunday`; every switch is
 logged in `employee_changes` (field `workdays`). The Friday scorecard covers
 Monday–Friday; weekend reports count in the monthly KPI.
 
+## Reports off for one person (2026-10-06)
+
+Someone who shouldn't write a daily report at all: **Admin Bot → /xodimlar →
+the person → 📝 Кунлик ҳисобот** (✅ ёқилган / ⛔ ўчирилган; tap again to
+switch back on). The card shows "Кунлик ҳисобот (16:00): ўчирилган".
+
+While off: no 16:00 ask and no 17:00 reminder, so no `daily_reports` row is
+opened — they never appear as "didn't report" in the morning brief or the
+Friday scorecard, and the KPI simply has no report figures for them (its
+process / commitment parts use what else is measured; nothing is a zero).
+Switching off also deletes today's still-unanswered ask; a report already
+sent today stays. With no ask open, their typed messages go to the work AI
+and files aren't offered "бугунги ҳисобот". `/hisobot` answers "сиздан кунлик
+ҳисобот сўралмайди, ёзишингиз шарт эмас 🙂". Stored as `employees.reports_off`;
+logged in `employee_changes` (field `reports`).
+
 ## Vague reports — one question for a little accuracy
 
 The AI asks **one** short follow-up question when a report says nothing

@@ -1187,7 +1187,7 @@ async def reports_awaiting_reminder(report_date: date) -> list[dict[str, Any]]:
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = %s AND r.status = 'asked' AND r.reminded_at IS NULL
-          AND e.status = 'active'
+          AND e.status = 'active' AND NOT e.reports_off
         ORDER BY r.asked_at
         """,
         (report_date,),
@@ -2181,6 +2181,26 @@ async def toggle_cheer(employee_id: str, changed_by: str) -> dict[str, Any] | No
     )
     if after is not None:
         await log_employee_change(employee_id, "cheer", None, "off" if after["cheer_off"] else "on", changed_by)
+    return after
+
+
+async def toggle_reports(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Switch daily reports off for one person, or back on; logged.
+
+    Switching off also drops today's still-unanswered ask, so they aren't
+    reminded at 17:00 or counted as having missed today's report.
+    """
+    after = await fetch_one(
+        "UPDATE employees SET reports_off = NOT reports_off WHERE id = %s AND status = 'active' RETURNING *",
+        (employee_id,),
+    )
+    if after is not None:
+        if after["reports_off"]:
+            await execute(
+                "DELETE FROM daily_reports WHERE employee_id = %s AND report_date = %s AND status = 'asked'",
+                (employee_id, today_local()),
+            )
+        await log_employee_change(employee_id, "reports", None, "off" if after["reports_off"] else "on", changed_by)
     return after
 
 

@@ -62,9 +62,11 @@ async def ask_everyone(run_id: uuid.UUID) -> int:
     """
     day = today_local()
     # Mon–Fri everyone; Saturday/Sunday only those the admin marked as
-    # working that day (Admin Bot → /xodimlar → the person's card).
+    # working that day (Admin Bot → /xodimlar → the person's card). Nobody
+    # whose reports the admin switched off (📝 on the same card).
     employees = [
-        e for e in await store.list_active_employees() if e["role"] != DIRECTOR_ROLE and kpi.works_on(e, day)
+        e for e in await store.list_active_employees()
+        if e["role"] != DIRECTOR_ROLE and kpi.works_on(e, day) and not e.get("reports_off")
     ]
     if not employees:
         log.warning("No active employees to ask (besides the Director)")

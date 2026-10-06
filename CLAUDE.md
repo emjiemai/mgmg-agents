@@ -97,7 +97,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   it for?" (бугунги ҳисобот / директорга / бекор) and forwarded to the Director
   as it is — the AI never reads files. **Reports are never guessed** (any typed
   message while it's owed is confirmed); **/hisobot** changes/deletes today's
-  report only. Cheer can be switched off per person (/xodimlar → 💬). Employees' messages about their work go to the **work AI**
+  report only. Cheer can be switched off per person (/xodimlar → 💬), daily reports too (📝, 2026-10-06:
+  never asked, never counted as missed). Employees' messages about their work go to the **work AI**
   (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks, own
   leads and (once uploaded) `employees.responsibilities`; **honesty first —
   "билмайман", never a guess**; no company data, no other people; Garmin sales

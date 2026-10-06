@@ -491,6 +491,7 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         lines.append(f"Мурожаат: {escape(address_text(emp))}")
         lines.append(f"AI ёрдамчи: {'ўчирилган' if emp.get('ai_chat_off') else 'ёқилган'}")
         lines.append(f"Кайфият хабарлари (10:00, 17:35): {'ўчирилган' if emp.get('cheer_off') else 'ёқилган'}")
+        lines.append(f"Кунлик ҳисобот (16:00): {'ўчирилган' if emp.get('reports_off') else 'ёқилган'}")
         lines.append(f"Вазифалари: {'юкланган' if (emp.get('responsibilities') or '').strip() else 'ҳали юкланмаган'}")
     if note:
         lines += ["", note]
@@ -515,6 +516,9 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         # Some find the cheer irritating: off for this person only (team-cheer skips them).
         rows.append([{"text": f"💬 Кайфият хабарлари: {'⛔ ўчирилган' if emp.get('cheer_off') else '✅ ёқилган'}",
                       "callback_data": f"chof:{employee_id}"}])
+        # Daily reports off for this person: no 16:00 ask, no 17:00 reminder, never counted as missed.
+        rows.append([{"text": f"📝 Кунлик ҳисобот: {'⛔ ўчирилган' if emp.get('reports_off') else '✅ ёқилган'}",
+                      "callback_data": f"rpof:{employee_id}"}])
     rows += [
         [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
         [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
@@ -830,6 +834,7 @@ async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) ->
 
 EMPLOYEE_ACTIONS = (
     "emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun", "addr", "aich", "chof",
+    "rpof",
 )
 
 
@@ -908,6 +913,15 @@ async def _handle_employee_action(
             await _answer(query_id, "Ходим топилмади")
             return "not_found"
         note = "💬 Кайфият хабарлари бу ходимга юборилмайди." if updated["cheer_off"] else "💬 Кайфият хабарлари яна юборилади."
+        text, keyboard = employee_card(updated, note)
+        await _edit(callback, text, keyboard, run_id)
+    elif action == "rpof":
+        updated = await store.toggle_reports(employee_id, decided_by)
+        if updated is None:
+            await _answer(query_id, "Ходим топилмади")
+            return "not_found"
+        note = "📝 Кунлик ҳисобот бу ходимдан сўралмайди ва эслатилмайди, топширмаган деб саналмайди." \
+            if updated["reports_off"] else "📝 Кунлик ҳисобот яна сўралади (16:00)."
         text, keyboard = employee_card(updated, note)
         await _edit(callback, text, keyboard, run_id)
     elif action == "aich":

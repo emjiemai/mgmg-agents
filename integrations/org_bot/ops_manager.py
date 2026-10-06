@@ -1105,6 +1105,9 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
 async def _show_today_report(employee: dict[str, Any], run_id: uuid.UUID) -> str:
     """/hisobot: today's report with ✏️ / 🗑, or how to send it."""
     report = await store.report_for_day(employee["telegram_user_id"], today_local())
+    if report is None and employee.get("reports_off"):
+        await _reply(employee["telegram_user_id"], run_id, report_tools.reports_off_text())
+        return "reports_off"
     if report is None:
         await _reply(employee["telegram_user_id"], run_id, report_tools.no_report_today_text())
         return "report_not_asked"
