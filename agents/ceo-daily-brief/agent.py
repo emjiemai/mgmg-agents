@@ -48,7 +48,7 @@ import json
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +60,7 @@ from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency, to_tiyin
-from integrations.common.timeutil import fmt_date, now_local, now_utc, today_local
+from integrations.common.timeutil import fmt_date, now_local, now_utc, to_local, today_local
 from integrations.org_bot import permissions
 from integrations.org_bot import store as org_store
 from integrations.org_bot.notify import notify_directors
@@ -85,6 +85,11 @@ MAX_LINES = 5
 
 # A SAP feed older than this is shown as "not updated since …", not as today's number.
 STALE_AFTER_DAYS = 3
+# The gateway pushes every 30 minutes, day and night. No push for this long
+# means its computer or task has stopped (2026-10-03 14:13 → 06.10: three
+# briefs showed Friday's numbers as today's): every SAP figure then says when
+# it is from, the brief opens with a warning, and the admin is told.
+SAP_SILENT_HOURS = 3
 
 
 @dataclass
@@ -113,6 +118,8 @@ class BriefData:
     report_rows: list[dict[str, Any]] | None = None
     # The previous brief's five numbers, for the "since yesterday" change.
     previous: dict[str, Any] = field(default_factory=dict)
+    # When SAP last pushed anything successfully (Tashkent time); None = never / unknown.
+    sap_pushed_at: datetime | None = None
     # Yesterday from Verifix; None when Verifix isn't set up (section hidden).
     attendance: attendance.DaySummary | None = None
     attendance_failed: bool = False
@@ -139,7 +146,7 @@ async def collect() -> BriefData:
     today = today_local()
     names = [
         "sap_aging", "sap_invoice_push", "sap_orders", "sap_inventory", "sap_inventory_push", "sap_sales",
-        "sap_stock_value", "payments", "daily_reports", "previous", "attendance", "billz", "cash",
+        "sap_stock_value", "payments", "daily_reports", "previous", "attendance", "billz", "cash", "sap_pushed_at",
     ]
     results = await asyncio.gather(
         _fetch_aging(),
@@ -155,6 +162,7 @@ async def collect() -> BriefData:
         _fetch_attendance(today),
         _fetch_shop_sales(today),
         _fetch_cash(),
+        _fetch_sap_pushed_at(),
         return_exceptions=True,
     )
     by_name = dict(zip(names, results))
@@ -163,6 +171,8 @@ async def collect() -> BriefData:
             data.note_failure(name, result)
 
     currency = settings.sap_default_currency
+    if not isinstance(by_name["sap_pushed_at"], BaseException):
+        data.sap_pushed_at = by_name["sap_pushed_at"]
     if not isinstance(by_name["sap_aging"], BaseException):
         data.aging = by_name["sap_aging"]
     if not isinstance(by_name["sap_invoice_push"], BaseException):
@@ -171,11 +181,18 @@ async def collect() -> BriefData:
     sales_feed = by_name["sap_sales"]
     if not isinstance(sales_feed, BaseException) and sales_feed[1] and _fresh(sales_feed[0]):
         # The full push's invoices (2026-10-03) — what was actually sold.
-        data.sales = figures.invoices_on(sales_feed[1], yesterday, currency, as_of=sales_feed[0])
         data.sales_unit = "ҳисоб-фактура"
+        if sales_feed[0] < today:
+            # Pushed before today: yesterday hadn't ended yet (or wasn't
+            # pushed at all), so "0" would be a guess — 06.10 showed 0 for 05.10.
+            data.sales = Figure(status="stale", as_of=sales_feed[0], since=data.sap_pushed_at)
+        else:
+            data.sales = figures.invoices_on(sales_feed[1], yesterday, currency, as_of=sales_feed[0])
     elif not isinstance(by_name["sap_orders"], BaseException):
         as_of, rows = by_name["sap_orders"]
         data.sales = _dated(figures.documents_on(rows, yesterday, currency, tool="orders", as_of=as_of))
+        if as_of is not None and as_of < today and data.sales.ok:
+            data.sales = Figure(status="stale", as_of=as_of, since=data.sap_pushed_at)
     stock_feed = by_name["sap_stock_value"]
     if not isinstance(stock_feed, BaseException) and stock_feed[1] and _fresh(stock_feed[0]):
         # get_stock_value: SAP's own stock value summed per warehouse — the whole of it.
@@ -230,6 +247,34 @@ async def _fetch_attendance(today: date) -> attendance.DaySummary | None:
     yesterday = today - timedelta(days=1)
     recs = await attendance.load(yesterday, yesterday, run_id=None, agent=AGENT)
     return attendance.summarize(recs, yesterday)
+
+
+async def _fetch_sap_pushed_at() -> datetime | None:
+    """When the SAP gateway last pushed anything successfully (Tashkent time)."""
+    row = await fetch_one(
+        "SELECT max(occurred_at) AS at FROM agent_actions WHERE agent = 'sap-gateway-push' AND status = 'success'"
+    )
+    return to_local(row["at"]) if row and row["at"] else None
+
+
+def sap_silent(data: BriefData, now: datetime | None = None) -> bool:
+    """SAP has pushed before, but not for SAP_SILENT_HOURS — its numbers are from the past."""
+    if data.sap_pushed_at is None:
+        return False
+    now = now or now_local()
+    return now - data.sap_pushed_at > timedelta(hours=SAP_SILENT_HOURS)
+
+
+def _since(moment: datetime | None) -> str:
+    return f"{moment:%d.%m %H:%M}" if moment else ""
+
+
+def sap_notice(data: BriefData) -> str | None:
+    """The warning that opens the brief when SAP has gone quiet."""
+    if not sap_silent(data):
+        return None
+    return (f"SAP {_since(data.sap_pushed_at)} дан бери маълумот юбормаяпти — "
+            "сотув, захира ва қарз рақамлари шу вақтга тегишли.")
 
 
 def _fresh(as_of: date | None) -> bool:
@@ -368,6 +413,7 @@ def render(data: BriefData) -> str:
     parts: list[str | None] = [
         f"<b>☀️ CEO кунлик ҳисоботи — {fmt_date(day)}.</b> <i>{now_local().strftime('%H:%M')} Тошкент</i>",
         "",
+        f"⚠️ <b>{escape(sap_notice(data))}</b>\n" if sap_notice(data) else None,
         render_five(data),
         _render_shop_sales(data),
         _render_missed_reports(data),
@@ -403,7 +449,8 @@ def _figure_value(figure: Figure | None, key: str, data: BriefData, *, what: str
     if figure.status == "unknown_format":
         return "<i>SAP маълумоти ўқилмади</i>", False
     if figure.status == "stale":
-        return f"<i>SAP маълумоти {fmt_date(figure.as_of)} дан бери янгиланмаган</i>", False
+        when = _since(figure.since) or fmt_date(figure.as_of)
+        return f"<i>SAP маълумоти {when} дан бери янгиланмаган</i>", False
     if not figure.totals:
         text = f"0 ({what} йўқ)" if not figure.capped else "<i>аниқлаб бўлмади</i>*"
         return text, figure.capped
@@ -425,6 +472,8 @@ def render_five(data: BriefData) -> str:
     lower_bound |= capped
 
     stock, capped = _figure_value(data.inventory, "inventory", data, what="қолдиқ")
+    if sap_silent(data) and data.inventory is not None and data.inventory.ok:
+        stock += f" <i>({_since(data.sap_pushed_at)} ҳолатида)</i>"
     lines.append(f"📦 Захира: {stock}")
     lower_bound |= capped
 
@@ -442,6 +491,8 @@ def render_five(data: BriefData) -> str:
         if overdue_totals:
             marker = " 🔴" if aging.bucket_totals_tiyin.get("90_plus", 0) > 0 else ""
             debt += f", муддати ўтгани {escape(_money(overdue_totals))} ({aging.overdue_count} та){marker}"
+        if sap_silent(data):
+            debt += f" <i>({_since(data.sap_pushed_at)} ҳолатида)</i>"
         lines.append(f"🧾 Мижоз қарзи: {debt}")
 
     if data.payments is None:
@@ -558,7 +609,8 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
     if figure.status == "unknown_format":
         return {**row, "tone": "muted", "number": "SAP маълумоти ўқилмади"}
     if figure.status == "stale":
-        return {**row, "tone": "muted", "number": f"{fmt_date(figure.as_of)} дан бери янгиланмаган"}
+        when = _since(figure.since) or fmt_date(figure.as_of)
+        return {**row, "tone": "muted", "number": f"{when} дан бери янгиланмаган"}
     if not figure.totals:
         if figure.capped:
             return {**row, "tone": "muted", "number": "аниқлаб бўлмади", "lower": True}
@@ -607,6 +659,8 @@ def view(data: BriefData) -> dict[str, Any]:
     sales = _figure_row(data.sales, "sales", "Кечаги сотув", "sales", data.sales_unit, data)
     stock = _figure_row(data.inventory, "inventory", "Захира", "stock", "қолдиқ", data)
     lower_bound |= sales["lower"] or stock["lower"]
+    if sap_silent(data) and stock["tone"] not in ("muted", "quiet"):
+        stock.update(sub=f"{_since(data.sap_pushed_at)} ҳолатида", sub_dir=None, sub_alert=True)
 
     # 4. customer debt (SAP)
     debt: dict[str, Any] = {"label": "Мижоз қарзи", "icon": "debt", "tone": "plain", "detail": None, "number": "",
@@ -630,6 +684,8 @@ def view(data: BriefData) -> dict[str, Any]:
             change = _delta("debt", open_totals, data, comparable=not data.aging_capped)
             if change:
                 debt["sub"], debt["sub_dir"] = change
+        if sap_silent(data):
+            debt.update(sub=f"{_since(data.sap_pushed_at)} ҳолатида", sub_dir=None, sub_alert=True)
 
     # 5. payments due today (written permissions)
     pay: dict[str, Any] = {"label": "Бугунги тўловлар", "icon": "payments", "tone": "plain", "detail": None,
@@ -700,7 +756,7 @@ def view(data: BriefData) -> dict[str, Any]:
         blocks.append(_people_block("Давомат", "people", fmt_date(a.day), summary, tone, rows))
 
     return {"date": fmt_date(day), "when": when, "figures": [cash, sales, stock, debt, pay],
-            "blocks": blocks, "lower_bound": lower_bound}
+            "blocks": blocks, "lower_bound": lower_bound, "notice": sap_notice(data)}
 
 
 async def send_picture_to_directors(picture: bytes, text: str, run_id: uuid.UUID) -> list[int]:
@@ -730,7 +786,8 @@ def caption(data: BriefData) -> str:
     v = view(data)
     parts = [f"{f['label']}: {'камида ' if f['lower'] else ''}{f['number']}{(' ' + f['unit']) if f['unit'] else ''}"
              for f in v["figures"] if f["tone"] != "muted" and f["label"] in ("Касса", "Кечаги сотув", "Мижоз қарзи")]
-    return f"☀️ <b>CEO кунлик ҳисоботи — {v['date']}</b>\n" + escape(" · ".join(parts))
+    notice = f"\n⚠️ {escape(v['notice'])}" if v.get("notice") else ""
+    return f"☀️ <b>CEO кунлик ҳисоботи — {v['date']}</b>\n" + escape(" · ".join(parts)) + notice
 
 
 # ----------------------------------------------------------------------- store
@@ -819,6 +876,32 @@ async def store(run_id: uuid.UUID, data: BriefData, message: str, message_id: in
 # ------------------------------------------------------------------------ main
 
 
+async def tell_admin_sap_silent(data: BriefData, run_id: uuid.UUID) -> bool:
+    """Admin Bot: the SAP push has stopped — check the gateway's computer. Once per brief."""
+    if not sap_silent(data) or settings.dry_run or settings.bots_frozen:
+        return False
+    token = settings.admin_bot_telegram_bot_token.get_secret_value()
+    if not token or not settings.admin_bot_telegram_chat_id:
+        return False
+    from integrations.telegram.bot import TelegramBot, TelegramError
+
+    hours = int((now_local() - data.sap_pushed_at).total_seconds() // 3600)
+    text = (
+        f"⚠️ <b>SAP маълумот юбормаяпти</b> — охиргиси {_since(data.sap_pushed_at)} ({hours} соат олдин).\n"
+        "SAP шлюзи турган компьютерни текширинг: ёқилганми, интернет борми, Task Scheduler'даги "
+        "SAP push вазифаси ишлаяптими (scripts/sap-gateway-push/README.md). Ҳозир брифингда SAP рақамлари "
+        "шу вақтга тегишли деб кўрсатилмоқда."
+    )
+    try:
+        async with TelegramBot(agent=AGENT, run_id=run_id, bot_token=token,
+                               default_chat_id=settings.admin_bot_telegram_chat_id) as bot:
+            await bot.send_message(text)
+    except TelegramError as exc:
+        log.error("Could not tell the admin SAP is silent: {}", exc)
+        return False
+    return True
+
+
 async def run(dry_run: bool = False) -> int:
     """Collect, render, send and store the daily brief.
 
@@ -838,6 +921,7 @@ async def run(dry_run: bool = False) -> int:
         return 2
 
     data = await collect()
+    await tell_admin_sap_silent(data, run_id)
     message = render(data)
     if data.errors and all(
         getattr(data, attr) is None for attr in ("aging", "sales", "inventory", "payments", "report_rows")

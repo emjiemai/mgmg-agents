@@ -20,6 +20,7 @@
 .fig--quiet .number { padding-top: 2px; font-size: 18px; font-weight: 400; color: var(--ink-2); }
 .foot { margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 11px; line-height: 1.45; color: var(--ink-3); }
 .foot .lowerbound { color: var(--warn); }
+.notice { margin: 12px 0 2px; padding: 9px 11px; border: 1px solid var(--alert); border-radius: 8px; font-size: 13px; line-height: 1.4; font-weight: 700; color: var(--alert); }
 {% endblock %}
 {% block body %}
 <header class="masthead">
@@ -29,6 +30,7 @@
   </div>
   <div class="mark">ЭМЖИЕМ</div>
 </header>
+{% if notice %}<p class="notice">⚠ {{ notice }}</p>{% endif %}
 
 <section class="figures">
 {% for f in figures %}

@@ -16,6 +16,7 @@ registered can trigger:
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import date, timedelta
@@ -25,10 +26,10 @@ from fastapi import BackgroundTasks
 
 from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
-from integrations.common.db import fetch_all, log_action
+from integrations.common.db import fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money
-from integrations.common.timeutil import now_local, today_local
+from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
     admin, ai_chat, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store, task_picker,
@@ -2079,11 +2080,30 @@ async def _fetch_lead_agent_data() -> str:
     return "\n".join(lines)
 
 
+async def sap_freshness() -> tuple[str, bool]:
+    """A line saying when SAP last pushed, and whether that's too long ago (the brief's rule)."""
+    row = await fetch_one(
+        "SELECT max(occurred_at) AS at FROM agent_actions WHERE agent = 'sap-gateway-push' AND status = 'success'"
+    )
+    if not row or not row["at"]:
+        return "SAP has never pushed any data.", True
+    pushed = to_local(row["at"])
+    hours = (now_local() - pushed).total_seconds() / 3600
+    if hours > 3:
+        return (
+            f"WARNING: SAP last pushed data at {pushed:%Y-%m-%d %H:%M} Tashkent ({int(hours)} hours ago) and has "
+            "sent nothing since — the push stopped. Everything below is as of then, NOT today: say so plainly, "
+            "with that date and time, and don't present it as current.",
+            True,
+        )
+    return f"SAP data is current: last pushed {pushed:%Y-%m-%d %H:%M} Tashkent.", False
+
+
 async def _fetch_finance_agent_data() -> str:
     """All open receivables (= open SAP invoices) + recent alerts, not just the top 15/5."""
     aging = await fetch_all(
-        "SELECT doc_num, card_name, days_overdue, aging_bucket, balance_due_tiyin, currency, due_date, sales_person_name "
-        "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC LIMIT 200"
+        "SELECT doc_num, card_name, doc_date, days_overdue, aging_bucket, balance_due_tiyin, currency, due_date, "
+        "sales_person_name, captured_at FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC LIMIT 200"
     )
     alerts = await fetch_all(
         "SELECT title, body, created_at FROM alerts WHERE agent = 'receivables' ORDER BY created_at DESC LIMIT 30"
@@ -2098,7 +2118,21 @@ async def _fetch_finance_agent_data() -> str:
     # because neither the label nor this text said "SAP" anywhere, so the
     # answer model had no textual basis to confirm this data was SAP data
     # (confirmed live: it said outright "these are receivables, not SAP").
-    lines = [f"{len(aging)} open SAP invoice(s) / receivable(s) (source: SAP Business One OINV):"]
+    freshness, _silent = await sap_freshness()
+    lines = [
+        freshness,
+        f"{len(aging)} open SAP invoice(s) / receivable(s) (source: SAP Business One OINV)"
+        + (f", snapshot taken {to_local(aging[0]['captured_at']):%Y-%m-%d %H:%M} Tashkent" if aging else "") + ".",
+        # Checked against the database 2026-10-06: the invoices are written in
+        # so'm (DocCur=UZS) but SAP's DocTotal is its local currency, USD — the
+        # Director looked an invoice up, saw so'm, and couldn't match "$".
+        "CURRENCY: the amounts below are SAP's local currency, USD — the equivalent of each invoice. The invoices "
+        "themselves are written in so'm (UZS); opening an invoice in SAP by its number shows its so'm amount, "
+        "which the gateway doesn't send yet. Always say the figures are USD equivalents, never call them so'm.",
+        "OVERDUE: most of these invoices have their due date equal to the invoice date (no payment terms set in "
+        "SAP), so 'days overdue' here means days since the invoice — say 'unpaid for N days' rather than "
+        "implying a missed agreed deadline.",
+    ]
     for r in aging:
         # Pre-formatted with format_money rather than handed to the model as
         # "<number> <code>": given the raw pair, the model reasonably renders
@@ -2108,9 +2142,9 @@ async def _fetch_finance_agent_data() -> str:
         # sight instead of laundered through translation.
         amount = format_money(r["balance_due_tiyin"], r["currency"])
         lines.append(
-            f"- Invoice #{r['doc_num']}, {r['card_name']}: {amount}, "
-            f"{r['days_overdue']}d overdue "
-            f"({r['aging_bucket']}), due {r['due_date']}, owner={r['sales_person_name']}"
+            f"- Invoice #{r['doc_num']} dated {r['doc_date']}, {r['card_name']}: {amount}, "
+            f"{r['days_overdue']}d past due date "
+            f"({r['aging_bucket']}), due {r['due_date']}, owner={r['sales_person_name'] or 'not set in SAP'}"
         )
     if alerts:
         lines.append("\nRecent receivables alerts:")
@@ -2152,8 +2186,26 @@ async def _fetch_sap_gateway_data(tool: str) -> str:
             f"to /webhooks/sap-gateway-push/{tool}/<secret> at least once."
         )
 
-    lines = [f"{len(rows)} {tool} record(s), most recently captured {rows[0]['captured_at']}"
-             + (f" (only the first {SAP_ANSWER_ROWS} shown):" if len(rows) >= SAP_ANSWER_ROWS else ":")]
+    freshness, _silent = await sap_freshness()
+    push = await fetch_one(
+        "SELECT payload FROM agent_actions WHERE agent = 'sap-gateway-push' AND action = %s "
+        "ORDER BY occurred_at DESC LIMIT 1",
+        (f"gateway_push_{tool}",),
+    )
+    payload = (push or {}).get("payload") or {}
+    if isinstance(payload, str):
+        payload = json.loads(payload or "{}")
+    lines = [freshness]
+    if not payload.get("complete") and len(rows) in (20, 100, 101):
+        # The gateway's original tools return only their latest 20/100 rows
+        # (docs/sap-gateway-tools.md, "Why") — a count from them is not a total.
+        lines.append(
+            f"WARNING: PARTIAL LIST — the SAP gateway's {tool} tool sends only its latest {len(rows)} rows, not "
+            f"all {tool}. Don't present counts, totals or 'all' from it as company-wide figures; say it covers "
+            f"only the latest {len(rows)} records."
+        )
+    lines.append(f"{len(rows)} {tool} record(s), captured {to_local(rows[0]['captured_at']):%Y-%m-%d %H:%M} Tashkent"
+                 + (f" (only the first {SAP_ANSWER_ROWS} shown):" if len(rows) >= SAP_ANSWER_ROWS else ":"))
     for r in rows:
         raw = r["raw"] if isinstance(r["raw"], dict) else {}
         fields = ", ".join(f"{k}={v}" for k, v in raw.items() if v is not None)
@@ -2165,16 +2217,28 @@ async def _fetch_reporter_agent_data() -> str:
     """The last 14 days of daily briefs, so trend questions aren't limited
     to a single snapshot the way a one-day-only fetch would be."""
     briefs = await fetch_all(
-        "SELECT brief_date, ar_overdue_total_tiyin FROM daily_briefs ORDER BY generated_at DESC LIMIT 14"
+        "SELECT DISTINCT ON (brief_date) brief_date, ar_overdue_total_tiyin, sections FROM daily_briefs "
+        "ORDER BY brief_date DESC, generated_at DESC LIMIT 14"
     )
     if not briefs:
         return "No daily brief has been generated yet."
 
-    lines = [f"Daily brief history, most recent first ({len(briefs)} day(s)):"]
+    lines = [
+        f"Daily brief history, most recent first ({len(briefs)} day(s)). Amounts are SAP's local currency (USD).",
+        # Until the complete gateway tool (2026-10-03) the push sent only the
+        # latest ~20 invoices without payments — those days' debt was partial,
+        # and the jump to the next day is a change of source, not of debt.
+        "Days marked PARTIAL came from the old SAP push that sent only part of the invoices: never compare them "
+        "with complete days or call the difference growth.",
+    ]
     for brief in briefs:
         overdue = brief["ar_overdue_total_tiyin"]
+        sections = brief["sections"] if isinstance(brief["sections"], dict) else json.loads(brief["sections"] or "{}")
+        debt = (sections.get("a2") or {}).get("debt") or {}
+        partial = debt.get("capped", True)
         lines.append(
             f"- {brief['brief_date']}: AR overdue="
             f"{format_money(overdue, settings.sap_default_currency) if overdue is not None else 'no data'}"
+            + (" (PARTIAL — not comparable)" if partial else " (complete)")
         )
     return "\n".join(lines)

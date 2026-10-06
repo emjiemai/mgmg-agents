@@ -51,6 +51,20 @@ number, in the same currency, and neither day's figure is a lower bound.
   runs the gateway machine.**
 - **Stale feeds.** A SAP feed not pushed for more than 3 days reads
   "… дан бери янгиланмаган" instead of a number.
+- **SAP gone quiet (2026-10-06).** The gateway pushes every 30 minutes, day
+  and night. When nothing has arrived for 3 hours (`SAP_SILENT_HOURS`):
+  - the brief opens with «⚠️ SAP 03.10 14:13 дан бери маълумот юбормаяпти —
+    сотув, захира ва қарз рақамлари шу вақтга тегишли» (text, picture and
+    caption);
+  - **Кечаги сотув** reads "SAP маълумоти 03.10 14:13 дан бери янгиланмаган"
+    whenever the snapshot was taken before today — yesterday wasn't over (or
+    wasn't pushed), so a "0" would be a guess;
+  - **Захира** and **Мижоз қарзи** keep their numbers with "(03.10 14:13
+    ҳолатида)";
+  - the admin gets an Admin Bot message to check the gateway's computer.
+  Why: SAP stopped pushing on 03.10 at 14:13 (also 18.09 10:47 → 19.09 and
+  24.09 10:17 → 30.09), and the briefs of 04–06.10 showed Friday's figures
+  as today's — "Кечаги сотув: 0" included.
 - **Unreadable rows.** Rows without the needed SAP columns give
   "SAP маълумоти ўқилмади", not a zero.
 - **Failures.** One source failing never stops the brief ("маълумот йўқ" on

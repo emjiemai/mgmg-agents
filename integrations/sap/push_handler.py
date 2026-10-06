@@ -333,6 +333,39 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 
+def stock_by_warehouse(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """get_stock_value's rows as one total per warehouse.
+
+    The spec (docs/sap-gateway-tools.md §3) asks for one summed row per
+    warehouse; the gateway as built (2026-10-03) sends one row per item and
+    warehouse (ItemCode, OnHand, AvgPrice, StockValue — 1,035 rows). Keyed by
+    warehouse alone, those collapsed to one random item each and the stock
+    read as $0. Item rows are summed here, so both shapes store the same.
+    """
+    if not any(r.get("ItemCode") not in (None, "") for r in rows):
+        return rows  # already one row per warehouse
+    totals: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        whs = str(r.get("WhsCode") or "")
+        if not whs:
+            continue
+        t = totals.setdefault(whs, {"WhsCode": whs, "WhsName": r.get("WhsName"), "Items": 0, "OnHand": 0.0,
+                                    "StockValue": 0.0})
+        try:
+            on_hand = float(r.get("OnHand") or 0)
+        except (TypeError, ValueError):
+            on_hand = 0.0
+        value = r.get("StockValue")
+        try:
+            value = float(value) if value not in (None, "") else on_hand * float(r.get("AvgPrice") or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        t["Items"] += 1
+        t["OnHand"] += on_hand
+        t["StockValue"] += value
+    return list(totals.values())
+
+
 def missing_columns(dataset: str, rows: list[dict[str, Any]]) -> list[str]:
     """Expected columns that no row carries (or that are empty in every row)."""
     expected = EXPECTED_COLUMNS.get(dataset, ())
@@ -430,6 +463,8 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
     if len(rows) > MAX_FULL_ROWS:
         return {"ok": False, "error": f"too many rows ({len(rows)} > {MAX_FULL_ROWS})"}
     rows = [r for r in rows if isinstance(r, dict)]
+    if dataset == "stock_value":
+        rows = stock_by_warehouse(rows)
     today = today_local()
     # The script says when a limited tool filled its limit (more may exist).
     complete = payload.get("complete") is not False

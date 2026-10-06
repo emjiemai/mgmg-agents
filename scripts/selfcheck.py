@@ -4325,6 +4325,132 @@ def test_onec_cash() -> None:
     check_true("pul_qoldigi is a data source the Director can ask", "pul_qoldigi" in AGENT_SLUGS)
 
 
+def test_sap_freshness() -> None:
+    """2026-10-06: SAP stopped pushing on 03.10 14:13 and three briefs showed Friday as today."""
+    print("SAP freshness and the 03-06.10 lessons")
+    import asyncio
+    import uuid
+    from datetime import datetime
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.timeutil import TASHKENT, now_local
+    from integrations.org_bot import ops_manager
+    from integrations.sap import push_handler
+    from integrations.sap.figures import Figure
+    from integrations.sap.models import ARAging, ARInvoice
+
+    brief = load_agent("ceo-daily-brief")
+    friday = datetime(2026, 10, 3, 14, 13, tzinfo=TASHKENT)
+    silent = brief.BriefData(report_rows=[], sap_pushed_at=friday)
+    check_true("SAP quiet for days is silent", brief.sap_silent(silent, now=datetime(2026, 10, 6, 8, 0, tzinfo=TASHKENT)))
+    check_true("pushed 20 minutes ago is not",
+               not brief.sap_silent(brief.BriefData(sap_pushed_at=now_local())))
+    check_true("never pushed: no warning (SAP not set up)", brief.sap_notice(brief.BriefData()) is None)
+
+    text = brief.render(silent)
+    check_true("the brief opens with the warning and the exact time",
+               "⚠️ <b>SAP 03.10 14:13 дан бери маълумот юбормаяпти" in text)
+    stale_sales = Figure(status="stale", as_of=friday.date(), since=friday)
+    check_true("yesterday's sales from an old push: 'not updated since', never 0",
+               "📈 Кечаги сотув: <i>SAP маълумоти 03.10 14:13 дан бери янгиланмаган</i>"
+               in brief.render(brief.BriefData(report_rows=[], sales=stale_sales, sap_pushed_at=friday)))
+    aging = ARAging(snapshot_date=friday.date())
+    aging.invoices = [ARInvoice(doc_entry=1, doc_num=2150, card_code="C1", card_name="Rich Home", days_overdue=47,
+                                aging_bucket="31_60", currency="USD", doc_total_tiyin=976431, balance_due_tiyin=976431)]
+    with_debt = brief.BriefData(report_rows=[], aging=aging, sap_pushed_at=friday)
+    check_true("debt says when it is from", "(03.10 14:13 ҳолатида)" in brief.render(with_debt))
+    view = brief.view(with_debt)
+    check_true("the picture carries the warning", view["notice"] and "03.10 14:13" in view["notice"])
+    debt_row = next(f for f in view["figures"] if f["label"] == "Мижоз қарзи")
+    check("the picture's debt row says when", (debt_row["sub"], debt_row["sub_alert"]), ("03.10 14:13 ҳолатида", True))
+    check_true("the caption warns too", "03.10 14:13" in brief.caption(with_debt))
+    check_true("a fresh brief has no warning", brief.view(brief.BriefData(report_rows=[]))["notice"] is None)
+
+    sent: list[str] = []
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, **kwargs):
+            sent.append(text)
+            return [1]
+
+    import integrations.telegram.bot as tg
+    from pydantic import SecretStr
+
+    from integrations.common.config import settings
+
+    saved = [(tg, "TelegramBot", tg.TelegramBot), (settings, "admin_bot_telegram_bot_token", settings.admin_bot_telegram_bot_token),
+             (settings, "admin_bot_telegram_chat_id", settings.admin_bot_telegram_chat_id), (settings, "dry_run", settings.dry_run),
+             (settings, "bots_frozen", settings.bots_frozen)]
+    tg.TelegramBot = FakeBot
+    settings.admin_bot_telegram_bot_token, settings.admin_bot_telegram_chat_id = SecretStr("t"), "9"
+    settings.dry_run, settings.bots_frozen = False, False
+    try:
+        check_true("the admin is told SAP is silent", asyncio.run(brief.tell_admin_sap_silent(silent, uuid.uuid4()))
+                   and "SAP маълумот юбормаяпти" in sent[-1] and "Task Scheduler" in sent[-1])
+        check_true("…and not when SAP is fine",
+                   not asyncio.run(brief.tell_admin_sap_silent(brief.BriefData(sap_pushed_at=now_local()), uuid.uuid4())))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # stock: the gateway sends item rows; they're summed per warehouse
+    items = [{"WhsCode": "01", "WhsName": "Asosiy", "ItemCode": "A", "OnHand": 5, "AvgPrice": 0, "StockValue": 0},
+             {"WhsCode": "01", "WhsName": "Asosiy", "ItemCode": "B", "OnHand": 2, "AvgPrice": 100, "StockValue": 200},
+             {"WhsCode": "04", "WhsName": "Garmin-Abay", "ItemCode": "C", "OnHand": 1, "AvgPrice": 50}]
+    per = push_handler.stock_by_warehouse(items)
+    check("item rows -> one total per warehouse (value from AvgPrice when StockValue is missing)",
+          [(r["WhsCode"], r["Items"], r["OnHand"], r["StockValue"]) for r in per],
+          [("01", 2, 7.0, 200.0), ("04", 1, 1.0, 50.0)])
+    summary = [{"WhsCode": "01", "WhsName": "A", "Items": 3, "OnHand": 5, "StockValue": 7}]
+    check("per-warehouse rows (the spec's shape) are kept as they are", push_handler.stock_by_warehouse(summary), summary)
+
+    # the Director's AI: data age, currency, terms
+    pushed_utc = datetime(2026, 10, 3, 9, 13, tzinfo=TASHKENT).astimezone(TASHKENT)
+
+    async def fake_one(sql, params=None):
+        if "max(occurred_at)" in sql:
+            return {"at": friday}
+        return {"payload": {"tool": "customers", "rows_received": 100}}
+
+    async def fake_all(sql, params=None):
+        if "v_ar_aging_latest" in sql:
+            return [{"doc_num": 2150, "card_name": "Rich Home", "doc_date": date(2026, 8, 17), "days_overdue": 47,
+                     "aging_bucket": "31_60", "balance_due_tiyin": 976431, "currency": "USD", "due_date": date(2026, 8, 17),
+                     "sales_person_name": None, "captured_at": friday}]
+        if "v_sap_gateway_latest" in sql:
+            return [{"natural_key": str(i), "raw": {"CardCode": f"C{i}"}, "captured_at": pushed_utc} for i in range(100)]
+        if "daily_briefs" in sql:
+            return [{"brief_date": date(2026, 10, 3), "ar_overdue_total_tiyin": 3411159, "sections": {"a2": {"debt": {"capped": False}}}},
+                    {"brief_date": date(2026, 10, 2), "ar_overdue_total_tiyin": 507377, "sections": {"a2": {"debt": {"capped": True}}}}]
+        return []
+
+    saved = [(ops_manager, "fetch_one", ops_manager.fetch_one), (ops_manager, "fetch_all", ops_manager.fetch_all)]
+    ops_manager.fetch_one, ops_manager.fetch_all = fake_one, fake_all
+    try:
+        finance = asyncio.run(ops_manager._fetch_finance_agent_data())
+        check_true("debt data: the push stopped, as of when", "WARNING: SAP last pushed data at 2026-10-03 14:13" in finance)
+        check_true("…amounts are USD equivalents of so'm invoices", "USD equivalents" in finance and "DocCur" not in finance)
+        check_true("…'overdue' is days since the invoice", "due date equal to the invoice date" in finance)
+        check_true("…each invoice with its date", "Invoice #2150 dated 2026-08-17" in finance and "not set in SAP" in finance)
+        customers = asyncio.run(ops_manager._fetch_sap_gateway_data("customers"))
+        check_true("a 100-row list is called partial", "PARTIAL LIST" in customers and "latest 100" in customers)
+        history = asyncio.run(ops_manager._fetch_reporter_agent_data())
+        check_true("old partial debt days are marked, not compared",
+                   "2026-10-02: AR overdue=$5,073.77 (PARTIAL — not comparable)" in history and "(complete)" in history)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -4362,6 +4488,7 @@ def main() -> int:
         test_billz_sap_check,
         test_onec,
         test_onec_cash,
+        test_sap_freshness,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

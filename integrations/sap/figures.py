@@ -17,7 +17,7 @@ Pure functions only, so the rules are tested offline (scripts/selfcheck.py).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from integrations.common.money import to_tiyin
@@ -46,6 +46,8 @@ class Figure:
         count: How many records make up the figure.
         capped: The push hit its row limit, so this is a lower bound.
         as_of: The snapshot day the rows came from.
+        since: When SAP last sent anything (Tashkent time) — shown when the
+            figure is stale, so "since when" has an hour, not just a day.
     """
 
     status: str = "no_data"
@@ -53,6 +55,7 @@ class Figure:
     count: int = 0
     capped: bool = False
     as_of: date | None = None
+    since: datetime | None = None
 
     @property
     def ok(self) -> bool:

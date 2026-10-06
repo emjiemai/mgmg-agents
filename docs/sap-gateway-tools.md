@@ -109,6 +109,32 @@ GROUP BY T0."WhsCode", T1."WhsName"
 ORDER BY T0."WhsCode"
 ```
 
+## As built vs this spec — checked against the database 2026-10-06
+
+For the gateway's maintainer. The pushes of 03.10 show the tools were added,
+but not as specified:
+
+| Tool | What arrives | What's missing / different | Effect |
+| ---- | ------------ | -------------------------- | ------ |
+| `get_sales_by_date` | 101 invoice **lines**, 19.09–02.10 (not the 14 days asked) | `ObjType`, `CreateDate`, `CreateTS`, `DocTotalFC`, `DocTotalSy`, `UserSign`, `Dscription`, `CodeBars`; credit notes (ORIN) not included; looks capped at ~100 rows | no so'm total, no "entered late" check, older days cut off |
+| `get_stock_value` | 1,035 **item** rows (`ItemCode`, `ItemName`, `AvgPrice`, `OnHand`, `StockValue`) instead of ≤ 20 warehouse totals | `Items` | the receiver kept one item per warehouse → stock read as $0. **Fixed on our side:** item rows are now summed per warehouse on arrival (`push_handler.stock_by_warehouse`) |
+| `get_open_invoices` | 50 open invoices with `PaidToDate` ✓ | the so'm amounts `DocTotalFC` / `PaidFC` aren't stored to check; no seller on the biggest invoices | debt is shown in SAP's local currency (USD) while every invoice is written in so'm (`DocCur` = UZS) |
+
+**Currency, for everyone reading SAP figures:** SAP's local currency here is
+USD (`DocTotal` of a 9.4 mln so'm hotel invoice is 739.79). The invoices are
+written in so'm, so the Director, opening invoice 2150 in SAP, sees so'm,
+while the bot said "$9,764.31". Until `DocTotalFC`/`PaidFC` (or `DocTotalSy`)
+arrive, every SAP amount is labelled as the USD equivalent.
+
+**Payment terms:** 44 of the 50 open invoices have `DocDueDate` = `DocDate`,
+so all of them are "overdue" from the first day. That's SAP's data (no
+payment terms on the customers), not a calculation error.
+
+**The push itself stopped** on 03.10 at 14:13 and hasn't resumed (06.10),
+as before on 18.09 (10:47 → 19.09 10:17) and 24.09 (10:17 → 30.09 09:17):
+the computer running the scheduled task is off, asleep or offline. The brief
+now says so (see `01-ceo-daily-brief.md`, "SAP gone quiet").
+
 ## Response shape
 
 The same as the existing tools: `{"ok": true, "data": [ {...}, ... ]}`, or
