@@ -97,6 +97,14 @@ CREATE INDEX IF NOT EXISTS idx_ar_snapshot_date   ON ar_aging_snapshots (snapsho
 CREATE INDEX IF NOT EXISTS idx_ar_snapshot_bucket ON ar_aging_snapshots (snapshot_date, aging_bucket);
 CREATE INDEX IF NOT EXISTS idx_ar_snapshot_bp     ON ar_aging_snapshots (card_code, snapshot_date DESC);
 
+-- The invoice as written (2026-10-06). SAP's DocTotal/PaidToDate are its local
+-- currency, USD, even for invoices written in so'm (every one so far), so the
+-- Director couldn't find "$9,764.31" in SAP. DocCur, DocTotalFC and PaidFC are
+-- kept when the gateway sends them; NULL until then.
+ALTER TABLE ar_aging_snapshots ADD COLUMN IF NOT EXISTS doc_currency TEXT;
+ALTER TABLE ar_aging_snapshots ADD COLUMN IF NOT EXISTS doc_total_fc_tiyin BIGINT;
+ALTER TABLE ar_aging_snapshots ADD COLUMN IF NOT EXISTS paid_fc_tiyin BIGINT;
+
 -- ---------------------------------------------------------------------------
 -- cash_balance_snapshots — daily cash position per bank account (SAP OACT).
 -- ---------------------------------------------------------------------------
@@ -279,10 +287,15 @@ CREATE TABLE IF NOT EXISTS sales_summary_snapshots (
 -- ---------------------------------------------------------------------------
 -- Convenience views for Power BI (money exposed in UZS, not tiyin)
 -- ---------------------------------------------------------------------------
+-- Columns listed, not a.*: CREATE OR REPLACE VIEW must keep the existing
+-- columns in their order and can only add new ones at the end.
 CREATE OR REPLACE VIEW v_ar_aging_latest AS
 SELECT
-    a.*,
-    (a.balance_due_tiyin / 100.0)::numeric(18,2) AS balance_due_uzs
+    a.id, a.snapshot_date, a.captured_at, a.division, a.doc_entry, a.doc_num, a.card_code, a.card_name,
+    a.doc_date, a.due_date, a.days_overdue, a.aging_bucket, a.currency, a.doc_total_tiyin,
+    a.paid_to_date_tiyin, a.balance_due_tiyin, a.sales_person_code, a.sales_person_name,
+    (a.balance_due_tiyin / 100.0)::numeric(18,2) AS balance_due_uzs,
+    a.doc_currency, a.doc_total_fc_tiyin, a.paid_fc_tiyin
 FROM ar_aging_snapshots a
 WHERE a.snapshot_date = (SELECT max(snapshot_date) FROM ar_aging_snapshots);
 

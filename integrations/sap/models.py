@@ -33,6 +33,23 @@ class ARInvoice(BaseModel):
     sales_person_code: int | None = None
     sales_person_name: str | None = None
     division: str | None = None
+    # The invoice as written: its own currency (DocCur) and open balance in it,
+    # when SAP sent DocTotalFC/PaidFC. ``currency``/``balance_due_tiyin`` are
+    # SAP's local currency (USD) -- not what SAP shows on a so'm invoice.
+    doc_currency: str | None = None
+    doc_balance_tiyin: int | None = None
+
+    @property
+    def as_written(self) -> tuple[int, str]:
+        """(open balance, currency) as on the invoice in SAP; the local amount until SAP sends it."""
+        if self.doc_currency and self.doc_balance_tiyin and self.doc_balance_tiyin > 0:
+            return self.doc_balance_tiyin, self.doc_currency
+        return self.balance_due_tiyin, self.currency
+
+
+def doc_balance(total_fc_tiyin: int | None, paid_fc_tiyin: int | None) -> int | None:
+    """An invoice's open balance in its own currency, or None if SAP didn't send it."""
+    return None if total_fc_tiyin is None else total_fc_tiyin - (paid_fc_tiyin or 0)
 
 
 class ARAging(BaseModel):

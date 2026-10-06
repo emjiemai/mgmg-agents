@@ -28,7 +28,7 @@ from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
 from integrations.common.db import fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_money
+from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
@@ -53,6 +53,7 @@ from integrations.org_bot.roles import (
     ROUTABLE_ROLE_SLUGS,
     role_picker_keyboard,
 )
+from integrations.sap.models import doc_balance
 from integrations.telegram.bot import TelegramBot, TelegramError, escape, sanitize_model_html
 
 AGENT = "ops-manager-bot"
@@ -2103,7 +2104,8 @@ async def _fetch_finance_agent_data() -> str:
     """All open receivables (= open SAP invoices) + recent alerts, not just the top 15/5."""
     aging = await fetch_all(
         "SELECT doc_num, card_name, doc_date, days_overdue, aging_bucket, balance_due_tiyin, currency, due_date, "
-        "sales_person_name, captured_at FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC LIMIT 200"
+        "sales_person_name, captured_at, doc_currency, doc_total_fc_tiyin, paid_fc_tiyin "
+        "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC"
     )
     alerts = await fetch_all(
         "SELECT title, body, created_at FROM alerts WHERE agent = 'receivables' ORDER BY created_at DESC LIMIT 30"
@@ -2119,28 +2121,38 @@ async def _fetch_finance_agent_data() -> str:
     # answer model had no textual basis to confirm this data was SAP data
     # (confirmed live: it said outright "these are receivables, not SAP").
     freshness, _silent = await sap_freshness()
+    written = [_as_written(r) for r in aging]
+    in_own = sum(1 for (_amount, currency), r in zip(written, aging) if currency != r["currency"])
     lines = [
         freshness,
         f"{len(aging)} open SAP invoice(s) / receivable(s) (source: SAP Business One OINV)"
         + (f", snapshot taken {to_local(aging[0]['captured_at']):%Y-%m-%d %H:%M} Tashkent" if aging else "") + ".",
         # Checked against the database 2026-10-06: the invoices are written in
         # so'm (DocCur=UZS) but SAP's DocTotal is its local currency, USD — the
-        # Director looked an invoice up, saw so'm, and couldn't match "$".
-        "CURRENCY: the amounts below are SAP's local currency, USD — the equivalent of each invoice. The invoices "
-        "themselves are written in so'm (UZS); opening an invoice in SAP by its number shows its so'm amount, "
-        "which the gateway doesn't send yet. Always say the figures are USD equivalents, never call them so'm.",
+        # Director looked an invoice up, saw so'm, and couldn't match "$"; asked
+        # "Сделай в суммах", the bot could only say it had no rate.
+        _currency_note(in_own, len(aging)),
         "OVERDUE: most of these invoices have their due date equal to the invoice date (no payment terms set in "
         "SAP), so 'days overdue' here means days since the invoice — say 'unpaid for N days' rather than "
         "implying a missed agreed deadline.",
     ]
-    for r in aging:
+    if aging:
+        # Totals worked out here, not left to the model to add up.
+        lines.append(f"TOTAL open: {format_money_by_currency(written)} ({len(aging)} invoices). By days since due date:")
+        for bucket in ("current", "1_30", "31_60", "61_90", "90_plus"):
+            amounts = [w for w, r in zip(written, aging) if r["aging_bucket"] == bucket]
+            if amounts:
+                lines.append(f"  {bucket}: {format_money_by_currency(amounts)} ({len(amounts)} invoices)")
+    for (amount, currency), r in list(zip(written, aging))[:200]:
         # Pre-formatted with format_money rather than handed to the model as
         # "<number> <code>": given the raw pair, the model reasonably renders
         # "UZS" as "so'm" in an Uzbek reply, so a wrong code upstream turned
         # into confidently wrong output. Passing "$9,764.31" already formatted
         # leaves nothing to reinterpret, and makes a wrong currency obvious on
         # sight instead of laundered through translation.
-        amount = format_money(r["balance_due_tiyin"], r["currency"])
+        amount = format_money(amount, currency)
+        if currency != r["currency"]:
+            amount += f" (SAP's {r['currency']} equivalent {format_money(r['balance_due_tiyin'], r['currency'])})"
         lines.append(
             f"- Invoice #{r['doc_num']} dated {r['doc_date']}, {r['card_name']}: {amount}, "
             f"{r['days_overdue']}d past due date "
@@ -2151,6 +2163,30 @@ async def _fetch_finance_agent_data() -> str:
         for a in alerts:
             lines.append(f"- {a['title']}: {a.get('body') or ''} ({a['created_at']})")
     return "\n".join(lines)
+
+
+def _as_written(row: dict[str, Any]) -> tuple[int, str]:
+    """(open balance, currency) as on the invoice in SAP; SAP's local amount until the gateway sends it."""
+    balance = doc_balance(row.get("doc_total_fc_tiyin"), row.get("paid_fc_tiyin"))
+    if row.get("doc_currency") and balance and balance > 0:
+        return balance, row["doc_currency"]
+    return row["balance_due_tiyin"], row["currency"]
+
+
+def _currency_note(in_own: int, total: int) -> str:
+    """How to read the amounts: as written on the invoices (so'm), or SAP's USD equivalents."""
+    if total and in_own == total:
+        return ("CURRENCY: each amount is the invoice's own, as written in SAP (so'm) — what the Director sees "
+                "opening the invoice — with SAP's USD equivalent in brackets. Lead with the so'm amounts.")
+    if in_own:
+        return (f"CURRENCY: {in_own} of {total} invoices show their own so'm amount as written in SAP (SAP's USD "
+                "equivalent in brackets); the rest are SAP's USD equivalents only. Label each amount with its own "
+                "currency and never add so'm and $ together.")
+    return ("CURRENCY: the amounts below are SAP's local currency, USD — the equivalent of each invoice. The "
+            "invoices themselves are written in so'm (UZS); opening an invoice in SAP by its number shows its so'm "
+            "amount, which the SAP connection doesn't send yet. Always say the figures are USD equivalents, never "
+            "call them so'm. Asked for so'm: say the so'm amounts are being added to the SAP connection — never "
+            "convert with a guessed rate.")
 
 
 SAP_ANSWER_ROWS = 3000

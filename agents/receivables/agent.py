@@ -50,7 +50,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money_by_currency
 from integrations.common.timeutil import fmt_date
 from integrations.org_bot.notify import notify_directors
-from integrations.sap.models import ARAging, ARInvoice
+from integrations.sap.models import ARAging, ARInvoice, doc_balance
 from integrations.telegram.bot import escape
 
 AGENT = "receivables"
@@ -92,7 +92,8 @@ async def collect(run_id: uuid.UUID) -> ARAging:
     rows = await fetch_all(
         "SELECT snapshot_date, doc_entry, doc_num, card_code, card_name, doc_date, due_date, "
         "days_overdue, aging_bucket, currency, doc_total_tiyin, paid_to_date_tiyin, "
-        "balance_due_tiyin, sales_person_code, sales_person_name, division "
+        "balance_due_tiyin, sales_person_code, sales_person_name, division, "
+        "doc_currency, doc_total_fc_tiyin, paid_fc_tiyin "
         "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC"
     )
     if not rows:
@@ -118,6 +119,8 @@ async def collect(run_id: uuid.UUID) -> ARAging:
             sales_person_code=r["sales_person_code"],
             sales_person_name=r["sales_person_name"],
             division=r["division"],
+            doc_currency=r["doc_currency"],
+            doc_balance_tiyin=doc_balance(r["doc_total_fc_tiyin"], r["paid_fc_tiyin"]),
         )
         for r in rows
     ]
@@ -181,7 +184,7 @@ def _total_of(invoices: list[ARInvoice], *, short: bool = False) -> str:
         e.g. "1 250 000 so'm", or "1 250 000 so'm + $9,764.00" if the
         invoices actually span more than one currency.
     """
-    return format_money_by_currency([(i.balance_due_tiyin, i.currency) for i in invoices], short=short)
+    return format_money_by_currency([i.as_written for i in invoices], short=short)
 
 
 async def record_alerts(run_id: uuid.UUID, aging: ARAging, min_days: int, message_id: int | None) -> None:

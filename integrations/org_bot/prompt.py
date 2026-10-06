@@ -345,6 +345,11 @@ to justify repeating a past conclusion.
   kalendari", "кассовый план", "какие платежи на этой неделе") — go to
   pul_kalendari. Questions about who owes what right now (a list of debtors
   or invoices) stay with finance_agent.
+- Customer debt asked with no system named ("Дебитор", "debitorlar",
+  "дебиторка", "kim qancha qarz") goes straight to finance_agent — do not
+  ask "SAP, 1C or Didox?". The debt list comes only from SAP; 1C and Didox
+  debts are not connected, so offering them as choices only leads to "no
+  data" (2026-10-05: the Director picked Didox, then 1C, and got nothing).
 - Questions about the STATUS of tasks you already assigned go to
   topshiriqlar: what is still open, what is overdue, who is late, who
   finishes on time ("qaysi topshiriqlar bajarilmadi", "muddati o'tganlar",

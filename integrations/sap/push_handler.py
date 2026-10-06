@@ -402,7 +402,8 @@ def aging_row(row: dict[str, Any], as_of: date, slp_names: dict[int, str]) -> tu
     """One open SAP invoice as an ``ar_aging_snapshots`` row, or None if unusable.
 
     ``DocTotal``/``PaidToDate`` are in SAP's local currency (USD here) even
-    for invoices written in so'm, so the balance is too.
+    for invoices written in so'm, so the balance is too. The invoice as
+    written (``invoice_currency``) is kept beside it.
     """
     doc_entry, card_code = row.get("DocEntry"), row.get("CardCode")
     if not doc_entry or not card_code:
@@ -425,7 +426,30 @@ def aging_row(row: dict[str, Any], as_of: date, slp_names: dict[int, str]) -> tu
         parse_sap_date(str(row.get("DocDate") or "")), due, overdue, aging_bucket(overdue),
         settings.sap_default_currency, total, paid, total - paid,
         slp if slp >= 0 else None, seller if slp >= 0 else None,
+        *invoice_currency(row),
     )
+
+
+def invoice_currency(row: dict[str, Any]) -> tuple[str | None, int | None, int | None]:
+    """(DocCur, DocTotalFC, PaidFC in minor units): the invoice as SAP shows it.
+
+    SAP fills the FC amounts only for an invoice written in a currency other
+    than its local one, so they're None for a local-currency invoice, when
+    the gateway didn't send them, or for a part-paid invoice without PaidFC
+    (its so'm balance can't be known).
+    """
+    doc_cur = str(row.get("DocCur") or "").strip().upper() or None
+    if not doc_cur or doc_cur == settings.sap_default_currency.upper() or row.get("DocTotalFC") in (None, ""):
+        return doc_cur, None, None
+    total = to_tiyin(row.get("DocTotalFC"))
+    if total <= 0:
+        return doc_cur, None, None
+    paid = row.get("PaidFC")
+    if paid in (None, ""):
+        if to_tiyin(row.get("PaidToDate")) > 0:
+            return doc_cur, None, None
+        paid = 0
+    return doc_cur, total, to_tiyin(paid)
 
 
 async def _sales_people() -> dict[int, str]:
@@ -492,8 +516,9 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
                             INSERT INTO ar_aging_snapshots
                                 (snapshot_date, doc_entry, doc_num, card_code, card_name, doc_date, due_date,
                                  days_overdue, aging_bucket, currency, doc_total_tiyin, paid_to_date_tiyin,
-                                 balance_due_tiyin, sales_person_code, sales_person_name)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                 balance_due_tiyin, sales_person_code, sales_person_name,
+                                 doc_currency, doc_total_fc_tiyin, paid_fc_tiyin)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (snapshot_date, doc_entry) DO NOTHING
                             """,
                             params,

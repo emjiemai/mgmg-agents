@@ -118,13 +118,17 @@ but not as specified:
 | ---- | ------------ | -------------------------- | ------ |
 | `get_sales_by_date` | 101 invoice **lines**, 19.09–02.10 (not the 14 days asked) | `ObjType`, `CreateDate`, `CreateTS`, `DocTotalFC`, `DocTotalSy`, `UserSign`, `Dscription`, `CodeBars`; credit notes (ORIN) not included; looks capped at ~100 rows | no so'm total, no "entered late" check, older days cut off |
 | `get_stock_value` | 1,035 **item** rows (`ItemCode`, `ItemName`, `AvgPrice`, `OnHand`, `StockValue`) instead of ≤ 20 warehouse totals | `Items` | the receiver kept one item per warehouse → stock read as $0. **Fixed on our side:** item rows are now summed per warehouse on arrival (`push_handler.stock_by_warehouse`) |
-| `get_open_invoices` | 50 open invoices with `PaidToDate` ✓ | the so'm amounts `DocTotalFC` / `PaidFC` aren't stored to check; no seller on the biggest invoices | debt is shown in SAP's local currency (USD) while every invoice is written in so'm (`DocCur` = UZS) |
+| `get_open_invoices` | 50 open invoices with `PaidToDate` ✓ | the so'm amounts `DocTotalFC` / `PaidFC` — unknown whether they're sent (the pushes of 03.10 predate the missing-columns log); no seller on the biggest invoices | debt shown in SAP's local currency (USD) while every invoice is written in so'm (`DocCur` = UZS). **Ready on our side (2026-10-06):** `DocCur`/`DocTotalFC`/`PaidFC` are stored and shown as so'm the moment they arrive; the next push's `missing_columns` says whether they did |
 
 **Currency, for everyone reading SAP figures:** SAP's local currency here is
 USD (`DocTotal` of a 9.4 mln so'm hotel invoice is 739.79). The invoices are
 written in so'm, so the Director, opening invoice 2150 in SAP, sees so'm,
-while the bot said "$9,764.31". Until `DocTotalFC`/`PaidFC` (or `DocTotalSy`)
-arrive, every SAP amount is labelled as the USD equivalent.
+while the bot said "$9,764.31". Every document pushed so far (orders, sales,
+payments, customers) has `DocCur` = UZS. Until `DocTotalFC`/`PaidFC` arrive,
+every SAP amount is labelled as the USD equivalent; once they do, the debt
+is shown in so'm as written on each invoice (`ar_aging_snapshots.doc_currency`,
+`doc_total_fc_tiyin`, `paid_fc_tiyin`). A part-paid invoice without `PaidFC`
+keeps the USD figure — its so'm balance isn't guessed.
 
 **Payment terms:** 44 of the 50 open invoices have `DocDueDate` = `DocDate`,
 so all of them are "overdue" from the first day. That's SAP's data (no

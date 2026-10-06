@@ -4326,7 +4326,7 @@ def test_onec_cash() -> None:
 
 
 def test_sap_freshness() -> None:
-    """2026-10-06: SAP stopped pushing on 03.10 14:13 and three briefs showed Friday as today."""
+    """2026-10-06: SAP stopped pushing on 03.10 14:13 and three briefs showed Saturday as today."""
     print("SAP freshness and the 03-06.10 lessons")
     import asyncio
     import uuid
@@ -4451,6 +4451,94 @@ def test_sap_freshness() -> None:
             setattr(obj, name, value)
 
 
+def test_invoice_as_written() -> None:
+    """2026-10-06: asked "Сделай в суммах", the bot had only SAP's USD for invoices written in so'm."""
+    print("Debt as written on the invoices (so'm)")
+    import asyncio
+    from datetime import datetime
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.common.timeutil import TASHKENT
+    from integrations.org_bot import ops_manager
+    from integrations.sap import push_handler
+    from integrations.sap.models import ARAging, ARInvoice, doc_balance
+
+    def plain(text: str) -> str:
+        return text.replace("\xa0", " ")
+
+    saved_currency = settings.sap_default_currency
+    settings.sap_default_currency = "USD"
+    try:
+        # what the gateway sends for a so'm invoice (the spec's columns)
+        row = {"DocEntry": 9, "DocNum": 2150, "CardCode": "C1", "CardName": "Rich Home", "DocDate": "2026-08-17",
+               "DocDueDate": "2026-08-17", "DocStatus": "O", "CANCELED": "N", "DocCur": "UZS", "DocTotal": "9764.31",
+               "PaidToDate": "0", "DocTotalFC": "124056000.00", "PaidFC": "0.00", "SlpCode": -1}
+        stored = push_handler.aging_row(row, date(2026, 10, 3), {})
+        check("stored: SAP's USD and the invoice's own so'm", (stored[12], stored[15:]), (976431, ("UZS", 12405600000, 0)))
+        check("so'm not sent: kept empty", push_handler.invoice_currency({**row, "DocTotalFC": None}), ("UZS", None, None))
+        check("part-paid without PaidFC: the so'm balance isn't guessed",
+              push_handler.invoice_currency({**row, "PaidToDate": "100", "PaidFC": None}), ("UZS", None, None))
+        check("a USD invoice has no second amount", push_handler.invoice_currency({**row, "DocCur": "USD"}), ("USD", None, None))
+    finally:
+        settings.sap_default_currency = saved_currency
+
+    som = ARInvoice(doc_entry=9, doc_num=2150, card_code="C1", card_name="Rich Home", days_overdue=47,
+                    aging_bucket="31_60", currency="USD", doc_total_tiyin=976431, balance_due_tiyin=976431,
+                    doc_currency="UZS", doc_balance_tiyin=doc_balance(12405600000, 0))
+    check("as written: so'm", som.as_written, (12405600000, "UZS"))
+    check("so'm not sent yet: SAP's USD", som.model_copy(update={"doc_balance_tiyin": None}).as_written, (976431, "USD"))
+
+    brief = load_agent("ceo-daily-brief")
+    aging = ARAging(snapshot_date=date(2026, 10, 3), invoices=[som])
+    switch_day = brief.BriefData(report_rows=[], aging=aging,
+                                 previous={"debt": {"status": "ok", "totals": {"USD": 900_000}, "capped": False}})
+    text = plain(brief.render(switch_day))
+    check_true("the brief's debt in so'm, as on the invoices", "🧾 Мижоз қарзи: 124 056 000 сўм" in text)
+    check_true("…no 'change' on the day so'm replaces $", "кечагига" not in text)
+    check("stored with how it was counted", brief.five_numbers_json(switch_day)["debt"]["basis"], "invoice")
+    next_day = brief.BriefData(report_rows=[], aging=aging, previous={"debt": {
+        "status": "ok", "totals": {"UZS": 12_000_000_000}, "capped": False, "basis": "invoice"}})
+    check_true("…compared again from the next day", "кечагига ▲ 4 056 000 сўм" in plain(brief.render(next_day)))
+    debt_row = next(f for f in brief.view(switch_day)["figures"] if f["label"] == "Мижоз қарзи")
+    check("the picture: short so'm", (debt_row["number"], plain(debt_row["unit"])), ("124,06", "млн сўм"))
+
+    now = datetime.now(TASHKENT)
+    rows = [{"doc_num": 2150, "card_name": "Rich Home", "doc_date": date(2026, 8, 17), "days_overdue": 47,
+             "aging_bucket": "31_60", "balance_due_tiyin": 976431, "currency": "USD", "due_date": date(2026, 8, 17),
+             "sales_person_name": None, "captured_at": now, "doc_currency": "UZS", "doc_total_fc_tiyin": 12405600000,
+             "paid_fc_tiyin": 0},
+            {"doc_num": 2001, "card_name": "AQUA CARE LLC", "doc_date": date(2026, 9, 1), "days_overdue": 20,
+             "aging_bucket": "1_30", "balance_due_tiyin": 10000, "currency": "USD", "due_date": date(2026, 9, 1),
+             "sales_person_name": "Ali", "captured_at": now, "doc_currency": "UZS", "doc_total_fc_tiyin": None,
+             "paid_fc_tiyin": None}]
+    shown: list[dict] = []
+
+    async def fake_one(sql, params=None):
+        return {"at": now}
+
+    async def fake_all(sql, params=None):
+        return shown if "v_ar_aging_latest" in sql else []
+
+    saved = [(ops_manager, "fetch_one", ops_manager.fetch_one), (ops_manager, "fetch_all", ops_manager.fetch_all)]
+    ops_manager.fetch_one, ops_manager.fetch_all = fake_one, fake_all
+    try:
+        shown[:] = rows
+        mixed = plain(asyncio.run(ops_manager._fetch_finance_agent_data()))
+        check_true("the bot: each invoice in so'm with SAP's $ beside it",
+                   "Invoice #2150 dated 2026-08-17, Rich Home: 124 056 000 сўм (SAP's USD equivalent $9,764.31)" in mixed)
+        check_true("…the total worked out, currencies kept apart", "TOTAL open: 124 056 000 сўм + $100.00 (2 invoices)" in mixed)
+        check_true("…by age", "31_60: 124 056 000 сўм (1 invoices)" in mixed and "1_30: $100.00 (1 invoices)" in mixed)
+        check_true("…says which are which", "1 of 2 invoices show their own so'm amount" in mixed)
+        shown[:] = rows[:1]
+        check_true("all in so'm: lead with so'm", "Lead with the so'm amounts" in asyncio.run(ops_manager._fetch_finance_agent_data()))
+        shown[:] = rows[1:]
+        check_true("no so'm yet: never a guessed rate", "never convert with a guessed rate" in asyncio.run(ops_manager._fetch_finance_agent_data()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def main() -> int:
     """Run every check.
 
@@ -4489,6 +4577,7 @@ def main() -> int:
         test_onec,
         test_onec_cash,
         test_sap_freshness,
+        test_invoice_as_written,
         test_plan_agents,
         test_db_viewer,
         test_names_and_routing,

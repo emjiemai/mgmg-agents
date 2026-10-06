@@ -67,7 +67,7 @@ from integrations.org_bot.notify import notify_directors
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
 from integrations.sap import figures
 from integrations.sap.figures import Figure
-from integrations.sap.models import ARAging, ARInvoice
+from integrations.sap.models import ARAging, ARInvoice, doc_balance
 from integrations.telegram.bot import escape
 from integrations.billz import sales as billz_sales
 from integrations.onec import cash as onec_cash
@@ -87,7 +87,7 @@ MAX_LINES = 5
 STALE_AFTER_DAYS = 3
 # The gateway pushes every 30 minutes, day and night. No push for this long
 # means its computer or task has stopped (2026-10-03 14:13 → 06.10: three
-# briefs showed Friday's numbers as today's): every SAP figure then says when
+# briefs showed Saturday's numbers as today's): every SAP figure then says when
 # it is from, the brief opens with a warning, and the admin is told.
 SAP_SILENT_HOURS = 3
 
@@ -301,7 +301,8 @@ async def _fetch_aging() -> ARAging:
     rows = await fetch_all(
         "SELECT snapshot_date, doc_entry, doc_num, card_code, card_name, doc_date, due_date, "
         "days_overdue, aging_bucket, currency, doc_total_tiyin, paid_to_date_tiyin, "
-        "balance_due_tiyin, sales_person_code, sales_person_name, division "
+        "balance_due_tiyin, sales_person_code, sales_person_name, division, "
+        "doc_currency, doc_total_fc_tiyin, paid_fc_tiyin "
         "FROM v_ar_aging_latest ORDER BY balance_due_tiyin DESC"
     )
     if not rows:
@@ -327,6 +328,8 @@ async def _fetch_aging() -> ARAging:
             sales_person_code=r["sales_person_code"],
             sales_person_name=r["sales_person_name"],
             division=r["division"],
+            doc_currency=r["doc_currency"],
+            doc_balance_tiyin=doc_balance(r["doc_total_fc_tiyin"], r["paid_fc_tiyin"]),
         )
         for r in rows
     ]
@@ -422,8 +425,8 @@ def render(data: BriefData) -> str:
     return "\n".join(p for p in parts if p is not None).rstrip()
 
 
-def _money(totals: dict[str, int]) -> str:
-    return format_money_by_currency([(amount, currency) for currency, amount in totals.items()])
+def _money(totals: dict[str, int], *, short: bool = False) -> str:
+    return format_money_by_currency([(amount, currency) for currency, amount in totals.items()], short=short)
 
 
 def _change(key: str, totals: dict[str, int], data: BriefData, comparable: bool) -> str:
@@ -487,7 +490,7 @@ def render_five(data: BriefData) -> str:
         if data.aging_capped:
             debt = f"камида {debt}*"
             lower_bound = True
-        debt += _change("debt", open_totals, data, comparable=not data.aging_capped)
+        debt += _change("debt", open_totals, data, comparable=not data.aging_capped and _same_debt_basis(data))
         if overdue_totals:
             marker = " 🔴" if aging.bucket_totals_tiyin.get("90_plus", 0) > 0 else ""
             debt += f", муддати ўтгани {escape(_money(overdue_totals))} ({aging.overdue_count} та){marker}"
@@ -520,12 +523,25 @@ def _cash_value(data: BriefData) -> str:
 
 
 def _totals_by_currency(invoices: list[ARInvoice], *, overdue_only: bool) -> dict[str, int]:
+    """Open balances per currency, each invoice as written (so'm) once SAP sends that."""
     totals: dict[str, int] = {}
     for invoice in invoices:
         if overdue_only and invoice.days_overdue <= 0:
             continue
-        totals[invoice.currency] = totals.get(invoice.currency, 0) + invoice.balance_due_tiyin
+        amount, currency = invoice.as_written
+        totals[currency] = totals.get(currency, 0) + amount
     return totals
+
+
+def _debt_basis(aging: ARAging) -> str:
+    """"invoice" once amounts are the invoices' own (so'm), "local" while they're SAP's USD."""
+    return "invoice" if any(i.as_written[1] != i.currency for i in aging.invoices) else "local"
+
+
+def _same_debt_basis(data: BriefData) -> bool:
+    """Yesterday's debt was counted the same way -- the day so'm arrives is not a change."""
+    previous = data.previous.get("debt") or {}
+    return data.aging is not None and previous.get("basis", "local") == _debt_basis(data.aging)
 
 
 def _render_missed_reports(data: BriefData) -> str | None:
@@ -671,17 +687,18 @@ def view(data: BriefData) -> dict[str, Any]:
         aging = data.aging
         open_totals = _totals_by_currency(aging.invoices, overdue_only=False)
         overdue_totals = _totals_by_currency(aging.invoices, overdue_only=True)
-        number, unit = _split(_money(open_totals)) if open_totals else ("0", "")
+        number, unit = _split(_money(open_totals, short=True)) if open_totals else ("0", "")
         debt.update(number=number, unit=unit, lower=data.aging_capped)
         lower_bound |= data.aging_capped
         if overdue_totals:
-            debt["detail"] = f"муддати ўтгани {_money(overdue_totals).replace(NBSP, ' ')} · {aging.overdue_count} та"
+            debt["detail"] = (f"муддати ўтгани {_money(overdue_totals, short=True).replace(NBSP, ' ')} · "
+                              f"{aging.overdue_count} та")
             debt["tone"] = "alert"
             old = aging.bucket_counts.get("90_plus", 0)
             if old:
                 debt.update(sub=f"{old} таси 90 кундан ошган", sub_alert=True)
         if not debt["sub"]:
-            change = _delta("debt", open_totals, data, comparable=not data.aging_capped)
+            change = _delta("debt", open_totals, data, comparable=not data.aging_capped and _same_debt_basis(data))
             if change:
                 debt["sub"], debt["sub_dir"] = change
         if sap_silent(data):
@@ -813,6 +830,7 @@ def five_numbers_json(data: BriefData) -> dict[str, Any]:
             "status": "ok",
             "totals": _totals_by_currency(data.aging.invoices, overdue_only=False),
             "capped": data.aging_capped,
+            "basis": _debt_basis(data.aging),
         }
     payments = None
     if data.payments is not None:
