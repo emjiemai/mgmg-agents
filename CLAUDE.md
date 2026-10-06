@@ -97,7 +97,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   it for?" (бугунги ҳисобот / директорга / бекор) and forwarded to the Director
   as it is — the AI never reads files. **Reports are never guessed** (any typed
   message while it's owed is confirmed); **/hisobot** changes/deletes today's
-  report only. Cheer can be switched off per person (/xodimlar → 💬). Employees' messages about their work go to the **work AI**
+  report only. Cheer can be switched off per person (/xodimlar → 💬), daily reports too (📝, 2026-10-06:
+  never asked, never counted as missed). Employees' messages about their work go to the **work AI**
   (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks, own
   leads and (once uploaded) `employees.responsibilities`; **honesty first —
   "билмайман", never a guess**; no company data, no other people; Garmin sales
@@ -119,8 +120,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
 
 ## Open items
-- SAP: Abdulbosit added the three gateway tools (2026-10-03, the owner's word — confirm with
-  `push-ar-aging.ps1 -Check`); the push runs every 30 min as Windows task "MGMG SAP push"
-  (`install-task.ps1`). Billz → SAP check is on **trial** (results to the admin) until the owner
+- SAP: the three gateway tools work — push resumed 2026-10-06, every 30 min as Windows task
+  "MGMG SAP push" (`install-task.ps1`), all kinds 200. Still missing columns (so'm totals
+  `DocTotalFC`/`PaidFC`/`DocTotalSy`, `SlpName`, `CreateDate`/`CreateTS`) — ask Abdulbosit,
+  list in `docs/sap-gateway-tools.md` "As built vs this spec". Billz → SAP check is on **trial** (results to the admin) until the owner
   confirms them, then `BILLZ_SAP_CHECK_TRIAL=false`. Admin to tick "эркин график" people in `/grafik`.
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

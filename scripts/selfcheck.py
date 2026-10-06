@@ -2755,6 +2755,130 @@ def test_files_reports_cheer_off() -> None:
             setattr(obj, name, value)
 
 
+def test_reports_off() -> None:
+    """2026-10-06: the admin switches daily reports off for one person (/xodimlar → 📝)."""
+    print("daily reports off per person")
+    import asyncio
+    import inspect
+    import uuid
+    from datetime import date
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, ops_manager, report_tools, store
+
+    saved = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+        saved.clear()
+
+    async def none(*args, **kwargs):
+        return None
+
+    worker = {"id": "w1", "telegram_user_id": 7, "role": "it", "status": "active", "display_name": "a",
+              "full_name": "Алишер", "works_saturday": False, "works_sunday": False}
+
+    # ---- 16:00: nobody with reports off is asked (no row opened = never "missed")
+    agent = load_agent("daily-reports")
+    opened, sent = [], []
+
+    class Bot:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def send_message(self, text, chat_id=None, **kwargs):
+            sent.append(chat_id)
+            return [1]
+
+    async def everyone():
+        return [{**worker, "reports_off": True}, {**worker, "id": "w2", "telegram_user_id": 8, "reports_off": False}]
+
+    async def open_row(employee, report_date):
+        opened.append(employee["id"])
+        return {"id": "r-" + employee["id"]}
+
+    patch(store, "list_active_employees", everyone)
+    patch(store, "open_report_request", open_row)
+    patch(store, "set_report_prompt_message_id", none)
+    patch(agent, "TelegramBot", Bot)
+    patch(agent, "today_local", lambda: date(2026, 10, 6))  # a Tuesday
+    patch(settings, "dry_run", False)
+    try:
+        asyncio.run(agent.ask_everyone(uuid.uuid4()))
+        check("reports off: not asked, no row opened", (opened, sent), (["w2"], ["8"]))
+    finally:
+        restore()
+
+    # ---- 17:00 reminder and the switch itself skip / clear them in SQL
+    check_true("the 17:00 reminder skips people with reports off",
+               "NOT e.reports_off" in inspect.getsource(store.reports_awaiting_reminder))
+    check_true("switching off drops today's unanswered ask",
+               "DELETE FROM daily_reports" in inspect.getsource(store.toggle_reports))
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("schema has employees.reports_off and logs the change",
+               "ADD COLUMN IF NOT EXISTS reports_off" in schema and "'cheer', 'reports')" in schema)
+
+    # ---- the 📝 button on the admin card
+    edits = []
+
+    async def toggle(employee_id, by):
+        return {**worker, "id": employee_id, "reports_off": True}
+
+    async def get_employee(employee_id):
+        return {**worker, "id": employee_id}
+
+    async def admin_edit(callback, text, keyboard, run_id):
+        edits.append((text, keyboard))
+
+    patch(store, "toggle_reports", toggle)
+    patch(store, "get_employee", get_employee)
+    patch(admin, "_edit", admin_edit)
+    patch(admin, "_answer", none)
+    try:
+        asyncio.run(admin.handle_admin_callback({"id": "q", "data": "rpof:e7", "from": {"id": 5}}, uuid.uuid4()))
+        check_true("the 📝 button switches reports off, and the card shows it",
+                   edits and "Кунлик ҳисобот (16:00): ўчирилган" in edits[-1][0]
+                   and "📝 Кунлик ҳисобот: ⛔" in str(edits[-1][1]))
+    finally:
+        restore()
+    text, keyboard = admin.employee_card({**worker, "reports_off": False})
+    check_true("the card shows reports on by default",
+               "Кунлик ҳисобот (16:00): ёқилган" in text and "rpof:w1" in str(keyboard))
+
+    # ---- /hisobot tells them they don't need to write one
+    replies = []
+
+    async def report_for_day(tg_id, day):
+        return None
+
+    async def fake_reply(tg_id, run_id, text, reply_markup=None):
+        replies.append(text)
+        return [1]
+
+    patch(store, "report_for_day", report_for_day)
+    patch(ops_manager, "_reply", fake_reply)
+    try:
+        outcome = asyncio.run(ops_manager._show_today_report({**worker, "reports_off": True}, uuid.uuid4()))
+        check("/hisobot with reports off", (outcome, replies[-1]), ("reports_off", report_tools.reports_off_text()))
+        outcome = asyncio.run(ops_manager._show_today_report({**worker, "reports_off": False}, uuid.uuid4()))
+        check("/hisobot otherwise unchanged", outcome, "report_not_asked")
+    finally:
+        restore()
+    check("reports-off text in the friendly voice", friendly_problems(report_tools.reports_off_text()), [])
+
+
 def test_report_accuracy() -> None:
     """The one follow-up on a report: asked only when the AI finds nothing checkable."""
     print("report accuracy follow-up")
@@ -4564,6 +4688,7 @@ def main() -> int:
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,
+        test_reports_off,
         test_verifix,
         test_flexible_schedule,
         test_verifix_basic_login,

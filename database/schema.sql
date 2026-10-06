@@ -729,7 +729,7 @@ CREATE TABLE IF NOT EXISTS employee_changes (
 CREATE INDEX IF NOT EXISTS idx_employee_changes_employee ON employee_changes (employee_id, changed_at DESC);
 ALTER TABLE employee_changes DROP CONSTRAINT IF EXISTS employee_changes_field_check;
 ALTER TABLE employee_changes ADD CONSTRAINT employee_changes_field_check
-    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat', 'cheer'));
+    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat', 'cheer', 'reports'));
 
 -- Who also works at the weekend (set by the admin on the /xodimlar card).
 -- Everyone works Monday–Friday; on Saturday/Sunday only these are asked for
@@ -1045,6 +1045,10 @@ ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS editing_at TIMESTAMPTZ;
 -- Some people find the cheer messages irritating: the admin can switch them
 -- off per person on the /xodimlar card (2026-10-02).
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS cheer_off BOOLEAN NOT NULL DEFAULT false;
+-- Daily reports off for one person (2026-10-06, /xodimlar → 📝): never asked
+-- at 16:00 or reminded at 17:00, so no row is opened — nothing counts as
+-- missed in the brief, the Friday scorecard or the KPI.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS reports_off BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS media_count INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS employee_files (

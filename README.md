@@ -104,7 +104,7 @@ access to each of these:
 
 | Command | Does |
 | ------- | ---- |
-| `/xodimlar` | Employees: name, role, ака/опа, weekend work, AI on/off, cheer on/off, remove |
+| `/xodimlar` | Employees: name, role, ака/опа, weekend work, AI on/off, cheer on/off, daily reports on/off, remove |
 | `/ismlar` | Ask everyone without a typed name for it |
 | `/dam` | Mark days off (no asks, reminders, cheer or leads that day) |
 | `/elon <text>` | Announce to every employee (preview, then confirm); `/elon` alone = a "technical error" notice |

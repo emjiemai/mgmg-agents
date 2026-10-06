@@ -116,9 +116,9 @@ but not as specified:
 
 | Tool | What arrives | What's missing / different | Effect |
 | ---- | ------------ | -------------------------- | ------ |
-| `get_sales_by_date` | 101 invoice **lines**, 19.09–02.10 (not the 14 days asked) | `ObjType`, `CreateDate`, `CreateTS`, `DocTotalFC`, `DocTotalSy`, `UserSign`, `Dscription`, `CodeBars`; credit notes (ORIN) not included; looks capped at ~100 rows | no so'm total, no "entered late" check, older days cut off |
+| `get_sales_by_date` | 101 invoice **lines**, 19.09–02.10 (not the 14 days asked) | `ObjType`, `CreateDate`, `CreateTS`, `DocTotalFC`, `DocTotalSy`, `UserSign`, `Dscription`, `CodeBars`; credit notes (ORIN) not included; looks capped at ~100 rows | no so'm total, no "entered late" check, older days cut off. Still so on 06.10: `sales` arrives without `ObjType, CreateDate, CreateTS, DocTotalFC, DocTotalSy, UserSign`, `sales_lines` without `ObjType, CodeBars` |
 | `get_stock_value` | 1,035 **item** rows (`ItemCode`, `ItemName`, `AvgPrice`, `OnHand`, `StockValue`) instead of ≤ 20 warehouse totals | `Items` | the receiver kept one item per warehouse → stock read as $0. **Fixed on our side:** item rows are now summed per warehouse on arrival (`push_handler.stock_by_warehouse`) |
-| `get_open_invoices` | 50 open invoices with `PaidToDate` ✓ | the so'm amounts `DocTotalFC` / `PaidFC` — unknown whether they're sent (the pushes of 03.10 predate the missing-columns log); no seller on the biggest invoices | debt shown in SAP's local currency (USD) while every invoice is written in so'm (`DocCur` = UZS). **Ready on our side (2026-10-06):** `DocCur`/`DocTotalFC`/`PaidFC` are stored and shown as so'm the moment they arrive; the next push's `missing_columns` says whether they did |
+| `get_open_invoices` | 50 open invoices with `PaidToDate` ✓ | `DocTotalFC`, `PaidFC`, `SlpName` — **confirmed not sent** (every push of 06.10 logs `ar_open arrived without DocTotalFC, PaidFC, SlpName`) | debt shown in SAP's local currency (USD) while every invoice is written in so'm (`DocCur` = UZS); seller only where `SlpCode` maps to a known name. **Ready on our side (2026-10-06):** `DocCur`/`DocTotalFC`/`PaidFC` are stored and shown as so'm the moment they arrive |
 
 **Currency, for everyone reading SAP figures:** SAP's local currency here is
 USD (`DocTotal` of a 9.4 mln so'm hotel invoice is 739.79). The invoices are
@@ -134,10 +134,18 @@ keeps the USD figure — its so'm balance isn't guessed.
 so all of them are "overdue" from the first day. That's SAP's data (no
 payment terms on the customers), not a calculation error.
 
-**The push itself stopped** on 03.10 at 14:13 and hasn't resumed (06.10),
-as before on 18.09 (10:47 → 19.09 10:17) and 24.09 (10:17 → 30.09 09:17):
-the computer running the scheduled task is off, asleep or offline. The brief
-now says so (see `01-ceo-daily-brief.md`, "SAP gone quiet").
+**The push** stopped on 03.10 at 14:13, as before on 18.09 (10:47 → 19.09 10:17)
+and 24.09 (10:17 → 30.09 09:17) — the computer running the scheduled task was
+off, asleep or offline; the brief says so (`01-ceo-daily-brief.md`, "SAP gone
+quiet"). **It resumed on 06.10** (the owner ran `push-ar-aging.ps1 -Check`):
+every 30 minutes from 08:43 UTC, all ten kinds (`ar_open`, `sales`,
+`sales_lines`, `stock_value` and the six old tools) answered 200.
+
+**Ask for the gateway's maintainer (06.10):** add the columns the spec's SQL
+already selects — `DocTotalFC`, `PaidFC`, `SlpName` to `get_open_invoices`;
+`ObjType`, `CreateDate`, `CreateTS`, `DocTotalFC`, `DocTotalSy`, `UserSign` to
+`get_sales_by_date` (and `CodeBars` on its lines). Without them the debt stays
+in USD and the Billz → SAP check can't compare so'm amounts or flag late entry.
 
 ## Response shape
 

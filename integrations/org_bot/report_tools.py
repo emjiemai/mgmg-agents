@@ -76,6 +76,11 @@ def no_report_today_text() -> str:
     return casual("бугун ҳисобот ҳали сўралмаган, ҳисобот соат 16:00 дан кейин қабул қилинади", "🙂")
 
 
+def reports_off_text() -> str:
+    """/hisobot for someone whose daily reports the admin switched off."""
+    return casual("сиздан кунлик ҳисобот сўралмайди, ёзишингиз шарт эмас", "🙂")
+
+
 def report_card(report: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
     """/hisobot: today's report as it stands, with ✏️ / 🗑 once it's sent."""
     if report.get("status") != "submitted":
