@@ -1187,7 +1187,8 @@ def test_db_viewer() -> None:
     from integrations.common.config import settings
 
     fake_rows = {
-        "relations": [{"name": "employees", "kind": "r"}, {"name": "v_ar_aging_latest", "kind": "v"}],
+        "relations": [{"name": "agent_actions", "kind": "r"}, {"name": "employees", "kind": "r"},
+                      {"name": "v_ar_aging_latest", "kind": "v"}],
         "columns": [{"column_name": "id"}, {"column_name": "full_name"}, {"column_name": "created_at"}],
         "rows": [{"id": 7, "full_name": "<script>x</script>", "created_at": datetime(2026, 9, 26, 3, 0, tzinfo=timezone.utc)}],
     }
@@ -1219,11 +1220,18 @@ def test_db_viewer() -> None:
         good = {"Authorization": "Basic " + base64.b64encode(b"any:s3cret-long").decode()}
         index = client.get("/db", headers=good)
         check("right password lets you in", index.status_code, 200)
-        check_true("lists the tables", "employees" in index.text and "1 қатор" in index.text)
+        check_true("lists the tables", "agent_actions" in index.text and "1 қатор" in index.text)
+        check_true("closed tables listed with a lock and no link",
+                   "🔒 employees" in index.text and "/db/employees" not in index.text
+                   and "/db/v_ar_aging_latest" not in index.text and "href='/db/agent_actions'" in index.text)
         check_true("never indexed or cached", index.headers.get("x-robots-tag", "").startswith("noindex")
                    and index.headers.get("cache-control") == "no-store")
 
-        page = client.get("/db/employees", headers=good)
+        seen_queries.clear()
+        closed = client.get("/db/v_ar_aging_latest", headers=good)
+        check_true("a financial table is closed (Director's order 07.10.2026)", "Бу жадвал ёпиқ" in closed.text)
+        check_true("...its rows are never read", not any("v_ar_aging_latest" in q and "LIMIT" in q for q in seen_queries))
+        page = client.get("/db/agent_actions", headers=good)
         check_true("shows a row", page.status_code == 200 and "full_name" in page.text)
         check_true("what the data holds is escaped", "&lt;script&gt;" in page.text and "<script>x" not in page.text)
         check_true("timestamps in Tashkent time", "2026-09-26 08:00:00" in page.text)
@@ -2755,6 +2763,353 @@ def test_files_reports_cheer_off() -> None:
             setattr(obj, name, value)
 
 
+def load_source(relative: str) -> str:
+    """A project file's text (for checks on wiring, not behaviour)."""
+    return (Path(__file__).resolve().parents[1] / relative).read_text(encoding="utf-8")
+
+
+def test_analyst() -> None:
+    """2026-10-07: the Director's question is looked up across the systems by the AI itself — read-only."""
+    print("Director's analyst (read-only tools)")
+    import asyncio
+    import contextlib
+    import inspect
+    import json
+    import uuid
+    from datetime import date, datetime, timezone
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.common import db
+    from integrations.common.config import settings
+    from integrations.onec import client as oc
+    from integrations.org_bot import analyst, ops_manager, prompt
+    from integrations.sap import push_handler
+
+    saved = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+        saved.clear()
+
+    # ---- the tools: well-formed, every one handled, nothing that writes
+    names = [t["function"]["name"] for t in analyst.TOOLS]
+    check("tool names are unique and each has a handler", (len(names) == len(set(names)), set(names)),
+          (True, set(analyst.HANDLERS)))
+    check_true("every SAP kind is one the gateway pushes", set(analyst.SAP_KINDS) <= set(push_handler.FULL_DATASETS))
+    fetchers = inspect.getsource(ops_manager._fetch_agent_data)
+    check_true("every company source has a reader", all(f'"{s}"' in fetchers for s in analyst.COMPANY_SOURCES))
+    source = inspect.getsource(analyst)
+    check_true("the analyst can't write: no execute, no INSERT/UPDATE/DELETE, no raw HTTP",
+               not any(w in source for w in ("execute(", "INSERT ", "UPDATE ", "DELETE ", "httpx.", ".post(", ".put(", ".patch(")))
+    check_true("database reads are READ ONLY with a timeout",
+               "SET TRANSACTION READ ONLY" in inspect.getsource(db.fetch_read_only)
+               and "statement_timeout" in inspect.getsource(db.fetch_read_only))
+    check_true("the 1C client still has no way to write",
+               not any(hasattr(oc.OneCClient, m) for m in ("post", "patch", "put", "delete")))
+    check_true("the prompt: never ask which system, look in both, read-only, Uzbek Cyrillic",
+               "NEVER ask" in analyst.ANALYST_SYSTEM_PROMPT and "onec_balances '40'" in analyst.ANALYST_SYSTEM_PROMPT
+               and "Only READ" in analyst.ANALYST_SYSTEM_PROMPT and "Cyrillic" in analyst.ANALYST_SYSTEM_PROMPT)
+    check_true("the router no longer answers a question with 'which system?'",
+               'NEVER answer a question with "which system?"' in prompt.CLASSIFY_SYSTEM_PROMPT)
+
+    # ---- the AI client speaks OpenAI-style tools
+    from integrations.ai import openrouter_client as orc
+
+    bodies: list[dict] = []
+
+    def ai_handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body["messages"][-1]["content"] == "empty":
+            return httpx.Response(200, json={"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "data_sources", "arguments": "{}"}}]}}]})
+
+    @contextlib.asynccontextmanager
+    async def ai_no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    async def ai_turn(text):
+        client = orc.OpenRouterClient(model_override="m1", fallback_override="")
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(ai_handler))
+        try:
+            return await client.chat([{"role": "user", "content": text}], analyst.TOOLS)
+        finally:
+            await client._client.aclose()
+
+    patch(orc, "audited", ai_no_audit)
+    try:
+        turn = asyncio.run(ai_turn("Дебитор"))
+        check_true("tools are offered and a tool call comes back, content null",
+                   bodies[-1]["tool_choice"] == "auto" and len(bodies[-1]["tools"]) == len(analyst.TOOLS)
+                   and turn["tool_calls"][0]["function"]["name"] == "data_sources" and turn["content"] is None)
+        try:
+            asyncio.run(ai_turn("empty"))
+            check_true("an empty turn is an error", False)
+        except orc.OpenRouterError:
+            check_true("an empty turn is an error (so the next model is tried)", True)
+    finally:
+        restore()
+
+    # ---- arguments are bounded
+    patch(analyst, "_today", lambda: date(2026, 10, 7))
+    try:
+        check("future dates are cut to today", analyst.period({"date_from": "2026-10-01", "date_to": "2027-01-01"}),
+              (date(2026, 10, 1), date(2026, 10, 7)))
+        check("from/to swapped back", analyst.period({"date_from": "2026-10-05", "date_to": "2026-10-01"}),
+              (date(2026, 10, 1), date(2026, 10, 5)))
+        start, end = analyst.period({"date_from": "2025-01-01", "date_to": "2026-10-07"})
+        check("a period is at most 92 days", (end - start).days + 1, 92)
+        check("no dates: the last 30 days", analyst.period({}), (date(2026, 9, 8), date(2026, 10, 7)))
+    finally:
+        restore()
+    check("account codes are digits only", [analyst._digits(x) for x in ("4010", "40'; drop", "", "1234567")],
+          ["4010", None, None, None])
+    check("unknown tool", asyncio.run(analyst.run_tool("delete_invoice", {})), "No such tool 'delete_invoice'.")
+    check_true("unknown SAP kind is refused", "Unknown kind" in asyncio.run(analyst.run_tool("sap_records", {"kind": "users"})))
+
+    async def broken(args):
+        raise RuntimeError("down")
+
+    patch(analyst, "HANDLERS", {**analyst.HANDLERS, "billz_sales": broken})
+    try:
+        check_true("a system that's down becomes 'unavailable', not a crash",
+                   "could not be read right now" in asyncio.run(analyst.run_tool("billz_sales", "{not json")))
+    finally:
+        restore()
+
+    # ---- SAP rows: date filter, cancelled left out of the sums, grouped
+    async def freshness():
+        return "SAP data is current.", False
+
+    async def fake_read(query, params=None, timeout="10s"):
+        return [{"captured_at": datetime(2026, 10, 7, 3, tzinfo=timezone.utc), "raw": r} for r in (
+            {"DocNum": 1, "DocDate": "2026-10-01", "CardName": "Hilton", "DocTotal": 100, "DocTotalSy": 1270000},
+            {"DocNum": 2, "DocDate": "2026-10-02", "CardName": "Hilton", "DocTotal": 50, "CANCELED": "Y"},
+            {"DocNum": 3, "DocDate": "2026-10-03", "CardName": "Hyatt", "DocTotal": 30},
+            {"DocNum": 4, "DocDate": "2026-09-01", "CardName": "Hyatt", "DocTotal": 999})]
+
+    patch(ops_manager, "sap_freshness", freshness)
+    patch(analyst, "fetch_read_only", fake_read)
+    patch(analyst, "_today", lambda: date(2026, 10, 7))
+    try:
+        text = asyncio.run(analyst.sap_records({"kind": "sales", "date_from": "2026-10-01", "date_to": "2026-10-07"}))
+        check_true("SAP sales: dated rows only, cancelled out of the sums",
+                   "3 rows (1 cancelled, left out of sums)" in text and "DocTotal: 130" in text
+                   and "DocTotalSy UZS: 1,270,000" in text and "DocNum=4" not in text)
+        check_true("...grouped by customer", "- Hilton: 100" in text and "- Hyatt: 30" in text)
+    finally:
+        restore()
+
+    # ---- 1C balances: by account and counterparty, names from the catalog
+    def handler(request):
+        path = request.url.path
+        if "ChartOfAccounts" in path:
+            return httpx.Response(200, json={"value": [
+                {"Ref_Key": "a40", "Code": "4010", "Description": "Счета к получению от покупателей"},
+                {"Ref_Key": "a50", "Code": "5010", "Description": "Касса"}]})
+        if "Balance" in path:
+            return httpx.Response(200, json={"value": [
+                {"Account_Key": "a40", "ExtDimension1": "c1", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+                 "СуммаBalance": 2000000, "СуммаBalanceDr": 2000000},
+                {"Account_Key": "a40", "ExtDimension1": "c2", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+                 "СуммаBalance": 500000, "СуммаBalanceDr": 500000},
+                {"Account_Key": "a50", "СуммаBalance": 9}]})
+        if "Catalog_" in path:
+            return httpx.Response(200, json={"value": [{"Ref_Key": "c1", "Description": "Hilton Tashkent"},
+                                                       {"Ref_Key": "c2", "Description": "Hyatt Regency"}]})
+        return httpx.Response(404, json={})
+
+    real_init = oc.OneCClient.__init__
+
+    def mocked_init(self, agent="-", run_id=None, transport=None):
+        real_init(self, agent, run_id, transport=httpx.MockTransport(handler))
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    patch(oc, "audited", no_audit)
+    patch(oc.OneCClient, "__init__", mocked_init)
+    for name, value in (("onec_odata_url", "https://clobus.uz/a/acc313/61458/odata/standard.odata/"),
+                        ("onec_login", "bot"), ("onec_password", SecretStr("x"))):
+        patch(settings, name, value)
+    try:
+        text = asyncio.run(analyst.onec_balances({"account_prefix": "40"}))
+        check_true("1C receivables: the account and each counterparty by name",
+                   "Account 4010" in text and "СуммаBalance 2,500,000" in text
+                   and "4010 Hilton Tashkent: СуммаBalance 2,000,000" in text and "Hyatt Regency" in text)
+        check_true("...only the accounts asked for", "Касса" not in text)
+    finally:
+        restore()
+
+    # ---- the loop: tools first, then the answer
+    calls: list[tuple[str, str]] = []
+    sent_messages: list[list[dict]] = []
+
+    class FakeAI:
+        def __init__(self, *args, **kwargs):
+            self.turn = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def chat(self, messages, tools=None):
+            sent_messages.append(list(messages))
+            self.turn += 1
+            if self.turn == 1:
+                return {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "t1", "type": "function", "function": {"name": "sap_receivables", "arguments": "{}"}},
+                    {"id": "t2", "type": "function", "function": {"name": "onec_balances", "arguments": '{"account_prefix": "40"}'}}]}
+            return {"role": "assistant", "content": "SAP бўйича қарз <b>$100</b>, 1C бўйича 2 500 000 сўм."}
+
+    async def fake_tool(name):
+        async def run(args):
+            calls.append((name, json.dumps(args)))
+            return f"{name} data"
+        return run
+
+    async def make():
+        return {n: await fake_tool(n) for n in analyst.HANDLERS}
+
+    patch(analyst, "OpenRouterClient", FakeAI)
+    patch(analyst, "HANDLERS", asyncio.run(make()))
+    try:
+        result = asyncio.run(analyst.answer("Дебитор", "", uuid.uuid4(), hint="finance_agent"))
+        check("both systems looked up, then answered", (result.tools, result.rounds),
+              (["sap_receivables", "onec_balances"], 2))
+        check_true("the answer comes back", "1C бўйича" in result.text)
+        tool_turns = [m for m in sent_messages[-1] if m.get("role") == "tool"]
+        check("each tool result goes back under its call id", [(m["tool_call_id"], m["content"]) for m in tool_turns],
+              [("t1", "sap_receivables data"), ("t2", "onec_balances data")])
+        check_true("the router's guess is only a hint", "finance_agent" in sent_messages[0][1]["content"])
+    finally:
+        restore()
+
+    class EndlessAI(FakeAI):
+        async def chat(self, messages, tools=None):
+            if tools is None:
+                return {"role": "assistant", "content": "етарли"}
+            return {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "x", "type": "function", "function": {"name": "data_sources", "arguments": "{}"}}]}
+
+    patch(analyst, "OpenRouterClient", EndlessAI)
+    patch(analyst, "HANDLERS", asyncio.run(make()))
+    patch(settings, "ops_analyst_max_rounds", 3)
+    try:
+        result = asyncio.run(analyst.answer("ҳаммаси", "", uuid.uuid4()))
+        check("rounds are capped, then it must answer", (result.rounds, result.text), (3, "етарли"))
+    finally:
+        restore()
+
+    # ---- the bot: analyst first, the old one-source answer if it fails
+    replies: list[str] = []
+    old_path: list[str] = []
+
+    async def reply(director_id, run_id, text):
+        replies.append(text)
+
+    async def from_agent(director_id, slug, question, run_id, history=""):
+        old_path.append(slug)
+
+    async def good(question, history, run_id, hint=None):
+        return analyst.Answer(text="1C бўйича ...", tools=["onec_balances"], rounds=2)
+
+    async def bad(question, history, run_id, hint=None):
+        raise RuntimeError("no tools on this model")
+
+    async def no_log(**kwargs):
+        return None
+
+    patch(ops_manager, "_reply_and_log", reply)
+    patch(ops_manager, "_answer_from_agent", from_agent)
+    patch(ops_manager, "log_action", no_log)
+    patch(analyst, "answer", good)
+    patch(settings, "ops_analyst_enabled", True)
+    try:
+        asyncio.run(ops_manager._answer_question(1, "finance_agent", "Дебитор", uuid.uuid4()))
+        check("the analyst answers the Director", (replies, old_path), (["1C бўйича ..."], []))
+        analyst.answer = bad
+        asyncio.run(ops_manager._answer_question(1, "finance_agent", "Дебитор", uuid.uuid4()))
+        check("analyst down: the old answer still comes", old_path, ["finance_agent"])
+        settings.ops_analyst_enabled = False
+        analyst.answer = good
+        asyncio.run(ops_manager._answer_question(1, "pul_qoldigi", "касса", uuid.uuid4()))
+        check("switched off: the old answer", old_path, ["finance_agent", "pul_qoldigi"])
+    finally:
+        restore()
+    check_true("the Director's words and the figures aren't logged",
+               "data[:200]" not in inspect.getsource(ops_manager._answer_from_agent)
+               and "answer[:300]" not in inspect.getsource(ops_manager._answer_from_agent)
+               and "raw_message[:120]" not in inspect.getsource(ops_manager._dispatch_director_task))
+
+
+def test_it_restrictions() -> None:
+    """The Director's order of 07.10.2026: IT keeps technical access only — no figures reach Admin Bot."""
+    print("IT restrictions (Director's order 07.10.2026)")
+    from datetime import date, datetime, timezone
+
+    from integrations.billz import sap_check as sc
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.timeutil import TASHKENT
+    from integrations.org_bot import tech_report
+
+    # Billz → SAP while on trial: counts only
+    cheque = sc.Cheque(key="k", number="77", day=date(2026, 10, 6), amount=12500000, shop="GARMIN ABAY",
+                       seller="Алишер", items=[])
+    result = sc.Result(day=date(2026, 10, 6), cheques_day=[cheque], missing=[cheque])
+    text = sc.technical_text(result)
+    check_true("IT's Billz → SAP copy: counts, no amount, cheque, shop or seller",
+               "Billz'да 1 та чек" in text and "киритилмаган: 1" in text
+               and not any(x in text for x in ("12", "77", "ABAY", "Алишер", "сўм")))
+    check_true("all matching says so", "Ҳаммаси мос" in sc.technical_text(sc.Result(day=date(2026, 10, 6))))
+    agent = load_agent("billz-sap-check")
+    check_true("the trial copy says who confirms it", "Директор" in agent.trial_text("x"))
+
+    # data quality: invoice numbers, never their amounts
+    dq = load_agent("data-quality")
+    inp = dq.Inputs(today=date(2026, 10, 7))
+    inp.invoices = [{"doc_num": 2253, "doc_date": date(2026, 9, 1), "due_date": date(2026, 9, 10), "currency": "USD",
+                     "doc_total_tiyin": 123456700, "balance_due_tiyin": 123456700, "sales_person_code": -1}]
+    report = dq.render(inp)
+    check_true("data quality names the invoice, not its amount", "#2253" in report and "1,234,567" not in report
+               and "$" not in report)
+
+    # the technical report: times, counts, ok/failed
+    r = tech_report.TechReport(at=datetime(2026, 10, 7, 8, 20, tzinfo=TASHKENT))
+    r.connections = [tech_report.Check("1C", True, "41 та объект очиқ"), tech_report.Check("Billz", False, "HTTP 401"),
+                     tech_report.Check("Verifix", None, "уланмаган")]
+    r.sap_last, r.sap_kinds, r.sap_missing = datetime(2026, 10, 7, 2, 13, tzinfo=timezone.utc), 10, {"ar_open": 3}
+    r.brief = "юборилди 07.10 08:03"
+    r.runs = [("ceo-daily-brief", 4, 0, datetime(2026, 10, 7, 3, 3, tzinfo=timezone.utc)),
+              ("lead-agent", 2, 1, datetime(2026, 10, 7, 3, 9, tzinfo=timezone.utc))]
+    r.errors, r.db_size_mb, r.refused, r.analyst = [("lead-agent", "SerpAPI HTTP 429", 1)], 84.2, 2, (5, 1)
+    text = tech_report.render(r)
+    check_true("technical report: SAP push time, connections, brief delivered, errors, DB, security",
+               "охирги юбориш 07.10 07:13" in text and "очиқ ҳисоб-фактуралар (3)" in text and "✅ 1C" in text and "❌ Billz: HTTP 401" in text
+               and "Эрталабки брифинг: юборилди" in text and "SerpAPI HTTP 429 ×1" in text and "84.2 MB" in text
+               and "Рад этилган уринишлар" in text and "2 та" in text and "AI жавоб берди 5 та" in text)
+    r.sap_last = datetime(2026, 10, 6, 20, 0, tzinfo=timezone.utc)
+    check_true("a silent SAP push is flagged", "соатдан бери келмаяпти" in tech_report.render(r))
+    check_true("the technical report is Uzbek Cyrillic",
+               latin_words(text, allow={"SAP", "Billz", "Verifix", "AI", "OpenRouter", "Didox", "Admin", "Bot", "OPS",
+                                        "Manager", "MB", "Render", "Recovery", "HTTP", "SerpAPI", "mgmg",
+                                        "db", "C"}) == [])
+    check_true("/texnik sends it on demand", "/texnik" in load_source("integrations/org_bot/admin.py"))
+    check_true("it runs last in the 08:00 job", load_source("scripts/run_morning_agents.py").index("tech-report")
+               > load_source("scripts/run_morning_agents.py").index("task-tracker/agent.py --monthly"))
+
+
 def test_reports_off() -> None:
     """2026-10-06: the admin switches daily reports off for one person (/xodimlar → 📝)."""
     print("daily reports off per person")
@@ -3354,8 +3709,10 @@ def test_verifix() -> None:
         check_true("...tells the admin where the keys are", "VERIFIX_CLIENT_ID" in sent[-1] and "OAuth2" in sent[-1])
         settings.verifix_client_id, settings.verifix_client_secret = "cid", SecretStr("sec")
         check("/verifix once set up", asyncio.run(admin.handle_admin_message(message, uuid.uuid4())), "verifix_ok")
-        check_true("...shows today's picture and the organisation",
-                   "Verifix уланди" in sent[-1] and "Табелда: 2 ходим" in sent[-1] and "ЭМЖИЕМ" in sent[-1])
+        check_true("...says it's connected and readable, with the organisation",
+                   "Verifix уланди" in sent[-1] and "Бугунги табел ўқилди: 2 қатор" in sent[-1] and "ЭМЖИЕМ" in sent[-1])
+        check_true("...but no names or times for IT (Director's order 07.10.2026)",
+                   not any(x in sent[-1] for x in ("Salimov", "Салимов", "Ergashev", "09:40", "кечикди")))
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
@@ -4400,8 +4757,11 @@ def test_onec() -> None:
               ["Catalog_ФизическиеЛица", "Document_НачислениеЗарплаты"])
         check_true("the client has no way to write", not any(hasattr(oc.OneCClient, m) for m in ("post", "patch", "put", "delete")))
         text = admin._onec_text(report)
-        check_true("/1c report: connected, accounts, warning about payroll",
-                   "1C уланди" in text and "5110" in text and "Иш ҳақи" in text)
+        check_true("/1c report: connected, accounts counted, warning about payroll",
+                   "1C уланди" in text and "Пул ҳисобварақлари (5000-синф): 2 та, қолдиғи ўқилди: 2 та" in text
+                   and "Иш ҳақи" in text)
+        check_true("/1c shows no balances to IT (Director's order 07.10.2026)",
+                   not any(x in text for x in ("98", "1 500", "сўм")))
         check_true("/1c without a login says why", "1C'га уланиб бўлмади" in admin._onec_text(
             {"sets": [], "accounts": [], "fields": [], "balances": {}, "errors": ["HTTP 401 — unauthorized"]}))
         settings.onec_password = SecretStr("")
@@ -4669,6 +5029,11 @@ def main() -> int:
     Returns:
         0 if all checks pass, 1 otherwise.
     """
+    from integrations.common.config import settings
+
+    # The Director's analyst calls the real AI: off for every suite but its own
+    # (test_analyst switches it on), so no check can reach OpenRouter.
+    settings.ops_analyst_enabled = False
     for suite in (
         test_references,
         test_bot_flows,
@@ -4689,6 +5054,8 @@ def main() -> int:
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,
         test_reports_off,
+        test_analyst,
+        test_it_restrictions,
         test_verifix,
         test_flexible_schedule,
         test_verifix_basic_login,

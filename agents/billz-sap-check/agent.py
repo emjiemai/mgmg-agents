@@ -11,7 +11,8 @@ days that never reached SAP are repeated until they do). The Director gets
 one message: a ✅ line when everything matches, the list when not. Other
 roles can be added with ``BILLZ_SAP_CHECK_ROLES``. While
 ``BILLZ_SAP_CHECK_TRIAL`` is on (the default until the first results are
-confirmed), it goes to the admin in Admin Bot instead.
+confirmed), the admin gets a counts-only copy in Admin Bot instead — no amounts,
+cheques or names (the Director's order of 07.10.2026).
 
 Needs both sides: BILLZ (``BILLZ_SECRET_TOKEN``) and SAP's invoice lines from
 the gateway tool ``get_sales_by_date`` (``docs/sap-gateway-tools.md``; today's
@@ -163,16 +164,19 @@ async def _save(day: date, status: str, result: dict[str, Any], sent: bool) -> N
 
 
 def trial_text(text: str) -> str:
-    """The admin's copy while the check is on trial."""
-    return ("🧪 <i>Синов: Директорга ҳали юборилмайди. Тўғри бўлса, Render'да "
-            "BILLZ_SAP_CHECK_TRIAL=false қилинг.</i>\n\n" + text)
+    """The admin's copy while the check is on trial — counts only (``sap_check.technical_text``)."""
+    return ("🧪 <i>Синов: Директорга ҳали юборилмайди. Натижалар Директор ёки у белгилаган мутахассис "
+            "томонидан тасдиқлангач, Render'да BILLZ_SAP_CHECK_TRIAL=false қилинг.</i>\n\n" + text)
 
 
-async def _send(text: str, run_id: uuid.UUID, document: tuple[bytes, str, str] | None = None) -> int:
+async def _send(text: str, run_id: uuid.UUID, document: tuple[bytes, str, str] | None = None,
+                technical: str | None = None) -> int:
     """The check to the admin (trial) or the Director: a PDF when there's a list, else the short text.
 
     Args:
-        document: ``(pdf, file name, caption)`` when something is wrong.
+        document: ``(pdf, file name, caption)`` when something is wrong — the Director's only.
+        technical: IT's counts-only copy, sent instead while on trial (the
+            Director's order of 07.10.2026: no amounts, cheques or names for IT).
     """
     if settings.billz_sap_check_trial:
         async with TelegramBot(
@@ -180,11 +184,7 @@ async def _send(text: str, run_id: uuid.UUID, document: tuple[bytes, str, str] |
             default_chat_id=settings.admin_bot_telegram_chat_id,
         ) as bot:
             try:
-                if document is not None:
-                    pdf, name, cap = document
-                    await bot.send_file(pdf, name, settings.admin_bot_telegram_chat_id, "🧪 Синов · " + cap)
-                else:
-                    await bot.send_message(trial_text(text))
+                await bot.send_message(trial_text(technical or "🧾 Billz ↔ SAP: текширилди."))
                 return 1
             except TelegramError as exc:
                 log.error("Could not send the Billz–SAP trial to the admin: {}", exc)
@@ -241,7 +241,7 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         log.info("No SAP invoice lines yet (gateway tool get_sales_by_date, docs/sap-gateway-tools.md) — nothing to compare")
         return 0
     if now_local() - pushed_at > STALE_AFTER:
-        text = sap_check.render_stale(day, pushed_at)
+        text = technical = sap_check.render_stale(day, pushed_at)
         status, result = "stale_sap", {"pushed_at": str(pushed_at)}
     else:
         start = day - timedelta(days=sap_check.WINDOW_DAYS - 1)
@@ -258,6 +258,7 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
             checked = compare(cheques, sales, lines, day, mapping)
         day_end = datetime.combine(today, time.min, tzinfo=TASHKENT)
         text = sap_check.render(checked, pushed_at=pushed_at, day_end=day_end)
+        technical = sap_check.technical_text(checked)
         status, result = checked.status, {**sap_check.summary(checked), "shops": shops,
                                           "pushed_at": str(pushed_at)}
         if not checked.ok and not checked.no_cheque_numbers:
@@ -277,7 +278,7 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         log.info("[dry run] status={}, would go to {}", status, where)
         return 0
 
-    sent = await _send(text, run_id, document)
+    sent = await _send(text, run_id, document, technical)
     await _save(day, status, result, sent > 0)
     await log_action(
         agent=AGENT, action="checked", target_system="telegram", status="success", run_id=run_id,

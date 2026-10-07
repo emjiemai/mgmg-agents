@@ -45,7 +45,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from integrations.common.config import settings
 from integrations.common.db import close_pool, fetch_all
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_utc, to_local, today_local
 from integrations.org_bot import names, permissions, store
 from integrations.org_bot.roles import DIRECTOR_ROLE
@@ -98,10 +97,6 @@ def _examples(docs: list[dict[str, Any]]) -> str:
     return f" ({', '.join(numbers)}{more})" if numbers else ""
 
 
-def _total(docs: list[dict[str, Any]]) -> str:
-    return format_money_by_currency([(d["balance_due_tiyin"], d.get("currency") or "UZS") for d in docs])
-
-
 def sap_findings(inp: Inputs) -> list[str]:
     """Problems in the SAP data this system receives."""
     found: list[str] = []
@@ -110,8 +105,8 @@ def sap_findings(inp: Inputs) -> list[str]:
     no_seller = [d for d in invoices if d.get("sales_person_code") is None or d["sales_person_code"] < 0]
     if no_seller:
         found.append(
-            f"Масъул сотувчиси йўқ очиқ ҳисоб-фактура: {len(no_seller)} та, {escape(_total(no_seller))}"
-            f"{escape(_examples(no_seller))}"
+            # Count and numbers only — no amounts: this goes to IT (the Director's order of 07.10.2026).
+            f"Масъул сотувчиси йўқ очиқ ҳисоб-фактура: {len(no_seller)} та{escape(_examples(no_seller))}"
         )
     no_due = [d for d in invoices if d.get("due_date") is None]
     if no_due:

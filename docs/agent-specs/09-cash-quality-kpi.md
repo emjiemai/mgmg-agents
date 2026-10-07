@@ -49,6 +49,10 @@ calendar also shows the money on hand from 1C.
 
 ## B4 — data quality (for IT)
 
+Since the Director's order of 07.10.2026 the report carries **no amounts**:
+invoice numbers, item codes and counts only (the "no sales person" line no
+longer shows the invoices' total).
+
 What it checks, from what this system can see:
 
 - **SAP invoices:** no sales person (they show as "Бошқа" everywhere), no due

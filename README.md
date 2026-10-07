@@ -22,14 +22,15 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 
 | When | What | Who gets it | Code |
 | ---- | ---- | ----------- | ---- |
-| always | **OPS Manager Bot** — the Director gives tasks (ticks who gets them before sending) and asks questions about any data; employees send reports and files, and talk to the work AI about their own tasks | Director, employees | `integrations/org_bot/ops_manager.py` |
+| always | **OPS Manager Bot** — the Director gives tasks (ticks who gets them before sending) and asks questions about any data, which the analyst looks up itself across SAP, 1C, BILLZ and Verifix, read-only (`analyst.py`); employees send reports and files, and talk to the work AI about their own tasks | Director, employees | `integrations/org_bot/ops_manager.py` |
 | always | **Admin Bot** — access requests, roles, names, days off, announcements, system checks | admin | `integrations/org_bot/admin.py` |
 | 08:00 | Morning brief (A2): cash (1C), yesterday's sales, stock, customer debt, today's payments, shop sales (BILLZ), who didn't report, attendance (Verifix) | Director | `agents/ceo-daily-brief/` |
-| 08:00 | Billz → SAP check: every shop cheque must be in SAP the same day | Director (on trial: the admin) | `agents/billz-sap-check/` |
+| 08:00 | Billz → SAP check: every shop cheque must be in SAP the same day | Director (on trial: the admin, counts only) | `agents/billz-sap-check/` |
 | 08:00 | Lead Agent (F2): new tenders/leads into the Google sheet | Director | `agents/lead-agent/` |
 | 08:00 | Lead hand-out: one lead to each B2B sales person | B2B Sotuv | `agents/lead-handout/` |
 | 08:00 | Receivables alert: overdue customer debt by age | Director | `agents/receivables/` |
 | 08:00 | Task reminders and overdue notices (A3) | employees, Director | `agents/task-tracker/` |
+| 08:00 | IT's technical report (after the other 08:00 agents): connections, SAP push, brief delivered, errors, DB, security — no figures | admin | `agents/tech-report/` |
 | Mon 08:00 | Data quality (B4); 30-day cash calendar (B2) | admin; Director + accountants | `agents/data-quality/`, `agents/cash-calendar/` |
 | 1st, 08:00 | Monthly KPI (E1) | Director, HR | `agents/task-tracker/ --monthly` |
 | 10:00, 17:35 | Team cheer — one friendly line | employees | `agents/team-cheer/` |
@@ -109,7 +110,8 @@ access to each of these:
 | `/dam` | Mark days off (no asks, reminders, cheer or leads that day) |
 | `/elon <text>` | Announce to every employee (preview, then confirm); `/elon` alone = a "technical error" notice |
 | `/grafik` | Who is on "эркин график" (never shown as late/absent) |
-| `/verifix`, `/billz`, `/1c` | Is that system connected, and what does it show today |
+| `/verifix`, `/billz`, `/1c` | Is that system connected and readable — status and counts only, no figures (the Director's order of 07.10.2026) |
+| `/texnik` | IT's technical report now: connections, SAP push, brief delivered, errors, DB, security (also every morning) |
 | `/sifat` | Data quality check now (SAP feeds, missing columns, unnamed people…) |
 | `/qr` | The two printable complaint QR cards |
 
@@ -128,8 +130,10 @@ employee writes their report or asks the work AI.
 cron job stop sending. Each agent also has its own `*_ENABLED` switch.
 
 **Look at the data:** `https://<mgmg-api host>/db` (read-only, password
-`DB_VIEWER_PASSWORD`), or any Postgres client with Render's External
-Database URL.
+`DB_VIEWER_PASSWORD`) — technical tables only since 2026-10-07 (audit log,
+access requests, changes, days off); financial and confidential tables are
+closed there. Render's External Database URL still opens everything: it is
+one of the broad rights listed in `docs/access-review-2026-10-07.md`.
 
 **Logs:** Render dashboard → the service → Logs. A cron job can be run by
 hand there ("Trigger Run") — note that it really sends.

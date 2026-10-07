@@ -39,11 +39,11 @@ ASK_NAMES_COMMANDS = ("/ismlar", "/names")
 DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
 # "/qr" -> the printable feedback QR card (one for the whole company).
 QR_COMMAND = "/qr"
-# "/verifix" -> is Verifix connected, and what does today look like there?
+# "/verifix" -> is Verifix connected, can today and yesterday be read (no names or times).
 VERIFIX_COMMAND = "/verifix"
-# "/billz" -> is BILLZ connected, and yesterday's shop sales.
+# "/billz" -> is BILLZ connected, and could yesterday be read (no figures).
 BILLZ_COMMAND = "/billz"
-# "/1c" -> is 1C (Clobus, OData) readable: what's published, where the money is.
+# "/1c" -> is 1C (Clobus, OData) readable: what's published, are balances readable (no amounts).
 ONEC_COMMANDS = ("/1c", "/1с")
 # "/dam" -> the next two weeks; tap a day to make it a day off (or a working day again).
 DAY_OFF_COMMANDS = ("/dam", "/damolish", "/dayoff")
@@ -52,6 +52,8 @@ FLEXIBLE_COMMANDS = ("/grafik", "/erkin")
 # Verifix people seen in this many days are listed on /grafik.
 FLEXIBLE_LOOKBACK_DAYS = 30
 DAY_OFF_DAYS = 14
+# "/texnik" -> IT's technical report now (tech_report.py; also every morning).
+TECH_REPORT_COMMANDS = ("/texnik", "/tech")
 # "/elon" (+ text) -> one message to every employee, after a confirm tap.
 ANNOUNCE_COMMAND = "/elon"
 # What /elon sends when no text is given: the "something went wrong" notice.
@@ -187,6 +189,9 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
     admin_id = settings.admin_bot_admin_user_id
     if admin_id and sender.get("id") != admin_id:
         log.warning("Admin command attempted by non-admin telegram_user_id={}", sender.get("id"))
+        # Counted in the technical report's security line (tech_report.py).
+        await log_action(agent=AGENT, action="unauthorized_admin_command", target_system="telegram",
+                         status="skipped", run_id=run_id, target_ref=str(sender.get("id")), mode="read")
         return "unauthorized"
 
     raw = (message.get("text") or "").strip()
@@ -213,6 +218,10 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await _check_billz(run_id)
     if text in ONEC_COMMANDS:
         return await _check_onec(run_id)
+    if text in TECH_REPORT_COMMANDS:
+        from integrations.org_bot import tech_report
+
+        return "tech_report_" + await tech_report.send(run_id)
 
     return "ignored"
 
@@ -247,7 +256,7 @@ async def _send_qr(run_id: uuid.UUID) -> str:
 
 
 async def _check_verifix(run_id: uuid.UUID) -> str:
-    """Admin Bot /verifix: can we read Verifix, and what does today look like?"""
+    """Admin Bot /verifix: can we read Verifix — today and the brief's yesterday (no names or times)."""
     from integrations.verifix import attendance
     from integrations.verifix.client import VerifixClient
 
@@ -271,31 +280,25 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
             log.error("Verifix check failed: {}", exc)
             text, outcome = f"❌ <b>Verifix'га уланиб бўлмади.</b>\n{escape(str(exc)[:300])}{_verifix_hint(exc)}", "verifix_failed"
         else:
-            grace = settings.verifix_late_grace_minutes
-            recs = attendance.records(
-                rows, attendance.classify_kinds(raw_kinds), grace=grace, now=now_local().replace(tzinfo=None),
-                flexible=await attendance.flexible_ids(),
-            )
-            day = attendance.summarize(recs, today)
+            # Connection only (the Director's order of 07.10.2026: IT doesn't
+            # see other people's attendance) — counts of rows, never names or times.
             text, outcome = (
                 f"✅ <b>Verifix уланди.</b> Ташкилот: {escape(organisation)}\n"
-                f"Табелда: {len(rows)} ходим. Бугун иш куни: {day.scheduled} киши, келди: {day.arrived}, "
-                f"кечикди: {len(day.late)}.\n"
-                f"Кечикиш чегараси: {grace} дақиқа.",
+                f"Бугунги табел ўқилди: {len(rows)} қатор. Вақт турлари: {len(raw_kinds)} та.\n"
+                f"Кечикиш чегараси: {settings.verifix_late_grace_minutes} дақиқа.",
                 "verifix_ok",
             )
-            # Exactly what the 08:00 brief does: yesterday, the whole day.
+            # The path the 08:00 brief takes: yesterday, the whole day.
             yesterday = today - timedelta(days=1)
             try:
-                block = attendance.render_day(
-                    attendance.summarize(await attendance.load(yesterday, yesterday, run_id=run_id, agent=AGENT), yesterday)
-                )
+                await attendance.load(yesterday, yesterday, run_id=run_id, agent=AGENT)
             except Exception as exc:  # noqa: BLE001 — show the reason the brief would hit
                 log.error("Verifix yesterday (brief path) failed: {!r}", exc)
-                text += f"\n\n⚠️ <b>Кечаги давомат (брифингдагидек) олинмади:</b>\n{escape(_error_text(exc))}"
+                text += f"\n\n⚠️ <b>Кечаги давомат (брифинг йўли) олинмади:</b>\n{escape(_error_text(exc))}"
                 outcome = "verifix_yesterday_failed"
             else:
-                text += "\n\n<b>Брифингда шундай чиқади:</b>\n" + (block or "кеча ҳеч кимнинг иш куни бўлмаган")
+                text += "\nКечаги давомат (брифинг йўли) ўқилди ✅"
+            text += "\n\n<i>Давомат тафсилотлари фақат Директорга кўринади.</i>"
     async with TelegramBot(
         agent=AGENT,
         run_id=run_id,
@@ -307,10 +310,9 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
 
 
 async def _check_billz(run_id: uuid.UUID) -> str:
-    """Admin Bot /billz: can we read BILLZ, and what were yesterday's shop sales?"""
+    """Admin Bot /billz: can we read BILLZ, and could yesterday be read (no sales figures)."""
     from datetime import timedelta
 
-    from integrations.billz import sales as billz_sales
     from integrations.billz.client import BillzClient
 
     if not settings.billz_configured:
@@ -324,7 +326,7 @@ async def _check_billz(run_id: uuid.UUID) -> str:
         try:
             async with BillzClient(agent=AGENT, run_id=run_id) as client:
                 shops = await client.shops()
-                day = billz_sales.day_sales(await client.shop_days(yesterday, yesterday), yesterday)
+                rows = await client.shop_days(yesterday, yesterday)
         except Exception as exc:  # noqa: BLE001 — the admin needs the reason
             log.error("BILLZ check failed: {}", exc)
             hint = ""
@@ -332,10 +334,11 @@ async def _check_billz(run_id: uuid.UUID) -> str:
                 hint = "\n\nКалит нотўғри ёки ўчирилган — Billz'да янги калит яратиб, Render'га қайта киритинг."
             text, outcome = f"❌ <b>Billz'га уланиб бўлмади.</b>\n{escape(str(exc)[:300])}{hint}", "billz_failed"
         else:
+            # Connection only (the Director's order of 07.10.2026): no sales figures for IT.
             text, outcome = (
-                f"✅ <b>Billz уланди.</b> Дўконлар: {len(shops)} та.\n\n"
-                + billz_sales.render_day(day)
-                + "\nЭрталабки ҳисоботда ҳар куни чиқади; Директор ботдан сўраши мумкин.",
+                f"✅ <b>Billz уланди.</b> Дўконлар: {len(shops)} та.\n"
+                f"Кечаги ҳисобот ўқилди: {len(rows)} қатор.\n\n"
+                "<i>Савдо рақамлари фақат Директорга кўринади (брифинг ва бот).</i>",
                 "billz_ok",
             )
     async with TelegramBot(
@@ -380,7 +383,6 @@ async def _check_onec(run_id: uuid.UUID) -> str:
 
 def _onec_text(report: dict) -> str:
     """The /1c report: what's published, money accounts, balance fields, problems."""
-    from integrations.common.money import format_uzs, to_tiyin
     from integrations.onec import discover
 
     if not report["sets"]:
@@ -398,19 +400,18 @@ def _onec_text(report: dict) -> str:
             f"⚠️ Иш ҳақи ва шахсий маълумотлар ҳам очиқ ({len(risky)} та, масалан: "
             f"{escape(', '.join(risky[:4]))}). Ботга керак эмас — OData созламаларидаги «Состав»дан олиб ташланг."
         )
+    # Accounts and whether their balances are readable — never the amounts
+    # (the Director's order of 07.10.2026: IT doesn't see the company's money).
     accounts = report["accounts"]
-    lines.append(f"\n💰 <b>Пул ҳисобварақлари (5000-синф):</b> {len(accounts)} та")
-    for a in accounts[:12]:
-        balance = report["balances"].get(a["code"])
-        shown = format_uzs(to_tiyin(balance)) if balance is not None else "—"
-        lines.append(f"   • {escape(a['code'])} {escape(a['name'][:40])}: {shown}")
+    readable = sum(1 for a in accounts if a["code"] in report["balances"])
+    lines.append(f"\n💰 Пул ҳисобварақлари (5000-синф): {len(accounts)} та, қолдиғи ўқилди: {readable} та")
     lines.append(
         f"\nҚолдиқ майдонлари: {escape(', '.join(report['fields'][:8]) or 'топилмади')}"
         + (f" (ҳисобда: {escape(report['amount_field'])})" if report.get("amount_field") else "")
     )
     if report["errors"]:
         lines.append("\n<i>" + escape("; ".join(report["errors"])[:600]) + "</i>")
-    lines.append("\n<i>Шу хабарни IT'га юборинг — «Касса» брифингга шу асосда уланади.</i>")
+    lines.append("\n<i>Қолдиқ суммалари фақат Директорга кўринади (брифинг «Касса» ва бот).</i>")
     return "\n".join(lines)
 
 
@@ -994,6 +995,8 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
     admin_id = settings.admin_bot_admin_user_id
     if admin_id and clicker.get("id") != admin_id:
         log.warning("Admin action attempted by non-admin telegram_user_id={}", clicker.get("id"))
+        await log_action(agent=AGENT, action="unauthorized_admin_callback", target_system="telegram",
+                         status="skipped", run_id=run_id, target_ref=str(clicker.get("id")), mode="read")
         await _answer(query_id, "Рухсат йўқ")
         return "unauthorized"
 
