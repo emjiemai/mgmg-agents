@@ -240,10 +240,10 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_save_as_report(rest, callback, run_id)
     if prefix == "cheer":
         return await _handle_cheer_answer(rest, callback, run_id)
-    if prefix == "ld":
-        return await _handle_lead_status(rest, callback, run_id)
-    if prefix == "lc":
-        return await _handle_lead_choice(rest, callback, run_id)
+    if prefix in ("ld", "lc"):
+        # A button on an old 15:00 lead question: the hand-out was stopped by
+        # the Director on 2026-10-07 — nothing is recorded, the buttons go.
+        return await _handle_stopped_lead_button(callback, run_id)
 
     # KPI: goals, results, the Director's 1–5 ratings (kpi_flow.py).
     kpi_outcome = await kpi_flow.handle_callback(prefix, rest, callback, run_id)
@@ -558,6 +558,7 @@ async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid
 
 
 async def _edit_lead_message(chat_id: int, message_id: int | None, text: str, keyboard: dict[str, Any], run_id: uuid.UUID) -> None:
+    """Edit one of the bot's own messages in an employee's chat (today's report card)."""
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
@@ -566,58 +567,22 @@ async def _edit_lead_message(chat_id: int, message_id: int | None, text: str, ke
         )
 
 
-async def _ask_lead_question(telegram_user_id: int, checkin_id: str, question: str, run_id: uuid.UUID) -> None:
-    """Send the one follow-up after a tap and remember it, so the typed answer lands on this lead."""
-    ids = await _reply(telegram_user_id, run_id, casual(question, "🙂"))
-    await store.ask_lead_question(checkin_id, question, ids[-1] if ids else None)
-
-
-async def _handle_lead_status(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """A 15:00 lead tap: жараёнда → "next step?"; рад этилди / бажарилди → reason/result buttons."""
-    query_id = callback.get("id", "")
-    parsed = leads.parse_callback(rest)
-    clicker_id = (callback.get("from") or {}).get("id")
-    if parsed is None or parsed[1] not in leads.STATUSES or clicker_id is None:
-        await _answer(query_id, "Номаълум амал")
-        return "unrecognized"
-    checkin_id, letter = parsed
-    status = leads.STATUSES[letter][0]
-    row = await store.answer_lead_checkin(checkin_id, clicker_id, status)
-    if row is None:
-        await _answer(query_id, "бу лид бўйича жавобингиз олинган")
-        return "lead_already_answered"
-    await _answer(query_id, "раҳмат")
-    if status == "in_progress":
-        await _edit_lead_message(clicker_id, row["message_id"], leads.status_line(row, status),
-                                 {"inline_keyboard": []}, run_id)
-        await _ask_lead_question(clicker_id, checkin_id, leads.IN_PROGRESS_QUESTION, run_id)
-    else:
-        await _edit_lead_message(clicker_id, row["message_id"], leads.choice_question(row, status),
-                                 leads.choice_keyboard(checkin_id, status), run_id)
-    return f"lead_{status}"
-
-
-async def _handle_lead_choice(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """The reason a lead was dismissed, or what came of it; "other" asks them to write it."""
-    query_id = callback.get("id", "")
-    parsed = leads.parse_callback(rest)
-    choice = leads.parse_choice(parsed[1]) if parsed else None
-    clicker_id = (callback.get("from") or {}).get("id")
-    if parsed is None or choice is None or clicker_id is None:
-        await _answer(query_id, "Номаълум амал")
-        return "unrecognized"
-    checkin_id = parsed[0]
-    status, index, outcome = choice
-    row = await store.choose_lead_outcome(checkin_id, clicker_id, outcome)
-    if row is None:
-        await _answer(query_id, "бу лид бўйича жавобингиз олинган")
-        return "lead_already_answered"
-    await _answer(query_id, "раҳмат, ёзиб қўйдим")
-    await _edit_lead_message(clicker_id, row["message_id"], leads.status_line(row, status, outcome),
-                             {"inline_keyboard": []}, run_id)
-    if leads.is_other(status, index):
-        await _ask_lead_question(clicker_id, checkin_id, leads.OTHER_QUESTION, run_id)
-    return "lead_outcome"
+async def _handle_stopped_lead_button(callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Old lead buttons: say the hand-out has stopped and take the buttons off that message."""
+    await _answer(callback.get("id", ""), "лидлар тарқатиш тўхтатилган")
+    message = callback.get("message") or {}
+    if message.get("message_id") and (message.get("chat") or {}).get("id"):
+        try:
+            async with TelegramBot(
+                agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+            ) as bot:
+                await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                    chat_id=str(message["chat"]["id"]), message_id=message["message_id"],
+                    text=message.get("text") or "лидлар тарқатиш тўхтатилган", reply_markup={"inline_keyboard": []},
+                )
+        except TelegramError as exc:
+            log.warning("Could not take the buttons off an old lead message: {}", exc)
+    return "lead_handout_stopped"
 
 
 async def _answer(query_id: str, text: str) -> None:
@@ -702,7 +667,7 @@ async def _route_to_ai(
 
 
 async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID) -> None:
-    """Answer one message — with the person's own tasks, leads and duties, nothing of anyone else's."""
+    """Answer one message — with the person's own tasks and duties, nothing of anyone else's."""
     telegram_user_id = employee["telegram_user_id"]
     try:
         if await store.ai_questions_today(telegram_user_id) >= ai_chat.DAILY_LIMIT:
@@ -710,7 +675,6 @@ async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, A
             return
         history = await store.recent_ai_turns(telegram_user_id)
         tasks = await store.open_tasks_for_employee(telegram_user_id)
-        own_leads = await store.open_leads_for_employee(str(employee["id"])) if employee.get("id") else []
         await store.log_ai_turn(telegram_user_id, "employee", text)
         async with OpenRouterClient(
             agent=ai_chat.AGENT,
@@ -719,7 +683,7 @@ async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, A
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
             raw = await ai.complete(
-                ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, own_leads, today_local())),
+                ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, today_local())),
                 ai_chat.user_prompt(history, text, task),
             )
         answer = ai_chat.clean_answer(raw)
@@ -1254,24 +1218,6 @@ async def _handle_employee_message(
     if reply_to.get("message_id") and await store.cheer_delivery_for_message(telegram_user_id, reply_to["message_id"]):
         await _reply(telegram_user_id, run_id, cheer.text_reply(reply_to["message_id"]))
         return "cheer_reply"
-
-    # The answer to a lead's follow-up ("кейинги қадамингиз нима?"): a Reply
-    # to it, or the next message soon after — unless the 16:00 report ask
-    # came in between, in which case this is more likely the report.
-    question = None
-    if reply_to.get("message_id"):
-        question = await store.lead_question_by_message(telegram_user_id, reply_to["message_id"])
-    # A message that asks something isn't taken as the answer just for
-    # arriving soon after — only a Reply to the question is (it goes to the AI).
-    if question is None and not asks_something(text):
-        question = await store.pending_lead_question(telegram_user_id, leads.ANSWER_WINDOW_MINUTES)
-        if question is not None:
-            report = await store.pending_report(telegram_user_id, today_local())
-            if report is not None and report.get("asked_at") and report["asked_at"] > question["question_asked_at"]:
-                question = None
-    if question is not None and await store.save_lead_note(str(question["id"]), text) is not None:
-        await _reply(telegram_user_id, run_id, casual("раҳмат каттакон, ёзиб қўйдим", "😊"))
-        return "lead_note"
 
     outcome = await _try_daily_report(employee, text, reply_to.get("message_id"), run_id)
     if outcome is not None:
@@ -2086,7 +2032,7 @@ async def _fetch_task_tracker_data() -> str:
     return "\n".join(lines)
 
 
-LEAD_SHEET_COLUMNS = leads.SHEET_COLUMNS  # the one list, shared with the lead hand-out
+LEAD_SHEET_COLUMNS = leads.SHEET_COLUMNS  # the one list, shared with the Lead Agent
 
 
 async def _fetch_lead_agent_data() -> str:

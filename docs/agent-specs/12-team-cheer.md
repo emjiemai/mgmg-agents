@@ -85,7 +85,7 @@ the boss reads is no longer a friendly question.
 
 Render gives a cron service one expression, and one expression can't hold
 three different minutes. `mgmg-team-cheer` runs `0,35 5,10,12 * * *` (UTC) =
-10:00, 10:35, 15:00, 15:35, 17:00, 17:35 Tashkent. Each run sends the slot
+10:00, 10:35, 17:00, 17:35 Tashkent (15:00/15:35 dropped with the lead hand-out, 2026-10-07). Each run sends the slot
 whose time passed less than 25 minutes ago (so a cron that starts a few
 minutes late still sends), and exits at once otherwise. `cheer_messages` has
 one row per day and slot, so a retried or doubled run never sends twice.

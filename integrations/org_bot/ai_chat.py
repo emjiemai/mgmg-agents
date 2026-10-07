@@ -4,12 +4,11 @@
 longer message the Director (or each other) through it; what they write
 about their work and their tasks is answered by the AI. So:
 
-- every employee's free message (not a report, a lead answer or a cheer
-  reply) goes to the AI — no command needed; the admin can switch it off
+- every employee's free message (not a report or a cheer reply) goes to the AI — no command needed; the admin can switch it off
   for one person (Admin Bot /xodimlar → 🤖), who is then told the bot is
-  for reports, tasks and leads only;
+  for reports and tasks only;
 - the AI knows the person's role, their open tasks (and the one they reply
-  to), their open leads, and — once the owner uploads them — their written
+  to), and — once the owner uploads them — their written
   duties (``employees.responsibilities``); plus what MGMG sells (public),
   and for Garmin sales the public catalog;
 - it has no SAP, money, stock, reports, KPI, customers or anything about
@@ -88,9 +87,12 @@ How you write:
 
 
 def work_context(
-    employee: dict[str, Any], tasks: list[dict[str, Any]], own_leads: list[dict[str, Any]], today: date
+    employee: dict[str, Any], tasks: list[dict[str, Any]], today: date
 ) -> str:
-    """What the AI may know about this person: their duties, open tasks and open leads."""
+    """What the AI may know about this person: their duties and open tasks.
+
+    (Their open leads were here until the Director stopped the lead hand-out, 2026-10-07.)
+    """
     lines = []
     duties = (employee.get("responsibilities") or "").strip()
     lines.append(f"Their written duties:\n{duties}" if duties else "Their written duties: not uploaded yet — say so if asked.")
@@ -103,10 +105,6 @@ def work_context(
             lines.append(f"- {_plain(t.get('task_summary'))} ({status}{due_text})")
     else:
         lines.append("Their open tasks: none.")
-    if own_leads:
-        lines.append("Their open leads (given to them each morning):")
-        for lead in own_leads[:15]:
-            lines.append(f"- {lead.get('company')} (given {lead['assigned_on']:%d.%m}, {lead.get('status')})")
     return "\n".join(lines)
 
 
@@ -151,7 +149,7 @@ def hint_text() -> str:
 
 def off_text() -> str:
     return casual(
-        "бу бот фақат иш учун: ҳисобот, топшириқлар ва лидлар, бошқа хабарлар ҳеч кимга юборилмайди", "🙂"
+        "бу бот фақат иш учун: ҳисобот ва топшириқлар, бошқа хабарлар ҳеч кимга юборилмайди", "🙂"
     )
 
 

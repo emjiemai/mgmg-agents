@@ -1,4 +1,16 @@
-# Lead hand-out — one lead a morning, "how is it going?" at 15:00
+# Lead hand-out — STOPPED 2026-10-07
+
+> **Stopped and removed on 2026-10-07 by the Director** ("he will do another
+> thing"): the AI sends nothing to B2B Sotuv any more — no 08:00 lead, no
+> 15:00 question. `agents/lead-handout/`, its switch, buttons and typed
+> answers are deleted; an old 15:00 button now just says "лидлар тарқатиш
+> тўхтатилган" and loses its buttons. Kept: the data (`leads`,
+> `lead_assignments`, `lead_checkins` — never deleted), October's past
+> answers in the KPI, the Director's questions about it as history
+> (`lidlar`), and the sheet helpers in `leads.py` the Lead Agent uses. The
+> text below is how it worked, for the record.
+
+## How it worked (2026-09-30 – 2026-10-07)
 
 **Code:** `agents/lead-handout/agent.py` (sends), `integrations/org_bot/leads.py`
 (the rules and wording), `integrations/org_bot/ops_manager.py` (taps, typed answers)

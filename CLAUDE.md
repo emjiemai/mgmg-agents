@@ -24,18 +24,16 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **mgmg-api** (Starter plan, always on): Admin Bot (admin) + OPS Manager Bot
   (employees + Director) webhooks, SAP gateway push receiver, `/db` read-only
   viewer, `/f` client complaints page (Uzbek Cyrillic, Russian, English).
-- **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, Lead Agent, lead
-  hand-out, receivables, task tracker, data quality Mon, cash calendar Mon,
+- **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, Lead Agent,
+  receivables, task tracker, data quality Mon, cash calendar Mon,
   monthly KPI 1st); 16:00 daily-reports ask; 17:00 reminder + Friday
   scorecard; daytime job `mgmg-team-cheer` (`run_morning_agents.py --daytime`)
   = team cheer 10:00 / 17:35 (answers by button only, never shown to the
-  Director; the 14:00 joke was deleted 2026-10-02) + lead check-in 15:00. Daily; weekends only for employees
+  Director; the 14:00 joke was deleted 2026-10-02). Daily; weekends only for employees
   marked as weekend workers.
-- **Leads to B2B sales** (2026-09-30, `docs/agent-specs/14-lead-handout.md`):
-  08:00 one lead per B2B Sotuv person (newest first — "from the end" of the
-  sheet; all tracks; sheet: "POSSIBLE Leads", tab Sheet1), 15:00 жараёнда / рад этилди / бажарилди + one question; open
-  leads re-asked daily and pile up by design; KPI counts them inside the
-  existing parts.
+- **Leads to B2B sales: STOPPED 2026-10-07** by the Director (he will do it another way) — the AI
+  sends nothing to B2B Sotuv; `agents/lead-handout/` is deleted; history kept (`14-lead-handout.md`).
+  The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1).
 - IT's technical report (`agents/tech-report/`, last in the 08:00 job, Admin Bot `/texnik`): connections,
   SAP push, brief delivered, runs/errors, DB size, refused attempts — counts and times only.
 - KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`
@@ -101,15 +99,15 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   message while it's owed is confirmed); **/hisobot** changes/deletes today's
   report only. Cheer can be switched off per person (/xodimlar → 💬), daily reports too (📝, 2026-10-06:
   never asked, never counted as missed). Employees' messages about their work go to the **work AI**
-  (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks, own
-  leads and (once uploaded) `employees.responsibilities`; **honesty first —
+  (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks and
+  (once uploaded) `employees.responsibilities`; **honesty first —
   "билмайман", never a guess**; no company data, no other people; Garmin sales
   get the public catalog; 60/day; admin can switch it off per person (🤖).
 - **Leads sheet is edited by people** (2026-10-02): share it from Google
   Sheets yourself (Editor); the bot reads/writes columns **by header name**,
   so moved/added columns are fine — don't rename the header cells.
 - **Days off**: Admin Bot `/dam` marks a day off (holiday) — no report asks,
-  cheer, leads, 15:00 lead questions or task reminders that day. **Announce**:
+  cheer or task reminders that day. **Announce**:
   `/elon` (no text = "техник хатолик юз берди…" notice) or `/elon <text>`,
   preview + confirm, goes to every active employee once (2026-10-01).
 - Daily reports accepted only until midnight of that day; one follow-up

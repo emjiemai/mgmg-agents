@@ -57,7 +57,7 @@ COMPANY_SOURCES: dict[str, str] = {
     "ruxsatlar": "written permission requests (EMJ-SOP-ADM-01): waiting, approved, rejected",
     "pul_kalendari": "money in/out expected in the next 30 days (approved payments + invoices due)",
     "mijoz_fikrlari": "client complaints left through the QR codes (Londry, Garmin), 60 days",
-    "lidlar": "leads handed to B2B sales people and where each stands (30 days)",
+    "lidlar": "history: leads handed to B2B sales people until the hand-out was stopped on 2026-10-07",
     "lead_agent": "every lead the Lead Agent found (the leads Google Sheet)",
     "garmin_lidlar": "customers who came through the Garmin AI bot (30 days)",
     "garmin_catalog": "Garmin products and prices (garmin.com.uz snapshot)",

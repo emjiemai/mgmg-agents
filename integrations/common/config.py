@@ -212,11 +212,6 @@ class Settings(BaseSettings):
     # coming in, approved written payments going out.
     cash_calendar_enabled: bool = True
 
-    # --- Lead hand-out (agents/lead-handout) ---
-    # 08:00 one lead to each B2B sales person, 15:00 "how is it going?" for
-    # every open lead. On by default: the owner asked for it (2026-09-30).
-    # LEAD_HANDOUT_ENABLED=false pauses both.
-    lead_handout_enabled: bool = True
 
     # --- Team cheer (agents/team-cheer) ---
     # 10:00 encouragement, 17:35 thanks + "how was

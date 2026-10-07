@@ -5,7 +5,7 @@
 **Mode:** read-only from every source; writes to Google Sheets + Telegram, both gated
 **Owner:** sales / business development
 **Status:** running — paused 2026-09-16, resumed 2026-09-30
-**After it:** every morning its leads go to B2B sales, one each, with a 15:00 check-in — `14-lead-handout.md`
+**After it:** its leads went to B2B sales, one each, with a 15:00 check-in — stopped by the Director on 2026-10-07 (`14-lead-handout.md`); the leads stay in the sheet
 (`LEAD_AGENT_ENABLED=true` in Render's `mgmg-shared`; `false` pauses it again)
 
 ## Purpose
