@@ -304,6 +304,74 @@ class OpenRouterClient:
 
         return text
 
+    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        """One turn of a tool-using conversation (OpenAI-compatible ``tools``).
+
+        Used by the Director's analyst (``org_bot/analyst.py``): the model either
+        answers (``content``) or asks for tools (``tool_calls``); the caller runs
+        them and sends their results back as ``role: tool`` messages.
+
+        Args:
+            messages: The whole conversation so far, system message first.
+            tools: Function definitions the model may call; None for none.
+
+        Returns:
+            The assistant message: ``{"role": "assistant", "content": ..., "tool_calls": [...]}``.
+
+        Raises:
+            OpenRouterError: only if EVERY model in the chain failed.
+        """
+        chain = self.model_chain()
+        last_error: Exception | None = None
+        for index, model in enumerate(chain, start=1):
+            for attempt in range(1, EMPTY_CONTENT_RETRIES + 2):
+                try:
+                    return await self._chat_with_model(model, messages, tools)
+                except OpenRouterError as exc:
+                    last_error = exc
+                    if "empty content" in str(exc) and attempt <= EMPTY_CONTENT_RETRIES:
+                        continue
+                    break
+            if index < len(chain):
+                log.warning("Model '{}' failed ({}), falling back to '{}'", model, str(last_error)[:120], chain[index])
+        raise OpenRouterError(f"All {len(chain)} model(s) failed ({', '.join(chain)}). Last error: {last_error}")
+
+    async def _chat_with_model(self, model: str, messages: list[dict], tools: list[dict] | None) -> dict:
+        """One tool-using completion against one model; see ``chat``."""
+        assert self._client is not None
+        payload: dict = {"model": model, "messages": messages, "max_tokens": DEFAULT_MAX_TOKENS}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        size = sum(len(str(m.get("content") or "")) for m in messages)
+        async with audited(
+            agent=self.agent, action="api_call", target_system=self.provider, run_id=self.run_id,
+            target_ref=model, payload={"prompt_chars": size, "model": model, "tools": len(tools or [])},
+        ) as ctx:
+            try:
+                response = await request_with_retry(self._client, "POST", BASE_URL, json=payload)
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                ctx["http_status"] = getattr(getattr(exc, "response", None), "status_code", None)
+                raise OpenRouterError(f"{self.provider} completion failed after retries: {exc}") from exc
+            ctx["http_status"] = response.status_code
+            if response.status_code != 200:
+                raise OpenRouterError(f"{self.provider} completion failed: HTTP {response.status_code} {response.text[:300]}")
+            choices = response.json().get("choices", [])
+            if not choices:
+                raise OpenRouterError(f"{self.provider} returned no choices")
+            message = choices[0].get("message", {}) or {}
+            calls = message.get("tool_calls") or []
+            text = message.get("content") or ""
+            if not calls and not text.strip():
+                raise OpenRouterError(
+                    f"{self.provider} returned empty content. finish_reason={choices[0].get('finish_reason')}"
+                )
+            ctx["payload"]["completion_chars"] = len(text)
+            ctx["payload"]["tool_calls"] = len(calls)
+        # A tool-calling turn goes back with content null, not "": some providers
+        # (Gemini among them) refuse an assistant turn with an empty text part.
+        return {"role": "assistant", "content": text or None, **({"tool_calls": calls} if calls else {})}
+
     async def complete_json(self, system: str, user: str) -> dict:
         """Run a completion and parse the reply as JSON.
 

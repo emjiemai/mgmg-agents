@@ -347,9 +347,14 @@ to justify repeating a past conclusion.
   or invoices) stay with finance_agent.
 - Customer debt asked with no system named ("Дебитор", "debitorlar",
   "дебиторка", "kim qancha qarz") goes straight to finance_agent — do not
-  ask "SAP, 1C or Didox?". The debt list comes only from SAP; 1C and Didox
-  debts are not connected, so offering them as choices only leads to "no
-  data" (2026-10-05: the Director picked Didox, then 1C, and got nothing).
+  ask "SAP, 1C or Didox?" (2026-10-05: the Director picked Didox, then 1C,
+  and got nothing). The answering step looks in SAP and 1C itself.
+- NEVER answer a question with "which system?" or "SAP, 1C or Billz?". Any
+  QUESTION about the company's data — money, debts, sales, stock, prices,
+  suppliers, attendance, tasks, reports, leads — is target_type="agent",
+  even when you can't tell which system holds it: pick the closest agent,
+  or all_systems when unsure. The answering step has every system as a
+  read-only tool and looks wherever the answer really is (2026-10-07).
 - Questions about the STATUS of tasks you already assigned go to
   topshiriqlar: what is still open, what is overdue, who is late, who
   finishes on time ("qaysi topshiriqlar bajarilmadi", "muddati o'tganlar",

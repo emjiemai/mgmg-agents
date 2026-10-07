@@ -1342,9 +1342,11 @@ async def _dispatch_director_task(
             return
 
         target_type, target_role, target_agent = validated
+        # The message itself isn't logged (the Director's order of 07.10.2026:
+        # IT doesn't read management's correspondence) — only where it went.
         log.info(
-            "Classified '{}' -> type={} role={} agent={}",
-            raw_message[:120], target_type, target_role, target_agent,
+            "Classified a {}-char message -> type={} role={} agent={}",
+            len(raw_message), target_type, target_role, target_agent,
         )
         if target_type == "employee":
             await _propose_task(
@@ -1352,7 +1354,7 @@ async def _dispatch_director_task(
                 due_date, person,
             )
         elif target_type == "agent":
-            await _answer_from_agent(director_telegram_user_id, target_agent, raw_message, run_id, history)
+            await _answer_question(director_telegram_user_id, target_agent, raw_message, run_id, history)
         elif target_type == "refused":
             # The guardrail path — the model's own polite refusal, already in
             # Uzbek/Russian per prompt.py's GUARDRAILS block.
@@ -1803,6 +1805,39 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
     return "dispatched"
 
 
+async def _answer_question(
+    director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = ""
+) -> None:
+    """A Director's question: the analyst looks it up across every system (analyst.py).
+
+    Falls back to the one-source answer (``_answer_from_agent``) when the
+    analyst is switched off or the AI couldn't run its lookups.
+    """
+    if settings.ops_analyst_enabled:
+        from integrations.org_bot import analyst
+
+        hint = f"{agent_slug} ({AGENT_LABELS.get(agent_slug, agent_slug)})"
+        try:
+            result = await analyst.answer(question, history, run_id, hint=hint)
+        except Exception as exc:  # noqa: BLE001 — the old path still answers
+            log.error("Analyst failed ({}), answering from {} alone", type(exc).__name__, agent_slug)
+            await log_action(
+                agent=AGENT, action="analyst_fallback", target_system="openrouter", status="failure",
+                run_id=run_id, mode="read", error_message=type(exc).__name__,
+            )
+        else:
+            if result.text.strip():
+                log.info("Analyst answered in {} round(s) using {}", result.rounds, ", ".join(result.tools) or "no tools")
+                await log_action(
+                    agent=AGENT, action="analyst_answer", target_system="openrouter", status="success",
+                    run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools},
+                )
+                await _reply_and_log(director_id, run_id, sanitize_model_html(result.text))
+                return
+            log.warning("Analyst returned nothing, answering from {} alone", agent_slug)
+    await _answer_from_agent(director_id, agent_slug, question, run_id, history)
+
+
 async def _answer_from_agent(
     director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = ""
 ) -> None:
@@ -1822,10 +1857,7 @@ async def _answer_from_agent(
     if not history:
         history = format_history(await store.recent_conversation(director_id))
     data = await _fetch_agent_data(agent_slug)
-    log.info(
-        "Answering '{}' from agent={} -- {} char(s) of data, preview: {}",
-        question[:120], agent_slug, len(data), data[:200].replace("\n", " | "),
-    )
+    log.info("Answering from agent={} -- {} char(s) of data", agent_slug, len(data))
     async with OpenRouterClient(
         agent=AGENT,
         run_id=run_id,
@@ -1835,7 +1867,7 @@ async def _answer_from_agent(
         answer = await ai.complete(
             ANSWER_SYSTEM_PROMPT, build_answer_message(AGENT_LABELS[agent_slug], data, question, history)
         )
-    log.info("Answer for agent={}: {}", agent_slug, answer[:300].replace("\n", " | "))
+    log.info("Answer for agent={}: {} char(s)", agent_slug, len(answer))
     await _reply_and_log(director_id, run_id, sanitize_model_html(answer))
 
 

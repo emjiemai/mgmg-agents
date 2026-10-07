@@ -172,6 +172,12 @@ class Settings(BaseSettings):
     # degrades to a known-good model instead of failing the reply.
     ops_manager_bot_model: str = "google/gemini-3.8-flash"
     ops_manager_bot_fallback_models: str = "google/gemini-3.7-flash"
+    # The Director's analyst (2026-10-07, org_bot/analyst.py): a question is
+    # answered by the AI looking things up itself in SAP, 1C, BILLZ, Verifix
+    # and the bot's own data — read-only tools only. Off = the old one-source
+    # answer. Rounds = how many times it may look something up per question.
+    ops_analyst_enabled: bool = True
+    ops_analyst_max_rounds: int = 6
 
     # --- Lead Agent on/off ---
     # Off unless explicitly turned on: every run spends SerpAPI, Tavily and
