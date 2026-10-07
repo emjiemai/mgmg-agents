@@ -43,6 +43,7 @@ AGENTS = [
     "agents/data-quality/agent.py",  # sends only on Mondays
     "agents/cash-calendar/agent.py",  # sends only on Mondays
     "agents/task-tracker/agent.py --monthly",  # sends only on the 1st
+    "agents/tech-report/agent.py",  # last: IT's report on how the runs above went (no figures)
 ]
 
 # 17:00 every day (the reminder only goes to people asked today, so on a

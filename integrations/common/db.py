@@ -123,6 +123,23 @@ async def fetch_all(query: str, params: Any = None) -> list[dict[str, Any]]:
             return await cur.fetchall()
 
 
+async def fetch_read_only(query: str, params: Any = None, timeout: str = "10s") -> list[dict[str, Any]]:
+    """Like ``fetch_all``, but inside a READ ONLY transaction with a statement timeout.
+
+    For code that answers questions (the Director's analyst): even a bug there
+    cannot change or lock anything in the database.
+    """
+    if not (timeout[:-1].isdigit() and timeout.endswith("s")):
+        raise ValueError(f"timeout must look like '10s', got {timeout!r}")
+    async with connection() as conn:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                await cur.execute("SET TRANSACTION READ ONLY")
+                await cur.execute(f"SET LOCAL statement_timeout = '{timeout}'")
+                await cur.execute(query, params)
+                return await cur.fetchall()
+
+
 async def fetch_one(query: str, params: Any = None) -> dict[str, Any] | None:
     """Run a SELECT and return the first row, or None.
 

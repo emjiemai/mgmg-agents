@@ -16,11 +16,12 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | A4 | Attendance from Verifix: late / didn't come / excused; people on "эркин график" (Admin Bot `/grafik`) are only counted, never late or absent | 08:00 brief (yesterday) · any time: "kim kechikdi?" · `/verifix` check · `/grafik` marks | Director | `VERIFIX_LOGIN` / `VERIFIX_PASSWORD` / `VERIFIX_FILIAL_ID` (set, working since 2026-10-01) |
 | B1 | Written permissions (EMJ-SOP-ADM-01) + payment gate by amount | on request ("ruxsat") | requester, approvers | `PERMISSIONS_ENABLED`, limits in `PERMISSION_APPROVAL_TIERS` (**not set yet**) |
 | B2 | 30-day cash calendar | Monday 08:00 · any time: "pul kalendari" | Director, accountants | `CASH_CALENDAR_ENABLED` |
-| B4 | Data quality check | Monday 08:00 · `/sifat` | admin (IT) | `DATA_QUALITY_ENABLED` |
+| B4 | Data quality check (no amounts since 2026-10-07) | Monday 08:00 · `/sifat` | admin (IT) | `DATA_QUALITY_ENABLED` |
 | E1 | KPI per employee — the Director's 15 criteria as 6 parts (goals/OKR, tasks, rating, volume, process, commitment) | `/maqsad` `/kpi` `/natija` `/baho` · 1st: ratings · final by the 5th | Director, HR, each employee (own card) | `MONTHLY_KPI_ENABLED` |
 | — | Receivables alert (overdue debt by age) — complete, paid part taken off (gateway `get_open_invoices`, 2026-10-03) | 08:00 daily | Director | — |
 | F2 | Lead Agent: tender and lead search (Londry, Garmin/Tanita), to the leads sheet | 08:00 daily (resumed 2026-09-30) | Director (summary) + Google leads sheet | `LEAD_AGENT_ENABLED` (**true**) |
-| — | Q&A — the Director asks about reports, tasks, KPI, permissions, debt, cash plan, SAP data | on question | Director | — |
+| — | Q&A — the Director asks anything about the company; since 2026-10-07 the **analyst** looks it up itself across SAP, 1C (balances, turnovers, by counterparty), BILLZ, Verifix and the bot's records with read-only tools, never asks "which system?" (`19-director-analyst.md`) | on question | Director | `OPS_ANALYST_ENABLED` (true) |
+| — | IT's technical report — connections (SAP push, 1C, BILLZ, Verifix, AI), brief delivered, runs and errors, DB size, refused attempts; **no figures** (the Director's order of 07.10.2026) | 08:00 (after the other agents) · `/texnik` | admin (IT) | — |
 | — | Tasks: the Director ticks who gets each one (the bot's guess pre-ticked), nothing goes out before Юбориш | on message | employees, Director | — |
 | — | Names and roles — every employee's typed name; admin re-asks a name or changes a role | on registration · `/xodimlar` · `/ism` | admin, employees | — |
 | F2+ | Lead hand-out: one lead to each B2B sales person, then "how is it going?" with жараёнда / рад этилди / бажарилди; counted in KPI | 08:00 · 15:00 (open leads every day until closed) | B2B Sotuv; the Director asks "lidlar qanday?" | `LEAD_HANDOUT_ENABLED` |
@@ -30,7 +31,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | — | Shop sales from BILLZ: yesterday per shop in the brief; shops, sellers, top products on question | 08:00 · any time: "do'konlarda savdo" · `/billz` check | Director | `BILLZ_SECRET_TOKEN` (set, working since 2026-10-02) |
 | B3− | Billz → SAP check: every shop cheque must be in SAP the same day — not entered, wrong amount, entered late, in SAP but not in Billz (`docs/agent-specs/17-billz-sap-check.md`) | 08:00 daily (yesterday; missing cheques repeated until entered) | Director (+ `BILLZ_SAP_CHECK_ROLES`) | `BILLZ_SAP_CHECK_ENABLED`; **trial**: to the admin until the first results are confirmed (`BILLZ_SAP_CHECK_TRIAL=false` → Director) |
 | — | Work AI: every employee's message about their work and tasks is answered by the AI (honest, no company data); the bot carries no text between people — only files, after "what is it for?" | on message, 60 a day | employees | Admin Bot `/xodimlar` → 🤖 (off for one person) |
-| — | Database viewer (read-only) | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
+| — | Database viewer (read-only) — since 2026-10-07 technical tables only (audit log, access requests, changes, days off…); financial and confidential tables are listed closed | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
 
 **10 of the plan's 21** are running (H0, A1, A2, A3, A4, B1, B2, B4, E1, F2). Of these,

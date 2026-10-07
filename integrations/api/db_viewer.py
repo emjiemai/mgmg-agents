@@ -5,7 +5,9 @@ look at the data. This is the smallest thing that fills that gap, served by
 the API service that is already running (no extra cost):
 
   * ``/db``            every table and view, with row counts
-  * ``/db/{table}``    rows, newest first, 50 per page, with a text search
+  * ``/db/{table}``    rows, newest first, 50 per page, with a text search —
+                       only for ``TECHNICAL_TABLES`` (2026-10-07); every other
+                       table is closed (financial or confidential data)
 
 Safety, in layers:
   * Off unless ``DB_VIEWER_PASSWORD`` is set (404 otherwise), then HTTP Basic
@@ -34,7 +36,7 @@ from fastapi.responses import HTMLResponse, Response
 from psycopg import sql
 
 from integrations.common.config import settings
-from integrations.common.db import connection
+from integrations.common.db import connection, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import to_local
 
@@ -44,6 +46,22 @@ router = APIRouter(prefix="/db", include_in_schema=False)
 PAGE_SIZE = 50
 CELL_CHARS = 120
 STATEMENT_TIMEOUT = "5s"
+
+# Tables whose rows the viewer shows (2026-10-07, the Director's order: IT
+# keeps technical access only). Everything else — SAP figures, debts, briefs,
+# the Director's conversation, KPI ratings, reports, attendance, complaints,
+# permissions — is listed with its row count only and its rows stay closed.
+TECHNICAL_TABLES = frozenset({
+    "agent_actions",        # the audit log: what ran, when, did it fail
+    "access_requests",      # who asked to join the bot
+    "employee_changes",     # name / role / settings changes, by whom
+    "days_off",
+    "attendance_flexible",  # Verifix ids marked "эркин график" (ids only)
+    "cheer_messages",
+    "announcements",
+})
+CLOSED_TEXT = ("Бу жадвал ёпиқ: молиявий ёки махфий маълумот. IT фақат техник жадвалларни кўради "
+               "(Директор кўрсатмаси, 07.10.2026).")
 
 # Newest-first ordering: the first of these a table has.
 _ORDER_COLUMNS = (
@@ -209,7 +227,10 @@ async def tables(request: Request) -> Response:
         else:
             count = await _count(name)
             size = f"<span class='muted'>{count if count is not None else '?'} қатор</span>"
-        items.append(f"<li><a href='/db/{quote(name)}'>{_e(name)}</a>{size}</li>")
+        if name in TECHNICAL_TABLES:
+            items.append(f"<li><a href='/db/{quote(name)}'>{_e(name)}</a>{size}</li>")
+        else:
+            items.append(f"<li><span class='muted'>🔒 {_e(name)}</span>{size}</li>")
     return _page("MGMG — база", f"<h1>Жадваллар</h1><ul class='list'>{''.join(items)}</ul>")
 
 
@@ -223,6 +244,11 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "") -
     names = {r["name"] for r in await _relations()}
     if table not in names:
         return _page("Топилмади", "<p><a href='/db'>← Жадваллар</a></p><p>Бундай жадвал йўқ.</p>")
+    if table not in TECHNICAL_TABLES:
+        log.info("Closed table {} asked for in /db — refused", table)
+        await log_action(agent="db-viewer", action="db_viewer_refused", target_system="postgres",
+                         status="skipped", target_ref=table, mode="read")
+        return _page("Ёпиқ", f"<p><a href='/db'>← Жадваллар</a></p><p>{_e(CLOSED_TEXT)}</p>")
 
     page = max(page, 1)
     search = q.strip()[:100]

@@ -558,6 +558,24 @@ def caption(result: Result) -> str:
     return f"🧾 <b>Billz ↔ SAP — {fmt_date(result.day)}</b>\n" + escape(" · ".join(parts).replace("\u00a0", " "))
 
 
+def technical_text(result: Result) -> str:
+    """IT's copy (the admin, while on trial): counts only — no amounts, cheques, sellers or customers.
+
+    The Director's order of 07.10.2026: IT sees whether the check ran and how
+    it came out, never the figures.
+    """
+    head = (f"🧾 <b>Billz ↔ SAP — {fmt_date(result.day)}</b>: текширилди. "
+            f"Billz'да {len(result.cheques_day)} та чек, SAP'да {len(result.docs_day)} та ҳужжат.")
+    if result.no_cheque_numbers:
+        return head + " Чек рақамлари келмади — фақат жами солиштирилди: " + ("мос ✅" if result.ok else "фарқ бор ⚠️")
+    if result.ok:
+        return head + " Ҳаммаси мос ✅"
+    parts = [f"{label}: {n}" for label, n in (
+        ("киритилмаган", len(result.missing)), ("суммаси фарқ", len(result.amount_diff)),
+        ("кеч киритилган", len(result.late)), ("SAP'да бор, Billz'да йўқ", len(result.extra))) if n]
+    return head + " Муаммолар — " + ", ".join(parts) + "."
+
+
 def render_stale(day: date, pushed_at: datetime | None) -> str:
     """When SAP's data is too old to compare with."""
     when = pushed_at.strftime("%d.%m %H:%M") if pushed_at else "ҳеч қачон"

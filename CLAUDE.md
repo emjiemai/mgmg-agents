@@ -36,6 +36,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   sheet; all tracks; sheet: "POSSIBLE Leads", tab Sheet1), 15:00 жараёнда / рад этилди / бажарилди + one question; open
   leads re-asked daily and pile up by design; KPI counts them inside the
   existing parts.
+- IT's technical report (`agents/tech-report/`, last in the 08:00 job, Admin Bot `/texnik`): connections,
+  SAP push, brief delivered, runs/errors, DB size, refused attempts — counts and times only.
 - KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`
   `/kpi` `/baho` (Director), `/kpi` `/natija` (employees); ratings on the 1st, final by the 5th.
 - Garmin AI bot (separate repo emjiemai/Garmin-AI-bot, cloned at D:\Garmin-AI-bot) POSTs its leads to
@@ -118,6 +120,16 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   📨 Юбориш (`task_picker.py`, `task_drafts`). Files too.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
+- **IT sees no company figures** (the Director's order of 07.10.2026, «Маълумотларга кириш
+  ҳуқуқларини чеклаш»): nothing sent to the admin / Admin Bot carries amounts, customers,
+  other people's attendance or the Director's messages — `/billz` `/1c` `/verifix` are status
+  only, Billz → SAP trial is counts only, data quality has no amounts, `/db` opens technical
+  tables only, logs keep no question/data/answer text. IT gets `tech_report.py` instead
+  (08:00 + `/texnik`). Table for the Director: `docs/access-review-2026-10-07.md`.
+- **The Director's questions go to the analyst** (2026-10-07, `docs/agent-specs/19-director-analyst.md`):
+  the AI looks things up itself with read-only tools (SAP pushed data, 1C balances/turnovers by
+  counterparty, BILLZ, Verifix, the bot's records) and **never asks "which system?"**; debt = SAP
+  and 1C both. No tool can write; the old one-source answer is the fallback.
 
 ## Open items
 - SAP: the three gateway tools work — push resumed 2026-10-06, every 30 min as Windows task

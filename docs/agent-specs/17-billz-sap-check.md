@@ -94,7 +94,11 @@ one-line caption; "all entered" and "SAP data too old" stay one text line
 report hasn't been seen with real data yet, so until the admin confirms the
 first mornings match the shop, the message goes to the admin in Admin Bot
 ("🧪 Синов…"), not the Director. `BILLZ_SAP_CHECK_TRIAL=false` in Render
-switches it over.
+switches it over. Since the Director's order of 07.10.2026 (IT sees no
+figures) the admin's trial copy is **counts only** (`sap_check.technical_text`:
+how many cheques and documents, how many not entered / wrong amount / late /
+extra) — no amounts, cheque numbers, shops, sellers or customers, and no PDF.
+So the trial is confirmed by the Director or the specialist he names, not by IT.
 
 If BILLZ ever gives lines without a cheque id, no cheque can be named:
 only yesterday's totals are compared ("фақат жами солиштирилди"), never a

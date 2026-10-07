@@ -106,7 +106,11 @@ start receiving every daily report and giving the bot orders.
    reports "already handled" rather than double-processing. Zero active
    employees for that role → the Director is told so explicitly, not left
    with silence.
-9. **Target is an AI agent**: no live invocation. Each agent's *full*
+9. **Target is an AI agent** — since 2026-10-07 a question goes to the
+   Director's analyst (`19-director-analyst.md`): the AI looks it up itself
+   with read-only tools across SAP, 1C, BILLZ, Verifix and the bot's own
+   records, and never asks "which system?". The one-agent answer below is
+   its fallback. One agent: no live invocation. Each agent's *full*
    already-computed output is read (every lead, every open receivable, the
    full pipeline, 14 days of daily briefs — not a truncated preview) and
    handed to a second AI call along with the Director's question, which
