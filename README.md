@@ -27,14 +27,12 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | 08:00 | Morning brief (A2): cash (1C), yesterday's sales, stock, customer debt, today's payments, shop sales (BILLZ), who didn't report, attendance (Verifix) | Director | `agents/ceo-daily-brief/` |
 | 08:00 | Billz → SAP check: every shop cheque must be in SAP the same day | Director (on trial: the admin, counts only) | `agents/billz-sap-check/` |
 | 08:00 | Lead Agent (F2): new tenders/leads into the Google sheet | Director | `agents/lead-agent/` |
-| 08:00 | Lead hand-out: one lead to each B2B sales person | B2B Sotuv | `agents/lead-handout/` |
 | 08:00 | Receivables alert: overdue customer debt by age | Director | `agents/receivables/` |
 | 08:00 | Task reminders and overdue notices (A3) | employees, Director | `agents/task-tracker/` |
 | 08:00 | IT's technical report (after the other 08:00 agents): connections, SAP push, brief delivered, errors, DB, security — no figures | admin | `agents/tech-report/` |
 | Mon 08:00 | Data quality (B4); 30-day cash calendar (B2) | admin; Director + accountants | `agents/data-quality/`, `agents/cash-calendar/` |
 | 1st, 08:00 | Monthly KPI (E1) | Director, HR | `agents/task-tracker/ --monthly` |
 | 10:00, 17:35 | Team cheer — one friendly line | employees | `agents/team-cheer/` |
-| 15:00 | Lead check-in: "жараёнда / рад этилди / бажарилди?" | B2B Sotuv | `agents/lead-handout/ --checkin` |
 | 16:00 | Daily report ask (A1) | employees | `agents/daily-reports/ --ask` |
 | 17:00 | Report reminder; on Fridays the weekly task scorecard | employees; Director | `agents/daily-reports/ --remind`, `task-tracker --weekly` |
 | on request | Written permission requests (B1) with approvals | requester, approvers | `integrations/org_bot/permission_flow.py` |

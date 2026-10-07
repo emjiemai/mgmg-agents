@@ -101,8 +101,8 @@ AGENTS: list[Agent] = [
     Agent(
         "lidlar",
         "Лидлар (B2B сотув)",
-        "the leads handed to B2B sales people in the last 30 days (one each morning): who has which, "
-        "which are in progress, dismissed (with the reason) or done (with the result), and their latest note",
+        "HISTORY: the leads that were handed to B2B sales people until the Director stopped the hand-out "
+        "on 2026-10-07 — who had which, in progress / dismissed / done, their latest note",
     ),
     Agent(
         "pul_qoldigi",

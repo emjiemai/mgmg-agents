@@ -20,7 +20,7 @@ report reminder and the Friday task scorecard share one cron service.
 Run:
     python scripts/run_morning_agents.py            # 08:00
     python scripts/run_morning_agents.py --evening  # 17:00
-    python scripts/run_morning_agents.py --daytime  # :00/:35 of 10, 15, 17 (cheer + lead check-in)
+    python scripts/run_morning_agents.py --daytime  # :00/:35 of 10 and 17 (team cheer)
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ AGENTS = [
     "agents/ceo-daily-brief/agent.py",
     "agents/billz-sap-check/agent.py",  # did every shop cheque reach SAP? (needs the full SAP push)
     "agents/lead-agent/agent.py",
-    "agents/lead-handout/agent.py --morning",  # after the Lead Agent: today's new leads go first
     "agents/receivables/agent.py",
     "agents/task-tracker/agent.py --morning",
     "agents/data-quality/agent.py",  # sends only on Mondays
@@ -54,12 +53,12 @@ EVENING_AGENTS = [
 ]
 
 
-# The daytime job (render.yaml's mgmg-team-cheer, :00 and :35 of 10, 15
-# and 17 o'clock): each agent checks the time itself and exits at once when
-# nothing is due — cheer at 10:00 and 17:35, the lead check-in at 15:00.
+# The daytime job (render.yaml's mgmg-team-cheer, :00 and :35 of 10 and 17
+# o'clock): the agent checks the time itself and exits at once when nothing
+# is due — cheer at 10:00 and 17:35. (The 15:00 lead check-in was removed
+# with the lead hand-out, 2026-10-07.)
 DAYTIME_AGENTS = [
     "agents/team-cheer/agent.py",
-    "agents/lead-handout/agent.py --checkin",
 ]
 
 

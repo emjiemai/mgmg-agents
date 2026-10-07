@@ -24,7 +24,6 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | — | IT's technical report — connections (SAP push, 1C, BILLZ, Verifix, AI), brief delivered, runs and errors, DB size, refused attempts; **no figures** (the Director's order of 07.10.2026) | 08:00 (after the other agents) · `/texnik` | admin (IT) | — |
 | — | Tasks: the Director ticks who gets each one (the bot's guess pre-ticked), nothing goes out before Юбориш | on message | employees, Director | — |
 | — | Names and roles — every employee's typed name; admin re-asks a name or changes a role | on registration · `/xodimlar` · `/ism` | admin, employees | — |
-| F2+ | Lead hand-out: one lead to each B2B sales person, then "how is it going?" with жараёнда / рад этилди / бажарилди; counted in KPI | 08:00 · 15:00 (open leads every day until closed) | B2B Sotuv; the Director asks "lidlar qanday?" | `LEAD_HANDOUT_ENABLED` |
 | — | Team cheer: one friendly line, sent silently — a wish, "how was your day" (tap answers, not shown to anyone; off per person: /xodimlar → 💬) | 10:00 · 17:35 (weekends: weekend workers) | employees (not the Director) | `TEAM_CHEER_ENABLED` |
 | — | Days off and announcements: Admin Bot `/dam` stops everything employee-facing on a holiday; `/elon` tells everyone (e.g. a technical error) | on demand | employees | — |
 | A2+ | Cash in the brief from 1C (bank + cash desk, change since yesterday); "hisobda qancha pul?" | 08:00 · any time · `/1c` check | Director | `ONEC_ODATA_URL` / `ONEC_LOGIN` / `ONEC_PASSWORD` |
@@ -41,8 +40,13 @@ is started (A1 and A3 are measured automatically every Friday).
 
 ## Stopped by the business
 
-None. The Lead Agent (F2), paused on 2026-09-16, was switched back on on
-2026-09-30 and is listed under Working.
+- **F2+ Lead hand-out to B2B sales** (08:00 one lead each, 15:00 "how is it
+  going?") — stopped and removed on 2026-10-07 by the Director, who will do
+  it another way. Nothing goes to B2B Sotuv; its history stays in the data,
+  in October's KPI and in the Director's answers (`14-lead-handout.md`).
+
+The Lead Agent (F2) itself — the tender and lead search into the sheet —
+keeps running (paused 2026-09-16, back on 2026-09-30).
 
 ## Left — and what each is waiting for
 

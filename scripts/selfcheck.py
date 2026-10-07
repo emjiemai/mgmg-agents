@@ -1904,287 +1904,79 @@ def test_team_cheer() -> None:
 
 
 def test_lead_handout() -> None:
-    """Leads to B2B sales: the sheet, who gets what, the card, 15:00, taps, typed answers, KPI."""
-    print("lead hand-out (08:00 / 15:00)")
+    """The lead hand-out to B2B sales was stopped by the Director (2026-10-07): nothing goes to them.
+
+    What stays: the leads sheet read by header (the Lead Agent, the Director's
+    questions) and the hand-out's history in the KPI and the Director's answers.
+    """
+    print("lead hand-out removed (2026-10-07)")
     import asyncio
-    import json
     import uuid
 
     from integrations.common.agent_loader import load_agent
-    from integrations.org_bot import kpi_score, leads, ops_manager, store
+    from integrations.common.config import settings
+    from integrations.org_bot import ai_chat, kpi_score, leads, ops_manager
 
-    # ---- the sheet
+    root = Path(__file__).resolve().parents[1]
+    # ---- nothing left that sends to B2B Sotuv
+    check_true("the hand-out agent is gone", not (root / "agents" / "lead-handout").exists())
+    check_true("no job runs it", "lead-handout" not in load_source("scripts/run_morning_agents.py"))
+    check_true("its switch is gone", not hasattr(settings, "lead_handout_enabled"))
+    check_true("no hand-out logic left", not any(hasattr(leads, n) for n in (
+        "plan_handout", "checkin_due", "card_text", "checkin_keyboard", "parse_brief", "SALES_ROLE")))
+    blueprint = load_source("render.yaml")
+    schedule = re.search(r"name: mgmg-team-cheer\n(?:.*\n)*?\s*schedule: \"([^\"]+)\"", blueprint).group(1)
+    check("the daytime job no longer runs at 15:00", schedule.split()[1], "5,12")
+    check_true("the work AI no longer gets 'own leads'",
+               "own_leads" not in inspect_source(ai_chat.work_context) and "own_leads" not in inspect_source(ops_manager))
+
+    # ---- the sheet, still read by header (the Lead Agent and the Director's questions)
     check("the sheet's columns are the Lead Agent's own", leads.SHEET_COLUMNS, load_agent("lead-agent").SHEET_COLUMNS)
     check_true("...and the bot's", ops_manager.LEAD_SHEET_COLUMNS is leads.SHEET_COLUMNS)
-    header = list(leads.SHEET_COLUMNS)
 
-    def sheet_row(**cells):
-        return [cells.get(c, "") for c in leads.SHEET_COLUMNS]
+    # ---- an old 15:00 button: nothing recorded, the buttons come off
+    edits, toasts = [], []
 
-    rows = [header,
-            sheet_row(company_name="Hyatt Regency", project_stage="under construction", priority="High",
-                      confidence="0,8", date_added="2026-09-30", dedupe_key="hyatt|equipment_sales"),
-            sheet_row(project_name="City Hospital", track="service_maintenance", date_added="2026-09-01"),
-            sheet_row(signal="nameless row")]
-    parsed = leads.rows_to_leads(rows)
-    check("unnamed rows are skipped", len(parsed), 2)
-    check("priority, confidence, date read", (parsed[0]["priority"], parsed[0]["confidence"], parsed[0]["date_added"]),
-          ("high", 0.8, date(2026, 9, 30)))
-    check("a missing dedupe key is made the sheet's way", parsed[1]["dedupe_key"], "city hospital|service_maintenance")
-
-    # ---- who gets what
-    today = date(2026, 10, 1)
-    pool = [
-        {"id": 1, "company_name": "Old low", "priority": "low", "confidence": 0.9, "date_added": date(2026, 9, 1)},
-        {"id": 2, "company_name": "Old high", "priority": "high", "confidence": 0.5, "date_added": date(2026, 9, 2)},
-        {"id": 3, "company_name": "New medium", "priority": "medium", "confidence": 0.4, "date_added": today},
-    ]
-    people = [{"id": "e2", "full_name": "Бобур"}, {"id": "e1", "full_name": "Алишер"}]
-    plan = leads.plan_handout(people, pool, today)
-    check("the newest lead first, then the next newest — not by priority", [(p["full_name"], lead["id"]) for p, lead in plan],
-          [("Алишер", 3), ("Бобур", 2)])
-    same_day = [{"id": 10, "priority": "high", "date_added": date(2026, 9, 30)},
-                {"id": 12, "priority": "low", "date_added": date(2026, 9, 30)},
-                {"id": 11, "priority": "medium", "date_added": date(2026, 9, 30)},
-                {"id": 13, "priority": "high", "date_added": None}]
-    check("same day: the later row in the sheet first (\"from the end\")",
-          [lead["id"] for _p, lead in leads.plan_handout([{"id": str(i), "full_name": str(i)} for i in range(4)], same_day, today)],
-          [12, 11, 10, 13])
-    check("fewer leads than people: the rest get none", len(leads.plan_handout(people, pool[:1], today)), 1)
-    for hm, due in (("14:59", False), ("15:00", True), ("15:24", True), ("15:35", False)):
-        h, m = map(int, hm.split(":"))
-        check(f"15:00 check-in due at {hm}", leads.checkin_due(datetime(2026, 10, 1, h, m)), due)
-
-    # ---- the card
-    good = json.dumps({"brief": "Hyatt Regency Тошкентда янги меҳмонхона қурмоқда. Кир ювиш ускуналарини таклиф қилиш мумкин.",
-                       "location": "Тошкент"})
-    check_true("a Cyrillic summary is used", leads.parse_brief(good) is not None)
-    check("an English one is not", leads.parse_brief(json.dumps({"brief": "A new hotel is being built in Tashkent."})), None)
-    check("nor a very long one", leads.parse_brief(json.dumps({"brief": "меҳмонхона " * 40})), None)
-    lead = {"company_name": "Hyatt <Regency>", "location": "Tashkent", "project_stage": "Under construction",
-            "priority": "high", "contact_method": "+998 71 200 00 00", "signal_source_url": "https://uzex.uz/lot/1"}
-    card = leads.card_text(lead, leads.fallback_brief(lead))
-    check_true("the card: name escaped, stage and priority in Uzbek, the source linked",
-               "Hyatt &lt;Regency&gt;" in card and "қурилмоқда" in card and "муҳимлиги юқори" in card
-               and 'href="https://uzex.uz/lot/1"' in card and "15:00" in card)
-    check_true("...Latin place names written in Cyrillic", "Ташкент" in card)
-    import html as html_lib
-
-    check_true("...and nothing else in Latin",
-               latin_words(html_lib.unescape(re.sub(r"<[^>]+>", " ", card)), allow={"Hyatt", "Regency"}) == [])
-    check("...and stage and priority said once", card.count("қурилмоқда"), 1)
-
-    # ---- the 15:00 line and its buttons
-    line = leads.checkin_text("Алишер ака", lead, 3)
-    check("one friendly line, counting the days", (friendly_problems(line, ("Алишер ака", "Hyatt &lt;Regency&gt;")),
-                                                   "3-кун" in line), ([], True))
-    kb = leads.checkin_keyboard(str(uuid.uuid4()))
-    choice_kb = leads.choice_keyboard(str(uuid.uuid4()), "dismissed")
-    datas = [b["callback_data"] for k in (kb, choice_kb) for row in k["inline_keyboard"] for b in row]
-    check("three answers: in progress, dismissed, done", [b["text"] for b in kb["inline_keyboard"][0]],
-          ["жараёнда", "рад этилди", "бажарилди"])
-    check_true("every button fits Telegram's 64 bytes", all(len(d.encode()) <= 64 for d in datas))
-    check("a reason button reads back", leads.parse_choice(choice_kb["inline_keyboard"][1][0]["callback_data"].split(":")[-1]),
-          ("dismissed", 2, "бошқадан олишган"))
-    check("a forged one doesn't", (leads.parse_choice("p0"), leads.parse_choice("x9")), (None, None))
-
-    # ---- KPI, inside the existing parts
-    emp = [{"id": "e1", "full_name": "Алишер", "role": "b2b_sotuv"}]
-    lead_rows = [{"employee_id": "e1", "asked": 4, "answered": 3, "closed": 2, "done": 1}]
-    goals = [{"employee_id": "e1", "title": "10 та лидни бажариш", "target": 10, "actual": None}]
-    month = kpi_score.build(emp, [], [], {}, goals, [], date(2026, 10, 1), date(2026, 10, 31), lead_rows=lead_rows)[0]
-    check("15:00 answers count in Жараён", round(month.parts["process"]), 75)
-    check("closed leads count in Иш ҳажми", month.volume, 2)
-    check("a lead goal is filled from the leads done", month.goals[0].actual, 1.0)
-    check("the card says so", "1/" not in kpi_score._detail("process", month) and "3/4 лид" in kpi_score._detail("process", month), True)
-
-    # ---- the agent, with a fake database, AI and Telegram
-    agent = load_agent("lead-handout")
-    sent, assigned, checkins, briefs = [], [], [], []
-    free = [dict(pool[1]), dict(pool[2])]
-    sales = [{"id": "e1", "telegram_user_id": 11, "full_name": "Алишер Каримов", "display_name": "a", "address_form": "aka",
-              "role": "b2b_sotuv"},
-             {"id": "e2", "telegram_user_id": 12, "full_name": "Бобур", "display_name": "b", "role": "b2b_sotuv",
-              "works_saturday": False}]
-
-    class FakeBot:
-        def __init__(self, *args, **kwargs):
+    class Bot:
+        def __init__(self, **kwargs):
             pass
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, *exc):
-            return None
+            return False
 
-        async def send_message(self, text, chat_id=None, reply_markup=None, **kwargs):
-            sent.append((chat_id, text, reply_markup))
-            return [700 + len(sent)]
-
-    class FakeAI(FakeBot):
-        async def complete(self, system, user, **kwargs):
-            return good
-
-    class NoSheet(FakeBot):
-        async def __aenter__(self):
-            from integrations.google.sheets_client import SheetsError
-
-            raise SheetsError("offline")
-
-    async def by_role(role):
-        return sales if role == "b2b_sotuv" else []
-
-    async def free_leads():
-        return free
-
-    async def assign(lead_id, employee_id, day):
-        if any(a[1] == employee_id for a in assigned):
-            return None
-        assigned.append((lead_id, employee_id, day))
-        return {"id": f"a{lead_id}"}
-
-    async def to_ask(day):
-        return [{**sales[0], "assignment_id": "a3", "assigned_on": day - timedelta(days=2), "company_name": "Hyatt"}]
-
-    async def open_checkin(assignment_id, day, user):
-        if checkins:
-            return None
-        checkins.append(assignment_id)
-        return {"id": str(uuid.uuid4())}
-
-    async def nothing(*args, **kwargs):
-        briefs.append(args)
-        return None
-
-    saved = []
-
-    def patch(obj, name, value):
-        saved.append((obj, name, getattr(obj, name)))
-        setattr(obj, name, value)
-
-    for name, fake in (("active_employees_by_role", by_role), ("free_leads", free_leads), ("create_lead_assignment", assign),
-                       ("open_leads_to_ask", to_ask), ("create_lead_checkin", open_checkin), ("set_lead_brief", nothing),
-                       ("set_lead_assignment_message", nothing), ("set_lead_checkin_message", nothing)):
-        patch(store, name, fake)
-    patch(agent, "TelegramBot", FakeBot)
-    patch(agent, "OpenRouterClient", FakeAI)
-    patch(agent, "SheetsClient", NoSheet)
-    patch(agent, "now_local", lambda: datetime(2026, 10, 1, 8, 0, tzinfo=TASHKENT))
-    try:
-        asyncio.run(agent.morning(uuid.uuid4()))
-        check("each sales person gets one lead, the newest first", [(a[0], a[1]) for a in assigned], [(3, "e1"), (2, "e2")])
-        check_true("the card carries the AI's Uzbek summary", "Кир ювиш ускуналарини" in sent[0][1])
-        check_true("...and it's kept, so it's written once", any(args and args[0] == 3 for args in briefs))
-        sent.clear()
-        asyncio.run(agent.morning(uuid.uuid4()))
-        check("a second morning run gives nobody a second lead", sent, [])
-
-        patch(agent, "now_local", lambda: datetime(2026, 10, 1, 15, 0, tzinfo=TASHKENT))
-        sent.clear()
-        asyncio.run(agent.checkin(uuid.uuid4()))
-        check("15:00: one line per open lead, with the three buttons",
-              (sent[0][1], len(sent[0][2]["inline_keyboard"][0])), ("Алишер ака, «Hyatt» лиди қандай кетяпти, 3-кун? 🙂", 3))
-        sent.clear()
-        asyncio.run(agent.checkin(uuid.uuid4()))
-        check("asked once a day", sent, [])
-    finally:
-        for obj, name, value in reversed(saved):
-            setattr(obj, name, value)
-
-    # ---- taps and the typed answer in OPS Manager Bot
-    edits, replies, toasts, notes, questions = [], [], [], [], []
-    checkin_id = str(uuid.uuid4())
-    state = {"answered": False, "outcome": False, "report_asked_at": None}
-
-    class EditBot(FakeBot):
         async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
-            edits.append((text, reply_markup))
-
-    async def answer_checkin(cid, user, status):
-        if state["answered"]:
-            return None
-        state["answered"] = True
-        return {"id": cid, "message_id": 801, "company_name": "Hyatt", "project_name": None, "status": status}
-
-    async def choose(cid, user, outcome):
-        if state["outcome"]:
-            return None
-        state["outcome"] = True
-        return {"id": cid, "message_id": 801, "company_name": "Hyatt", "project_name": None, "status": "dismissed"}
-
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
-        replies.append(text)
-        return [900]
+            edits.append((message_id, text, reply_markup))
 
     async def fake_answer(query_id, text):
         toasts.append(text)
 
-    async def ask_q(cid, question, message_id):
-        questions.append((cid, question, message_id))
-
-    now = datetime(2026, 10, 1, 15, 5, tzinfo=TASHKENT)
-
-    async def pending_q(user, minutes):
-        return {"id": checkin_id, "question_asked_at": now} if questions else None
-
-    async def q_by_message(user, message_id):
-        return {"id": checkin_id} if message_id == 900 else None
-
-    async def save_note(cid, note):
-        notes.append(note)
-        return {"id": cid}
-
-    async def pending_report(user, day):
-        return {"asked_at": state["report_asked_at"]} if state["report_asked_at"] else None
-
-    async def no_report(*args, **kwargs):
-        return "daily_report"
-
-    async def no_cheer(*args):
-        return None
-
-    saved.clear()
-    for name, fake in (("answer_lead_checkin", answer_checkin), ("choose_lead_outcome", choose), ("ask_lead_question", ask_q),
-                       ("pending_lead_question", pending_q), ("lead_question_by_message", q_by_message),
-                       ("save_lead_note", save_note), ("pending_report", pending_report),
-                       ("report_being_edited", no_cheer),
-                       ("cheer_delivery_for_message", no_cheer)):
-        patch(store, name, fake)
-    patch(ops_manager, "TelegramBot", EditBot)
-    patch(ops_manager, "_reply", fake_reply)
-    patch(ops_manager, "_answer", fake_answer)
-    patch(ops_manager, "_try_daily_report", no_report)
-    worker = {"telegram_user_id": 11, "role": "b2b_sotuv", "full_name": "Алишер"}
+    saved = [(ops_manager, "TelegramBot", ops_manager.TelegramBot), (ops_manager, "_answer", ops_manager._answer)]
+    ops_manager.TelegramBot, ops_manager._answer = Bot, fake_answer
     try:
-        tap = {"id": "q", "data": f"ld:{checkin_id}:p", "from": {"id": 11}}
-        check("жараёнда is taken", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "lead_in_progress")
-        check_true("...the buttons go, and the next step is asked",
-                   edits[-1][1] == {"inline_keyboard": []} and questions[-1][1] == leads.IN_PROGRESS_QUESTION
-                   and replies[-1] == "кейинги қадамингиз нима ва қачон? 🙂")
-        check("a second tap is not recorded", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "lead_already_answered")
-
-        typed = {"text": "эртага учрашув белгиланди"}
-        check("the next message is the answer", asyncio.run(ops_manager._handle_employee_message(worker, typed, uuid.uuid4())), "lead_note")
-        check_true("...kept, and thanked in one friendly line", notes == ["эртага учрашув белгиланди"] and friendly_problems(replies[-1]) == [])
-        state["report_asked_at"] = now + timedelta(minutes=55)
-        check("after the 16:00 report ask, a plain message is the report",
-              asyncio.run(ops_manager._handle_employee_message(worker, typed, uuid.uuid4())), "daily_report")
-        replied = {"text": "шартнома тайёрланмоқда", "reply_to_message": {"message_id": 900}}
-        check("...but a Reply to the lead question is still the lead's",
-              asyncio.run(ops_manager._handle_employee_message(worker, replied, uuid.uuid4())), "lead_note")
-
-        state["answered"] = False
-        tap_x = {"id": "q", "data": f"ld:{checkin_id}:x", "from": {"id": 11}}
-        check("рад этилди is taken", asyncio.run(ops_manager._handle_callback(tap_x, uuid.uuid4())), "lead_dismissed")
-        check_true("...and the reasons are offered", len(edits[-1][1]["inline_keyboard"]) == 2 and "нима сабабдан?" in edits[-1][0])
-        questions.clear()
-        pick = {"id": "q", "data": f"lc:{checkin_id}:x3", "from": {"id": 11}}
-        check("a reason is taken", asyncio.run(ops_manager._handle_callback(pick, uuid.uuid4())), "lead_outcome")
-        check_true("...'other' asks them to write it", edits[-1][0].endswith("рад этилди, бошқа сабаб ✅")
-                   and questions and questions[-1][1] == leads.OTHER_QUESTION)
+        tap = {"id": "q", "from": {"id": 7}, "data": f"ld:{uuid.uuid4()}:p",
+               "message": {"message_id": 801, "chat": {"id": 7}, "text": "Hyatt — қандай кетяпти?"}}
+        check("an old lead button", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "lead_handout_stopped")
+        check_true("...says it's stopped and takes the buttons off",
+                   toasts == ["лидлар тарқатиш тўхтатилган"] and edits == [(801, "Hyatt — қандай кетяпти?", {"inline_keyboard": []})])
     finally:
-        for obj, name, value in reversed(saved):
+        for obj, name, value in saved:
             setattr(obj, name, value)
+
+    # ---- history: the Director's answer says it stopped; the KPI still counts what happened
+    check_true("the Director's data says the hand-out stopped", "stopped by the Director on 2026-10-07" in leads.describe([]))
+    emp = [{"id": "e1", "full_name": "Алишер", "role": "b2b_sotuv"}]
+    lead_rows = [{"employee_id": "e1", "asked": 4, "answered": 3, "closed": 2, "done": 1}]
+    month = kpi_score.build(emp, [], [], {}, [], [], date(2026, 10, 1), date(2026, 10, 31), lead_rows=lead_rows)[0]
+    check("October's past lead answers still count in Жараён", round(month.parts["process"]), 75)
+
+
+def inspect_source(obj) -> str:
+    import inspect
+
+    return inspect.getsource(obj)
 
 
 def test_politeness_days_off_announcements() -> None:
@@ -2196,7 +1988,7 @@ def test_politeness_days_off_announcements() -> None:
 
     from integrations.common.agent_loader import load_agent
     from integrations.common.config import settings
-    from integrations.org_bot import admin, cheer, kpi, leads, ops_manager, store, tone
+    from integrations.org_bot import admin, cheer, kpi, ops_manager, store, tone
 
     # ---- names keep their capitals; the sentence stays lowercase
     check("a name keeps its capitals", tone.casual("Алишер ака, БУГУН зўр кун", "☀️", keep=["Алишер ака"]),
@@ -2211,14 +2003,12 @@ def test_politeness_days_off_announcements() -> None:
         *[t for t, _e in cheer._MORNING],
         *[c.text for c in cheer._EVENING], *[o[k] for c in cheer._EVENING for o in c.options for k in ("label", "reply")],
         *[t for t, _e in cheer._TEXT_REPLIES], kpi.build_request_text("Алишер", ()), kpi.build_reminder_text("Алишер", ()),
-        leads.IN_PROGRESS_QUESTION, leads.OTHER_QUESTION, *leads.DISMISS_REASONS, *leads.DONE_RESULTS,
         admin.TECH_ERROR_TEXT,
     ]
     check("every fixed line the bot sends is polite", [t for t in every_fixed_line if not tone.is_polite(t)], [])
     rude = json.dumps({"text": "бугун нима қилдинг?", "emoji": "🌙",
                        "options": [{"label": "зўр", "reply": "раҳмат"}, {"label": "ёмон", "reply": "раҳмат"}]})
     check("an AI line with 'сен' forms is thrown away", cheer.parse_ai(rude, "evening"), None)
-    check("...and an AI lead summary", leads.parse_brief(json.dumps({"brief": "сен бу меҳмонхонага қўнғироқ қил, улар сенга ишонади"})), None)
 
     class RudeAI:
         def __init__(self, *args, **kwargs):
@@ -2268,18 +2058,14 @@ def test_politeness_days_off_announcements() -> None:
 
     was_dry = settings.dry_run
     patch(store, "is_day_off", off)
-    cheer_agent, reports_agent, leads_agent = load_agent("team-cheer"), load_agent("daily-reports"), load_agent("lead-handout")
+    cheer_agent, reports_agent = load_agent("team-cheer"), load_agent("daily-reports")
     patch(cheer_agent, "send_slot", must_not_send)
     patch(reports_agent, "ask_everyone", must_not_send)
     patch(reports_agent, "remind_silent", must_not_send)
-    patch(leads_agent, "morning", must_not_send)
-    patch(leads_agent, "checkin", must_not_send)
     try:
         for name, coro in (("cheer", cheer_agent.run("evening", dry_run=True)),
                            ("report ask", reports_agent.run("ask", dry_run=True)),
-                           ("report reminder", reports_agent.run("remind", dry_run=True)),
-                           ("leads 08:00", leads_agent.run("morning", dry_run=True)),
-                           ("leads 15:00", leads_agent.run("checkin", dry_run=True, force=True))):
+                           ("report reminder", reports_agent.run("remind", dry_run=True))):
             check(f"day off: no {name}", (asyncio.run(coro), len(calls)), (0, 0))
     finally:
         settings.dry_run = was_dry
@@ -2368,14 +2154,12 @@ def test_ai_chat_and_sheet() -> None:
     # ---- what the AI knows: their own work only, honesty first
     tasks = [{"task_summary": "<b>Принтерни</b> текширинг", "status": "started", "due_date": today - timedelta(days=1)},
              {"task_summary": "КП тайёрланг", "status": "sent", "due_date": None}]
-    own_leads = [{"company": "Hyatt Regency", "assigned_on": today, "status": "in_progress"}]
-    context = ai_chat.work_context(seller, tasks, own_leads, today)
-    check_true("their tasks (deadline, overdue) and leads are in it",
-               "Принтерни текширинг (started, due 01.10 (overdue))" in context and "КП тайёрланг (not started, no deadline)" in context
-               and "Hyatt Regency" in context)
+    context = ai_chat.work_context(seller, tasks, today)
+    check_true("their tasks (deadline, overdue) are in it",
+               "Принтерни текширинг (started, due 01.10 (overdue))" in context and "КП тайёрланг (not started, no deadline)" in context)
     check_true("duties not uploaded yet: the AI is told so", "not uploaded yet" in context)
     check_true("uploaded duties are read",
-               "Мижозлар билан ишлаш" in ai_chat.work_context({**seller, "responsibilities": "Мижозлар билан ишлаш"}, [], [], today))
+               "Мижозлар билан ишлаш" in ai_chat.work_context({**seller, "responsibilities": "Мижозлар билан ишлаш"}, [], today))
     prompt = ai_chat.system_prompt(seller, context)
     check_true("honesty first: say 'I don't know', never guess",
                "HONESTY FIRST" in prompt and "билмайман" in prompt and "Never guess" in prompt)
@@ -2454,10 +2238,10 @@ def test_ai_chat_and_sheet() -> None:
         setattr(obj, name, value)
 
     for name, fake in (("log_ai_turn", log_turn), ("recent_ai_turns", empty), ("ai_questions_today", questions_today),
-                       ("open_tasks_for_employee", open_tasks), ("open_leads_for_employee", empty),
-                       ("cheer_delivery_for_message", none), ("lead_question_by_message", none),
+                       ("open_tasks_for_employee", open_tasks),
+                       ("cheer_delivery_for_message", none),
                        ("report_being_edited", none),
-                       ("pending_lead_question", none), ("pending_report", pending_report),
+                       ("pending_report", pending_report),
                        ("open_report_followup", none), ("submitted_report_today", none), ("find_task_by_message_id", none),
                        ("create_pending_relay", create_held), ("resolve_pending_relay", resolve_held),
                        ("get_employee_by_telegram_id", get_by_tg)):
@@ -2536,8 +2320,7 @@ def test_ai_chat_and_sheet() -> None:
     records = leads.sheet_records([moved, [row[c] for c in moved]])
     check("a moved column is still found by its header", (records[0]["company_name"], records[0]["signal_source_url"]),
           ("Hyatt", "https://x.uz/1"))
-    check("rows_to_leads reads it right too", leads.rows_to_leads([moved, [row[c] for c in moved]])[0]["dedupe_key"],
-          "hyatt|equipment_sales")
+    check("...and every other column too", records[0]["dedupe_key"], "hyatt|equipment_sales")
     check("an unrecognisable header falls back to the standard order",
           leads.column_order(["А", "Б", "В"]), cols)
     lead_agent = load_agent("lead-agent")

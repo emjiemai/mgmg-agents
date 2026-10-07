@@ -36,7 +36,6 @@ AGENT_LABELS = {
     "daily-reports": "Кунлик ҳисобот сўрови",
     "team-cheer": "Кайфият хабарлари",
     "lead-agent": "Лид агенти",
-    "lead-handout": "Лидлар тарқатиш",
     "receivables": "Дебиторлик огоҳлантириши",
     "task-tracker": "Топшириқлар назорати",
     "data-quality": "Маълумот сифати",

@@ -17,12 +17,11 @@ honesty first. Each employee's written duties will be uploaded later.
 
 ## What happens to an employee's message
 
-In order: a Reply to a cheer → a friendly line; a lead's follow-up → saved
-on the lead; today's report → saved (a message that asks something during the
+In order: a Reply to a cheer → a friendly line; today's report → saved (a message that asks something during the
 report window gets "бу бугунги ҳисоботингизми ёки савол?" — **ҳа, ҳисобот /
 йўқ, бу савол**); everything else → **the work AI**. A Reply to a task card
 brings that task into the question. A message with "?" is never taken
-as a lead's follow-up or the report's one follow-up answer just for arriving
+as the report's one follow-up answer just for arriving
 soon after them — only a Reply to that question is (2026-10-03). No command is needed (`/ai` just gets a
 hint); other unknown commands are ignored. The answer runs in the background.
 
@@ -32,7 +31,7 @@ to the Director" buttons do nothing.
 ## What the AI knows — only this
 
 - the person: name, role, **their open tasks** (deadline, overdue, started or
-  not), **their open leads**, and **their written duties** once uploaded
+  not) and **their written duties** once uploaded
   (until then it's told they aren't uploaded and says so);
 - the company, public facts only: Primus Londry equipment and services,
   Garmin and Tanita; Garmin sales also get the public catalog.
@@ -57,7 +56,7 @@ is in that language. Telegram HTML only.
 
 Admin Bot `/xodimlar` → the person → **🤖 AI ёрдамчи: ✅ ёқилган** — tap to
 switch it off for that person (⛔); their messages then get "бу бот фақат иш
-учун: ҳисобот, топшириқлар ва лидлар…" and go nowhere. The card also shows
+учун: ҳисобот ва топшириқлар…" and go nowhere. The card also shows
 whether their duties are uploaded.
 
 **Duties upload — next step.** `employees.responsibilities` is ready and the
@@ -73,7 +72,7 @@ last 12 turns go with each message) and shown to no one. Every AI call is in
 ## Checks
 
 `selfcheck.py` (`test_ai_chat_and_sheet`, `test_report_or_message`): the
-context holds their tasks (overdue marked), leads and duties; the prompt's
+context holds their tasks (overdue marked) and duties (leads removed with the hand-out, 2026-10-07); the prompt's
 honesty rule, no data, no messages to the Director; Garmin-only catalog;
 a message goes to the AI and nothing offers to send it to the Director; the
 daily limit; `/ai` hint; unknown commands ignored; the off switch; report

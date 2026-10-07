@@ -930,7 +930,7 @@ async def _handle_employee_action(
         if updated is None:
             await _answer(query_id, "Ходим топилмади")
             return "not_found"
-        note = "🤖 AI ёрдамчи ўчирилди — бот энди фақат ҳисобот, топшириқ ва лидларни қабул қилади." if updated["ai_chat_off"] \
+        note = "🤖 AI ёрдамчи ўчирилди — бот энди фақат ҳисобот ва топшириқларни қабул қилади." if updated["ai_chat_off"] \
             else "🤖 AI ёрдамчи ёқилди."
         text, keyboard = employee_card(updated, note)
         await _edit(callback, text, keyboard, run_id)

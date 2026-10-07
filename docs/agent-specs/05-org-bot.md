@@ -161,8 +161,8 @@ never reads files (`report_tools.py`, `employee_files`). A report is never
 guessed: any typed message while it's owed is confirmed first, and
 **/hisobot** lets them change or delete today's report.
 
-An employee's free message goes, in order, to: a reply to a cheer, a lead's
-follow-up, today's daily report (during the report window a message that
+An employee's free message goes, in order, to: a reply to a cheer, today's
+daily report (during the report window a message that
 asks something gets "бу бугунги ҳисоботингизми ёки савол?" — ҳа, ҳисобот /
 йўқ, бу савол) — and otherwise to the **work AI**
 (`integrations/org_bot/ai_chat.py`, `docs/agent-specs/15-ai-chat.md`), which
@@ -337,8 +337,8 @@ resolved against the prior turn's task.
 
 - **`/dam`** (also `/damolish`, `/dayoff`) — the next 14 days as buttons; tap
   a day to make it a day off (✅), tap again to make it a working day. On a day
-  off no employee gets the report ask or reminder, cheer messages, a lead or
-  the 15:00 lead question, or task reminders, and nobody counts as not having
+  off no employee gets the report ask or reminder, cheer messages or task
+  reminders, and nobody counts as not having
   reported. The Director's brief, the Friday scorecard and the monthly KPI
   still run. Stored in `days_off`.
 - **`/elon`** — the "something went wrong" notice ("кечирасиз, техник хатолик
