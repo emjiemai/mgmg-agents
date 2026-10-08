@@ -13,6 +13,7 @@ Endpoints:
     POST /webhooks/garmin-lead/{secret}               a lead from the Garmin AI bot (integrations/garmin/leads.py)
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
     GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
+    GET  /r, /r/garmin, /r/go/{branch}                Google review pages, their own QR codes (review_page.py)
 
 Security:
     * Every webhook path carries a shared secret compared in constant time.
@@ -36,7 +37,7 @@ from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from integrations.ai.openrouter_client import describe_openrouter_key
-from integrations.api import db_viewer, feedback_page
+from integrations.api import db_viewer, feedback_page, review_page
 from integrations.common.config import settings
 from integrations.common.db import close_pool, fetch_one
 from integrations.common.logging_setup import setup_logging
@@ -57,6 +58,7 @@ app = FastAPI(
 )
 app.include_router(db_viewer.router)
 app.include_router(feedback_page.router)
+app.include_router(review_page.router)
 
 
 @app.on_event("shutdown")

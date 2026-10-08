@@ -83,6 +83,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   Вузгородок, Garmin Абай / Минор (`feedback.BRANCHES`; `?branch=` preselects).
   Complaints reach OPS Manager Bot marked 🔴 with the branch. No Uzbek Latin.
   Mobile app: not now.
+- **Google reviews: separate pages and QR codes** (2026-10-08, `docs/agent-specs/20-google-reviews.md`):
+  `/r` Londry, `/r/garmin` Garmin — the branch button opens that branch's Google review page
+  (`GOOGLE_REVIEW_URLS`, Google https hosts only). `/f` stays complaints only (red). Reviews are
+  **green** (positive, never the complaint red), gold stars. Honest: no rating asked first, everyone
+  gets the same link (no review gating). Cards: `/qr sharh` — green card, logo, five white stars.
 - **Friendly voice** (2026-09-30) for cheer, motivation and daily-report
   messages: one short lowercase sentence, no line breaks, no bold, one emoji
   only at the very end, addressed "Алишер ака" (ака/опа set by the admin, never
@@ -135,4 +140,5 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   `DocTotalFC`/`PaidFC`/`DocTotalSy`, `SlpName`, `CreateDate`/`CreateTS`) — ask Abdulbosit,
   list in `docs/sap-gateway-tools.md` "As built vs this spec". Billz → SAP check is on **trial** (results to the admin) until the owner
   confirms them, then `BILLZ_SAP_CHECK_TRIAL=false`. Admin to tick "эркин график" people in `/grafik`.
+- `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

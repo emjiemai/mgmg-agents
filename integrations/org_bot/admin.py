@@ -39,6 +39,8 @@ ASK_NAMES_COMMANDS = ("/ismlar", "/names")
 DATA_QUALITY_COMMANDS = ("/sifat", "/quality")
 # "/qr" -> the printable feedback QR card (one for the whole company).
 QR_COMMAND = "/qr"
+# "/qr sharh" -> the Google review cards (/r), one per branch that has its link.
+REVIEW_QR_WORDS = ("sharh", "шарҳ", "review", "google")
 # "/verifix" -> is Verifix connected, can today and yesterday be read (no names or times).
 VERIFIX_COMMAND = "/verifix"
 # "/billz" -> is BILLZ connected, and could yesterday be read (no figures).
@@ -205,6 +207,8 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
     if text in ASK_NAMES_COMMANDS:
         return await _ask_names(run_id)
     if text.split()[:1] == [QR_COMMAND]:
+        if text.split()[1:2] and text.split()[1] in REVIEW_QR_WORDS:
+            return await _send_review_qr(run_id)
         return await _send_qr(run_id)
     if text in DATA_QUALITY_COMMANDS:
         from integrations.common.agent_loader import load_agent  # the agent lives in a hyphenated folder
@@ -224,6 +228,47 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return "tech_report_" + await tech_report.send(run_id)
 
     return "ignored"
+
+
+async def _send_review_qr(run_id: uuid.UUID) -> str:
+    """Send the admin the printable Google review cards — one per branch with a review link."""
+    import tempfile
+    from pathlib import Path
+
+    from integrations.api import review_page
+    from integrations.org_bot import qr_card  # local import: Pillow only when needed
+
+    links = review_page.review_urls()
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        if not settings.public_url:
+            await bot.send_message("Сервер манзили номаълум — Render'да PUBLIC_BASE_URL ни белгиланг.")
+            return "review_qr_no_url"
+        if not links:
+            await bot.send_message(
+                "⭐ <b>Google шарҳ ҳаволалари киритилмаган.</b>\nRender → mgmg-shared: GOOGLE_REVIEW_URLS = "
+                "<code>yunusobod=…;vuzgorodok=…;abay=…;minor=…</code> — ҳар бир филиалнинг Google Business "
+                "профилидан «Get more reviews» ҳаволаси."
+            )
+            return "review_qr_no_links"
+        folder = Path(tempfile.mkdtemp(prefix="mgmg-review-qr-"))
+        for branch in links:
+            place = review_page.BRANCH_PLACE[branch]
+            url = f"{settings.public_url}{review_page.PAGES[place]}?branch={branch}"
+            path = folder / f"qr-google-sharh-{branch}.png"
+            path.write_bytes(qr_card.card_png(url, place, stars=True))
+            await bot.send_document(
+                str(path), chat_id=settings.admin_bot_telegram_chat_id,
+                caption=f"⭐ Google шарҳ — {escape(review_page.BRANCH_LABELS['uz_cyrl'][branch])}: {escape(url)}",
+            )
+        missing = [review_page.BRANCH_LABELS["uz_cyrl"][b] for b in review_page.BRANCH_PLACE if b not in links]
+        if missing:
+            await bot.send_message("Ҳаволаси йўқ филиаллар (карта чиқмади): " + escape(", ".join(missing)))
+    return "review_qr_sent"
 
 
 async def _send_qr(run_id: uuid.UUID) -> str:

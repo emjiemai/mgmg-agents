@@ -79,6 +79,11 @@ class Settings(BaseSettings):
 
     # --- Client feedback page at /f (QR codes) ---
     feedback_enabled: bool = True
+    # --- Google review pages at /r, /r/garmin (integrations/api/review_page.py) ---
+    # Each branch's own "Get more reviews" link from its Google Business
+    # Profile: "yunusobod=https://g.page/r/…/review;vuzgorodok=…;abay=…;minor=…".
+    # A branch without a link shows "тез орада" and gets no QR card.
+    google_review_urls: str = ""
 
     # --- Read-only database viewer at /db (integrations/api/db_viewer.py) ---
     # Empty = the page doesn't exist (404). Set a long random password in

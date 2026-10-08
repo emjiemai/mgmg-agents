@@ -112,6 +112,7 @@ access to each of these:
 | `/texnik` | IT's technical report now: connections, SAP push, brief delivered, errors, DB, security (also every morning) |
 | `/sifat` | Data quality check now (SAP feeds, missing columns, unnamed people…) |
 | `/qr` | The two printable complaint QR cards |
+| `/qr sharh` | The printable Google review cards (`/r`), one per branch with a link in `GOOGLE_REVIEW_URLS` — green card with five white stars |
 
 **New people** write anything to **OPS Manager Bot** → the admin gets an
 Accept card in Admin Bot → they pick a role → the admin confirms the role →
