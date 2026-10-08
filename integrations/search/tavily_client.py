@@ -95,7 +95,12 @@ class TavilyClient:
             target_ref=BASE_URL,
             payload={"query": query, "days": days},
         ) as ctx:
-            response = await request_with_retry(self._client, "POST", BASE_URL, json=payload)
+            try:
+                response = await request_with_retry(self._client, "POST", BASE_URL, json=payload)
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                # Same as SerpAPI (2026-10-07): a typed error, so one query never fails the batch.
+                ctx["http_status"] = getattr(getattr(exc, "response", None), "status_code", None)
+                raise TavilyError(f"Tavily search failed after retries: {exc}") from exc
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
                 raise TavilyError(f"Tavily search failed: HTTP {response.status_code} {response.text[:300]}")

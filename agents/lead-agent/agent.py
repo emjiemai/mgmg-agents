@@ -36,8 +36,8 @@ from integrations.common.db import close_pool, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.search.models import RawLead
-from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
-from integrations.search.tavily_client import TavilyClient, TavilyError
+from integrations.search.serpapi_client import SerpAPIClient
+from integrations.search.tavily_client import TavilyClient
 from integrations.org_bot import leads as leads_sheet
 from integrations.org_bot.notify import notify_directors
 from integrations.telegram.bot import escape
@@ -337,7 +337,7 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
         async with concurrency:
             try:
                 return await client.search_all_engines(query, num=10, freshness=freshness)
-            except SerpAPIError as err:
+            except Exception as err:  # noqa: BLE001 — one query must never fail the others (see below)
                 log.error("SerpAPI failed for '{}': {}", query, err)
                 return []
 
@@ -352,7 +352,7 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
         async with concurrency:
             try:
                 return await client.search_news(query, days=days, max_results=10)
-            except TavilyError as err:
+            except Exception as err:  # noqa: BLE001 — one query must never fail the others
                 log.error("Tavily failed for '{}': {}", query, err)
                 return []
 

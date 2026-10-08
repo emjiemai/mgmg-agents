@@ -240,3 +240,11 @@ provider congestion, then add a paid model to the chain.
   ongoing plan/quota ceiling, not a one-off — the Track 3 query volume added
   that day makes this worse, not better, until the plan is upgraded or the
   per-run query count is trimmed. Tavily was unaffected again in the same test.
+- **Fixed 2026-10-08** (seen in IT's technical report, 07.10): a SerpAPI 429
+  that outlasted the retries came out as a raw `httpx.HTTPStatusError`, not
+  `SerpAPIError`, so it failed the whole SerpAPI batch and closed the shared
+  client under the queries still running ("Cannot send a request, as the
+  client has been closed" ×4) — that morning's SerpAPI results were all lost.
+  Now the SerpAPI and Tavily clients turn it into their own error (that engine
+  is skipped) and each query in `collect_raw_leads` catches anything, so one
+  failing query never stops the others. The 429 itself is SerpAPI's plan quota.

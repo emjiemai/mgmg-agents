@@ -111,7 +111,15 @@ class SerpAPIClient:
             target_ref=BASE_URL,
             payload={"query": query, "engine": engine},
         ) as ctx:
-            response = await request_with_retry(self._client, "GET", BASE_URL, params=params)
+            try:
+                response = await request_with_retry(self._client, "GET", BASE_URL, params=params)
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                # A 429 that never clears comes out of the retry helper as the raw
+                # httpx error; as SerpAPIError it is skipped like any failed engine
+                # (2026-10-07: one escaped, failed the whole batch and closed the
+                # client under the other queries — "client has been closed" ×4).
+                ctx["http_status"] = getattr(getattr(exc, "response", None), "status_code", None)
+                raise SerpAPIError(f"SerpAPI {engine} search failed after retries: {exc}") from exc
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
                 raise SerpAPIError(f"SerpAPI {engine} search failed: HTTP {response.status_code} {response.text[:300]}")

@@ -2893,6 +2893,94 @@ def test_it_restrictions() -> None:
                > load_source("scripts/run_morning_agents.py").index("task-tracker/agent.py --monthly"))
 
 
+def test_tech_report_errors_fixed() -> None:
+    """2026-10-08, from /texnik: a SerpAPI 429 failed the whole batch; an over-long edit was refused."""
+    print("errors from the technical report (2026-10-08)")
+    import asyncio
+    import contextlib
+
+    import httpx
+
+    from integrations.search import serpapi_client as sc
+    from integrations.search import tavily_client as tc
+    from integrations.telegram import bot as tb
+
+    # ---- a 429 that never clears is a typed error: the engine is skipped, the others go on
+    request = httpx.Request("GET", sc.BASE_URL)
+
+    async def always_429(client, method, url, **kwargs):
+        raise httpx.HTTPStatusError("429", request=request, response=httpx.Response(429, request=request))
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"http_status": None, "payload": {}}
+
+    saved = [(sc, "request_with_retry", sc.request_with_retry), (sc, "audited", sc.audited),
+             (tc, "request_with_retry", tc.request_with_retry), (tc, "audited", tc.audited)]
+    sc.request_with_retry, sc.audited, tc.request_with_retry, tc.audited = always_429, no_audit, always_429, no_audit
+
+    async def serp():
+        client = sc.SerpAPIClient(agent="t")
+        client._client = httpx.AsyncClient()
+        try:
+            try:
+                await client.search("hotel", "google", 10)
+                raised = None
+            except Exception as exc:  # noqa: BLE001
+                raised = exc
+            return raised, await client.search_all_engines("hotel")
+        finally:
+            await client._client.aclose()
+
+    async def tav():
+        client = tc.TavilyClient(agent="t")
+        client._client = httpx.AsyncClient()
+        try:
+            await client.search_news("hotel", days=3, max_results=5)
+        except Exception as exc:  # noqa: BLE001
+            return exc
+        finally:
+            await client._client.aclose()
+
+    try:
+        raised, leads = asyncio.run(serp())
+        check_true("SerpAPI 429 after retries is a SerpAPIError", isinstance(raised, sc.SerpAPIError))
+        check("...so every engine is tried and the call returns, not raises", leads, [])
+        check_true("Tavily the same", isinstance(asyncio.run(tav()), tc.TavilyError))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    source = load_source("agents/lead-agent/agent.py")
+    check_true("the Lead Agent: one failing query never fails the others",
+               source.count("except Exception as err:  # noqa: BLE001 — one query must never fail the others") == 2)
+
+    # ---- an over-long edit is shortened, not refused
+    short = "<b>Ҳисобот</b> &lt;1&gt;"
+    check("a short edit is left as it is", tb.fit_for_edit(short), short)
+    long = "<b>Бугунги ҳисоботингиз</b>\n\n" + ("ишладим &amp; ёздим " * 600)
+    cut = tb.fit_for_edit(long)
+    check_true("a long one fits Telegram's limit, without broken tags",
+               len(html_unescape(cut)) <= 4096 and "<b>" not in cut and cut.endswith("…") and "&amp;" in cut)
+    sent: list[dict] = []
+
+    async def fake_call(method, payload, **kwargs):
+        sent.append(payload)
+
+    async def edit():
+        bot = tb.TelegramBot(agent="t", bot_token="x")
+        bot._call = fake_call
+        await bot._edit_message("7", 801, long)
+
+    asyncio.run(edit())
+    check_true("_edit_message sends the shortened text", sent and sent[-1]["text"] == cut)
+
+
+def html_unescape(text: str) -> str:
+    import html
+
+    return html.unescape(text)
+
+
 def test_reports_off() -> None:
     """2026-10-06: the admin switches daily reports off for one person (/xodimlar → 📝)."""
     print("daily reports off per person")
@@ -4839,6 +4927,7 @@ def main() -> int:
         test_reports_off,
         test_analyst,
         test_it_restrictions,
+        test_tech_report_errors_fixed,
         test_verifix,
         test_flexible_schedule,
         test_verifix_basic_login,
