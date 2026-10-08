@@ -269,6 +269,10 @@ class TelegramBot:
         """
         if not message_id:
             return
+        # An edit can't be split like a new message: one over Telegram's limit
+        # was refused outright (MESSAGE_TOO_LONG, 2026-10-07) and the message
+        # stayed as it was. Shorten it instead.
+        text = fit_for_edit(text)
         payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"}
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
@@ -371,6 +375,28 @@ def sanitize_model_html(text: str | None) -> str:
     for tag in _MODEL_ALLOWED_TAGS:
         escaped = escaped.replace(f"&lt;{tag}&gt;", f"<{tag}>").replace(f"&lt;/{tag}&gt;", f"</{tag}>")
     return escaped
+
+
+EDIT_LIMIT = 4000  # Telegram's 4096 visible characters, with room for the "…" note
+
+
+def fit_for_edit(text: str, limit: int = EDIT_LIMIT) -> str:
+    """An HTML message body short enough to edit a message with.
+
+    Telegram counts the visible text (after the tags). Within the limit it is
+    returned as it is; over it, the tags are dropped (cutting inside one would
+    break the HTML) and the text is cut on a line or word boundary with "…".
+    """
+    import re
+
+    visible = html.unescape(re.sub(r"<[^>]+>", "", text))
+    if len(visible) <= limit:
+        return text
+    cut = visible[:limit]
+    boundary = max(cut.rfind("\n"), cut.rfind(" "))
+    if boundary > limit * 0.8:
+        cut = cut[:boundary]
+    return html.escape(cut.rstrip(), quote=False) + "\n…"
 
 
 def split_message(text: str, limit: int = SAFE_CHUNK) -> list[str]:
