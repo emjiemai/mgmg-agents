@@ -32,6 +32,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | — | Work AI: every employee's message about their work and tasks is answered by the AI (honest, no company data); the bot carries no text between people — only files, after "what is it for?" | on message, 60 a day | employees | Admin Bot `/xodimlar` → 🤖 (off for one person) |
 | — | Database viewer (read-only) — since 2026-10-07 technical tables only (audit log, access requests, changes, days off…); financial and confidential tables are listed closed | `/db` on the API | admin | `DB_VIEWER_PASSWORD` |
 | — | Client complaints via QR codes — Londry `/f`, Garmin `/f/garmin` (anonymous allowed, 🔴 in OPS Manager Bot; Uzbek Cyrillic, Russian, English) | when a client scans · `/qr` makes both cards | Director | `FEEDBACK_ENABLED` |
+| — | Google reviews via their own QR codes — Londry `/r`, Garmin `/r/garmin` (separate from the complaint pages; green, not red): pick the branch → that branch's Google review page; every client gets the same link (no review gating); taps counted (`20-google-reviews.md`) | when a client scans · `/qr sharh` makes the cards | Google (public reviews) | `GOOGLE_REVIEW_URLS` (**not set yet**) |
 
 **10 of the plan's 21** are running (H0, A1, A2, A3, A4, B1, B2, B4, E1, F2). Of these,
 only H0 has been running long enough to call proven; the rest are in their

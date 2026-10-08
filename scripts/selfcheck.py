@@ -2981,6 +2981,125 @@ def html_unescape(text: str) -> str:
     return html.unescape(text)
 
 
+def test_review_pages() -> None:
+    """2026-10-08: Google review pages /r and /r/garmin — separate from the complaint pages /f."""
+    print("Google review pages (/r)")
+    import asyncio
+    import io
+
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from integrations.api import app as api_app
+    from integrations.api import review_page as rp
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, qr_card
+
+    # ---- only Google's own https links are ever used
+    links = rp.review_urls("yunusobod=https://g.page/r/ABC/review; vuzgorodok=http://g.page/r/X;"
+                           "abay=https://evil.example/review;minor=https://search.google.com/local/writereview?placeid=P;"
+                           "nowhere=https://g.page/r/Z")
+    check("valid Google https links kept, the rest dropped", links,
+          {"yunusobod": "https://g.page/r/ABC/review",
+           "minor": "https://search.google.com/local/writereview?placeid=P"})
+    check("a look-alike host is refused", rp.is_google_link("https://g.page.evil.com/r/x"), False)
+    check("a login in the link is refused", rp.is_google_link("https://user@g.page/r/x"), False)
+
+    # ---- the page: honest, every branch, Uzbek Cyrillic
+    page = rp.page_html("laundry", "uz_cyrl", None, links)
+    check_true("Londry's page lists both branches, one live, one 'soon'",
+               "/r/go/yunusobod?lang=uz_cyrl" in page and "Londry Вузгородок" in page and "тез орада" in page
+               and "/r/go/vuzgorodok" not in page)
+    check_true("it says every rating opens the same Google page", "бир хил Google саҳифасини очади" in page)
+    check_true("no rating is asked first (no review gating), no script",
+               "<script" not in page and "<form" not in page)
+    check("Uzbek Cyrillic, no Latin besides names", latin_words(page_text(page), allow={
+        "Londry", "Google", "Русский", "English"}), [])
+    one = rp.page_html("garmin", "ru", "abay", links)
+    check_true("a branch's own card shows only that branch, with a link to the others",
+               "Абай" in one and "Минор" not in one and "Другие филиалы" in one)
+
+    # ---- the routes: separate from /f, redirect only to the configured link
+    saved = settings.google_review_urls
+    settings.google_review_urls = "yunusobod=https://g.page/r/ABC/review"
+    original_log = rp.log_action
+    clicks = []
+
+    async def fake_log(**kwargs):
+        clicks.append(kwargs)
+
+    rp.log_action = fake_log
+    client = TestClient(api_app.app)
+    try:
+        check("/r opens", client.get("/r").status_code, 200)
+        check("/r/garmin opens", client.get("/r/garmin").status_code, 200)
+        go = client.get("/r/go/yunusobod?url=https://evil.example", follow_redirects=False)
+        check("a tap goes to that branch's Google page — never a URL from the address bar",
+              (go.status_code, go.headers.get("location")), (303, "https://g.page/r/ABC/review"))
+        check_true("...counted with the branch only", clicks and clicks[-1]["action"] == "review_click"
+                   and clicks[-1]["target_ref"] == "yunusobod")
+        back = client.get("/r/go/abay", follow_redirects=False)
+        check("a branch without a link goes back to its page", (back.status_code, back.headers.get("location")),
+              (303, "/r/garmin"))
+        check("the complaint page /f is untouched", client.get("/f").status_code, 200)
+        check_true("...and still a complaint form", "<form" in client.get("/f").text)
+    finally:
+        settings.google_review_urls = saved
+        rp.log_action = original_log
+
+    # ---- the printed card: positive green + five stars, so it can't be taken for a complaint card
+    plain = Image.open(io.BytesIO(qr_card.card_png("https://x.uz/f", "laundry")))
+    starred = Image.open(io.BytesIO(qr_card.card_png("https://x.uz/r?branch=yunusobod", "laundry", stars=True)))
+    check("the review card has a star row under the code", starred.height - plain.height, qr_card.STAR_ROW_H)
+    band = starred.crop((0, plain.height - 40, qr_card.CARD_W, starred.height)).convert("RGB")
+    whites = sum(1 for px in band.getdata() if px == qr_card.WHITE)
+    check_true("...in white, on green — the complaint card stays red",
+               whites > 5000 and starred.getpixel((5, 5)) == qr_card.GREEN and plain.getpixel((5, 5)) == qr_card.RED)
+    check_true("the page is green with gold stars, not the complaint red",
+               "--head:#1e8e3e" in page and "#f2b01e" in page and "content='#1e8e3e'" in page)
+
+    # ---- /qr sharh before the links are set
+    sent = []
+
+    class Bot:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def send_message(self, text, **kwargs):
+            sent.append(text)
+
+    saved_bot, saved_url, saved_admin = admin.TelegramBot, settings.public_base_url, settings.admin_bot_admin_user_id
+    admin.TelegramBot, settings.public_base_url, settings.admin_bot_admin_user_id = Bot, "https://mgmg-api-eeky.onrender.com", 0
+    settings.google_review_urls = ""
+    try:
+        outcome = asyncio.run(admin.handle_admin_message({"from": {"id": 5}, "text": "/qr sharh"}, uuid_module().uuid4()))
+        check("/qr sharh without links says what to set", (outcome, "GOOGLE_REVIEW_URLS" in sent[-1]),
+              ("review_qr_no_links", True))
+    finally:
+        admin.TelegramBot, settings.public_base_url, settings.admin_bot_admin_user_id = saved_bot, saved_url, saved_admin
+        settings.google_review_urls = saved
+
+
+def page_text(page: str) -> str:
+    """A page's visible text: tags, the style block and attribute values dropped."""
+    page = re.sub(r"<style>.*?</style>", " ", page, flags=re.S)
+    import html
+
+    return html.unescape(re.sub(r"<[^>]+>", " ", page))
+
+
+def uuid_module():
+    import uuid
+
+    return uuid
+
+
 def test_reports_off() -> None:
     """2026-10-06: the admin switches daily reports off for one person (/xodimlar → 📝)."""
     print("daily reports off per person")
@@ -4928,6 +5047,7 @@ def main() -> int:
         test_analyst,
         test_it_restrictions,
         test_tech_report_errors_fixed,
+        test_review_pages,
         test_verifix,
         test_flexible_schedule,
         test_verifix_basic_login,

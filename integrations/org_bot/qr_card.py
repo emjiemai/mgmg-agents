@@ -6,6 +6,10 @@ requires a light margin around the code. No text on the card (asked
 2026-09-28) — only the business's logo above the code, in white, so the
 Londry and Garmin cards can't be mixed up.
 
+Google review cards (``/r``, 2026-10-08) are the same card in green (the
+owner: red is the complaints' colour) with five white stars under the code —
+still no text, and a printed review card can't be taken for a complaint card.
+
 Logos live in ``logos/`` with their background cut out (transparent PNG, the
 brand's own colour). They are small files, so they're enlarged here with
 smoothing and redrawn in white; a larger or vector logo would print sharper
@@ -22,6 +26,7 @@ from PIL import Image, ImageDraw
 from qrcode.constants import ERROR_CORRECT_Q
 
 RED = (215, 25, 32)
+GREEN = (30, 142, 62)  # Google review cards: positive, never the complaint red
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 
@@ -61,19 +66,37 @@ def _white_logo(place: str) -> Image.Image | None:
     return logo
 
 
-def card_png(url: str, place: str | None = None) -> bytes:
+STAR_ROW_H = 190  # extra red band under the code for the review card's stars
+STAR_SIZE = 96
+
+
+def _star(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float) -> None:
+    """A filled five-pointed star centred on (cx, cy), outer radius r."""
+    import math
+
+    points = []
+    for i in range(10):
+        angle = -math.pi / 2 + i * math.pi / 5
+        radius = r if i % 2 == 0 else r * 0.45
+        points.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    draw.polygon(points, fill=WHITE)
+
+
+def card_png(url: str, place: str | None = None, stars: bool = False) -> bytes:
     """Draw the card for ``url`` and return it as PNG bytes.
 
     Args:
         url: The page the code opens.
         place: ``feedback.PLACES`` key — puts that business's logo on top.
+        stars: The Google review card: green, five white stars under the code.
     """
     logo = _white_logo(place) if place else None
     matrix = qr_matrix(url)
     x0, y0, module_px, modules = card_geometry(url, with_logo=logo is not None)
     box = module_px * modules
 
-    card = Image.new("RGB", (CARD_W, CARD_H_LOGO if logo else CARD_H), RED)
+    height = (CARD_H_LOGO if logo else CARD_H) + (STAR_ROW_H if stars else 0)
+    card = Image.new("RGB", (CARD_W, height), GREEN if stars else RED)
     draw = ImageDraw.Draw(card)
     radius = module_px * 2
     draw.rounded_rectangle((x0 - radius, y0 - radius, x0 + box + radius, y0 + box + radius), radius=radius * 2, fill=WHITE)
@@ -93,6 +116,13 @@ def card_png(url: str, place: str | None = None) -> bytes:
         x = (CARD_W - (right - left)) // 2 - left
         y = (band_bottom - (bottom - top)) // 2 - top
         card.paste(logo, (x, y), logo)
+
+    if stars:
+        row_top = y0 + box + radius
+        cy = row_top + (height - row_top) / 2
+        gap = STAR_SIZE * 1.25
+        for i in range(5):
+            _star(draw, CARD_W / 2 + (i - 2) * gap, cy, STAR_SIZE / 2)
 
     out = io.BytesIO()
     card.save(out, format="PNG", dpi=(300, 300))
