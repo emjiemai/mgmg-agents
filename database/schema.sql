@@ -574,7 +574,7 @@ ALTER TABLE sap_gateway_snapshots DROP CONSTRAINT IF EXISTS sap_gateway_snapshot
 ALTER TABLE sap_gateway_snapshots ADD CONSTRAINT sap_gateway_snapshots_tool_check CHECK (tool IN (
     'orders', 'products', 'customers', 'warehouses', 'inventory', 'payments',
     'sales', 'sales_lines', 'payments_out', 'ap_open', 'po_open', 'sales_people',
-    'equipment', 'service_calls', 'service_contracts', 'stock_value'
+    'equipment', 'service_calls', 'service_contracts', 'stock_value', 'supplier_balances'
 ));
 
 -- Billz → SAP check (2026-10-03, docs/agent-specs/17-billz-sap-check.md):

@@ -4184,6 +4184,75 @@ def test_reports() -> None:
                    "Render", "BILLZ", "CHECK", "TRIAL", "false", "OKR", "C"}) == [])
 
 
+def test_sap_gateway_code() -> None:
+    """The SAP gateway's source (sap-gateway/, 2026-10-09): every column it reads exists in SAP,
+    values are bound, and it serves every complete tool the push script calls."""
+    print("SAP gateway source")
+    import json
+    import re
+
+    from integrations.sap import push_handler
+
+    root = Path(__file__).resolve().parents[1]
+    gateway = root / "sap-gateway"
+    columns = json.loads((root / "scripts" / "sap-gateway-push" / "sap_columns.json").read_text(encoding="utf-8"))["tables"]
+    sources = {f.name: f.read_text(encoding="utf-8") for f in sorted((gateway / "src").glob("*.js"))}
+    check_true("no secrets in the repo copy", not (gateway / ".env").exists()
+               and all("HANA_PASSWORD=" not in s or s.startswith("#") for s in sources.values()))
+
+    wrong = []
+    for name, js in sources.items():
+        # tableRef('OINV') H ... H."DocEntry"; sales-by-date builds both halves with branch(13, 'OINV', 'INV1')
+        aliases: dict[str, set[str]] = {}
+        for table, alias in re.findall(r"tableRef\('(\w+)'\)\}\s+(\w+)", js):
+            aliases.setdefault(alias, set()).add(table)
+        for _obj, head, lines in re.findall(r"branch\((\d+), '(\w+)', '(\w+)'\)", js):
+            aliases.setdefault("H", set()).add(head)
+            aliases.setdefault("L", set()).add(lines)
+        for alias, col in re.findall(r'\b([A-Z])\."(\w+)"', js):
+            for table in aliases.get(alias, ()):
+                if table in columns and col not in columns[table]:
+                    wrong.append(f"{name}: {table}.{col}")
+    check("every column the gateway's joined queries read exists in SAP (export of 2026-10-02)", wrong, [])
+
+    served = set(re.findall(r"app\.post\('/tools/(\w+)'", sources["server.js"]))
+    listed = set(re.findall(r"name: '(\w+)'", sources["tools.js"]))
+    script = (root / "scripts" / "sap-gateway-push" / "push-ar-aging.ps1").read_text(encoding="utf-8")
+    called = set(re.findall(r'Push-CompleteTool -Tool "(\w+)"', script))
+    check_true("the gateway serves every complete tool the push calls", called <= served)
+    check_true("...and describes every tool it serves (GET /tools)", served == listed)
+    sales = sources["sales-by-date.js"]
+    check_true("sales by date: dates bound, never pasted into the SQL",
+               "TO_DATE(?, 'YYYY-MM-DD')" in sales and "'${fromDate}'" not in sales and "[...range, ...range]" in sales)
+    check_true("...invoices and credit notes, dated or entered in the range",
+               "branch(13, 'OINV', 'INV1')" in sales and "branch(14, 'ORIN', 'RIN1')" in sales and 'H."CreateDate" BETWEEN' in sales)
+    check_true("...with every column the Billz check and the brief need",
+               all(f'"{c}"' in sales for c in set(push_handler.EXPECTED_COLUMNS["sales"]) | set(push_handler.EXPECTED_COLUMNS["sales_lines"])))
+    check_true("open invoices carry the so'm amounts and the seller's name",
+               all(f'"{c}"' in sources["open-invoices.js"] for c in push_handler.EXPECTED_COLUMNS["ar_open"]))
+    check_true("supplier balances carry what the 1C comparison reads",
+               all(f'"{c}"' in sources["supplier-balances.js"] for c in push_handler.EXPECTED_COLUMNS["supplier_balances"]))
+    check_true("the HANA client binds parameters", "connection.exec(sql, params," in sources["hana.js"])
+
+    # the 1C <-> SAP comparison reads the gateway's rows as they come
+    import importlib.util
+    import sys as _sys
+
+    ar = _sys.modules.get("ap_reconcile")
+    if ar is None:
+        spec = importlib.util.spec_from_file_location("ap_reconcile", root / "scripts" / "ap_reconcile.py")
+        ar = importlib.util.module_from_spec(spec)
+        _sys.modules["ap_reconcile"] = ar  # dataclasses look their module up here
+        spec.loader.exec_module(ar)
+    pushed = [{"CardCode": "S001", "CardName": "Primus LLC", "LicTradNum": "301234567", "CardType": "S",
+               "Currency": "UZS", "Balance": "-800.00", "BalanceSys": "-9400000.00", "BalanceFC": "-9400000.00"},
+              {"CardCode": "S002", "CardName": "Tanita", "LicTradNum": "", "CardType": "S", "Currency": "USD",
+               "Balance": "-120.00", "BalanceSys": "-1410000.00", "BalanceFC": "-120.00"}]
+    parties, info = ar.sap_parties(pushed)
+    check("the gateway's suppliers: what we owe, in so'm, positive", (parties["S001"].owed, parties["S001"].inn, info["flipped"]),
+          (9400000.0, "301234567", True))
+
+
 def test_sap_full_push() -> None:
     """Complete SAP data through new gateway tools: the spec, the script, the receiver."""
     print("SAP complete gateway tools")
@@ -4213,7 +4282,8 @@ def test_sap_full_push() -> None:
                all(re.search(rf'\${v}\s*=\s*"PASTE_', script) for v in ("GatewayToken", "MgmgApiHost", "PushSecret")))
     pushed = re.findall(r'Push-CompleteTool -Tool "(\w+)".*?-Kinds @\(([^)]*)\)', script)
     tools = {tool: re.findall(r'"(\w+)"', kinds) for tool, kinds in pushed}
-    check("the complete tools the script uses", sorted(tools), ["get_open_invoices", "get_sales_by_date", "get_stock_value"])
+    check("the complete tools the script uses", sorted(tools),
+          ["get_open_invoices", "get_sales_by_date", "get_stock_value", "get_supplier_balances"])
     check_true("...each one is specified for the gateway", all(re.search(rf"### \d+\. `{t}`", spec) for t in tools))
     check_true("...and every kind they fill is one the receiver stores",
                all(k in push_handler.FULL_DATASETS for kinds in tools.values() for k in kinds))
@@ -4234,7 +4304,7 @@ def test_sap_full_push() -> None:
     # The SQL proposed to the gateway's maintainer reads only columns SAP has.
     blocks = re.findall(r"### \d+\. `(\w+)`.*?```sql\n(.*?)```", spec, flags=re.S)
     # Tools specified but not pushed yet: asked of the gateway's maintainer, used by hand meanwhile.
-    asked = {"get_supplier_balances"}  # 2026-10-09, scripts/ap_reconcile.py (supplier debt 1C ↔ SAP)
+    asked: set[str] = set()  # get_supplier_balances was asked 2026-10-09 and is now in the gateway and the push
     check("one SQL template per tool (pushed, or asked and not yet built)",
           sorted(t for t, _ in blocks), sorted(set(tools) | asked))
     wrong = []
@@ -5141,6 +5211,7 @@ def main() -> int:
         test_garmin_leads,
         test_billz,
         test_sap_full_push,
+        test_sap_gateway_code,
         test_reports,
         test_billz_sap_check,
         test_onec,

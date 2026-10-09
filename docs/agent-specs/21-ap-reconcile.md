@@ -43,9 +43,11 @@ only, **6 with both at once** (advance likely not offset), 2 with a currency
 debt (6015, USD and EUR); 5 have no ИНН (matched by name). The account totals
 in the workbook equal 1C's own account balances.
 
-The SAP side isn't available yet: the gateway publishes no supplier data
-(only customers' invoices, sales, stock), and its computer isn't reachable
-from outside. Abdulbosit is asked for tool 4 or the export.
+The SAP side: tool 4 `get_supplier_balances` is written into the gateway
+(`sap-gateway/src/supplier-balances.js`, 2026-10-09) and the push script
+sends it as `supplier_balances`; once the gateway is updated, run with
+`--sap-pushed` instead of `--sap file.xlsx` (needs `DATABASE_URL`):
+`python scripts/ap_reconcile.py --onec-json 1c.json --sap-pushed --out solishtirish.xlsx`.
 
 ## Tests
 

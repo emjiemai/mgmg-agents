@@ -9,10 +9,11 @@ Reads, never writes:
   * 1C — over OData with the GET-only ``OneCClient``: balances of 6010 / 6015
     (payables to suppliers, so'm and currency) and 4310 / 4315 (advances paid
     to suppliers), by counterparty and contract, with each counterparty's ИНН;
-  * SAP — a file exported from SAP B1 (the gateway is on its own computer and
-    doesn't publish suppliers yet): the suppliers' balances (OCRD, CardType
-    'S'), as Excel or CSV. Columns are found by their header (SAP's English or
-    Russian export names, or the field names).
+  * SAP — the suppliers' balances (OCRD, CardType 'S'): either pushed by the
+    gateway's ``get_supplier_balances`` (``--sap-pushed``, 2026-10-09; needs
+    DATABASE_URL), or a file exported from SAP B1, as Excel or CSV. Columns
+    are found by their header (SAP's English or Russian export names, or the
+    field names — which is what the gateway sends).
 
 Writes one Excel workbook (``--out``) for the Director and accounting: the
 comparison, what is only in 1C, what is only in SAP, the 1C detail by
@@ -21,6 +22,7 @@ SAP or Telegram, and no figure is printed or logged — only counts.
 
 Run:
     python scripts/ap_reconcile.py --onec-json 1c.json --sap sap.xlsx --out solishtirish.xlsx
+    python scripts/ap_reconcile.py --onec-json 1c.json --sap-pushed --out solishtirish.xlsx
     python scripts/ap_reconcile.py --pull-1c 1c.json      # read 1C now (needs ONEC_* set)
 """
 
@@ -197,6 +199,21 @@ def read_table(path: Path) -> list[dict[str, Any]]:
     header_at = next((i for i, r in enumerate(rows[:20]) if sum(1 for c in r if str(c or "").strip()) >= 3), 0)
     header = [str(c or "").strip() for c in rows[header_at]]
     return [dict(zip(header, r)) for r in rows[header_at + 1:] if any(str(c or "").strip() for c in r)]
+
+
+async def pushed_sap_rows() -> tuple[list[dict[str, Any]], str]:
+    """The suppliers the gateway last pushed (``supplier_balances``), and when (read-only)."""
+    from integrations.common.db import close_pool, fetch_all
+
+    try:
+        rows = await fetch_all(
+            "SELECT raw, captured_at FROM v_sap_gateway_latest WHERE tool = 'supplier_balances'"
+        )
+    finally:
+        await close_pool()
+    raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"]) for r in rows]
+    when = max((r["captured_at"] for r in rows), default=None)
+    return raws, f"SAP шлюзи, {when:%d.%m.%Y %H:%M}" if when else "SAP шлюзи (маълумот йўқ)"
 
 
 def find_columns(header: list[str]) -> dict[str, str]:
@@ -394,6 +411,8 @@ def main() -> None:
     parser.add_argument("--pull-1c", type=Path, help="read 1C now (GET only) into this JSON file")
     parser.add_argument("--onec-json", type=Path, help="1C data read earlier (--pull-1c)")
     parser.add_argument("--sap", type=Path, help="SAP B1 export of the suppliers' balances (xlsx or csv)")
+    parser.add_argument("--sap-pushed", action="store_true",
+                        help="use the suppliers the SAP gateway pushed (get_supplier_balances) instead of a file")
     parser.add_argument("--out", type=Path, default=Path("kreditorlik-1c-sap.xlsx"))
     args = parser.parse_args()
     if args.pull_1c:
@@ -401,9 +420,14 @@ def main() -> None:
         return
     data = json.loads(args.onec_json.read_text(encoding="utf-8"))
     onec = onec_parties(data)
-    sap, info = sap_parties(read_table(args.sap)) if args.sap else ({}, {"columns": {}, "flipped": False})
+    if args.sap_pushed:
+        sap_rows, sap_source = asyncio.run(pushed_sap_rows())
+    else:
+        sap_rows = read_table(args.sap) if args.sap else []
+        sap_source = args.sap.name if args.sap else "йўқ"
+    sap, info = sap_parties(sap_rows) if sap_rows else ({}, {"columns": {}, "flipped": False})
     counts = write_workbook(match(onec, sap), onec, {"onec_as_of": data.get("as_of", ""),
-                                                     "sap_file": args.sap.name if args.sap else "йўқ",
+                                                     "sap_file": sap_source,
                                                      "sap_columns": info["columns"], "flipped": info["flipped"],
                                                      "sap_rows": len(sap)},
                             args.out)

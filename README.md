@@ -87,7 +87,7 @@ access to each of these:
 | Hosting, database, all secrets | Render — `mgmg-api`, `mgmg-db`, the cron jobs; env group `mgmg-shared` |
 | Telegram bots | @BotFather, on the account that created Admin Bot and OPS Manager Bot |
 | SAP push | The gateway machine: `C:\mgmg-push\push-ar-aging.ps1` + Windows task "MGMG SAP push" |
-| SAP gateway itself | Its maintainer (Node.js, `localhost:3000`, its own `.env`) |
+| SAP gateway itself | Code in this repo, `sap-gateway/` (Node.js); runs on the gateway computer at `localhost:3000` with its own `.env` (HANA user, `API_TOKEN`) — admin access since 2026-10-09 |
 | Leads sheet | Google Sheets "POSSIBLE Leads" (`GOOGLE_LEADS_SHEET_ID`), shared with the service account |
 | AI | OpenRouter account (`OPENROUTER_API_KEY`) |
 | Shop tills | BILLZ → Настройки → Компания → Ключи интеграции |
@@ -207,10 +207,12 @@ python -m pyflakes integrations agents scripts
   `python agents/ceo-daily-brief/agent.py --dry-run` (needs a `.env` with
   the real secrets: `cp .env.example .env`).
 - Local stack: `docker compose up -d` (Postgres + the API).
-- **New SAP data** = ask the gateway's maintainer for a new tool (written up
-  like `docs/sap-gateway-tools.md`), add its kind to `FULL_DATASETS` and
-  `EXPECTED_COLUMNS` in `integrations/sap/push_handler.py`, and a
-  `Push-CompleteTool` line in `push-ar-aging.ps1`.
+- **New SAP data** = a new gateway tool in `sap-gateway/src/` (one file per
+  tool, registered in `server.js` and `tools.js`, values as bound
+  parameters), its kind in `FULL_DATASETS` and `EXPECTED_COLUMNS` in
+  `integrations/sap/push_handler.py`, and a `Push-CompleteTool` line in
+  `push-ar-aging.ps1`. Then copy `sap-gateway/src/` to the gateway computer
+  and restart it.
 - **A new role:** `integrations/org_bot/roles.py` (selfcheck makes sure its
   labels agree everywhere).
 - **A new scheduled job:** add the agent to a list in

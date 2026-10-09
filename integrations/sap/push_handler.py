@@ -317,6 +317,7 @@ FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "service_calls": ("callID",),                  # OSCL
     "service_contracts": ("ContractID",),          # OCTR
     "stock_value": ("WhsCode",),                   # OITW summed per warehouse (gateway get_stock_value)
+    "supplier_balances": ("CardCode",),            # OCRD suppliers with a balance (gateway get_supplier_balances)
 }
 
 # The columns each complete gateway tool must send (docs/sap-gateway-tools.md).
@@ -330,6 +331,8 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
     "sales_lines": ("ObjType", "DocEntry", "LineNum", "ItemCode", "Dscription", "Quantity", "WhsCode", "CodeBars",
                     "LineTotal"),
     "stock_value": ("WhsCode", "WhsName", "Items", "OnHand", "StockValue"),
+    "supplier_balances": ("CardCode", "CardName", "LicTradNum", "CardType", "Currency", "Balance", "BalanceSys",
+                          "BalanceFC"),
 }
 
 

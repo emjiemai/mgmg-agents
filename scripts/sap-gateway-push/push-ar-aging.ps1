@@ -50,6 +50,8 @@ $ExpectedColumns = @{
         "CreateTS", "CANCELED", "DocCur", "DocTotal", "DocTotalFC", "DocTotalSy", "SlpCode", "UserSign", "LineNum",
         "ItemCode", "Dscription", "Quantity", "WhsCode", "CodeBars", "LineTotal")
     "get_stock_value" = @("WhsCode", "WhsName", "Items", "OnHand", "StockValue")
+    "get_supplier_balances" = @("CardCode", "CardName", "LicTradNum", "CardType", "Currency", "Balance",
+        "BalanceSys", "BalanceFC")
 }
 
 function Write-Log {
@@ -216,7 +218,7 @@ function Test-Setup {
         Write-Warning "  Gateway ($GatewayUrl): $($_.Exception.Message) -- is 'npm start' running, is the token right?"
         return
     }
-    foreach ($tool in @("get_open_invoices", "get_sales_by_date", "get_stock_value")) {
+    foreach ($tool in @("get_open_invoices", "get_sales_by_date", "get_stock_value", "get_supplier_balances")) {
         $body = '{}'
         if ($tool -eq "get_sales_by_date") {
             $first = (Get-Date).AddDays(-3).ToString("yyyy-MM-dd")
@@ -278,6 +280,7 @@ try {
     $to = (Get-Date).ToString("yyyy-MM-dd")
     [void](Push-CompleteTool -Tool "get_sales_by_date" -Body ('{"from":"' + $from + '","to":"' + $to + '"}') -Kinds @("sales", "sales_lines"))
     [void](Push-CompleteTool -Tool "get_stock_value" -Body '{}' -Kinds @("stock_value"))
+    [void](Push-CompleteTool -Tool "get_supplier_balances" -Body '{"limit":5000}' -Kinds @("supplier_balances") -Limit 5000)
 
     # Today's tools: at most 100 rows each (get_products answers HTTP 400 above 20).
     if (-not $openInvoices) { Push-Invoices }

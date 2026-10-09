@@ -62,8 +62,12 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   gateway's fixed tools** — never direct DB access or HANA credentials (the gateway owner's rules,
   `SAP_B1_AI_AGENT_TEACHING_UPDATED.md`; Abdulbosit (IT) runs it). Today's tools: 100-row cap →
   "камида". New data = a new gateway tool: `docs/sap-gateway-tools.md` specifies
-  `get_open_invoices`, `get_sales_by_date`, `get_stock_value` (→ `/webhooks/sap-data/...`); the
-  script uses each as soon as it exists.
+  `get_open_invoices`, `get_sales_by_date`, `get_stock_value`, `get_supplier_balances`
+  (→ `/webhooks/sap-data/...`); the script uses each as soon as it exists.
+- **The gateway's source is in this repo: `sap-gateway/`** (Node.js; the owner got admin access
+  2026-10-09). Edit there, then copy `src/` to the gateway computer and restart `npm start`. Its SQL
+  is checked against SAP's columns by selfcheck (`test_sap_gateway_code`); values are bound
+  parameters (`exec(sql, params)`). No Node on this PC — JS is syntax-checked with a parser only.
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).
 
 Status of the owner's 21-agent plan: `docs/agents-status.md` (running: H0, A1,
@@ -135,10 +139,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   and 1C both. No tool can write; the old one-source answer is the fallback.
 
 ## Open items
-- SAP: the three gateway tools work — push resumed 2026-10-06, every 30 min as Windows task
-  "MGMG SAP push" (`install-task.ps1`), all kinds 200. Still missing columns (so'm totals
-  `DocTotalFC`/`PaidFC`/`DocTotalSy`, `SlpName`, `CreateDate`/`CreateTS`) — ask Abdulbosit,
-  list in `docs/sap-gateway-tools.md` "As built vs this spec". Billz → SAP check is on **trial** (results to the admin) until the owner
+- SAP: push every 30 min as Windows task "MGMG SAP push" (`install-task.ps1`). The missing columns
+  (so'm totals, `SlpName`, `CreateDate`/`CreateTS`, `ObjType`, `CodeBars`, credit notes, entered-late
+  sales) and the new `get_supplier_balances` are **written in `sap-gateway/` (2026-10-09) but not yet
+  deployed**: copy `sap-gateway/src/` to the gateway computer, restart, run `push-ar-aging.ps1 -Check`
+  (the new push script too). Billz → SAP check is on **trial** (results to the admin) until the owner
   confirms them, then `BILLZ_SAP_CHECK_TRIAL=false`. Admin to tick "эркин график" people in `/grafik`.
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

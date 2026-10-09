@@ -1,4 +1,4 @@
-# SAP gateway — three tools the Command Center needs
+# SAP gateway — the tools the Command Center needs
 
 For: whoever maintains the local SAP gateway (Node.js, `localhost:3000`,
 `SAP_B1_AI_AGENT_TEACHING_UPDATED.md`).
@@ -128,6 +128,21 @@ ORDER BY T0."BalanceSys"
 Until the tool exists, the same query's result (or SAP's Business Partner
 list for suppliers with these columns), exported to Excel, does the job:
 `python scripts/ap_reconcile.py --onec-json … --sap that.xlsx`.
+
+## Status 2026-10-09 — written into the gateway, to deploy
+
+The gateway's source is now in this repository (`sap-gateway/`, admin access
+given to the owner on 2026-10-09), and the gaps below are fixed there:
+
+- `get_open_invoices`: + `DocTotalFC`, `PaidFC`, `DocTotalSy`, `PaidSys`, `SlpName` (OSLP join);
+- `get_sales_by_date`: + `ObjType`, `CreateDate`, `CreateTS`, `DocTotalFC`, `DocTotalSy`,
+  `UserSign`, `CodeBars`; credit notes (ORIN/RIN1) included; rows **dated or entered** in the
+  range; dates bound as parameters; at most 92 days;
+- `get_supplier_balances`: new (`src/supplier-balances.js`), pushed as `supplier_balances`.
+
+`get_stock_value` stays item rows; the receiver sums them per warehouse. To
+deploy: copy `sap-gateway/src/` over the gateway computer's `src/`, restart
+`npm start`, then `push-ar-aging.ps1 -Check` lists every tool's columns.
 
 ## As built vs this spec — checked against the database 2026-10-06
 
