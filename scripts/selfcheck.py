@@ -4248,9 +4248,16 @@ def test_sap_gateway_code() -> None:
                "Currency": "UZS", "Balance": "-800.00", "BalanceSys": "-9400000.00", "BalanceFC": "-9400000.00"},
               {"CardCode": "S002", "CardName": "Tanita", "LicTradNum": "", "CardType": "S", "Currency": "USD",
                "Balance": "-120.00", "BalanceSys": "-1410000.00", "BalanceFC": "-120.00"}]
-    parties, info = ar.sap_parties(pushed)
-    check("the gateway's suppliers: what we owe, in so'm, positive", (parties["S001"].owed, parties["S001"].inn, info["flipped"]),
-          (9400000.0, "301234567", True))
+    parties, info = ar.sap_parties(pushed, -1.0)
+    check("the gateway's suppliers read with their columns", (parties["S001"].owed, parties["S001"].inn), (9400000.0, "301234567"))
+    # SAP's sign is chosen by agreement with 1C, not by guessing (09.10.2026: an advance read as a debt)
+    onec = {"X": ar.OneCParty(key="X", name="Tovar-xomashyo birjasi", inn="200933985", advance=32419520.78)}
+    rows = [{"CardCode": "S9", "CardName": "Tovar-xomashyo birjasi", "LicTradNum": "200933985", "CardType": "S",
+             "Balance": "-2634.82", "BalanceSys": "-32419520.78"}]
+    sign, how = ar.choose_sign(onec, rows)
+    sap_side, _ = ar.sap_parties(rows, sign)
+    pair = [m for m in ar.match(onec, sap_side) if m.onec and m.sap][0]
+    check("an advance equal in both systems: no difference", (sign, round(pair.diff, 2), how["matched"]), (1.0, 0.0, 1))
 
 
 def test_sap_full_push() -> None:

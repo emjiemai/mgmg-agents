@@ -230,8 +230,14 @@ def find_columns(header: list[str]) -> dict[str, str]:
     return found
 
 
-def sap_parties(rows: list[dict[str, Any]]) -> tuple[dict[str, SapParty], dict[str, Any]]:
-    """The export → suppliers, with what we owe each in so'm when SAP gives it (its system currency)."""
+def sap_parties(rows: list[dict[str, Any]], sign: float | None = None) -> tuple[dict[str, SapParty], dict[str, Any]]:
+    """The export → suppliers, with what we owe each in so'm when SAP gives it (its system currency).
+
+    ``sign`` turns SAP's balance into "we owe = positive": -1 or +1. Left
+    None, the majority sign of the balances decides — which proved wrong on
+    the real data (09.10.2026: most suppliers hold an advance, stored
+    negative), so ``choose_sign`` decides it against 1C instead.
+    """
     if not rows:
         return {}, {"columns": {}, "flipped": False}
     columns = find_columns(list(rows[0]))
@@ -241,8 +247,9 @@ def sap_parties(rows: list[dict[str, Any]]) -> tuple[dict[str, SapParty], dict[s
                                     not in ("S", "SUPPLIER", "ПОСТАВЩИК", "ПОСТ."))]
     values = [num(r.get(columns.get("balance_sys") or columns["balance_lc"])) for r in kept]
     # SAP stores a supplier's balance as a credit: negative = we owe. Shown positive here.
-    flipped = sum(1 for v in values if v < 0) > sum(1 for v in values if v > 0)
-    sign = -1.0 if flipped else 1.0
+    if sign is None:
+        sign = -1.0 if sum(1 for v in values if v < 0) > sum(1 for v in values if v > 0) else 1.0
+    flipped = sign < 0
     found: dict[str, SapParty] = {}
     for r in kept:
         name = str(r.get(columns["name"], "") or "").strip()
@@ -270,6 +277,25 @@ class Match:
     @property
     def diff(self) -> float:
         return (self.onec.net if self.onec else 0.0) - (self.sap.owed if self.sap else 0.0)
+
+
+def choose_sign(onec: dict[str, OneCParty], rows: list[dict[str, Any]]) -> tuple[float, dict[str, Any]]:
+    """SAP's sign, read from the data: the one under which the suppliers found in both
+    systems agree with 1C (smallest total difference).
+
+    On 09.10.2026 the majority guess turned every advance into a debt: the
+    exchange's 32,419,520.78 advance, equal in both systems to the tiyin,
+    showed as a 64.8 mln "difference".
+    """
+    best: tuple[float, float, int] | None = None
+    for sign in (1.0, -1.0):
+        sap, _ = sap_parties(rows, sign)
+        pairs = [m for m in match(onec, sap) if m.onec and m.sap]
+        total = sum(abs(m.diff) for m in pairs)
+        if best is None or total < best[1]:
+            best = (sign, total, len(pairs))
+    assert best is not None
+    return best[0], {"sign_by_1c": True, "matched": best[2]}
 
 
 def tolerance(amount: float) -> float:
@@ -398,7 +424,8 @@ def write_workbook(pairs: list[Match], onec: dict[str, OneCParty], meta: dict[st
         f"Фарқ кичик бўлса (≤ {TOLERANCE_SOM:,.0f} сўм ёки 0,5 %) «Мос» деб олинади.",
         "Сабаб — тахмин, ҳукм эмас: ҳар бир фарқ бухгалтерия томонидан акт-сверка билан текширилади.",
         f"SAP устунлари топилди: {', '.join(f'{k}={v}' for k, v in meta.get('sap_columns', {}).items())}"
-        + ("; SAP қолдиқлари манфий эди — ишораси алмаштирилди" if meta.get("flipped") else ""),
+        + ("; SAP қолдиғининг ишораси алмаштирилди" if meta.get("flipped") else "")
+        + "; ишора 1C билан мос келишига қараб танланди",
     ):
         ws.append([line])
     wb.save(out)
@@ -425,7 +452,11 @@ def main() -> None:
     else:
         sap_rows = read_table(args.sap) if args.sap else []
         sap_source = args.sap.name if args.sap else "йўқ"
-    sap, info = sap_parties(sap_rows) if sap_rows else ({}, {"columns": {}, "flipped": False})
+    if sap_rows:
+        sign, _ = choose_sign(onec, sap_rows)
+        sap, info = sap_parties(sap_rows, sign)
+    else:
+        sap, info = {}, {"columns": {}, "flipped": False}
     counts = write_workbook(match(onec, sap), onec, {"onec_as_of": data.get("as_of", ""),
                                                      "sap_file": sap_source,
                                                      "sap_columns": info["columns"], "flipped": info["flipped"],
