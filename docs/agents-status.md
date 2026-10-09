@@ -56,7 +56,7 @@ keeps running (paused 2026-09-16, back on 2026-09-30).
 | C3 | Dead-stock sales | A gateway tool for slow-moving stock (OITW + last purchase dates) — `docs/sap-gateway-tools.md`, "Later" |
 | D1 | Stock & reorder signal | Gateway tools for item stock, sales lines (`get_sales_by_date`) and open purchase orders |
 | C2 | Sales forecast & targets | Sales per sales person over months (`get_sales_by_date` covers 31 days at a time) |
-| B3 | Reconciliation bank ↔ SAP ↔ 1C ↔ Didox | Access to the bank, 1C and Didox |
+| B3 | Reconciliation bank ↔ SAP ↔ 1C ↔ Didox — **started 2026-10-09**: supplier debt 1C ↔ SAP (`scripts/ap_reconcile.py`, `21-ap-reconcile.md`); the 1C side reads, the SAP side waits for gateway tool `get_supplier_balances` | SAP supplier balances from the gateway; bank and Didox access |
 | C1 | Lead collector (Telegram, WhatsApp, Instagram) — **in progress**: the Garmin AI bot (separate repo emjiemai/Garmin-AI-bot: Instagram Reels → web catalog → AI Telegram bot → manager) is live; since 2026-10-01 its leads are stored in the Command Center (`garmin_leads`, the Director asks "garmin lidlari") — `docs/agent-specs/14-garmin-leads.md` | WhatsApp Business API and Instagram access |
 | C4 | Service & contract reminders | Gateway tools for equipment cards (OINS — 1,678 machines in SAP), service calls (OSCL), contracts (OCTR) |
 | C5 | Customer win-back | Complete purchase history per customer from SAP (a gateway tool) |
