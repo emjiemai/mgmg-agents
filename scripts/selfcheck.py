@@ -3100,6 +3100,87 @@ def uuid_module():
     return uuid
 
 
+def test_ap_reconcile() -> None:
+    """2026-10-09: supplier debt, 1C against SAP B1 — read-only, matched by ИНН then name."""
+    print("supplier debt 1C vs SAP (scripts/ap_reconcile.py)")
+    import importlib.util
+    import inspect
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location("ap_reconcile", Path(__file__).resolve().parent / "ap_reconcile.py")
+    ar = importlib.util.module_from_spec(spec)
+    sys.modules["ap_reconcile"] = ar  # dataclasses look their module up there
+    spec.loader.exec_module(ar)
+
+    data = {
+        "as_of": "2026-10-09T10:00:00",
+        "chart": [{"Ref_Key": "a6010", "Code": "6010", "Description": "Поставщики"},
+                  {"Ref_Key": "a6015", "Code": "6015", "Description": "Поставщики (в валюте)"},
+                  {"Ref_Key": "a4310", "Code": "4310", "Description": "Авансы выданные"}],
+        "parties": [{"Ref_Key": "p1", "Description": "ООО «Primus Trade»", "ИНН": "301 234 567"},
+                    {"Ref_Key": "p2", "Description": "Электр Таъминот МЧЖ", "ИНН": ""},
+                    {"Ref_Key": "p3", "Description": "Только 1С", "ИНН": "999888777"}],
+        "currencies": [{"Ref_Key": "usd", "Description": "USD"}],
+        "rows": [
+            {"Account_Key": "a6010", "ExtDimension1": "p1", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+             "СуммаBalanceCr": 10_000_000, "СуммаBalanceDr": 0},
+            {"Account_Key": "a4310", "ExtDimension1": "p1", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+             "СуммаBalanceDr": 2_000_000, "СуммаBalanceCr": 0},
+            {"Account_Key": "a6015", "ExtDimension1": "p2", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+             "СуммаBalanceCr": 5_000_000, "ВалютнаяСуммаBalanceCr": 400, "Валюта_Key": "usd"},
+            {"Account_Key": "a6010", "ExtDimension1": "p3", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+             "СуммаBalanceCr": 700_000},
+            {"Account_Key": "a6010", "ExtDimension1": "x", "ExtDimension1_Type": "StandardODATA.Catalog_ФизическиеЛица",
+             "СуммаBalanceCr": 1},
+        ],
+    }
+    onec = ar.onec_parties(data)
+    check("1C: counterparties only (persons left out), payables minus advances",
+          {p.name: (p.payable, p.advance, p.net) for p in onec.values()},
+          {"ООО «Primus Trade»": (10_000_000, 2_000_000, 8_000_000), "Электр Таъминот МЧЖ": (5_000_000, 0, 5_000_000),
+           "Только 1С": (700_000, 0, 700_000)})
+    check("1C: currency debt kept in its currency", onec["p2"].payable_fc, {"USD": 400})
+    check("1C: debt and an advance at once is flagged (advance not offset)",
+          (onec["p1"].unoffset, onec["p2"].unoffset), (True, False))
+
+    # SAP's English export: supplier balances stored negative (credit) — shown positive
+    rows = [{"BP Code": "V001", "BP Name": "Primus Trade LLC", "Federal Tax ID": "301234567", "BP Type": "S",
+             "Account Balance": "-650.00", "Balance (SC)": "-8 000 000"},
+            {"BP Code": "V002", "BP Name": "Elektr Ta'minot", "Federal Tax ID": "", "BP Type": "S",
+             "Account Balance": "-380", "Balance (SC)": "-4 820 000"},
+            {"BP Code": "V003", "BP Name": "Faqat SAP", "Federal Tax ID": "", "BP Type": "S",
+             "Account Balance": "-20", "Balance (SC)": "-250 000"},
+            {"BP Code": "C001", "BP Name": "A customer", "Federal Tax ID": "", "BP Type": "C",
+             "Account Balance": "100", "Balance (SC)": "1 270 000"}]
+    sap, info = ar.sap_parties(rows)
+    check("SAP: suppliers only, credit shown as what we owe, in so'm",
+          ({k: v.owed for k, v in sap.items()}, info["flipped"]),
+          ({"V001": 8_000_000, "V002": 4_820_000, "V003": 250_000}, True))
+    pairs = ar.match(onec, sap)
+    by = {(m.onec.name if m.onec else None, m.sap.code if m.sap else None): m for m in pairs}
+    check_true("matched by ИНН (spaces ignored) and by the cleaned-up name (Latin → Cyrillic, no МЧЖ)",
+               by[("ООО «Primus Trade»", "V001")].by == "ИНН" and by[("Электр Таъминот МЧЖ", "V002")].by == "ном")
+    check("equal after advances: «Мос»", ar.reason(by[("ООО «Primus Trade»", "V001")]), "Мос")
+    check_true("a gap within 5% on a currency debt: exchange-rate reason",
+               ar.reason(by[("Электр Таъминот МЧЖ", "V002")]).startswith("Валюта курси"))
+    check_true("only in one system, each way", ar.reason(by[("Только 1С", None)]).startswith("Фақат 1C")
+               and ar.reason(by[(None, "V003")]).startswith("Фақат SAP"))
+    with tempfile.TemporaryDirectory() as folder:
+        out = Path(folder) / "x.xlsx"
+        counts = ar.write_workbook(pairs, onec, {"onec_as_of": data["as_of"], "sap_file": "sap.xlsx",
+                                                 "sap_columns": info["columns"], "flipped": True, "sap_rows": len(sap)}, out)
+        from openpyxl import load_workbook
+
+        sheets = load_workbook(out).sheetnames
+    check("the workbook: comparison, only-1C, only-SAP, 1C detail, notes", (sheets, counts),
+          (["Солиштириш", "Фақат 1C", "Фақат SAP", "1C тафсилот", "Изоҳ"],
+           {"matched": 2, "differ": 1, "only_1c": 1, "only_sap": 1}))
+    source = inspect.getsource(ar)
+    check_true("read-only: no write to 1C, the database or Telegram, and no amounts printed",
+               not any(w in source for w in ("execute(", "INSERT", ".post(", "send_message", "TelegramBot"))
+               and "counts only, never amounts" in source)
+
+
 def test_reports_off() -> None:
     """2026-10-06: the admin switches daily reports off for one person (/xodimlar → 📝)."""
     print("daily reports off per person")
@@ -4152,7 +4233,10 @@ def test_sap_full_push() -> None:
 
     # The SQL proposed to the gateway's maintainer reads only columns SAP has.
     blocks = re.findall(r"### \d+\. `(\w+)`.*?```sql\n(.*?)```", spec, flags=re.S)
-    check("one SQL template per tool", sorted(t for t, _ in blocks), sorted(tools))
+    # Tools specified but not pushed yet: asked of the gateway's maintainer, used by hand meanwhile.
+    asked = {"get_supplier_balances"}  # 2026-10-09, scripts/ap_reconcile.py (supplier debt 1C ↔ SAP)
+    check("one SQL template per tool (pushed, or asked and not yet built)",
+          sorted(t for t, _ in blocks), sorted(set(tools) | asked))
     wrong = []
     selected: dict[str, set[str]] = {}
     for tool, sql in blocks:
@@ -5048,6 +5132,7 @@ def main() -> int:
         test_it_restrictions,
         test_tech_report_errors_fixed,
         test_review_pages,
+        test_ap_reconcile,
         test_verifix,
         test_flexible_schedule,
         test_verifix_basic_login,

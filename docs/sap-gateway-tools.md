@@ -109,6 +109,26 @@ GROUP BY T0."WhsCode", T1."WhsName"
 ORDER BY T0."WhsCode"
 ```
 
+### 4. `get_supplier_balances` — supplier debt (asked 2026-10-09)
+
+For the Director's 1C ↔ SAP payables comparison (`scripts/ap_reconcile.py`,
+`docs/agent-specs/21-ap-reconcile.md`). One row per supplier with a balance.
+`Balance` is SAP's local currency (USD), `BalanceSys` its system currency
+(so'm) — the one compared with 1C; SAP keeps a supplier's credit balance
+negative (the script turns it round). Input `{}`.
+
+```sql
+SELECT T0."CardCode", T0."CardName", T0."LicTradNum", T0."CardType", T0."Currency",
+       T0."Balance", T0."BalanceSys", T0."BalanceFC"
+FROM "MGM"."OCRD" T0
+WHERE T0."CardType" = 'S' AND (T0."Balance" <> 0 OR T0."BalanceSys" <> 0)
+ORDER BY T0."BalanceSys"
+```
+
+Until the tool exists, the same query's result (or SAP's Business Partner
+list for suppliers with these columns), exported to Excel, does the job:
+`python scripts/ap_reconcile.py --onec-json … --sap that.xlsx`.
+
 ## As built vs this spec — checked against the database 2026-10-06
 
 For the gateway's maintainer. The pushes of 03.10 show the tools were added,
