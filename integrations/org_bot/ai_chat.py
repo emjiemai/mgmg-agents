@@ -41,11 +41,13 @@ DAILY_LIMIT = 60
 ANSWER_MAX = 3500
 
 _COMPANY = """\
-MGMG (ЭМЖИЕМ), Tashkent, has two business lines:
-- Primus Londry — industrial laundry equipment for hotels, hospitals,
-  laundries and factories: washer-extractors, tumble dryers, flatwork
-  ironers, chemicals; and services: laundry design, installation,
-  maintenance, spare parts. Sold B2B, mostly by recommendation.
+MGMG (ЭМЖИЕМ), Tashkent, has three businesses:
+- PRIMUS — industrial laundry equipment for hotels, hospitals, laundries and
+  factories: washer-extractors, tumble dryers, flatwork ironers, chemicals;
+  and services: laundry design, installation, maintenance, spare parts. Sold
+  B2B, mostly by recommendation.
+- LONDRY — the company's own self-service laundries (pay with tokens or
+  cash at the machines).
 - Garmin — an authorised Garmin retailer in Uzbekistan (smartwatches,
   running/outdoor/multisport watches, dive computers, cycling and marine
   electronics), with Tanita scales.

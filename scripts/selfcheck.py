@@ -3293,9 +3293,11 @@ def test_knowledge() -> None:
                and "NOT connected" in text and "Didox" in text and "Not used by the business: an in-house CRM" in text)
     check_true("the Director's words: дебитор, кредитор, аванс, касса, ҳисобот, солиштир",
                all(w in text for w in ("дебитор", "кредитор", "аванс", "касса", "ҳисобот", "солиштир", "акт-сверка")))
-    check_true("Londry is the brand (never 'Laundry' as a name)", "Primus Londry" in text and "never \"Laundry\"" in text)
+    check_true("three businesses: PRIMUS equipment, LONDRY self-service laundries, Garmin; never 'Laundry'",
+               all(w in text for w in ("PRIMUS", "LONDRY", "self-service laundries", "Garmin")) and "never \"Laundry\"" in text)
     check_true("no amounts in it (IT reads the file) — account codes and dates only",
-               not re.search(r"\d{1,3}(?:[ ,.]\d{3})+|\d{5,}", text))
+               not re.search(r"\d{1,3}(?:[ ,.]\d{3})+|\d{5,}",
+                             re.sub(r"\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2}", "", text)))
     for name, body in (("router", prompt.CLASSIFY_SYSTEM_PROMPT), ("one-source answer", prompt.ANSWER_SYSTEM_PROMPT),
                        ("analyst", analyst.ANALYST_SYSTEM_PROMPT)):
         check_true(f"the {name} prompt knows the company", text in body)

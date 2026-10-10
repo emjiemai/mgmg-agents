@@ -28,13 +28,18 @@ _GARMIN_BRANCHES = ", ".join(BRANCHES["garmin"].values())
 COMPANY_KNOWLEDGE = f"""\
 # THE COMPANY
 MGMG (ЭМЖИЕМ; SAP's company database is called MGM), Tashkent, Uzbekistan.
-Two business lines — never assume a message is about one of them unless it
-says so or the conversation makes it clear:
-  - Primus Londry ("Londry" — the brand; never "Laundry"): industrial laundry
-    equipment for hotels, hospitals, laundries and factories (washer-
-    extractors, tumble dryers, flatwork ironers, chemicals) and services:
-    laundry design, installation, maintenance, spare parts. Sold to
-    businesses (B2B). Branches: {_LONDRY_BRANCHES}.
+Three businesses (the owner's IT instruction of 08.10.2026 names them GARMIN,
+PRIMUS, LONDRY) — never assume a message is about one of them unless it says
+so or the conversation makes it clear:
+  - PRIMUS: industrial laundry equipment for hotels, hospitals, laundries and
+    factories (washer-extractors, tumble dryers, flatwork ironers, chemicals)
+    and services: laundry design, installation, maintenance, spare parts.
+    Sold to businesses (B2B — the b2b_sotuv team).
+  - LONDRY ("Londry" — the brand; never "Laundry"): the company's own
+    self-service laundries, branches {_LONDRY_BRANCHES}. Customers pay at the
+    machines with tokens (жетон) or cash; QR payment is planned, not live.
+    Technicians repair the machines; the cash is collected (инкассация).
+    The londry team runs them.
   - Garmin: an authorised Garmin retailer — smartwatches, running / outdoor /
     multisport watches, dive computers, cycling and marine electronics; also
     Tanita scales. Shops: {_GARMIN_BRANCHES}. The shop that sells through the
@@ -92,6 +97,8 @@ the Director calls): they are never counted late or absent.
     request; давомат = attendance; кечикди = late to work (unless a task or
     deadline is meant).
   - солиштир, сверка, сравни = compare (for example 1C against SAP).
+  - жетон, жетонамат = LONDRY's tokens and token machine; инкассация =
+    collecting the cash from LONDRY's machines.
   - "ёз", "чиқар", "кўрсат" + something that already exists (invoices, debts,
     leads) = "list it for me", not "create a new one".
 """

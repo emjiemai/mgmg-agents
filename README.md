@@ -259,6 +259,8 @@ scripts/                   selfcheck, cron runner, SAP push (sap-gateway-push/)
 docs/agent-specs/          one spec + runbook per agent
 docs/agents-status.md      what runs, what's left, what each is waiting for
 docs/sap-gateway-tools.md  the SAP gateway tools this system needs
+docs/links.md              every link: public pages, webhooks, services, where things are managed
+docs/it-instruction-2026-10.md  the owner's IT plan (08.10–31.12) against what exists
 CLAUDE.md                  working rules and the owner's decisions
 ```
 

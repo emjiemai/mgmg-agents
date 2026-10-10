@@ -146,6 +146,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (`director_clarifications`); never asks "which system?" or for a period.
 
 ## Open items
+- **The owner's IT instruction** (08.10–31.12.2026, received 10.10): phases Ф0–Ф3, 10 rules, 8 agents,
+  А1–А8 — mapped in `docs/it-instruction-2026-10.md` with the owner's open decisions (personal data
+  on a server in Uzbekistan + masking before AI — **not met today**; AmoCRM; who gets PULSE; n8n or
+  this service; Microsoft 365). Three businesses: GARMIN, PRIMUS (B2B equipment), LONDRY
+  (self-service laundries, tokens/cash). All links: `docs/links.md`.
 - SAP: push every 30 min as Windows task "MGMG SAP push" (`install-task.ps1`). The missing columns
   (so'm totals, `SlpName`, `CreateDate`/`CreateTS`, `ObjType`, `CodeBars`, credit notes, entered-late
   sales) and `get_supplier_balances` are written in `sap-gateway/` (2026-10-09); supplier balances
