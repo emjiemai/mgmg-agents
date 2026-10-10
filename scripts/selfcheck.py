@@ -4251,13 +4251,27 @@ def test_sap_gateway_code() -> None:
     parties, info = ar.sap_parties(pushed, -1.0)
     check("the gateway's suppliers read with their columns", (parties["S001"].owed, parties["S001"].inn), (9400000.0, "301234567"))
     # SAP's sign is chosen by agreement with 1C, not by guessing (09.10.2026: an advance read as a debt)
-    onec = {"X": ar.OneCParty(key="X", name="Tovar-xomashyo birjasi", inn="200933985", advance=32419520.78)}
-    rows = [{"CardCode": "S9", "CardName": "Tovar-xomashyo birjasi", "LicTradNum": "200933985", "CardType": "S",
-             "Balance": "-2634.82", "BalanceSys": "-32419520.78"}]
+    # (invented figures — no real supplier or amount in the repo, the Director's order of 07.10)
+    onec = {"X": ar.OneCParty(key="X", name="Namuna taminotchi", inn="300000001", advance=12345678.90)}
+    rows = [{"CardCode": "S9", "CardName": "Namuna taminotchi", "LicTradNum": "300000001", "CardType": "S",
+             "Balance": "-1003.71", "BalanceSys": "-12345678.90"}]
     sign, how = ar.choose_sign(onec, rows)
     sap_side, _ = ar.sap_parties(rows, sign)
     pair = [m for m in ar.match(onec, sap_side) if m.onec and m.sap][0]
     check("an advance equal in both systems: no difference", (sign, round(pair.diff, 2), how["matched"]), (1.0, 0.0, 1))
+    other = {"Y": ar.OneCParty(key="Y", name="Boshqa firma", inn="300000002", payable=500.0)}
+    sign, how = ar.choose_sign(other, rows)
+    check("no supplier in both systems: no sign claimed from 1C, majority fallback",
+          (sign, how["sign_by_1c"], ar.sap_parties(rows, sign)[1]["flipped"]), (None, False, True))
+    import tempfile as _tf
+
+    import openpyxl as _ox
+    with _tf.TemporaryDirectory() as folder:
+        out = Path(folder) / "k.xlsx"
+        ar.write_workbook([], other, {"onec_as_of": "", "sap_file": "x", "sap_columns": {}, "flipped": True,
+                                      "sign_by_1c": False, "sap_rows": 1}, out)
+        note = " ".join(str(c.value or "") for row in _ox.load_workbook(out)["Изоҳ"].iter_rows() for c in row)
+    check("the workbook says when the sign was not checked against 1C", "кўпчилик қолдиққа қараб" in note, True)
 
 
 def test_sap_full_push() -> None:

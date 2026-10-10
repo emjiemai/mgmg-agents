@@ -114,8 +114,9 @@ ORDER BY T0."WhsCode"
 For the Director's 1C ↔ SAP payables comparison (`scripts/ap_reconcile.py`,
 `docs/agent-specs/21-ap-reconcile.md`). One row per supplier with a balance.
 `Balance` is SAP's local currency (USD), `BalanceSys` its system currency
-(so'm) — the one compared with 1C; SAP keeps a supplier's credit balance
-negative (the script turns it round). Input `{}`.
+(so'm) — the one compared with 1C; on the 09.10 data a debt to a supplier is
+positive and an advance negative — the script checks the sign against 1C
+(`choose_sign`) rather than assuming it. Input `{}`.
 
 ```sql
 SELECT T0."CardCode", T0."CardName", T0."LicTradNum", T0."CardType", T0."Currency",

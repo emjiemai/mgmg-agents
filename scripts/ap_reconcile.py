@@ -246,7 +246,7 @@ def sap_parties(rows: list[dict[str, Any]], sign: float | None = None) -> tuple[
     kept = [r for r in rows if not ("card_type" in columns and str(r.get(columns["card_type"], "")).strip().upper()
                                     not in ("S", "SUPPLIER", "ПОСТАВЩИК", "ПОСТ."))]
     values = [num(r.get(columns.get("balance_sys") or columns["balance_lc"])) for r in kept]
-    # SAP stores a supplier's balance as a credit: negative = we owe. Shown positive here.
+    # Fallback only (no supplier in both systems): the majority sign is taken as "we owe".
     if sign is None:
         sign = -1.0 if sum(1 for v in values if v < 0) > sum(1 for v in values if v > 0) else 1.0
     flipped = sign < 0
@@ -279,13 +279,14 @@ class Match:
         return (self.onec.net if self.onec else 0.0) - (self.sap.owed if self.sap else 0.0)
 
 
-def choose_sign(onec: dict[str, OneCParty], rows: list[dict[str, Any]]) -> tuple[float, dict[str, Any]]:
+def choose_sign(onec: dict[str, OneCParty], rows: list[dict[str, Any]]) -> tuple[float | None, dict[str, Any]]:
     """SAP's sign, read from the data: the one under which the suppliers found in both
     systems agree with 1C (smallest total difference).
 
-    On 09.10.2026 the majority guess turned every advance into a debt: the
-    exchange's 32,419,520.78 advance, equal in both systems to the tiyin,
-    showed as a 64.8 mln "difference".
+    On 09.10.2026 the majority guess turned every advance into a debt, so an
+    advance equal in both systems showed as twice its size in "difference".
+    With no supplier in both systems there is nothing to agree on: None, and
+    ``sap_parties`` falls back to the majority guess (the workbook says so).
     """
     best: tuple[float, float, int] | None = None
     for sign in (1.0, -1.0):
@@ -295,6 +296,8 @@ def choose_sign(onec: dict[str, OneCParty], rows: list[dict[str, Any]]) -> tuple
         if best is None or total < best[1]:
             best = (sign, total, len(pairs))
     assert best is not None
+    if best[2] == 0:
+        return None, {"sign_by_1c": False, "matched": 0}
     return best[0], {"sign_by_1c": True, "matched": best[2]}
 
 
@@ -425,7 +428,8 @@ def write_workbook(pairs: list[Match], onec: dict[str, OneCParty], meta: dict[st
         "Сабаб — тахмин, ҳукм эмас: ҳар бир фарқ бухгалтерия томонидан акт-сверка билан текширилади.",
         f"SAP устунлари топилди: {', '.join(f'{k}={v}' for k, v in meta.get('sap_columns', {}).items())}"
         + ("; SAP қолдиғининг ишораси алмаштирилди" if meta.get("flipped") else "")
-        + "; ишора 1C билан мос келишига қараб танланди",
+        + ("; ишора 1C билан мос келишига қараб танланди" if meta.get("sign_by_1c")
+           else "; иккала тизимда ҳам бор етказиб берувчи йўқ — ишора кўпчилик қолдиққа қараб олинди"),
     ):
         ws.append([line])
     wb.save(out)
@@ -453,13 +457,15 @@ def main() -> None:
         sap_rows = read_table(args.sap) if args.sap else []
         sap_source = args.sap.name if args.sap else "йўқ"
     if sap_rows:
-        sign, _ = choose_sign(onec, sap_rows)
+        sign, how = choose_sign(onec, sap_rows)
         sap, info = sap_parties(sap_rows, sign)
+        info["sign_by_1c"] = how["sign_by_1c"]
     else:
         sap, info = {}, {"columns": {}, "flipped": False}
     counts = write_workbook(match(onec, sap), onec, {"onec_as_of": data.get("as_of", ""),
                                                      "sap_file": sap_source,
                                                      "sap_columns": info["columns"], "flipped": info["flipped"],
+                                                     "sign_by_1c": info.get("sign_by_1c", False),
                                                      "sap_rows": len(sap)},
                             args.out)
     print("written", args.out, counts)  # counts only, never amounts

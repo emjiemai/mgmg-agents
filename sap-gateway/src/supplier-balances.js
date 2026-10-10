@@ -6,7 +6,8 @@ import { exec, normalizeLimit, tableRef } from './query.js';
  *
  * Balance is SAP's local currency (USD here), BalanceSys its system currency
  * (so'm, the figure compared with 1C), BalanceFC the partner's own currency.
- * SAP keeps money owed to a supplier as a negative (credit) balance.
+ * The sign is checked against 1C by ap_reconcile.py (on 09.10.2026 a debt
+ * was positive and an advance negative).
  * LicTradNum is the tax id (ИНН/СТИР) used to pair suppliers with 1C.
  */
 export async function getSupplierBalances({ limit = 5000 } = {}) {
