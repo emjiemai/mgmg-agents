@@ -75,7 +75,8 @@ def latin_words(text: str, allow: set[str] | None = None) -> list[str]:
     """
     import re
 
-    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "Londry", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot", "Verifix"}
+    allowed = {"CEO", "IT", "KPI", "SAP", "CRM", "HR", "AI", "QR", "Garmin", "Londry", "EMJ", "SOP", "ADM", "OPS", "Admin", "Bot", "Verifix",
+               "Billz", "C"}  # brands; "C" is 1C's
     allowed |= allow or set()
     # Telegram commands (/ismlar, /bekor) can only be Latin.
     plain = re.sub(r"/[a-z_]+", " ", re.sub(r"<[^>]+>", " ", text))
@@ -2958,13 +2959,30 @@ def test_analyst() -> None:
         check_true("asked in words: a text comparison, no file", "agree 1, differ 1" in text and files == [])
         asyncio.run(analyst.supplier_debt_compare({"excel": True}))
         asyncio.run(analyst.supplier_debt_compare({"excel": True}))
-        check_true("excel=true: one .xlsx for the answer (asked twice, sent once)",
-                   len(files) == 1 and files[0][1].startswith("kreditorlik-1C-SAP-") and files[0][1].endswith(".xlsx")
-                   and files[0][0][:2] == b"PK")
+        check_true("excel=true: the .xlsx in Uzbek and in Russian (asked twice, sent once each)",
+                   [f[1][:20] for f in files] == ["kreditorlik-1C-SAP-2", "kreditorskaya-1C-SAP"]
+                   and files[1][1].endswith("-RU.xlsx") and all(f[0][:2] == b"PK" for f in files))
+        ru_book = _load_wb(io.BytesIO(files[1][0]))
+        check_true("the Russian workbook: Russian sheets, headers and reasons, and the column explanations under each table",
+                   ru_book.sheetnames == ["Сверка", "Только в 1С", "Только в SAP", "1С детализация", "Пояснения"]
+                   and ru_book["Сверка"]["K1"].value == "Вероятная причина"
+                   and any(c.value == "Суммы различаются: в одной системе нет документа или оплаты, либо сумма другая — нужен акт сверки"
+                           for c in ru_book["Сверка"]["K"])
+                   and any(c.value == "ПОЯСНЕНИЕ К СТОЛБЦАМ" for c in ru_book["Сверка"]["A"])
+                   and any("«К оплате»" in str(c.value or "") for row in ru_book["Сверка"].iter_rows() for c in row))
+        uz_book = _load_wb(io.BytesIO(files[0][0]))
+        check_true("the Uzbek workbook explains its columns too, with SAP's own column names",
+                   any(c.value == "УСТУНЛАР ИЗОҲИ" for c in uz_book["Солиштириш"]["A"])
+                   and any("«Название поставщика»" in str(c.value or "") for row in uz_book["Солиштириш"].iter_rows() for c in row))
         files.clear()
         analyst._wants_file.set(True)
         asyncio.run(analyst.supplier_debt_compare({}))
-        check("the Director's own word «солиштир» sends the file even if the model forgot", len(files), 1)
+        check("the Director's own word «солиштир» sends the files even if the model forgot", len(files), 2)
+        files.clear()
+        analyst._lang.set("ru")
+        asyncio.run(analyst.supplier_debt_compare({"excel": True}))
+        check("someone who reads Russian gets the Russian file first", files[0][1].endswith("-RU.xlsx"), True)
+        analyst._lang.set("uz")
     finally:
         analyst._files.set(None)
         analyst._wants_file.set(False)
@@ -3287,6 +3305,260 @@ def uuid_module():
     import uuid
 
     return uuid
+
+
+def test_data_access() -> None:
+    """2026-10-10, the Director: accounting and finance look up 1C, SAP and Billz through the bot."""
+    print("data access for accounting and finance")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import admin, ai_chat, analyst, data_access, ops_manager, store, tech_report
+
+    root = Path(__file__).resolve().parents[1]
+    acc = {"id": "11111111-2222-3333-4444-555555555555", "telegram_user_id": 501, "status": "active",
+           "role": "buxgalteriya", "full_name": "Синов Бухгалтер", "display_name": "S", "data_access": ["sap", "1c", "x"],
+           "lang": "ru"}
+    check("granted: only known systems, only Бухгалтерия / Молия, only active",
+          (data_access.granted(acc), data_access.granted({**acc, "role": "it"}),
+           data_access.granted({**acc, "status": "revoked"})), ({"sap", "1c"}, set(), set()))
+    buttons = data_access.card_buttons(acc)
+    check_true("the card: one toggle per system, each within Telegram's 64 bytes",
+               [b["text"] for b in buttons] == ["✅ SAP", "✅ 1C", "▫️ Billz"]
+               and all(len(b["callback_data"].encode()) <= 64 for b in buttons))
+    check("no toggles for other roles", data_access.card_buttons({**acc, "role": "it"}), [])
+    text, keyboard = data_access.director_notice(acc, "admin1")
+    check_true("the Director is told who, which systems, by whom — with ⛔ to close it",
+               "Синов Бухгалтер (Бухгалтерия)" in text and "SAP, 1C" in text and "admin1" in text
+               and keyboard["inline_keyboard"][0][0]["callback_data"] == f"dax:{acc['id']}")
+    check_true("the person is told in their language",
+               "доступ к данным" in data_access.employee_notice(acc)
+               and "маълумотларини сўраш" in data_access.employee_notice({**acc, "lang": "uz"}))
+
+    names = lambda scope: [t["function"]["name"] for t in analyst.tools_for(scope)]  # noqa: E731
+    check("Billz only: Billz's tool (and which systems are connected)", names({"billz"}), ["data_sources", "billz_sales"])
+    check_true("SAP + 1C: their tools and the supplier-debt comparison",
+               {"sap_receivables", "sap_records", "onec_balances", "onec_turnovers", "supplier_debt_compare"} <= set(names({"sap", "1c"}))
+               and "supplier_debt_compare" not in names({"sap"}))
+    check_true("never attendance or the bot's own records for an employee — whatever is given",
+               not {"attendance", "company_data"} & set(names({"sap", "1c", "billz"})))
+    check("the Director keeps every tool", len(analyst.tools_for(None)), len(analyst.TOOLS))
+    check_true("every tool says which systems it reads", set(analyst.TOOL_SYSTEMS) == analyst.TOOL_NAMES)
+    refused = asyncio.run(analyst.run_tool("attendance", {}, allowed={"billz_sales"}))
+    check_true("a tool outside the grant is refused in code, whatever the model asks", "not in this person's access" in refused)
+
+    # the loop for an employee: their prompt and language, only their tools, a sneaked call refused
+    seen: dict = {}
+    ran: list[str] = []
+
+    class FakeAI:
+        def __init__(self, *args, **kwargs):
+            self.turn = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def chat(self, messages, tools=None):
+            self.turn += 1
+            if self.turn == 1:
+                seen["system"], seen["tools"] = messages[0]["content"], [t["function"]["name"] for t in tools]
+                return {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {"name": "attendance", "arguments": "{}"}},
+                    {"id": "b", "type": "function", "function": {"name": "onec_balances", "arguments": '{"account_prefix": "60"}'}}]}
+            seen["results"] = [m["content"] for m in messages if m.get("role") == "tool"]
+            return {"role": "assistant", "content": "Кредиторская задолженность по 1С: …"}
+
+    async def fake_handler_factory(name):
+        async def run(args):
+            ran.append(name)
+            return f"{name} data"
+        return run
+
+    async def handlers():
+        return {n: await fake_handler_factory(n) for n in analyst.HANDLERS}
+
+    saved = [(analyst, "OpenRouterClient", analyst.OpenRouterClient), (analyst, "HANDLERS", analyst.HANDLERS)]
+    analyst.OpenRouterClient = FakeAI
+    analyst.HANDLERS = asyncio.run(handlers())
+    try:
+        result = asyncio.run(analyst.answer("кредиторка?", "", uuid.uuid4(), employee=acc, scope={"sap", "1c"}))
+        check_true("the employee's prompt: their name, role and access, in Russian",
+                   "Синов Бухгалтер — Бухгалтерия" in seen["system"] and "SAP, 1C" in seen["system"]
+                   and "LANGUAGE — THIS PERSON: RUSSIAN" in seen["system"])
+        check_true("only their tools offered", "attendance" not in seen["tools"] and "company_data" not in seen["tools"]
+                   and "onec_balances" in seen["tools"])
+        check("a sneaked attendance call never runs; the granted one does", ran, ["onec_balances"])
+        check_true("...and the model is told it's not in their access",
+                   "not in this person's access" in seen["results"][0] and result.text.startswith("Кредиторская"))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the bot: their messages go to the analyst; a reply to a task card stays with the work AI
+    asked: list = []
+    replies: list = []
+    sent: list = []
+    work_ai: list = []
+
+    async def fake_answer(question, history, run_id, hint=None, *, employee=None, scope=None):
+        asked.append((question, employee["telegram_user_id"], sorted(scope)))
+        return analyst.Answer(text="Ответ", tools=["onec_balances"], rounds=2, files=[(b"PK", "x-RU.xlsx")])
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+        replies.append((chat_id, text))
+        return [1]
+
+    async def fake_send_files(chat_id, run_id, files):
+        sent.append((chat_id, [f[1] for f in files]))
+
+    async def fake_work_ai(employee, text, task, run_id):
+        work_ai.append(text)
+
+    async def zero(*args, **kwargs):
+        return 0
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    async def no_turns(*args, **kwargs):
+        return []
+
+    saved = [(analyst, "answer", analyst.answer), (ops_manager, "_reply", ops_manager._reply),
+             (ops_manager, "_send_files", ops_manager._send_files), (ops_manager, "_answer_ai_chat", ops_manager._answer_ai_chat),
+             (ops_manager, "_show_typing", ops_manager._show_typing), (ops_manager, "log_action", ops_manager.log_action),
+             (store, "ai_questions_today", store.ai_questions_today), (store, "recent_ai_turns", store.recent_ai_turns),
+             (store, "log_ai_turn", store.log_ai_turn)]
+    analyst.answer, ops_manager._reply, ops_manager._send_files = fake_answer, fake_reply, fake_send_files
+    ops_manager._answer_ai_chat, ops_manager._show_typing, ops_manager.log_action = fake_work_ai, nothing, nothing
+    store.ai_questions_today, store.recent_ai_turns, store.log_ai_turn = zero, no_turns, nothing
+    try:
+        outcome = asyncio.run(ops_manager._route_to_ai(acc, "кредиторка?", None, uuid.uuid4(), None))
+        check("a granted person's message goes to the analyst with their systems",
+              (outcome, asked), ("data_question", [("кредиторка?", 501, ["1c", "sap"])]))
+        check_true("the answer and the files go to them, not the Director",
+                   replies == [(501, "Ответ")] and sent == [(501, ["x-RU.xlsx"])])
+        asyncio.run(ops_manager._route_to_ai(acc, "по задаче", {"task_summary": "x"}, uuid.uuid4(), None))
+        check("a reply to a task card stays with the work AI", work_ai, ["по задаче"])
+        asyncio.run(ops_manager._route_to_ai({**acc, "data_access": []}, "салом", None, uuid.uuid4(), None))
+        check("no access: the work AI as before", work_ai[-1], "салом")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the Director's ⛔
+    told: list = []
+    director = {"telegram_user_id": 9, "role": "operatsion_direktor", "status": "active"}
+
+    async def get_by_tg(tg):
+        return director if tg == 9 else {**acc, "telegram_user_id": tg}
+
+    async def clear(employee_id, by):
+        told.append(("cleared", by))
+        return {**acc, "data_access": []}
+
+    async def tell_admin(text, run_id):
+        told.append(("admin", text))
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def _edit_message(self, **kwargs):
+            told.append(("edited", kwargs["text"]))
+
+        async def _answer_callback(self, *args):
+            return None
+
+    saved = [(store, "get_employee_by_telegram_id", store.get_employee_by_telegram_id), (store, "clear_data_access", store.clear_data_access),
+             (admin, "tell_admin", admin.tell_admin), (ops_manager, "TelegramBot", ops_manager.TelegramBot),
+             (ops_manager, "_reply", ops_manager._reply), (ops_manager, "log_action", ops_manager.log_action)]
+    store.get_employee_by_telegram_id, store.clear_data_access, admin.tell_admin = get_by_tg, clear, tell_admin
+    ops_manager.TelegramBot, ops_manager._reply, ops_manager.log_action = FakeBot, fake_reply, nothing
+    replies.clear()
+    try:
+        tap = {"id": "q", "data": f"dax:{acc['id']}", "from": {"id": 9}, "message": {"message_id": 3, "chat": {"id": 9}}}
+        check("the Director closes it with one tap", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "data_access_closed")
+        check_true("...the card says so, the person and the admin are told",
+                   ("cleared", "director:9") in told and any(k == "edited" and "ёпилди" in v for k, v in told)
+                   and replies and "закрыт" in replies[-1][1] and any(k == "admin" for k, _ in told))
+        stranger = {**tap, "from": {"id": 501}}
+        check("nobody else can use that button", asyncio.run(ops_manager._handle_callback(stranger, uuid.uuid4())), "unrecognized")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # Admin Bot: the card and its buttons
+    text, keyboard = admin.employee_card(acc)
+    datas = [b["callback_data"] for row in keyboard["inline_keyboard"] for b in row]
+    check_true("an accountant's card: the access line, three toggles and the AI language",
+               "Маълумотга кириш (бот орқали): SAP, 1C" in text and "AI жавоб тили: русча" in text
+               and f"dacc:billz:{acc['id']}" in datas and f"lng:{acc['id']}" in datas)
+    it_text, it_keyboard = admin.employee_card({**acc, "role": "it", "data_access": []})
+    check_true("IT's own card: no toggles (IT sees no figures)",
+               "фақат Бухгалтерия ва Молия учун" in it_text
+               and not any(str(b["callback_data"]).startswith("dacc:") for row in it_keyboard["inline_keyboard"] for b in row))
+    events: list = []
+
+    async def get_employee(employee_id):
+        return acc
+
+    async def toggle(employee_id, system, by):
+        events.append(("toggle", system))
+        return {**acc, "data_access": ["sap", "1c", "billz"]} if system == "billz" else None
+
+    async def to_director(employee, by, run_id):
+        events.append(("director", data_access.label(data_access.granted(employee))))
+
+    async def to_employee(tg, text, run_id):
+        events.append(("employee", tg))
+
+    async def quiet(*args, **kwargs):
+        return None
+
+    saved = [(store, "get_employee", store.get_employee), (store, "toggle_data_access", store.toggle_data_access),
+             (admin, "_tell_director_data_access", admin._tell_director_data_access), (admin, "_tell_employee", admin._tell_employee),
+             (admin, "_edit", admin._edit), (admin, "_answer", admin._answer), (admin, "log_action", admin.log_action)]
+    store.get_employee, store.toggle_data_access = get_employee, toggle
+    admin._tell_director_data_access, admin._tell_employee = to_director, to_employee
+    admin._edit, admin._answer, admin.log_action = quiet, quiet, quiet
+    try:
+        out = asyncio.run(admin._handle_employee_action("dacc", f"billz:{acc['id']}", "q", "admin1", {}, uuid.uuid4()))
+        check("admin gives Billz: the Director and the person are told",
+              (out, events), ("employee_dacc", [("toggle", "billz"), ("director", "SAP, 1C, Billz"), ("employee", 501)]))
+        events.clear()
+        check("a role without access is refused, nobody told",
+              (asyncio.run(admin._handle_employee_action("dacc", f"sap:{acc['id']}", "q", "admin1", {}, uuid.uuid4())), events),
+              ("data_access_refused", [("toggle", "sap")]))
+        check("an unknown system is refused before anything",
+              asyncio.run(admin._handle_employee_action("dacc", f"hana:{acc['id']}", "q", "admin1", {}, uuid.uuid4())), "unrecognized")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    check_true("the work AI answers in Russian for someone set to Russian",
+               ai_chat.RUSSIAN in ai_chat.system_prompt(acc, "ctx")
+               and ai_chat.RUSSIAN not in ai_chat.system_prompt({**acc, "lang": "uz"}, "ctx"))
+    schema = (root / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("the database keeps who has which system and their language",
+               "ADD COLUMN IF NOT EXISTS data_access TEXT[] NOT NULL DEFAULT '{}'" in schema
+               and "ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uz'" in schema)
+    store_src = (root / "integrations" / "org_bot" / "store.py").read_text(encoding="utf-8")
+    check_true("the database refuses a grant outside Бухгалтерия / Молия, and every change is logged",
+               "role = ANY(%(roles)s)" in store_src and store_src.count('"data_access",') >= 2)
+    from datetime import datetime, timezone
+
+    r = tech_report.TechReport(at=datetime(2026, 10, 10, 8, 0, tzinfo=timezone.utc))
+    r.data_access = 2
+    check_true("IT's report counts people with data access (no names)", "маълумотга кириши бор ходимлар: 2 киши" in tech_report.render(r))
 
 
 def test_backup() -> None:
@@ -5605,6 +5877,7 @@ def main() -> int:
         test_it_restrictions,
         test_tech_report_errors_fixed,
         test_review_pages,
+        test_data_access,
         test_backup,
         test_knowledge,
         test_ap_reconcile,

@@ -2036,6 +2036,56 @@ async def toggle_ai_chat(employee_id: str, changed_by: str) -> dict[str, Any] | 
     return after
 
 
+async def toggle_data_access(employee_id: str, system: str, changed_by: str) -> dict[str, Any] | None:
+    """Give or take one system ('sap', '1c', 'billz') for one person — only Бухгалтерия and Молия; logged.
+
+    None if that person isn't active, isn't in those roles, or the system is unknown.
+    """
+    from integrations.org_bot.data_access import ROLES, SYSTEMS  # local: data_access imports nothing from here
+
+    if system not in SYSTEMS:
+        return None
+    before = await fetch_one("SELECT data_access FROM employees WHERE id = %s", (employee_id,))
+    after = await fetch_one(
+        """
+        UPDATE employees SET data_access = CASE WHEN %(s)s = ANY(data_access) THEN array_remove(data_access, %(s)s)
+                                                ELSE array_append(data_access, %(s)s) END
+        WHERE id = %(id)s AND status = 'active' AND role = ANY(%(roles)s)
+        RETURNING *
+        """,
+        {"s": system, "id": employee_id, "roles": list(ROLES)},
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "data_access", ",".join(sorted((before or {}).get("data_access") or [])),
+                                  ",".join(sorted(after["data_access"])), changed_by)
+    return after
+
+
+async def clear_data_access(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Close all of one person's data access (the Director's button); logged. None if there was none."""
+    before = await fetch_one("SELECT data_access FROM employees WHERE id = %s", (employee_id,))
+    after = await fetch_one(
+        "UPDATE employees SET data_access = '{}' WHERE id = %s AND cardinality(data_access) > 0 RETURNING *",
+        (employee_id,),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "data_access", ",".join(sorted((before or {}).get("data_access") or [])),
+                                  "", changed_by)
+    return after
+
+
+async def toggle_lang(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """Switch the AI's language for one person: Uzbek ↔ Russian; logged."""
+    after = await fetch_one(
+        "UPDATE employees SET lang = CASE WHEN lang = 'ru' THEN 'uz' ELSE 'ru' END WHERE id = %s AND status = 'active' "
+        "RETURNING *",
+        (employee_id,),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "lang", None, after["lang"], changed_by)
+    return after
+
+
 async def toggle_cheer(employee_id: str, changed_by: str) -> dict[str, Any] | None:
     """Switch the 10:00 / 17:35 cheer messages off for one person, or back on; logged."""
     after = await fetch_one(

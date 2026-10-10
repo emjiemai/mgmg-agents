@@ -25,7 +25,7 @@ from integrations.common.config import settings
 from integrations.common.db import log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import now_local, today_local
-from integrations.org_bot import store
+from integrations.org_bot import data_access, store
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS, ROLE_SLUGS, ROLES
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
@@ -539,6 +539,8 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         lines.append(f"Кайфият хабарлари (10:00, 17:35): {'ўчирилган' if emp.get('cheer_off') else 'ёқилган'}")
         lines.append(f"Кунлик ҳисобот (16:00): {'ўчирилган' if emp.get('reports_off') else 'ёқилган'}")
         lines.append(f"Вазифалари: {'юкланган' if (emp.get('responsibilities') or '').strip() else 'ҳали юкланмаган'}")
+        lines.append(f"AI жавоб тили: {data_access.lang_label(emp)}")
+        lines.append(data_access.card_line(emp))
     if note:
         lines += ["", note]
     employee_id = emp["id"]
@@ -565,6 +567,12 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         # Daily reports off for this person: no 16:00 ask, no 17:00 reminder, never counted as missed.
         rows.append([{"text": f"📝 Кунлик ҳисобот: {'⛔ ўчирилган' if emp.get('reports_off') else '✅ ёқилган'}",
                       "callback_data": f"rpof:{employee_id}"}])
+        # The AI answers in Uzbek, or Russian for someone who reads it better (2026-10-10).
+        rows.append([{"text": f"🌐 AI тили: {data_access.lang_label(emp)}", "callback_data": f"lng:{employee_id}"}])
+        # Company data through the bot — Бухгалтерия and Молия only; the Director is told (data_access.py).
+        access_buttons = data_access.card_buttons(emp)
+        if access_buttons:
+            rows.append(access_buttons)
     rows += [
         [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
         [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
@@ -867,6 +875,34 @@ async def _edit(callback: dict[str, Any], text: str, keyboard: dict[str, Any], r
         )
 
 
+async def tell_admin(text: str, run_id: uuid.UUID) -> None:
+    """A short notice to the admin in Admin Bot (no figures)."""
+    async with TelegramBot(
+        agent=AGENT,
+        run_id=run_id,
+        bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        try:
+            await bot.send_message(text)
+        except TelegramError as exc:
+            log.warning("Could not message the admin: {}", exc)
+
+
+async def _tell_director_data_access(employee: dict[str, Any], by: str, run_id: uuid.UUID) -> None:
+    """Every data-access change goes to the Director in OPS Manager Bot, with ⛔ to close it (data_access.py)."""
+    text, keyboard = data_access.director_notice(employee, by)
+    directors = await store.active_employees_by_role(DIRECTOR_ROLE)
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for director in directors:
+            try:
+                await bot.send_message(text, chat_id=str(director["telegram_user_id"]), reply_markup=keyboard)
+            except TelegramError as exc:
+                log.warning("Could not tell the Director about data access: {}", exc)
+
+
 async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) -> None:
     """Message an employee on OPS Manager Bot — the chat they already use."""
     async with TelegramBot(
@@ -880,7 +916,7 @@ async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) ->
 
 EMPLOYEE_ACTIONS = (
     "emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun", "addr", "aich", "chof",
-    "rpof",
+    "rpof", "lng", "dacc",
 )
 
 
@@ -900,11 +936,17 @@ async def _handle_employee_action(
         return "employee_list"
 
     role_slug = None
+    system = None
     employee_id = target
     if action == "cr":
         role_slug, _, employee_id = target.partition(":")
         if role_slug not in ROLE_SLUGS:
             await _answer(query_id, "Номаълум роль")
+            return "unrecognized"
+    if action == "dacc":
+        system, _, employee_id = target.partition(":")
+        if system not in data_access.SYSTEMS:
+            await _answer(query_id, "Номаълум тизим")
             return "unrecognized"
 
     employee = await store.get_employee(employee_id)
@@ -979,6 +1021,29 @@ async def _handle_employee_action(
             else "🤖 AI ёрдамчи ёқилди."
         text, keyboard = employee_card(updated, note)
         await _edit(callback, text, keyboard, run_id)
+    elif action == "lng":
+        updated = await store.toggle_lang(employee_id, decided_by)
+        if updated is None:
+            await _answer(query_id, "Ходим топилмади")
+            return "not_found"
+        text, keyboard = employee_card(updated, f"🌐 AI энди {data_access.lang_label(updated)} жавоб беради.")
+        await _edit(callback, text, keyboard, run_id)
+    elif action == "dacc":
+        updated = await store.toggle_data_access(employee_id, system, decided_by)
+        if updated is None:
+            await _answer(query_id, "Фақат Бухгалтерия ва Молия учун")
+            return "data_access_refused"
+        have = data_access.granted(updated)
+        note = (f"🔐 Бот орқали маълумот: {data_access.label(have)}. Директорга хабар берилди."
+                if have else "🔐 Бот орқали маълумотга кириш ёпилди. Директорга хабар берилди.")
+        text, keyboard = employee_card(updated, note)
+        await _edit(callback, text, keyboard, run_id)
+        await _tell_director_data_access(updated, decided_by, run_id)
+        await _tell_employee(updated["telegram_user_id"], data_access.employee_notice(updated), run_id)
+        await log_action(
+            agent=AGENT, action="data_access_changed", target_system="postgres", status="success", run_id=run_id,
+            target_ref=employee_id, mode="write", payload={"by": decided_by, "systems": sorted(have)},
+        )
     elif action == "addr":
         updated = await store.cycle_address_form(employee_id, decided_by)
         if updated is None:
@@ -996,6 +1061,12 @@ async def _handle_employee_action(
             await _answer(query_id, "Роль ўзгармади")
             return "role_unchanged"
         before, after = changed
+        # Data access belongs to Бухгалтерия / Молия: another role closes it (data_access.py).
+        if after["role"] not in data_access.ROLES and after.get("data_access"):
+            closed = await store.clear_data_access(employee_id, decided_by)
+            if closed is not None:
+                after = closed
+                await _tell_director_data_access(closed, decided_by, run_id)
         old_label = ROLE_LABELS.get(before["role"], before["role"])
         new_label = ROLE_LABELS.get(after["role"], after["role"])
         await _tell_employee(
@@ -1206,6 +1277,10 @@ async def _handle_remove_user(
     if employee is None:
         await _answer(query_id, "Аллақачон ўчирилган")
         return "already_removed"
+    # Removed = no data access either, even if they register again (data_access.py).
+    closed = await store.clear_data_access(employee_id, removed_by)
+    if closed is not None:
+        await _tell_director_data_access({**closed, "data_access": []}, removed_by, run_id)
 
     message = callback.get("message") or {}
     async with TelegramBot(

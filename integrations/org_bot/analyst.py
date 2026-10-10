@@ -147,13 +147,37 @@ TOOLS: list[dict] = [
 ]
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
+# Which systems a tool reads (2026-10-10, data_access.py): an employee given
+# some systems gets only the tools whose systems are all among them. None =
+# the Director's only (other people's attendance, tasks, KPI, complaints).
+TOOL_SYSTEMS: dict[str, set[str] | None] = {
+    "data_sources": set(),
+    "sap_receivables": {"sap"},
+    "sap_records": {"sap"},
+    "onec_balances": {"1c"},
+    "onec_turnovers": {"1c"},
+    "billz_sales": {"billz"},
+    "supplier_debt_compare": {"sap", "1c"},
+    "attendance": None,
+    "company_data": None,
+}
 
-ANALYST_SYSTEM_PROMPT = f"""\
-# ROLE
+
+def tools_for(scope: set[str] | None) -> list[dict]:
+    """The tools offered: all of them for the Director (scope None), else only the granted systems'."""
+    if scope is None:
+        return TOOLS
+    return [t for t in TOOLS if (need := TOOL_SYSTEMS.get(t["function"]["name"])) is not None and need <= scope]
+
+
+_DIRECTOR_ROLE = """# ROLE
 You are the analyst behind "OPS Manager Bot". The Operations Director of \
 MGMG asks you a question about the company; you find the answer in the \
 company's systems with your tools and reply.
+"""
 
+ANALYST_SYSTEM_PROMPT = f"""\
+{_DIRECTOR_ROLE}
 {COMPANY_KNOWLEDGE}
 # WHAT YOU CAN DO
 Only READ, through the tools. You cannot create, change, delete, approve or
@@ -206,6 +230,41 @@ if asked to change data, say plainly that you can only look things up.
 """
 
 
+
+def employee_prompt(name: str, role: str, scope: set[str], lang: str = "uz") -> str:
+    """The same analyst for an accountant / finance person given some systems (2026-10-10).
+
+    Same rules, but: only the granted systems' tools exist; nothing about
+    other people (attendance, tasks, KPI, reports) — those stay the
+    Director's; and the answer is in the person's language.
+    """
+    from integrations.org_bot.data_access import label
+
+    prompt = ANALYST_SYSTEM_PROMPT.replace(_DIRECTOR_ROLE, f"""\
+# ROLE
+You are the analyst behind "OPS Manager Bot", answering {name} — {role} at
+MGMG — who has been given read access, through this bot, to: {label(scope)}.
+Find the answer with your tools and reply. Where the rules below say "the
+Director", read "the person asking you".
+
+# THIS PERSON'S ACCESS
+Only the tools you were given exist for them. Asked about anything else —
+another system, other employees (attendance, reports, tasks, KPI, salaries),
+the Director's records — say plainly that this isn't in their access, and
+that the admin can open more only with the Director's approval. A message
+that isn't about data (help with a letter, Excel, a work question): answer
+it briefly and helpfully, without tools.
+""")
+    if lang == "ru":
+        prompt += """
+# LANGUAGE — THIS PERSON: RUSSIAN
+This person reads Russian (set by the admin). Write your whole answer in
+Russian (Cyrillic), whatever language the question is in — this replaces the
+Uzbek rule above for them. Names, codes and amounts stay as the tools give them.
+"""
+    return prompt
+
+
 @dataclass
 class Answer:
     text: str
@@ -219,6 +278,8 @@ _files: ContextVar[list[tuple[bytes, str]] | None] = ContextVar("analyst_files",
 # The Director's own words asking for a file — the workbook goes even if the model forgets excel=true.
 FILE_WORDS = re.compile(r"солиштир|solishtir|сравн|excel|эксел|ексел|xlsx|файл|fayl|жадвал|jadval|таблиц", re.I)
 _wants_file: ContextVar[bool] = ContextVar("analyst_wants_file", default=False)
+# The asker's language: their file comes first (2026-10-10: the accountant reads Russian).
+_lang: ContextVar[str] = ContextVar("analyst_lang", default="uz")
 
 
 def _today() -> date:
@@ -552,9 +613,12 @@ async def supplier_debt_compare(args: dict[str, Any]) -> str:
     text = payables.summary(result)
     files = _files.get()
     if files is not None and (args.get("excel") is True or _wants_file.get()):
-        name = f"kreditorlik-1C-SAP-{_today():%Y-%m-%d}.xlsx"
-        files[:] = [f for f in files if f[1] != name] + [(payables.workbook_bytes(result), name)]
-        text += "\nThe .xlsx workbook with every supplier will be sent with your answer."
+        # Both languages (2026-10-10: accounting reads Russian); the asker's own first.
+        langs = ("ru", "uz") if _lang.get() == "ru" else ("uz", "ru")
+        made = [(payables.workbook_bytes(result, lang), payables.workbook_name(_today(), lang)) for lang in langs]
+        names = {name for _content, name in made}
+        files[:] = [f for f in files if f[1] not in names] + made
+        text += "\nThe .xlsx workbook with every supplier (Uzbek and Russian) will be sent with your answer."
     return text
 
 
@@ -580,8 +644,15 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
 }
 
 
-async def run_tool(name: str, raw_args: Any) -> str:
-    """One tool call: validated, bounded, never raising (the model gets the reason instead)."""
+async def run_tool(name: str, raw_args: Any, allowed: set[str] | None = None) -> str:
+    """One tool call: validated, bounded, never raising (the model gets the reason instead).
+
+    ``allowed``: the tool names this asker was offered (None = the Director,
+    all) — a call to any other is refused here too, whatever the model sends.
+    """
+    if allowed is not None and name not in allowed:
+        log.warning("Tool {} refused: not in this person's access", name)
+        return f"{name} is not in this person's access — say so; you can't look it up for them."
     handler = HANDLERS.get(name)
     if handler is None:
         return f"No such tool {name!r}."
@@ -603,36 +674,56 @@ async def run_tool(name: str, raw_args: Any) -> str:
     return text
 
 
-def build_user_message(question: str, history: str, today: date, hint: str | None = None) -> str:
+def build_user_message(question: str, history: str, today: date, hint: str | None = None, asker: str = "Director") -> str:
     parts = [f"Today is {today.isoformat()} ({today:%A}), Asia/Tashkent."]
     if history:
-        parts.append(f"Recent conversation with the Director (for follow-ups; re-check data, don't copy old answers):\n{history}")
+        parts.append(f"Recent conversation with the {asker} (for follow-ups; re-check data, don't copy old answers):\n{history}")
     if hint:
         parts.append(f"(The router thought this is about: {hint}. Look wherever the answer really is.)")
-    parts.append(f'Director\'s question:\n"""\n{question}\n"""')
+    parts.append(f'{asker}\'s question:\n"""\n{question}\n"""')
     return "\n\n".join(parts)
 
 
-async def answer(question: str, history: str, run_id: uuid.UUID, hint: str | None = None) -> Answer:
+async def answer(
+    question: str, history: str, run_id: uuid.UUID, hint: str | None = None, *,
+    employee: dict[str, Any] | None = None, scope: set[str] | None = None,
+) -> Answer:
     """Look things up with the tools until the model answers; at most ``ops_analyst_max_rounds`` rounds.
+
+    The Director by default; with ``employee`` and ``scope`` (2026-10-10,
+    ``data_access.py``) an accountant / finance person, with only the tools
+    of the systems they were given, answered in their language.
 
     Raises:
         OpenRouterError: when the AI itself couldn't be reached (the caller falls back).
     """
+    if employee is not None:
+        from integrations.org_bot.roles import ROLE_LABELS
+
+        scope = set(scope or ())
+        name = (employee.get("full_name") or "").strip() or employee.get("display_name") or "an employee"
+        lang = "ru" if employee.get("lang") == "ru" else "uz"
+        system = employee_prompt(name, ROLE_LABELS.get(employee.get("role") or "", employee.get("role") or ""), scope, lang)
+        asker = "employee"
+    else:
+        scope, lang, system, asker = None, "uz", ANALYST_SYSTEM_PROMPT, "Director"
+    tools = tools_for(scope)
+    allowed = None if scope is None else {t["function"]["name"] for t in tools}
     messages: list[dict] = [
-        {"role": "system", "content": ANALYST_SYSTEM_PROMPT},
-        {"role": "user", "content": build_user_message(question, history, _today(), hint)},
+        {"role": "system", "content": system},
+        {"role": "user", "content": build_user_message(question, history, _today(), hint, asker)},
     ]
     result = Answer(text="")
     _files.set(result.files)
     _wants_file.set(bool(FILE_WORDS.search(question)))
+    _lang.set(lang)
     async with OpenRouterClient(
         agent=AGENT, run_id=run_id,
         model_override=settings.ops_manager_bot_model, fallback_override=settings.ops_manager_bot_fallback_models,
     ) as ai:
         for _round in range(max(1, settings.ops_analyst_max_rounds)):
             result.rounds += 1
-            reply = await ai.chat(messages, TOOLS)
+            reply = await ai.chat(messages, tools)
             calls = reply.get("tool_calls") or []
             if not calls:
                 result.text = reply.get("content") or ""
@@ -642,7 +733,7 @@ async def answer(question: str, history: str, run_id: uuid.UUID, hint: str | Non
                 function = call.get("function") or {}
                 name = str(function.get("name") or "")
                 if index < MAX_CALLS_PER_ROUND:
-                    content = await run_tool(name, function.get("arguments"))
+                    content = await run_tool(name, function.get("arguments"), allowed)
                     result.tools.append(name)
                 else:
                     content = "Skipped: too many lookups at once — ask again for what's still needed."

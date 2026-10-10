@@ -32,8 +32,8 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheer, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store, task_picker,
-    task_tracker,
+    admin, ai_chat, cheer, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    task_picker, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
 from integrations.org_bot.prompt import (
@@ -261,6 +261,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_held_as_question(rest, callback, run_id, background)
     if prefix == "clr":
         return await _handle_clarification(rest, callback, run_id, background)
+    if prefix == "dax":
+        return await _handle_data_access_close(rest, callback, run_id)
     if prefix == "fp":
         return await _handle_file_purpose(rest, callback, run_id)
     if prefix in ("rpe", "rpd", "rpdy", "rpn"):
@@ -682,8 +684,21 @@ async def _route_to_ai(
     employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
     background: BackgroundTasks | None,
 ) -> str:
-    """An employee's message about their work goes to the AI (``ai_chat.py``), never to a person."""
+    """An employee's message about their work goes to the AI (``ai_chat.py``), never to a person.
+
+    Someone given company data (Бухгалтерия / Молия, ``data_access.py``,
+    2026-10-10) goes to the analyst instead, with only their systems' tools —
+    unless they reply to a task card, which stays with the work AI.
+    """
     telegram_user_id = employee["telegram_user_id"]
+    scope = data_access.granted(employee)
+    if scope and task is None:
+        await _show_typing(telegram_user_id, run_id)
+        if background is not None:
+            background.add_task(_answer_data_question, employee, text, scope, run_id)
+        else:
+            await _answer_data_question(employee, text, scope, run_id)
+        return "data_question"
     if employee.get("ai_chat_off"):
         await _reply(telegram_user_id, run_id, ai_chat.off_text())
         return "ai_off"
@@ -724,6 +739,71 @@ async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, A
             await _reply(telegram_user_id, run_id, ai_chat.error_text())
         except Exception:  # noqa: BLE001
             pass
+
+
+async def _answer_data_question(employee: dict[str, Any], text: str, scope: set[str], run_id: uuid.UUID) -> None:
+    """An accountant's / finance person's question: the analyst with their systems only, in their language."""
+    from integrations.org_bot import analyst
+
+    telegram_user_id = employee["telegram_user_id"]
+    ru = employee.get("lang") == "ru"
+    try:
+        if await store.ai_questions_today(telegram_user_id) >= ai_chat.DAILY_LIMIT:
+            await _reply(telegram_user_id, run_id, "На сегодня лимит вопросов исчерпан, продолжим завтра 🙂" if ru
+                         else ai_chat.limit_text())
+            return
+        history = "\n".join(f"{'Employee' if t['role'] == 'employee' else 'You'}: {t['content']}"
+                             for t in await store.recent_ai_turns(telegram_user_id))
+        await store.log_ai_turn(telegram_user_id, "employee", text)
+        result = await analyst.answer(text, history, run_id, employee=employee, scope=scope)
+        answer = sanitize_model_html(result.text.strip()) or (
+            "Не удалось найти ответ, попробуйте спросить иначе." if ru else ai_chat.clean_answer(""))
+        await store.log_ai_turn(telegram_user_id, "assistant", answer)
+        # Which tools ran and how many rounds — never the question or the figures (the order of 07.10.2026).
+        await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="success",
+                         run_id=run_id, mode="read",
+                         payload={"systems": sorted(scope), "tools": result.tools, "rounds": result.rounds})
+        await _reply(telegram_user_id, run_id, answer)
+        await _send_files(telegram_user_id, run_id, result.files)
+    except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
+        log.error("Data question failed for {}: {}", telegram_user_id, type(exc).__name__)
+        await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="failure",
+                         run_id=run_id, mode="read", error_message=type(exc).__name__)
+        try:
+            await _reply(telegram_user_id, run_id, "Техническая ошибка, попробуйте чуть позже 🙏" if ru
+                         else ai_chat.error_text())
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _handle_data_access_close(employee_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The Director's ⛔ under a data-access notice: everything that person had is closed."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    clicker = await store.get_employee_by_telegram_id(clicker_id) if clicker_id else None
+    if clicker is None or clicker.get("role") != DIRECTOR_ROLE or clicker.get("status") != "active":
+        await _answer(query_id, "Фақат Директор")
+        return "unrecognized"
+    closed = await store.clear_data_access(employee_id, f"director:{clicker_id}")
+    message = callback.get("message") or {}
+    if closed is None:
+        await _answer(query_id, "Аллақачон ёпилган")
+        return "data_access_already_closed"
+    await _answer(query_id, "OK")
+    who = escape(data_access.person(closed))
+    if message.get("message_id") and message.get("chat", {}).get("id"):
+        async with TelegramBot(
+            agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+        ) as bot:
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=str(message["chat"]["id"]), message_id=message["message_id"],
+                text=f"🔐 {who}: маълумотга кириш <b>ёпилди</b>.", reply_markup={"inline_keyboard": []},
+            )
+    await _reply(closed["telegram_user_id"], run_id, data_access.employee_notice(closed))
+    await admin.tell_admin(f"🔐 Директор {who} учун маълумотга киришни ёпди.", run_id)
+    await log_action(agent=AGENT, action="data_access_closed", target_system="postgres", status="success",
+                     run_id=run_id, target_ref=employee_id, mode="write", payload={"by": "director"})
+    return "data_access_closed"
 
 
 async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1866,7 +1946,10 @@ async def _answer_question(
 
 
 async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[bytes, str]]) -> None:
-    """Files the analyst made for its answer (the 1C ↔ SAP supplier-debt workbook), after the text."""
+    """Files the analyst made for its answer (the 1C ↔ SAP supplier-debt workbook), after the text.
+
+    ``director_id``: whoever asked — the Director, or an employee given data access.
+    """
     if not files:
         return
     async with TelegramBot(

@@ -1064,6 +1064,15 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS cheer_off BOOLEAN NOT NULL DEFAUL
 -- at 16:00 or reminded at 17:00, so no row is opened — nothing counts as
 -- missed in the brief, the Friday scorecard or the KPI.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS reports_off BOOLEAN NOT NULL DEFAULT false;
+-- Company data through the bot for accounting and finance (2026-10-10, the
+-- Director's instruction; integrations/org_bot/data_access.py): which systems
+-- this person may ask about — 'sap', '1c', 'billz'. Set by the admin on the
+-- /xodimlar card, only for the Бухгалтерия and Молия roles; every change is
+-- in employee_changes and shown to the Director, who can close it.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS data_access TEXT[] NOT NULL DEFAULT '{}';
+-- The language the AI answers this person in (2026-10-10): 'uz' (Uzbek
+-- Cyrillic, the rule) or 'ru' — set by the admin, never guessed.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uz';
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS media_count INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS employee_files (

@@ -52,9 +52,13 @@ doesn't carry messages.
 менда йўқ" and who could know — never a guess, never an invented number,
 name, date or price.
 
-It writes Uzbek Cyrillic, always the polite "сиз", especially courteous with
-women; a draft asked for in another language (a Russian email to a customer)
+It writes Uzbek Cyrillic — or Russian for someone the admin set to Russian
+(`/xodimlar` → 🌐, `employees.lang`, 2026-10-10) — always the polite "сиз",
+especially courteous with women; a draft asked for in another language (a Russian email to a customer)
 is in that language. Telegram HTML only.
+
+Someone given company data (Бухгалтерия / Молия, `22-data-access.md`) is
+answered by the analyst instead, except when replying to a task card.
 
 ## Admin
 

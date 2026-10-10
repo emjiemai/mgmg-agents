@@ -8,6 +8,15 @@ section 4). Everything is read only.
 **Code:** `integrations/onec/payables.py` (the comparison, the summary, the workbook);
 `scripts/ap_reconcile.py` (command line). No data in the repository.
 
+## Languages and column explanations (2026-10-10)
+
+The workbook comes in Uzbek and Russian (`write_workbook(..., lang)`,
+`TEXT`, `REASONS_RU`; command line `--lang ru`). Under every table: what
+each column means and where the same figure is in SAP / 1C — the accountant
+asked, since SAP's own report («Кредиторская задолженность», «К оплате»
+with Валюта = Система) names its columns differently. The bot sends both
+files; the asker's language first.
+
 ## From OPS Manager Bot (2026-10-10)
 
 The Director asks in his own words — «кредиторлик қанча, 1C ва SAP да фарқи

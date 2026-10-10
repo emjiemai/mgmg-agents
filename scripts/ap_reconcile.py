@@ -32,6 +32,7 @@ def main() -> None:
     parser.add_argument("--sap-pushed", action="store_true",
                         help="use the suppliers the SAP gateway pushed (get_supplier_balances) instead of a file")
     parser.add_argument("--out", type=Path, default=Path("kreditorlik-1c-sap.xlsx"))
+    parser.add_argument("--lang", choices=("uz", "ru"), default="uz", help="the workbook's language (ru: Russian)")
     args = parser.parse_args()
     if args.pull_1c:
         print("1C read:", asyncio.run(pull_onec(args.pull_1c)))
@@ -43,7 +44,7 @@ def main() -> None:
         sap_rows = read_table(args.sap) if args.sap else []
         sap_source = args.sap.name if args.sap else "йўқ"
     result = compare(data, sap_rows, sap_source)
-    counts = write_workbook(result.pairs, result.onec, result.meta, args.out)
+    counts = write_workbook(result.pairs, result.onec, result.meta, args.out, args.lang)
     print("written", args.out, counts)  # counts only, never amounts
 
 

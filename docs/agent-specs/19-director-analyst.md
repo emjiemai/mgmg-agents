@@ -23,6 +23,10 @@ Verifix itself, without the ability to change anything in them.
    figure is from where: customer debt = SAP open invoices **and** 1C
    account 40; supplier debt = `supplier_debt_compare` (1C 60 − 43 against
    SAP supplier balances, already compared); money = 1C 50/51/52.
+3b. Since 2026-10-10 it also answers **accountants and finance people the
+   admin gave systems to** (`22-data-access.md`): their own prompt and
+   language, only the tools of their systems (`tools_for`), any other tool
+   refused in `run_tool` — never attendance or the bot's own records.
 3a. It knows the company (`knowledge.COMPANY_KNOWLEDGE`, 2026-10-10): the
    businesses, branches, departments, which system holds what and the
    Director's words. When a question can mean two clearly different things

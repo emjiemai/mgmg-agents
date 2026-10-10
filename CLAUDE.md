@@ -9,7 +9,9 @@ PC and a laptop — this file is the shared context; chat history is not.
 - **Don't guess — verify.** Read the code/docs/API before claiming anything.
 - **Concise answers.** Results first, short.
 - **Every bot and user-facing text is Uzbek Cyrillic** (names too: Latin → Cyrillic).
-  Code comments, docs, commit messages: English.
+  Code comments, docs, commit messages: English. **One exception** (2026-10-10): a person the admin
+  set to Russian (`/xodimlar` → 🌐, `employees.lang`) gets the AI's answers (analyst, work AI) in
+  Russian; the supplier-debt `.xlsx` comes in Uzbek and Russian. Fixed bot messages stay Uzbek.
 - **After each fix: run checks, then commit and push** (authorized). Commit only
   if `PYTHONIOENCODING=utf-8 python scripts/selfcheck.py` exits 0 (don't judge by
   piped/tailed output). Also `python -m pyflakes integrations agents scripts`.
@@ -142,6 +144,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   and 1C both. No tool can write; the old one-source answer is the fallback. Supplier debt 1C ↔ SAP
   (2026-10-10, `integrations/onec/payables.py`, spec 21): a short text comparison; with «солиштир» /
   «excel» / «файл» the bot also sends the `.xlsx` workbook (built on the server).
+- **Accounting and finance get company data through the bot** (2026-10-10, the Director;
+  `docs/agent-specs/22-data-access.md`): the admin gives SAP / 1C / Billz per person on `/xodimlar`,
+  only to Бухгалтерия / Молия; the Director is told each time and has ⛔ to close it; their questions
+  go to the analyst with only those systems' tools — never attendance or the bot's own records.
 - **The bot knows the company and asks when unsure** (2026-10-10): `integrations/org_bot/knowledge.py`
   (businesses, branches, departments, which system holds what, the Director's words — facts only,
   no figures) goes into every OPS Manager prompt; keep it current when the business changes. Not

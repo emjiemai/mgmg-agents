@@ -81,6 +81,7 @@ class TechReport:
     backup_failed: int = 0  # failed backups in 24 h
     analyst: tuple[int, int] = (0, 0)  # Director questions answered by the analyst / fallen back
     pending_access: int = 0
+    data_access: int = 0  # people given company data through the bot (count only)
     refused: int = 0  # Admin Bot commands from someone else + closed /db tables asked for
 
 
@@ -216,6 +217,11 @@ async def gather(now: datetime | None = None) -> TechReport:
     )
     if answered:
         report.analyst = (int(answered[0]["answered"]), int(answered[0]["fallback"]))
+    granted = await fetch_read_only(
+        """SELECT count(*) AS n FROM employees WHERE status = 'active' AND role IN ('buxgalteriya', 'moliya')
+           AND cardinality(data_access) > 0"""
+    )
+    report.data_access = int(granted[0]["n"]) if granted else 0
     pending = await fetch_read_only("SELECT count(*) AS n FROM access_requests WHERE status = 'pending'")
     report.pending_access = int(pending[0]["n"]) if pending else 0
     refused = await fetch_read_only(
@@ -289,6 +295,7 @@ def render(r: TechReport) -> str:
     lines += ["", "<b>Хавфсизлик</b>",
               f"{'⚠️' if r.refused else '✅'} Рад этилган уринишлар (Admin Bot, ёпиқ жадваллар): {r.refused} та",
               f"Кутилаётган кириш сўровлари: {r.pending_access} та",
+              f"Бот орқали маълумотга кириши бор ходимлар: {r.data_access} киши",
               "", "<i>Суммалар, мижозлар ва ходимларнинг маълумотлари бу ҳисоботда йўқ (Директор кўрсатмаси, 07.10.2026).</i>"]
     return "\n".join(lines)
 

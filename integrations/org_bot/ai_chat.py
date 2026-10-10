@@ -92,6 +92,15 @@ How you write:
 """
 
 
+# For someone the admin set to Russian (2026-10-10): the one exception to Uzbek Cyrillic.
+RUSSIAN = """
+LANGUAGE FOR THIS PERSON: Russian. The admin set it — they read Russian
+better. Write every answer in Russian (Cyrillic), whatever language they
+write in; this replaces the Uzbek rule above. Still polite ("вы"), short,
+Telegram HTML only.
+"""
+
+
 def work_context(
     employee: dict[str, Any], tasks: list[dict[str, Any]], today: date
 ) -> str:
@@ -119,10 +128,13 @@ def system_prompt(employee: dict[str, Any], context: str) -> str:
     role = employee.get("role") or ""
     catalog = f"\nThe public Garmin catalog (prices may have changed):\n{GARMIN_CATALOG}\n" if role == "garmin_sotuv" else ""
     name = (employee.get("full_name") or "").strip() or employee.get("display_name") or "employee"
-    return SYSTEM_PROMPT.format(
+    prompt = SYSTEM_PROMPT.format(
         name=name, role=ROLE_LABELS.get(role, role) or "employee", context=context, company=_COMPANY, catalog=catalog,
         guide=EMPLOYEE_BOT_GUIDE,
     )
+    if employee.get("lang") == "ru":  # set by the admin on the /xodimlar card (2026-10-10)
+        prompt += RUSSIAN
+    return prompt
 
 
 def user_prompt(history: list[dict[str, Any]], question: str, task: dict[str, Any] | None = None) -> str:
