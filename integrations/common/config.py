@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     # Render's mgmg-shared group to switch it on; log in with any name.
     db_viewer_password: SecretStr = SecretStr("")
 
+    # --- Encrypted backups for the office computer (integrations/backup/dump.py, 2026-10-10) ---
+    # BACKUP_SECRET: a long random string; the office script's links carry it.
+    # BACKUP_PUBLIC_KEY: the owner's GnuPG PUBLIC key (the armored text,
+    # "-----BEGIN PGP PUBLIC KEY BLOCK-----"…). The private key never comes
+    # here — it stays in the owner's password vault. Either empty = /backup
+    # doesn't exist (404).
+    backup_secret: SecretStr = SecretStr("")
+    backup_public_key: str = ""
+
     # --- Verifix (face-ID attendance, A4; integrations/verifix/) ---
     # Read-only. Client id + secret come from Verifix: Администрирование ->
     # Настройки -> Внешние системы -> Клиенты OAuth2 для сервера для компании

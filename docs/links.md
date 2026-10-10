@@ -26,6 +26,16 @@ Base address of the service: **https://mgmg-api-eeky.onrender.com** (Render
 | ---- | ---- | ---- |
 | `/db` | read-only database viewer: technical tables only (Director's order of 07.10) | HTTP login, `DB_VIEWER_PASSWORD`; off when it isn't set |
 
+## 2a. Backups — the office computer only (secret in the link)
+
+| Link | What | Secret |
+| ---- | ---- | ---- |
+| `GET /backup/{secret}` | status for `pull-backup.ps1 -Check` (makes nothing) | `BACKUP_SECRET` |
+| `POST /backup/{secret}` | make an encrypted backup; answers its manifest | `BACKUP_SECRET` |
+| `GET /backup/{secret}/{file}` | fetch that encrypted file, once (gone after, or after an hour) | `BACKUP_SECRET` |
+
+Wrong secret or not set up = "not found". The file only opens with the owner's private key.
+
 ## 3. Webhooks — machines only (each ends in a secret)
 
 | Link | Who calls it | Secret (Render variable) |
@@ -67,3 +77,5 @@ Base address of the service: **https://mgmg-api-eeky.onrender.com** (Render
 | Hosting, settings, logs, database | Render dashboard: services `mgmg-api`, crons `mgmg-morning-agents`, `mgmg-daily-reports`, `mgmg-report-reminder`, `mgmg-team-cheer`; database `mgmg-db`; settings group `mgmg-shared` |
 | Bots' owner settings | Telegram @BotFather (Admin Bot, OPS Manager Bot) |
 | SAP push task | gateway computer: Windows task "MGMG SAP push" (`scripts/sap-gateway-push/`) |
+| Backup task | office computer: Windows task "MGMG database backup" (`scripts/backup/`) |
+| PostgreSQL apt repository (the image's `pg_dump` 16) | https://apt.postgresql.org (key https://www.postgresql.org/media/keys/ACCC4CF8.asc) |

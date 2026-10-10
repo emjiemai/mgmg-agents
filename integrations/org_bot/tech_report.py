@@ -28,6 +28,7 @@ from integrations.telegram.bot import escape
 log = setup_logging("tech-report")
 
 SAP_SILENT_HOURS = 3  # the push runs every 30 min; the brief's own rule
+BACKUP_LATE_HOURS = 26  # the office computer fetches one a day (scripts/backup/), with a little slack
 LOW_AI_CREDIT = 3.0   # dollars left on the OpenRouter key before it's flagged
 
 # agent_actions.agent -> how IT reads it
@@ -45,6 +46,7 @@ AGENT_LABELS = {
     "ops-manager-bot": "OPS Manager Bot",
     "admin-bot": "Admin Bot",
     "followup-drain": "Қўшимча савол навбати",
+    "backup": "Захира нусха",
 }
 
 # SAP kinds as IT reads them in the report.
@@ -73,6 +75,10 @@ class TechReport:
     runs: list[tuple[str, int, int, datetime | None]] = field(default_factory=list)  # (agent, ok, failed, last)
     errors: list[tuple[str, str, int]] = field(default_factory=list)  # (agent, short reason, count)
     db_size_mb: float | None = None
+    backup_set_up: bool = False
+    backup_last: datetime | None = None  # the last encrypted copy the office computer fetched
+    backup_mb: float | None = None
+    backup_failed: int = 0  # failed backups in 24 h
     analyst: tuple[int, int] = (0, 0)  # Director questions answered by the analyst / fallen back
     pending_access: int = 0
     refused: int = 0  # Admin Bot commands from someone else + closed /db tables asked for
@@ -183,6 +189,23 @@ async def gather(now: datetime | None = None) -> TechReport:
     ):
         report.errors.append((row["agent"], row["reason"], int(row["n"])))
 
+    from integrations.backup import dump as backup_dump
+
+    report.backup_set_up = backup_dump.configured()
+    fetched = await fetch_read_only(
+        """SELECT occurred_at, payload FROM agent_actions WHERE agent = 'backup' AND action = 'backup_fetched'
+           AND status = 'success' ORDER BY occurred_at DESC LIMIT 1"""
+    )
+    if fetched:
+        report.backup_last = fetched[0]["occurred_at"]
+        size_bytes = _payload(fetched[0]["payload"]).get("bytes")
+        report.backup_mb = round(size_bytes / 1024 / 1024, 1) if isinstance(size_bytes, (int, float)) else None
+    failed = await fetch_read_only(
+        """SELECT count(*) AS n FROM agent_actions WHERE agent = 'backup' AND status = 'failure' AND occurred_at >= %s""",
+        (since,),
+    )
+    report.backup_failed = int(failed[0]["n"]) if failed else 0
+
     size = await fetch_read_only("SELECT pg_database_size(current_database()) AS bytes")
     report.db_size_mb = round(size[0]["bytes"] / 1024 / 1024, 1) if size else None
     answered = await fetch_read_only(
@@ -206,6 +229,21 @@ async def gather(now: datetime | None = None) -> TechReport:
 
 def _mark(ok: bool | None) -> str:
     return "✅" if ok else "⚪️" if ok is None else "❌"
+
+
+def _backup_line(r: TechReport) -> str:
+    """The copy outside Render (IT-5): when the office computer last fetched one."""
+    if not r.backup_set_up:
+        return "⚪️ Офисдаги нусха: созланмаган — Render'да иккита созлама керак (README, «Захира нусха»)"
+    failed = f"; 24 соатда {r.backup_failed} та хато" if r.backup_failed else ""
+    if r.backup_last is None:
+        return "❌ Офисдаги нусха: ҳали бирорта ҳам олинмаган — офис компьютеридаги вазифани текширинг" + failed
+    hours = (r.at - to_local(r.backup_last)).total_seconds() / 3600
+    size = f", {r.backup_mb} MB" if r.backup_mb is not None else ""
+    if hours > BACKUP_LATE_HOURS:
+        return (f"❌ Офисдаги нусха: охиргиси {to_local(r.backup_last):%d.%m %H:%M}{size} — {int(hours)} соатдан бери "
+                "олинмаган, офис компьютерини текширинг" + failed)
+    return f"✅ Офисдаги нусха: {to_local(r.backup_last):%d.%m %H:%M}{size}" + failed
 
 
 def render(r: TechReport) -> str:
@@ -246,7 +284,8 @@ def render(r: TechReport) -> str:
 
     lines += ["", "<b>Захира нусха ва база</b>",
               f"База ҳажми: {r.db_size_mb} MB" if r.db_size_mb is not None else "База ҳажми: ўқилмади",
-              "Захира нусхани бу ҳисобот текшира олмайди: Render → mgmg-db → Recovery'да кўринг."]
+              _backup_line(r),
+              "Render'нинг ўз нусхаси (3–7 кун): Render → mgmg-db → Recovery."]
     lines += ["", "<b>Хавфсизлик</b>",
               f"{'⚠️' if r.refused else '✅'} Рад этилган уринишлар (Admin Bot, ёпиқ жадваллар): {r.refused} та",
               f"Кутилаётган кириш сўровлари: {r.pending_access} та",

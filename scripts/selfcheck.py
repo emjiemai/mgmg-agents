@@ -3063,10 +3063,20 @@ def test_it_restrictions() -> None:
                and "Рад этилган уринишлар" in text and "2 та" in text and "AI жавоб берди 5 та" in text)
     r.sap_last = datetime(2026, 10, 6, 20, 0, tzinfo=timezone.utc)
     check_true("a silent SAP push is flagged", "соатдан бери келмаяпти" in tech_report.render(r))
+    # 2026-10-10 (IT-5): the copy outside Render
+    check_true("backups not set up: said, with where to read how", "Офисдаги нусха: созланмаган" in text)
+    r.backup_set_up, r.backup_last, r.backup_mb = True, datetime(2026, 10, 7, 1, 5, tzinfo=timezone.utc), 12.4
+    check_true("the office's last copy: time and size", "✅ Офисдаги нусха: 07.10 06:05, 12.4 MB" in tech_report.render(r))
+    r.backup_last, r.backup_failed = datetime(2026, 10, 5, 8, 0, tzinfo=timezone.utc), 2
+    late = tech_report.render(r)
+    check_true("no copy for more than a day, or failures: flagged",
+               "❌ Офисдаги нусха: охиргиси 05.10" in late and "олинмаган" in late and "2 та хато" in late)
+    r.backup_last = None
+    check_true("set up but never fetched: flagged", "ҳали бирорта ҳам олинмаган" in tech_report.render(r))
     check_true("the technical report is Uzbek Cyrillic",
                latin_words(text, allow={"SAP", "Billz", "Verifix", "AI", "OpenRouter", "Didox", "Admin", "Bot", "OPS",
                                         "Manager", "MB", "Render", "Recovery", "HTTP", "SerpAPI", "mgmg",
-                                        "db", "C"}) == [])
+                                        "db", "C", "README"}) == [])
     check_true("/texnik sends it on demand", "/texnik" in load_source("integrations/org_bot/admin.py"))
     check_true("it runs last in the 08:00 job", load_source("scripts/run_morning_agents.py").index("tech-report")
                > load_source("scripts/run_morning_agents.py").index("task-tracker/agent.py --monthly"))
@@ -3277,6 +3287,164 @@ def uuid_module():
     import uuid
 
     return uuid
+
+
+def test_backup() -> None:
+    """2026-10-10 (IT-5): an encrypted copy of the database outside Render — only the owner's key opens it."""
+    print("encrypted backups")
+    import hashlib
+    import inspect
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from integrations.api import app as api_app
+    from integrations.backup import dump
+    from integrations.common.config import settings
+
+    root = Path(__file__).resolve().parents[1]
+    saved = [(settings, "backup_secret", settings.backup_secret), (settings, "backup_public_key", settings.backup_public_key),
+             (dump, "fetch_read_only", dump.fetch_read_only), (dump, "FOLDER", dump.FOLDER),
+             (api_app, "log_action", api_app.log_action), (dump, "_last_started", dump._last_started)]
+    try:
+        settings.backup_secret, settings.backup_public_key = SecretStr(""), ""
+        check("off until both settings are set", dump.configured(), False)
+        settings.backup_public_key = "-----BEGIN PGP PUBLIC KEY BLOCK-----\\nabc\\n-----END PGP PUBLIC KEY BLOCK-----"
+        check("a key pasted on one line with \\n is accepted", dump.public_key().count("\n"), 2)
+        settings.backup_public_key = "not a key"
+        check("anything that isn't a public key is ignored", dump.public_key(), "")
+
+        argv = dump.dump_argv("postgres://u:pw@h/db")
+        check_true("pg_dump: the whole database in its own format, no owner/grants, no shell",
+                   argv[1:5] == ["--format=custom", "--compress=6", "--no-owner", "--no-privileges"]
+                   and argv[-1] == "--dbname=postgres://u:pw@h/db")
+        gpg = dump.gpg_argv(Path("/h"), Path("/h/k.asc"), Path("/o.gpg"))
+        check_true("gpg: encrypts to the key file only — no keyring, no private key",
+                   gpg[:2] == ["gpg", "--batch"] and "--recipient-file" in gpg and gpg[-1] == "--encrypt"
+                   and "--decrypt" not in gpg and "--sign" not in gpg)
+        check("an error line never carries the database password",
+              dump._scrub("pg_dump: error: connection to postgres://mgmg:S3cr3t@host/db failed"),
+              "pg_dump: error: connection to postgres://mgmg:***@host/db failed")
+        check_true("file ids are checked before any lookup", dump.take("../../etc/passwd") is None and dump.take("") is None)
+        source = inspect.getsource(dump)
+        check_true("nothing writes to the database; counts only, read-only; never a shell",
+                   "fetch_read_only" in source and "execute(" not in source and "shell=True" not in source
+                   and "INSERT" not in source)
+
+        gpg_ok = shutil.which("gpg") is not None
+        if not gpg_ok:
+            print("  skip encrypt/decrypt round trip (gpg not installed on this computer)")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            owner = tmp / "owner"
+            owner.mkdir(mode=0o700)
+            dump.FOLDER = tmp / "made"
+            if gpg_ok:
+                subprocess.run(["gpg", "--homedir", str(owner), "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                                "--quick-gen-key", "MGMG backup selfcheck", "default", "default", "1d"],
+                               check=True, capture_output=True)
+                settings.backup_public_key = subprocess.run(["gpg", "--homedir", str(owner), "--armor", "--export"],
+                                                            check=True, capture_output=True, text=True).stdout
+            else:
+                settings.backup_public_key = "-----BEGIN PGP PUBLIC KEY BLOCK-----\nx\n-----END PGP PUBLIC KEY BLOCK-----"
+            settings.backup_secret = SecretStr("b4ckup-s3cret-long")
+            check("set up: on", dump.configured(), True)
+            content = b"PGDMP" + bytes(range(256)) * 400
+            fake_dump = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'PGDMP' + bytes(range(256)) * 400)"]
+            audit: list[tuple[str, str]] = []
+
+            async def fake_counts(query, params=None, timeout="10s"):
+                return [{"name": "employees", "n": 12}, {"name": "tasks", "n": 340}]
+
+            async def fake_log(**kwargs):
+                audit.append((kwargs["action"], kwargs["status"]))
+
+            dump.fetch_read_only = fake_counts
+            api_app.log_action = fake_log
+            real_make = dump.make
+            client = TestClient(api_app.app)
+            check("a wrong secret looks like nothing is there", client.get("/backup/wrong").status_code, 404)
+            status = client.get("/backup/b4ckup-s3cret-long").json()
+            check_true("-Check: says what is set, nothing secret", status["configured"] is True
+                       and set(status["tools"]) == {"pg_dump", "gpg"} and "BEGIN" not in json.dumps(status))
+            if gpg_ok:
+                async def make_with_fake_dump(**kwargs):
+                    return await real_make(dump_cmd=fake_dump)
+
+                dump.make = make_with_fake_dump
+                dump._last_started = 0.0
+                made = client.post("/backup/b4ckup-s3cret-long").json()
+                check_true("the manifest: time, size, SHA-256 and row counts only",
+                           made["ok"] and made["tables"] == {"employees": 12, "tasks": 340} and made["rows"] == 352
+                           and made["name"].startswith("mgmg-db-") and made["name"].endswith(".dump.gpg")
+                           and len(made["sha256"]) == 64)
+                check("a second backup within minutes is refused", client.post("/backup/b4ckup-s3cret-long").status_code, 429)
+                got = client.get(f"/backup/b4ckup-s3cret-long/{made['file']}")
+                check_true("the file arrives whole: the SHA-256 matches the manifest and the header",
+                           got.status_code == 200 and hashlib.sha256(got.content).hexdigest() == made["sha256"]
+                           == got.headers["x-backup-sha256"])
+                check_true("it is encrypted — not the database's bytes", content[:64] not in got.content)
+                encrypted = tmp / "x.gpg"
+                encrypted.write_bytes(got.content)
+                opened = subprocess.run(["gpg", "--homedir", str(owner), "--batch", "--pinentry-mode", "loopback",
+                                         "--passphrase", "", "--decrypt", str(encrypted)], capture_output=True)
+                check("only the owner's private key opens it, and it is exactly the dump", opened.stdout == content, True)
+                check("fetched once: then it is gone from the server",
+                      client.get(f"/backup/b4ckup-s3cret-long/{made['file']}").status_code, 404)
+                check_true("nothing left on the server's disk", not list(dump.FOLDER.glob("*.gpg")))
+                check("each step audited (sizes only)", audit, [("backup_made", "success"), ("backup_fetched", "success")])
+
+                async def failing(**kwargs):
+                    raise RuntimeError("pg_dump exit 1: connection refused")
+
+                dump.make = failing
+                failed = client.post("/backup/b4ckup-s3cret-long")
+                check_true("a failure is reported to the script and audited",
+                           failed.status_code == 500 and "pg_dump exit 1" in failed.json()["error"]
+                           and audit[-1] == ("backup_made", "failure"))
+                dump.make = real_make
+
+            # a file nobody fetched is removed after an hour
+            dump.FOLDER.mkdir(parents=True, exist_ok=True)
+            stale = dump.FOLDER / "old.gpg"
+            stale.write_bytes(b"x")
+            dump.cleanup(now=time.time() + dump.KEEP_SECONDS + 5)
+            check("an unfetched file is removed after an hour", stale.exists(), False)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the office scripts
+    scripts = {p.name: p.read_text(encoding="utf-8") for p in (root / "scripts" / "backup").glob("*.ps1")}
+    check("the office scripts are there", sorted(scripts), ["install-backup-task.ps1", "pull-backup.ps1", "restore-test.ps1"])
+    pull = scripts["pull-backup.ps1"]
+    check_true("pull: checks the SHA-256, keeps a second copy, removes old copies, -Check makes nothing",
+               "Get-FileHash -Algorithm SHA256" in pull and "$SecondFolder" in pull and "Remove-OldCopies" in pull
+               and "param([switch]$Check)" in pull and "Tls12" in pull and "PASTE_BACKUP_SECRET_HERE" in pull)
+    restore = scripts["restore-test.ps1"]
+    check_true("restore test: empty test database, counts compared, then deleted with the decrypted file",
+               "createdb.exe" in restore and "pg_restore.exe" in restore and "dropdb.exe" in restore
+               and "Remove-Item -Force $plain" in restore and "query_to_xml" in restore)
+    core = "query_to_xml(format('SELECT count(*) AS n FROM %I.%I', t.table_schema, t.table_name), false, true, '')"
+    check_true("the restore test counts tables with the same query as the manifest",
+               core in " ".join(dump.COUNTS_SQL.split()) and core in restore
+               and "t.table_schema = 'public' AND t.table_type = 'BASE TABLE'" in restore)
+    check_true("PowerShell files are plain ASCII (Windows PowerShell 5.1 misreads UTF-8 without a BOM)",
+               all(text.isascii() for p in root.glob("scripts/**/*.ps1") for text in [p.read_text(encoding="utf-8")]))
+    docker = (root / "Dockerfile").read_text(encoding="utf-8")
+    check_true("the image has gpg and pg_dump 16 (the database's version) from PostgreSQL's own repository",
+               "gnupg" in docker and "postgresql-client-16" in docker and "apt.postgresql.org" in docker)
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    check_true("README: backups explained, settings listed, and the change log (every change gets a line)",
+               "scripts/backup/README.md" in readme and "BACKUP_PUBLIC_KEY" in readme and "## 10. Change log" in readme)
+    check_true("both settings are declared in render.yaml, never synced",
+               all(f"- key: {k}\n        sync: false" in (root / "render.yaml").read_text(encoding="utf-8")
+                   for k in ("BACKUP_SECRET", "BACKUP_PUBLIC_KEY")))
 
 
 def test_knowledge() -> None:
@@ -5437,6 +5605,7 @@ def main() -> int:
         test_it_restrictions,
         test_tech_report_errors_fixed,
         test_review_pages,
+        test_backup,
         test_knowledge,
         test_ap_reconcile,
         test_verifix,

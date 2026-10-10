@@ -15,6 +15,9 @@ PC and a laptop — this file is the shared context; chat history is not.
   piped/tailed output). Also `python -m pyflakes integrations agents scripts`.
 - Add tests to `scripts/selfcheck.py` for every change; update the matching
   `docs/agent-specs/*.md` and `docs/agents-status.md`.
+- **ALWAYS update `README.md` with every change, even a small one** (the owner, 2026-10-10): what
+  changed, how to use it, new settings/commands/links, and a dated line in its **§10 Change log**
+  (newest first) — README is the handover guide for whoever comes next.
 - On Windows, never pipe Cyrillic through stdin heredocs — write patch
   scripts/files with the editor instead.
 
@@ -156,5 +159,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   sales) and `get_supplier_balances` are written in `sap-gateway/` (2026-10-09); supplier balances
   **arrive** (09.10, every column). An older duplicate Windows task also runs at :17/:47 — delete it. Billz → SAP check is on **trial** (results to the admin) until the owner
   confirms them, then `BILLZ_SAP_CHECK_TRIAL=false`. Admin to tick "эркин график" people in `/grafik`.
+- **Backups (IT-5, due 24.10):** code done 2026-10-10 (`scripts/backup/README.md`). To do by hand: the
+  owner makes the GnuPG key (Kleopatra); set `BACKUP_SECRET` + `BACKUP_PUBLIC_KEY` in Render; install
+  `pull-backup.ps1` + the task on an office computer with a second disk; restore test with the owner.
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

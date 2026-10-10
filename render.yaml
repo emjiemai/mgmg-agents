@@ -267,3 +267,11 @@ envVarGroups:
         sync: false  # code default: google/gemini-3.8-flash
       - key: OPS_MANAGER_BOT_FALLBACK_MODELS
         sync: false  # code default: google/gemini-3.7-flash
+      # Encrypted backups for the office computer (integrations/backup/,
+      # scripts/backup/, 2026-10-10). BACKUP_SECRET: a long random string.
+      # BACKUP_PUBLIC_KEY: the owner's GnuPG PUBLIC key (armored text) — the
+      # private key never goes to Render. Either empty = /backup is off.
+      - key: BACKUP_SECRET
+        sync: false
+      - key: BACKUP_PUBLIC_KEY
+        sync: false

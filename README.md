@@ -37,6 +37,7 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | 17:00 | Report reminder; on Fridays the weekly task scorecard | employees; Director | `agents/daily-reports/ --remind`, `task-tracker --weekly` |
 | on request | Written permission requests (B1) with approvals | requester, approvers | `integrations/org_bot/permission_flow.py` |
 | on a QR scan | Client complaints — Londry `/f`, Garmin `/f/garmin` | Director (🔴) | `integrations/api/feedback_page.py` |
+| daily, 13:00 | Encrypted database backup fetched by an office computer — the copy outside Render (IT-5) | stays on that computer + a second disk | `integrations/backup/`, `scripts/backup/` |
 
 The brief reaches the Director as one designed **picture**; the cash
 calendar, KPI table, Billz → SAP check and data-quality report as **PDFs**
@@ -94,6 +95,9 @@ access to each of these:
 | Attendance | Verifix (login + organisation ID) |
 | Accounting / cash | 1C «Бухгалтерия для Узбекистана» on Clobus (OData user) |
 | Garmin AI bot | Separate repo `emjiemai/Garmin-AI-bot` — sends its leads here |
+| Database backups | The office computer: `C:\mgmg-backup-script\pull-backup.ps1` + Windows task "MGMG database backup"; copies in `D:\mgmg-backup` and the second disk; the key that opens them is in the owner's password vault (`scripts/backup/README.md`) |
+
+Every link the system uses (pages, webhooks, services): `docs/links.md`.
 
 ---
 
@@ -136,6 +140,12 @@ one of the broad rights listed in `docs/access-review-2026-10-07.md`.
 
 **Logs:** Render dashboard → the service → Logs. A cron job can be run by
 hand there ("Trigger Run") — note that it really sends.
+
+**Backups:** three copies — the live database, Render's own recovery (3–7
+days, Render → mgmg-db → Recovery) and an encrypted copy every day on an
+office computer, plus a second disk (30 days + 12 months). Only the owner's
+key opens it. Setup, the monthly restore test and how to restore for real:
+`scripts/backup/README.md`. The 08:00 technical report shows the last copy.
 
 ---
 
@@ -188,6 +198,7 @@ Every setting with its meaning is in **`.env.example`**; the defaults are in
 | Billz → SAP | `BILLZ_SAP_WAREHOUSES` (the shops' warehouses in SAP), `BILLZ_SAP_CHECK_TRIAL` (true = only to the admin), `BILLZ_SAP_CHECK_ROLES` |
 | Switches | `DAILY_REPORTS_ENABLED`, `TASK_TRACKER_ENABLED`, `PERMISSIONS_ENABLED`, `LEAD_HANDOUT_ENABLED`, `TEAM_CHEER_ENABLED`, `FEEDBACK_ENABLED`, `BOTS_FROZEN` |
 | Other | `PERMISSION_APPROVAL_TIERS` (payment limits), `PUBLIC_BASE_URL` (address on the QR codes — `/f` is already printed, never move it), `DB_VIEWER_PASSWORD` |
+| Backups | `BACKUP_SECRET` (the same value goes into `pull-backup.ps1`), `BACKUP_PUBLIC_KEY` (the owner's GnuPG **public** key — never the private one) |
 
 ---
 
@@ -237,6 +248,7 @@ before they're saved or sent; numbers are never guessed — partial data says
 | SAP numbers out of date | the Windows task (`Get-ScheduledTaskInfo -TaskName "MGMG SAP push"`); is the laptop on and the gateway (`npm start`) running? |
 | BILLZ / Verifix / 1C missing from the brief | Admin Bot `/billz`, `/verifix`, `/1c` say why |
 | Someone is "late" every day | mark them in `/grafik` if they're on "эркин график" |
+| ❌ "Офисдаги нусха" in the technical report | on the office computer: `pull-backup.log`, `pull-backup.ps1 -Check`; is the computer on, the second disk plugged in? |
 | Anything else | the `agent_actions` table in `/db` — every external call with its result |
 
 ---
@@ -252,10 +264,11 @@ integrations/
   billz/ onec/ verifix/    BILLZ, 1C, Verifix clients and their rules
   google/ search/ tenders/ Lead Agent's sources and the leads sheet
   garmin/                  leads from the Garmin AI bot
+  backup/                  encrypted pg_dump for the office computer's copy
   reports/                 HTML templates → the brief picture and the PDF reports (fonts bundled)
   ai/ telegram/ common/    OpenRouter, Telegram primitives, config / DB / audit / money / time
 database/schema.sql        the whole schema, self-applying
-scripts/                   selfcheck, cron runner, SAP push (sap-gateway-push/)
+scripts/                   selfcheck, cron runner, SAP push (sap-gateway-push/), backups (backup/)
 docs/agent-specs/          one spec + runbook per agent
 docs/agents-status.md      what runs, what's left, what each is waiting for
 docs/sap-gateway-tools.md  the SAP gateway tools this system needs
@@ -268,3 +281,17 @@ Conventions: Python 3.11, async `httpx`, `pydantic-settings`, `psycopg` 3,
 `loguru`. Money is stored as integer minor units, time in UTC and shown in
 Tashkent time. External calls retry with backoff; an agent whose source fails
 says so in its message instead of crashing. Comments explain *why*.
+
+---
+
+## 10. Change log
+
+Every change, even a small one, gets a line here (newest first) — the rule
+since 2026-10-10. Details are in git history and the specs.
+
+| Date | What changed |
+| ---- | ---- |
+| 2026-10-10 | **Database backups (IT-5):** the server makes an encrypted `pg_dump` (owner's GnuPG public key) on request; an office computer fetches one daily, checks its SHA-256, keeps 30 days + 12 months and a second copy; monthly restore test script; the technical report shows the last copy. New settings `BACKUP_SECRET`, `BACKUP_PUBLIC_KEY`; the image now has `gnupg` and `postgresql-client-16`. `scripts/backup/README.md`. |
+| 2026-10-10 | `docs/links.md` (every link) and `docs/it-instruction-2026-10.md` (the owner's IT instruction against what exists). The bot's company knowledge now names three businesses: PRIMUS (B2B equipment), LONDRY (self-service laundries), Garmin. |
+| 2026-10-10 | OPS Manager knows the company (`integrations/org_bot/knowledge.py`) and, when it doesn't understand, asks one question with 2–3 meanings as buttons. The Director's temporary permission of 09.10 marked closed. |
+| 2026-10-10 | Supplier debt 1C ↔ SAP from OPS Manager Bot: a short comparison, and the `.xlsx` on «солиштир» / «excel» / «файл» (`integrations/onec/payables.py`). |

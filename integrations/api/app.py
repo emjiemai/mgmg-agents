@@ -14,6 +14,9 @@ Endpoints:
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
     GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
     GET  /r, /r/garmin, /r/go/{branch}                Google review pages, their own QR codes (review_page.py)
+    GET  /backup/{secret}                             backup status for the office script's -Check
+    POST /backup/{secret}                             make an encrypted backup, answer its manifest (integrations/backup/)
+    GET  /backup/{secret}/{file_id}                   fetch that encrypted file, once
 
 Security:
     * Every webhook path carries a shared secret compared in constant time.
@@ -34,12 +37,14 @@ import uuid
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 
 from integrations.ai.openrouter_client import describe_openrouter_key
 from integrations.api import db_viewer, feedback_page, review_page
+from integrations.backup import dump as backup_dump
 from integrations.common.config import settings
-from integrations.common.db import close_pool, fetch_one
+from integrations.common.db import close_pool, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.garmin import leads as garmin_leads
 from integrations.org_bot import admin as org_admin
@@ -301,6 +306,71 @@ async def garmin_lead_webhook(secret: str, request: Request) -> JSONResponse:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+# ------------------------------------------------------------------ backups
+
+
+def _backup_gate(secret: str) -> JSONResponse | None:
+    """404 when backups aren't set up or the secret is wrong — the route looks like it doesn't exist."""
+    if not backup_dump.configured():
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    if not _secret_ok(secret, settings.backup_secret.get_secret_value(), "BACKUP_SECRET"):
+        log.warning("Backup asked for with a wrong secret")
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return None
+
+
+@app.get("/backup/{secret}", include_in_schema=False)
+async def backup_status(secret: str) -> JSONResponse:
+    """What is set and installed — for ``pull-backup.ps1 -Check``; makes nothing."""
+    return _backup_gate(secret) or JSONResponse(backup_dump.status())
+
+
+@app.post("/backup/{secret}", include_in_schema=False)
+async def backup_make(secret: str) -> JSONResponse:
+    """Make an encrypted backup now; answers its manifest (with the file id to fetch it by)."""
+    refused = _backup_gate(secret)
+    if refused is not None:
+        return refused
+    run_id = uuid.uuid4()
+    try:
+        backup = await backup_dump.make()
+    except backup_dump.TooSoon:
+        return JSONResponse({"ok": False, "error": "a backup was made a few minutes ago — try again later"},
+                            status_code=429)
+    except Exception as exc:  # noqa: BLE001 — the reason goes back to the script and the audit log
+        reason = str(exc)[:200]
+        log.error("Backup failed: {}", reason)
+        await log_action(agent=backup_dump.AGENT, action="backup_made", target_system="postgres", status="failure",
+                         run_id=run_id, mode="read", error_message=reason)
+        return JSONResponse({"ok": False, "error": reason}, status_code=500)
+    log.info("Backup made: {} bytes, {} tables, {} s", backup.size, len(backup.tables), backup.seconds)
+    await log_action(agent=backup_dump.AGENT, action="backup_made", target_system="postgres", status="success",
+                     run_id=run_id, mode="read",
+                     payload={"bytes": backup.size, "tables": len(backup.tables), "seconds": backup.seconds})
+    return JSONResponse({"ok": True, **backup.manifest()})
+
+
+@app.get("/backup/{secret}/{file_id}", include_in_schema=False)
+async def backup_fetch(secret: str, file_id: str) -> Any:
+    """The encrypted file, once: it is deleted from the server after it has been sent."""
+    refused = _backup_gate(secret)
+    if refused is not None:
+        return refused
+    backup = backup_dump.take(file_id)
+    if backup is None:
+        return JSONResponse({"ok": False, "error": "no such backup (fetched already, or older than an hour)"},
+                            status_code=404)
+
+    async def done() -> None:
+        backup_dump.forget(file_id)
+        await log_action(agent=backup_dump.AGENT, action="backup_fetched", target_system="postgres",
+                         status="success", mode="read", payload={"bytes": backup.size})
+
+    name = backup.manifest()["name"]
+    return FileResponse(backup.path, media_type="application/octet-stream", filename=name,
+                        headers={"X-Backup-Sha256": backup.sha256}, background=BackgroundTask(done))
 
 
 def _secret_ok(provided: str, expected: str, setting_name: str) -> bool:

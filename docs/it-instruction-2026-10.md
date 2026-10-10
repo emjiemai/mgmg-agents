@@ -23,7 +23,7 @@ it to this system; the instruction itself stays with the owner. Statuses as of
 | IT-2 | Password vault + MFA | 17.10 | ✋ ⬜ | The system's own secrets live only in Render (`mgmg-shared`, `sync: false`); add MFA on Render, GitHub, OpenRouter, Google, the bot owner's Telegram. |
 | IT-3 | LONDRY systems (app admin, payment cabinet, token-machine codes, vendor contacts, machine list) | 15.10 | ✋ ⬜ | — (LONDRY isn't connected to anything yet) |
 | IT-4 | LONDRY software videos L-07…L-09 | 15.10 | ✋ ⬜ | — |
-| IT-5 | Backups 3-2-1 + restore test (SAP, 1C, M365, cameras, bot) | 24.10 | ⬜ | The bot's database is on Render (`mgmg-db`). Needed: a copy outside Render on a schedule, and a written restore test. Can be built (a dump job + a restore drill). |
+| IT-5 | Backups 3-2-1 + restore test (SAP, 1C, M365, cameras, bot) | 24.10 | 🟡 | **The bot's database: code done 2026-10-10** — encrypted daily copy on an office computer + second disk, Render's own 3–7-day recovery, restore-test script that writes the report (`scripts/backup/README.md`). Still by hand: the owner's key, two Render settings, the office computer, the restore test with the owner. SAP (with Altitude), 1C (with Aspect), M365 and cameras: ✋ with their vendors. |
 | IT-6 | Corporate WhatsApp/Telegram for GARMIN, PRIMUS, LONDRY | 24.10 | ✋ ⬜ | — |
 | IT-7 | IT book v0 (systems, admins, where, how to restore) | 24.10 | 🟡 | `README.md` (handover guide), `docs/links.md` (every link), `docs/access-review-2026-10-07.md` (who has what), `docs/agents-status.md`. Still to write: the systems outside this repo, and it must live in Microsoft 365. |
 
