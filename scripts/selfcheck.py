@@ -392,6 +392,74 @@ def test_bot_flows() -> None:
         check("nobody but the Director can send it", asyncio.run(ops_manager._handle_callback(stranger, uuid.uuid4())),
               "unrecognized")
         check_true("no error on the task path", not any("Хатолик" in r for r in replies))
+
+        # 2026-10-10: not understood → one question back, the likely meanings as buttons
+        asked: list[tuple[str, object]] = []
+        turns: list[str] = []
+        clarifications: dict = {}
+        dispatched: list[str] = []
+
+        async def reply_with_markup(_chat_id, _run_id, text, reply_markup=None):
+            asked.append((text, reply_markup))
+            return [300]
+
+        async def log_turn(_user, role, content):
+            turns.append(f"{role}: {content}")
+
+        async def create_clarification(director, question, options):
+            clarifications["c"] = {"id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "director_telegram_user_id": director,
+                                   "question": question, "options": options, "chosen": None}
+            return clarifications["c"]
+
+        async def choose_clarification(clarification_id, director, index):
+            row = clarifications.get("c")
+            if (not row or row["id"] != clarification_id or row["director_telegram_user_id"] != director
+                    or row["chosen"] is not None or index >= len(row["options"])):
+                return None
+            row["chosen"] = index
+            return row
+
+        real_dispatch = ops_manager._dispatch_director_task
+        patch(ops_manager, "_reply", reply_with_markup)
+        patch(store, "log_conversation_turn", log_turn)
+        patch(store, "create_clarification", create_clarification)
+        patch(store, "choose_clarification", choose_clarification)
+        FakeAI.classification = {"target_type": "clarify", "target_role": None, "target_agent": None,
+                                 "task_summary": "Нимани назарда тутдингиз?",
+                                 "options": ["Бухгалтерияга: акт-сверка тайёрлансин", "<b>Савол:</b> кредиторлик қанча",
+                                             "Савол: кредиторлик қанча", "Тўртинчи", "Бешинчи"],
+                                 "target_employee": None, "due_date": None}
+        asyncio.run(real_dispatch(1, "сверка", 13, uuid.uuid4()))
+        question, markup = asked[-1]
+        buttons = [row[0] for row in markup["inline_keyboard"]]
+        check("not understood: one question, the meanings as buttons (clean, no repeats, at most three)",
+              (question, [b["text"] for b in buttons]),
+              ("Нимани назарда тутдингиз?", ["Бухгалтерияга: акт-сверка тайёрлансин", "Савол: кредиторлик қанча", "Тўртинчи"]))
+        check_true("each button fits Telegram's 64-byte callback data",
+                   all(len(b["callback_data"].encode()) <= 64 for b in buttons))
+        check_true("the question and its meanings go into the conversation memory (a typed answer works too)",
+                   turns[-1].startswith("bot: Нимани назарда тутдингиз?") and "2) Савол: кредиторлик қанча" in turns[-1])
+
+        async def fake_dispatch(director, text, source_message_id, run_id):
+            dispatched.append(text)
+
+        patch(ops_manager, "_dispatch_director_task", fake_dispatch)
+        tap = {"id": "q", "data": buttons[1]["callback_data"], "from": {"id": 1}, "message": {"message_id": 9, "chat": {"id": 1}}}
+        check("a tap sends that meaning on, as if he had written it",
+              (asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), dispatched),
+              ("clarification_chosen", ["Савол: кредиторлик қанча"]))
+        check_true("...and the question shows what he chose, buttons gone",
+                   "✔️ Савол: кредиторлик қанча" in edits[-1][0] and edits[-1][1] == {"inline_keyboard": []})
+        check("a second tap does nothing", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "clarification_closed")
+        clarifications["c"]["chosen"] = None
+        check("only the Director who was asked can choose",
+              asyncio.run(ops_manager._handle_callback({**tap, "from": {"id": 2}}, uuid.uuid4())), "clarification_closed")
+        check("a broken button is refused",
+              asyncio.run(ops_manager._handle_callback({**tap, "data": "clr:x:y"}, uuid.uuid4())), "unrecognized")
+        FakeAI.classification = {**FakeAI.classification, "options": "not a list"}
+        asked.clear()
+        asyncio.run(real_dispatch(1, "сверка", 14, uuid.uuid4()))
+        check("no usable meanings: the question alone", asked, [("Нимани назарда тутдингиз?", None)])
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
@@ -3211,6 +3279,51 @@ def uuid_module():
     return uuid
 
 
+def test_knowledge() -> None:
+    """2026-10-10: OPS Manager Bot knows the company, and asks when it doesn't understand."""
+    print("OPS Manager knowledge and asking back")
+    from integrations.org_bot import ai_chat, analyst, feedback, knowledge, prompt, roles
+    from integrations.org_bot.ops_manager import clarify_keyboard, clarify_options, validate_classification
+
+    text = knowledge.COMPANY_KNOWLEDGE
+    check_true("every department and branch, from the code", all(r.label in text for r in roles.ROUTABLE_ROLES)
+               and all(b in text for place in feedback.BRANCHES.values() for b in place.values()))
+    check_true("every system and what it holds; Didox not connected; the CRM not used",
+               all(w in text for w in ("SAP Business One", "1C", "BILLZ", "Verifix", "POSSIBLE Leads", "EMJ-SOP-ADM-01"))
+               and "NOT connected" in text and "Didox" in text and "Not used by the business: an in-house CRM" in text)
+    check_true("the Director's words: дебитор, кредитор, аванс, касса, ҳисобот, солиштир",
+               all(w in text for w in ("дебитор", "кредитор", "аванс", "касса", "ҳисобот", "солиштир", "акт-сверка")))
+    check_true("Londry is the brand (never 'Laundry' as a name)", "Primus Londry" in text and "never \"Laundry\"" in text)
+    check_true("no amounts in it (IT reads the file) — account codes and dates only",
+               not re.search(r"\d{1,3}(?:[ ,.]\d{3})+|\d{5,}", text))
+    for name, body in (("router", prompt.CLASSIFY_SYSTEM_PROMPT), ("one-source answer", prompt.ANSWER_SYSTEM_PROMPT),
+                       ("analyst", analyst.ANALYST_SYSTEM_PROMPT)):
+        check_true(f"the {name} prompt knows the company", text in body)
+    check_true("the in-house CRM is no longer named as a place records live",
+               "CRM deals live" not in prompt.CLASSIFY_SYSTEM_PROMPT)
+    check_true("the router asks back when it doesn't understand — but never which system or period",
+               'target_type="clarify"' in prompt.CLASSIFY_SYSTEM_PROMPT and '"options"' in prompt.CLASSIFY_SYSTEM_PROMPT
+               and 'never ask "which system?"' in prompt.CLASSIFY_SYSTEM_PROMPT
+               and "never ask for a period" in prompt.CLASSIFY_SYSTEM_PROMPT
+               and "After YOUR clarifying question" in prompt.CLASSIFY_SYSTEM_PROMPT)
+    check_true("the analyst asks one question with numbered readings, never which system",
+               "ask ONE short\n  question back" in analyst.ANALYST_SYSTEM_PROMPT
+               and "Never ask which system" in analyst.ANALYST_SYSTEM_PROMPT
+               and "NEVER ask the\n  Director \"which system?\"" in analyst.ANALYST_SYSTEM_PROMPT)
+    check("clarify is a valid outcome", validate_classification({"target_type": "clarify"}), ("clarify", None, None))
+    check("options: tags stripped, repeats and empties dropped, at most three",
+          clarify_options({"options": ["<i>A</i>", "a", "", None, "B", "C", "D"]}), ["A", "B", "C"])
+    check("options that aren't a list: none", clarify_options({"options": "A"}), [])
+    long = "Бухгалтерияга: " + "ж" * 100
+    button = clarify_keyboard("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", [long])["inline_keyboard"][0][0]
+    check_true("a long meaning is shortened on its button only", len(button["text"]) == 60 and button["text"].endswith("…")
+               and len(button["callback_data"].encode()) <= 64)
+    employee_prompt = ai_chat.system_prompt({"role": "it", "full_name": "Синов"}, "ctx")
+    check_true("the employees' work AI: branches and what the bot does for them (no company figures)",
+               "Вузгородок" in employee_prompt and "/ruxsat" in employee_prompt and "/natija" in employee_prompt
+               and "SAP Business One" not in employee_prompt)
+
+
 def test_ap_reconcile() -> None:
     """2026-10-09: supplier debt, 1C against SAP B1 — read-only, matched by ИНН then name."""
     print("supplier debt 1C vs SAP (integrations/onec/payables.py)")
@@ -5322,6 +5435,7 @@ def main() -> int:
         test_it_restrictions,
         test_tech_report_errors_fixed,
         test_review_pages,
+        test_knowledge,
         test_ap_reconcile,
         test_verifix,
         test_flexible_schedule,

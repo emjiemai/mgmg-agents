@@ -21,7 +21,13 @@ Verifix itself, without the ability to change anything in them.
    it must answer from what it found.
 3. Where two systems hold the same thing it looks in both and says which
    figure is from where: customer debt = SAP open invoices **and** 1C
-   account 40; supplier debt = SAP `ap_open` **and** 1C 60; money = 1C 50/51/52.
+   account 40; supplier debt = `supplier_debt_compare` (1C 60 − 43 against
+   SAP supplier balances, already compared); money = 1C 50/51/52.
+3a. It knows the company (`knowledge.COMPANY_KNOWLEDGE`, 2026-10-10): the
+   businesses, branches, departments, which system holds what and the
+   Director's words. When a question can mean two clearly different things
+   it asks ONE short question with the readings numbered ("1) … 2) …")
+   instead of guessing — never which system, never the period.
 4. If the analyst can't run (AI down, the model refuses tools,
    `OPS_ANALYST_ENABLED=false`), the old one-source answer
    (`ops_manager._answer_from_agent`) still replies.

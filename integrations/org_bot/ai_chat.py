@@ -28,6 +28,8 @@ import re
 from datetime import date
 from typing import Any
 
+from integrations.org_bot.feedback import BRANCHES
+from integrations.org_bot.knowledge import EMPLOYEE_BOT_GUIDE
 from integrations.org_bot.prompt import GARMIN_CATALOG
 from integrations.org_bot.roles import ROLE_LABELS
 from integrations.org_bot.tone import casual
@@ -47,7 +49,8 @@ MGMG (ЭМЖИЕМ), Tashkent, has two business lines:
 - Garmin — an authorised Garmin retailer in Uzbekistan (smartwatches,
   running/outdoor/multisport watches, dive computers, cycling and marine
   electronics), with Tanita scales.
-"""
+Branches: Londry {londry}; Garmin shops {garmin}.
+""".format(londry=", ".join(BRANCHES["laundry"].values()), garmin=", ".join(BRANCHES["garmin"].values()))
 
 SYSTEM_PROMPT = """\
 You are the work assistant inside MGMG's Telegram bot, talking with one
@@ -65,6 +68,7 @@ What you know about them (only this):
 {context}
 What you know about the company — public facts only:
 {company}{catalog}
+{guide}
 What you do NOT have: any company system or data — no SAP, sales figures,
 debts, cash, stock, reports, KPI, customers, or anything about other
 employees. What you can NOT do: send, save or change anything, pass a message
@@ -114,7 +118,8 @@ def system_prompt(employee: dict[str, Any], context: str) -> str:
     catalog = f"\nThe public Garmin catalog (prices may have changed):\n{GARMIN_CATALOG}\n" if role == "garmin_sotuv" else ""
     name = (employee.get("full_name") or "").strip() or employee.get("display_name") or "employee"
     return SYSTEM_PROMPT.format(
-        name=name, role=ROLE_LABELS.get(role, role) or "employee", context=context, company=_COMPANY, catalog=catalog
+        name=name, role=ROLE_LABELS.get(role, role) or "employee", context=context, company=_COMPANY, catalog=catalog,
+        guide=EMPLOYEE_BOT_GUIDE,
     )
 
 

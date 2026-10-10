@@ -34,7 +34,11 @@ to the Director" buttons do nothing.
   not) and **their written duties** once uploaded
   (until then it's told they aren't uploaded and says so);
 - the company, public facts only: Primus Londry equipment and services,
-  Garmin and Tanita; Garmin sales also get the public catalog.
+  Garmin and Tanita, the branches (Londry Юнусобод / Вузгородок, Garmin Абай /
+  Минор); Garmin sales also get the public catalog;
+- what the bot does for them (2026-10-10, `knowledge.EMPLOYEE_BOT_GUIDE`):
+  task cards, the 16:00 report and /hisobot, /natija and /kpi, /ruxsat for a
+  written permission, files to the Director, /ism.
 
 It has no SAP, sales figures, debts, cash, stock, reports, KPI, customers or
 anything about other employees. It tells people the two work ways that do

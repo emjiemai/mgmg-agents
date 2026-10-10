@@ -1010,6 +1010,21 @@ CREATE TABLE IF NOT EXISTS task_drafts (
 );
 
 -- ---------------------------------------------------------------------------
+-- director_clarifications — OPS Manager Bot's question back when it didn't
+-- understand the Director (2026-10-10): the 2–3 meanings it offered as
+-- buttons (a button carries only its index). A tap sends that meaning on as
+-- if he had written it; once. Holds the Director's words — not in /db.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS director_clarifications (
+    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    director_telegram_user_id  BIGINT       NOT NULL,
+    question                   TEXT         NOT NULL,
+    options                    TEXT[]       NOT NULL,
+    chosen                     SMALLINT,
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
 -- The work AI (2026-10-02, integrations/org_bot/ai_chat.py): every
 -- employee's free message about their work goes to the AI — the bot no
 -- longer carries messages to the Director or between people. The admin can

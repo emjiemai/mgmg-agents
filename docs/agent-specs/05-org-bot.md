@@ -78,7 +78,7 @@ start receiving every daily report and giving the bot orders.
    the backstop against that.
 7. Classification (`integrations/org_bot/prompt.py:CLASSIFY_SYSTEM_PROMPT`) is
    one AI call against a **closed, bounded enum** (every role in `ROLES` +
-   every entry in `AGENTS` + "none" + "refused" — see `roles.py` for the
+   every entry in `AGENTS` + "clarify" + "none" + "refused" — see `roles.py` for the
    current list), not free text. The model's raw output is validated in code
    (`ops_manager.validate_classification`) against `roles.py`'s known slugs
    before anything is trusted — this is the proportionate backstop for a
@@ -86,6 +86,18 @@ start receiving every daily report and giving the bot orders.
    exists because open-ended lead qualification has a much wider failure
    surface). An unrecognized or missing target — including the model's own
    "none" — asks the Director to clarify rather than guessing.
+7a. **Not understood → it asks (2026-10-10, the owner).** When a message can
+   mean two or more really different things (a task or a question; which
+   department or person; two different questions) or is too vague to act on,
+   the router returns `target_type="clarify"`: one short question and the 2–3
+   likely meanings, each written as the full request (`options`). They come
+   as buttons (`ops_manager.clarify_keyboard`, kept in
+   `director_clarifications`, a button carries only its index); a tap sends
+   that meaning on exactly as if he had typed it — once, only by the Director
+   who was asked, within 24 hours. The question and its numbered meanings go
+   into the conversation memory, so a typed answer ("иккинчиси", or his own
+   words) works too: the router combines it with the question. It never asks
+   "which system?" or for a period — those it decides itself.
 8. **Target is a human role — confirmed first (2026-10-02).** Nothing goes
    out straight away: the Director gets a card with the task and every
    active employee as a tick-box (`integrations/org_bot/task_picker.py`,
@@ -236,6 +248,14 @@ role — because the lead happened to be tagged B2B, not because deleting a
 spreadsheet row is anything a human role does via a task card. With zero
 grounding in its own capabilities, the model invented a plausible-sounding
 route instead of recognizing the request was impossible through this bot.
+
+Since 2026-10-10 the company part is `integrations/org_bot/knowledge.py`
+(`COMPANY_KNOWLEDGE`, shared with the analyst): both businesses and their
+branches, the departments (from `roles.py`), which system holds what (SAP,
+1C, BILLZ, Verifix, the leads sheet, the bot's own records; Didox and online
+banking not connected; no CRM), and the Director's words (дебитор /
+кредитор / аванс / зачет / акт-сверка / касса / ҳисобот / солиштир …). Facts
+only, no figures.
 
 Fixed by adding `COMPANY_CONTEXT` to both prompts: who MGMG/Primus Londry
 are, and an explicit, forceful capability boundary — "you can route a task

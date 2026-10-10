@@ -152,8 +152,8 @@ def validate_classification(result: dict[str, Any]) -> tuple[str, str | None, st
     Returns:
         ``(target_type, target_role, target_agent)`` if the output is
         internally consistent and every slug is real (``target_type`` is
-        "none" or "refused" — refused is the guardrail path, its refusal
-        text lives in ``task_summary``, not here) — else None. Callers must
+        "none", "clarify" or "refused" — their text lives in
+        ``task_summary``, not here) — else None. Callers must
         treat None the same as an explicit "none" (ask the Director to
         clarify), never as a silent default route.
     """
@@ -161,13 +161,40 @@ def validate_classification(result: dict[str, Any]) -> tuple[str, str | None, st
     target_role = result.get("target_role")
     target_agent = result.get("target_agent")
 
-    if target_type in ("none", "refused"):
+    if target_type in ("none", "refused", "clarify"):
         return target_type, None, None
     if target_type == "employee" and target_role in ROUTABLE_ROLE_SLUGS:
         return "employee", target_role, None
     if target_type == "agent" and target_agent in AGENT_SLUGS:
         return "agent", None, target_agent
     return None
+
+
+CLARIFY_MAX_OPTIONS = 3
+CLARIFY_OPTION_CHARS = 120   # what is stored and sent on; the button shows less
+CLARIFY_LABEL_CHARS = 60
+
+
+def clarify_options(result: dict[str, Any]) -> list[str]:
+    """The meanings the router offered with a "clarify" — clean, distinct, at most three."""
+    raw = result.get("options")
+    if not isinstance(raw, list):
+        return []
+    found: list[str] = []
+    for item in raw:
+        text = " ".join(re.sub(r"<[^>]+>", "", str(item or "")).split())[:CLARIFY_OPTION_CHARS]
+        if text and text.lower() not in (f.lower() for f in found):
+            found.append(text)
+    return found[:CLARIFY_MAX_OPTIONS]
+
+
+def clarify_keyboard(clarification_id: str, options: list[str]) -> dict[str, Any]:
+    """One button per meaning, one per row (a button carries only its index)."""
+    def label(text: str) -> str:
+        return text if len(text) <= CLARIFY_LABEL_CHARS else text[:CLARIFY_LABEL_CHARS - 1].rstrip() + "…"
+
+    return {"inline_keyboard": [[{"text": label(o), "callback_data": f"clr:{clarification_id}:{i}"}]
+                                for i, o in enumerate(options)]}
 
 
 # --------------------------------------------------------------------- entry
@@ -232,6 +259,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return "relay_disabled"
     if prefix == "asai":
         return await _handle_held_as_question(rest, callback, run_id, background)
+    if prefix == "clr":
+        return await _handle_clarification(rest, callback, run_id, background)
     if prefix == "fp":
         return await _handle_file_purpose(rest, callback, run_id)
     if prefix in ("rpe", "rpd", "rpdy", "rpn"):
@@ -1301,6 +1330,8 @@ async def _dispatch_director_task(
             )
         elif target_type == "agent":
             await _answer_question(director_telegram_user_id, target_agent, raw_message, run_id, history)
+        elif target_type == "clarify":
+            await _ask_clarification(director_telegram_user_id, task_summary, clarify_options(result), run_id)
         elif target_type == "refused":
             # The guardrail path — the model's own polite refusal, already in
             # Uzbek/Russian per prompt.py's GUARDRAILS block.
@@ -1332,6 +1363,55 @@ async def _dispatch_director_task(
             status="failure", run_id=run_id, error_message=str(exc), mode="write",
         )
         await _safe_notify_failure(director_telegram_user_id, run_id)
+
+
+async def _ask_clarification(director_id: int, question: str, options: list[str], run_id: uuid.UUID) -> None:
+    """The router didn't understand: ask back, with its 2–3 readings as buttons (2026-10-10).
+
+    The question and the options go into the conversation memory, so a typed
+    answer ("иккинчиси", or his own words) is understood on the next message.
+    """
+    question = sanitize_model_html(question) or "Аниқ тушунмадим — нимани назарда тутдингиз?"
+    if not options:
+        await _reply_and_log(director_id, run_id, question)
+        return
+    row = await store.create_clarification(director_id, _plain(question), options)
+    await _reply(director_id, run_id, question, reply_markup=clarify_keyboard(str(row["id"]), options))
+    await store.log_conversation_turn(
+        director_id, "bot", question + "\n" + "\n".join(f"{i}) {o}" for i, o in enumerate(options, start=1))
+    )
+
+
+async def _handle_clarification(
+    rest: str, callback: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks | None
+) -> str:
+    """The Director tapped one meaning: it goes on as if he had written it."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    clarification_id, _, index_text = rest.rpartition(":")
+    if not clarification_id or not index_text.isdigit() or clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    row = await store.choose_clarification(clarification_id, clicker_id, int(index_text))
+    if row is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "clarification_closed"
+    choice = row["options"][row["chosen"]]
+    await _answer(query_id, "OK")
+    message = callback.get("message") or {}
+    if message.get("message_id") and message.get("chat", {}).get("id"):
+        async with TelegramBot(
+            agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+        ) as bot:
+            await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                chat_id=str(message["chat"]["id"]), message_id=message["message_id"],
+                text=f"{escape(row['question'])}\n\n✔️ {escape(choice)}", reply_markup={"inline_keyboard": []},
+            )
+    if background is not None:
+        background.add_task(_dispatch_director_task, clicker_id, choice, None, run_id)
+    else:
+        await _dispatch_director_task(clicker_id, choice, None, run_id)
+    return "clarification_chosen"
 
 
 async def _roster() -> tuple[list[str], dict[str, dict[str, Any]]]:

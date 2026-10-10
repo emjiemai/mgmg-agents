@@ -1997,6 +1997,31 @@ async def get_task_draft(draft_id: str) -> dict[str, Any] | None:
     return await fetch_one("SELECT * FROM task_drafts WHERE id = %s", (draft_id,))
 
 
+# ---------------------------------------------------------- clarifying questions
+
+
+async def create_clarification(director_telegram_user_id: int, question: str, options: list[str]) -> dict[str, Any] | None:
+    """Remember the meanings offered to the Director as buttons."""
+    return await fetch_one(
+        "INSERT INTO director_clarifications (director_telegram_user_id, question, options) "
+        "VALUES (%s, %s, %s) RETURNING *",
+        (director_telegram_user_id, question, options),
+    )
+
+
+async def choose_clarification(clarification_id: str, director_telegram_user_id: int, index: int) -> dict[str, Any] | None:
+    """Record the tapped meaning, once; None if already answered, not theirs, out of range or a day old."""
+    return await fetch_one(
+        """
+        UPDATE director_clarifications SET chosen = %s
+        WHERE id = %s AND director_telegram_user_id = %s AND chosen IS NULL
+          AND %s < cardinality(options) AND created_at > now() - interval '24 hours'
+        RETURNING *
+        """,
+        (index, clarification_id, director_telegram_user_id, index),
+    )
+
+
 # ---------------------------------------------------------- AI chat (employees)
 
 

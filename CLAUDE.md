@@ -139,6 +139,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   and 1C both. No tool can write; the old one-source answer is the fallback. Supplier debt 1C ↔ SAP
   (2026-10-10, `integrations/onec/payables.py`, spec 21): a short text comparison; with «солиштир» /
   «excel» / «файл» the bot also sends the `.xlsx` workbook (built on the server).
+- **The bot knows the company and asks when unsure** (2026-10-10): `integrations/org_bot/knowledge.py`
+  (businesses, branches, departments, which system holds what, the Director's words — facts only,
+  no figures) goes into every OPS Manager prompt; keep it current when the business changes. Not
+  understood → `target_type="clarify"`: one question + 2–3 meanings as buttons
+  (`director_clarifications`); never asks "which system?" or for a period.
 
 ## Open items
 - SAP: push every 30 min as Windows task "MGMG SAP push" (`install-task.ps1`). The missing columns
