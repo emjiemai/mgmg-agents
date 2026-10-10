@@ -32,11 +32,12 @@ Verifix itself, without the ability to change anything in them.
 | ---- | ----- | ----- |
 | `data_sources` | what's connected, SAP push freshness per kind | Didox: not connected |
 | `sap_receivables` | `v_ar_aging_latest` (SAP OINV, open) | filters: customer, days unpaid; totals by age and customer; amounts as written (so'm) when the gateway sends them, else SAP's USD |
-| `sap_records` | `v_sap_gateway_latest`, one kind (sales, sales_lines, payments, payments_out, ap_open, po_open, orders, inventory, stock_value, products, customers, warehouses, sales_people, equipment, service_calls, service_contracts) | text search, date filter on DocDate; sums worked out in code (cancelled left out); grouped by customer / item / warehouse |
+| `sap_records` | `v_sap_gateway_latest`, one kind (sales, sales_lines, payments, payments_out, ap_open, supplier_balances, po_open, orders, inventory, stock_value, products, customers, warehouses, sales_people, equipment, service_calls, service_contracts) | text search, date filter on DocDate; sums worked out in code (cancelled left out); grouped by customer / item / warehouse |
 | `onec_balances` | 1C `AccountingRegister_Хозрасчетный/Balance` + chart + counterparty catalog | account prefix (digits), as of a date; per account and per counterparty (ExtDimension1), so'm |
 | `onec_turnovers` | 1C `…/Turnovers(StartPeriod, EndPeriod)` | debit/credit per account and counterparty: revenue 9010, cost 9110, expenses 94, money in/out 50/51. Field names are read from the answer (not yet seen on the live 1C) |
 | `billz_sales` | BILLZ reports, any period ≤ 92 days | shops, sellers, top products, so'm |
 | `attendance` | Verifix timesheet, ≤ 92 days, optional one person | late / absent / excused, per person |
+| `supplier_debt_compare` | 1C 6010/6015 + 4310/4315 (live, GET) against SAP `supplier_balances` (pushed) — `integrations/onec/payables.py` | 2026-10-10. Supplier debt compared supplier by supplier (ИНН, then name; SAP's sign chosen by 1C): both totals, agree / differ / only-1C / only-SAP counts, biggest gaps with a likely reason. `excel=true`, or the Director's own words «солиштир», «excel», «файл», «жадвал» (`FILE_WORDS`): the same workbook as `scripts/ap_reconcile.py` is built in memory and sent after the text as `kreditorlik-1C-SAP-<date>.xlsx` (`Answer.files` → `ops_manager._send_files`); once per answer |
 | `company_data` | the bot's own readers (`ops_manager._fetch_agent_data`) | tasks, daily reports + KPI, permissions, cash calendar, complaints, lead hand-out, leads sheet, Garmin bot leads, Garmin catalog, brief history |
 
 ## Read-only, by construction
@@ -53,7 +54,8 @@ Verifix itself, without the ability to change anything in them.
   30,000 characters with a note to narrow the search.
 - Tests (`scripts/selfcheck.py`, `test_analyst`): no write statement or raw
   HTTP in the module, every tool handled, arguments bounded, the loop, the
-  fallback.
+  fallback; the supplier-debt summary, the workbook only when asked, the
+  text before the file.
 
 ## Privacy
 

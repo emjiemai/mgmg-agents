@@ -5,7 +5,20 @@
 **Access:** IT may not see payables (the order of 07.10); the Director gave
 written temporary permission on 09.10 for this task (`docs/access-review-2026-10-07.md`,
 section 4). Everything is read only.
-**Code:** `scripts/ap_reconcile.py` (no data in the repository).
+**Code:** `integrations/onec/payables.py` (the comparison, the summary, the workbook);
+`scripts/ap_reconcile.py` (command line). No data in the repository.
+
+## From OPS Manager Bot (2026-10-10)
+
+The Director asks in his own words — «кредиторлик қанча, 1C ва SAP да фарқи
+борми?» — and the analyst's `supplier_debt_compare` tool reads 1C live and
+SAP's pushed `supplier_balances`, and answers in a few lines: both totals,
+how many suppliers agree / differ / are only in one system, the biggest
+differences with a likely reason. With «солиштир», «excel», «файл» or
+«жадвал» in the question (or when the model asks for it) the same Excel
+workbook follows the text as `kreditorlik-1C-SAP-<date>.xlsx` — built in
+memory on the server, no PC needed. Only the Director's questions reach the
+analyst; logs keep the tool name and the file's size, never a figure.
 
 ## What it compares
 
@@ -53,7 +66,9 @@ sends it as `supplier_balances`; once the gateway is updated, run with
 
 `scripts/selfcheck.py`, `test_ap_reconcile`: 1C netting, persons left out,
 currency kept, SAP export headers found, sign turned, ИНН and name matching,
-reasons, the workbook's sheets, nothing written anywhere.
+reasons, the workbook's sheets, nothing written anywhere; `test_analyst`: the
+bot's summary (totals, counts, top gap), the workbook in memory, the file only
+when asked and once, the text before the file, the shared pool never closed.
 
 ## SAP's sign (fixed 2026-10-09)
 

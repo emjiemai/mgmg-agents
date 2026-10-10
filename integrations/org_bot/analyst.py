@@ -27,9 +27,11 @@ employees' work AI (``ai_chat.py``) has no company data at all.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections import defaultdict
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable
@@ -70,7 +72,9 @@ SAP_KINDS: dict[str, str] = {
     "sales_lines": "lines of those invoices: item, quantity, warehouse, line total",
     "payments": "incoming payments from customers (ORCT), last ~45 days",
     "payments_out": "outgoing payments to suppliers (OVPM), last ~45 days",
-    "ap_open": "open supplier invoices = what the company owes suppliers (OPCH)",
+    "ap_open": "open supplier invoices (OPCH) — not pushed yet; supplier debt is supplier_balances",
+    "supplier_balances": "every supplier with a balance (OCRD): Balance USD, BalanceSys so'm "
+                         "(positive = we owe, negative = advance paid)",
     "po_open": "open purchase order lines (OPOR + POR1)",
     "orders": "open sales orders (ORDR)",
     "inventory": "stock by item and warehouse (OITW + OITM), non-zero",
@@ -85,7 +89,7 @@ SAP_KINDS: dict[str, str] = {
 }
 # Fields whose sums are worked out here, not left to the model to add up.
 SUM_FIELDS = ("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "PaidFC", "LineTotal", "Quantity",
-              "OnHand", "StockValue", "OpenQty", "CashSum", "TrsfrSum", "CheckSum")
+              "OnHand", "StockValue", "OpenQty", "CashSum", "TrsfrSum", "CheckSum", "Balance", "BalanceSys")
 DATE_FIELDS = ("DocDate", "TaxDate", "CreateDate", "DocDueDate")
 
 
@@ -130,6 +134,12 @@ TOOLS: list[dict] = [
         {"date_from": _DATE, "date_to": _DATE,
          "name": {"type": "string", "description": "one person's name (any alphabet), optional"}},
         ("date_from", "date_to")),
+    _fn("supplier_debt_compare", "Supplier debt (кредиторлик) compared supplier by supplier: 1C (6010+6015 owed "
+        "minus 4310+4315 advances) against SAP's supplier balances, paired by ИНН then name. Gives both totals, how "
+        "many suppliers agree / differ / are only in one system, and the biggest differences with a likely reason. "
+        "Use it for 'кредиторлик', 'етказиб берувчиларга қарз', '1C ва SAP солиштир'. Reads 1C live (slow, ~20 s).",
+        {"excel": {"type": "boolean", "description": "true when the Director wants the file / Excel / table / "
+                   "full comparison — the bot then sends him the .xlsx workbook with every supplier"}}),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -154,8 +164,8 @@ if asked to change data, say plainly that you can only look things up.
   Director "which system?" — check the likely ones yourself.
 - Where two systems hold the same thing, look in both and say which figure
   is from where. Customer debt: sap_receivables (SAP invoices) AND
-  onec_balances '40' (1C's books); supplier debt: sap_records ap_open AND
-  onec_balances '60'; money right now: onec_balances '5'; shop sales:
+  onec_balances '40' (1C's books); supplier debt: supplier_debt_compare
+  (both systems at once, already compared); money right now: onec_balances '5'; shop sales:
   billz_sales; B2B sales: sap_records sales; stock: sap_records inventory /
   stock_value and onec_balances '29'. If they differ, say so — don't pick one.
 - Didox (e-invoices) is not connected: only if asked about Didox, say so and
@@ -166,6 +176,10 @@ if asked to change data, say plainly that you can only look things up.
 - A tool that fails or has no data: say that system is unavailable right
   now, and answer from the others. Never invent a figure.
 - Several tools can be called at once when they don't depend on each other.
+- Asked to compare supplier debt, or for an Excel / file / table of it: call
+  supplier_debt_compare with excel=true. The bot attaches the .xlsx to your
+  answer itself — say in one line that the full table is in the file; never
+  say you can't send files.
 
 # NUMBERS
 - Repeat amounts exactly as the tools give them, with their currency. Never
@@ -191,6 +205,14 @@ class Answer:
     text: str
     tools: list[str] = field(default_factory=list)
     rounds: int = 0
+    files: list[tuple[bytes, str]] = field(default_factory=list)  # (content, filename) sent after the text
+
+
+# Files a tool made during one answer (the workbook), picked up by ``answer``.
+_files: ContextVar[list[tuple[bytes, str]] | None] = ContextVar("analyst_files", default=None)
+# The Director's own words asking for a file — the workbook goes even if the model forgets excel=true.
+FILE_WORDS = re.compile(r"солиштир|solishtir|сравн|excel|эксел|ексел|xlsx|файл|fayl|жадвал|jadval|таблиц", re.I)
+_wants_file: ContextVar[bool] = ContextVar("analyst_wants_file", default=False)
 
 
 def _today() -> date:
@@ -513,6 +535,23 @@ async def attendance(args: dict[str, Any]) -> str:
     return f"Period asked: {start} to {end}.\n" + verifix.describe(recs, end, now)
 
 
+async def supplier_debt_compare(args: dict[str, Any]) -> str:
+    from integrations.onec import payables
+
+    if not settings.onec_configured:
+        return "1C is not connected (ONEC_ODATA_URL / ONEC_LOGIN / ONEC_PASSWORD not set) — can't compare."
+    onec_data = await payables.read_onec(agent=AGENT)
+    sap_rows, sap_source = await payables.pushed_sap_rows()
+    result = payables.compare(onec_data, sap_rows, sap_source)
+    text = payables.summary(result)
+    files = _files.get()
+    if files is not None and (args.get("excel") is True or _wants_file.get()):
+        name = f"kreditorlik-1C-SAP-{_today():%Y-%m-%d}.xlsx"
+        files[:] = [f for f in files if f[1] != name] + [(payables.workbook_bytes(result), name)]
+        text += "\nThe .xlsx workbook with every supplier will be sent with your answer."
+    return text
+
+
 async def company_data(args: dict[str, Any]) -> str:
     from integrations.org_bot import ops_manager
 
@@ -530,6 +569,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "onec_turnovers": onec_turnovers,
     "billz_sales": billz_sales,
     "attendance": attendance,
+    "supplier_debt_compare": supplier_debt_compare,
     "company_data": company_data,
 }
 
@@ -578,6 +618,8 @@ async def answer(question: str, history: str, run_id: uuid.UUID, hint: str | Non
         {"role": "user", "content": build_user_message(question, history, _today(), hint)},
     ]
     result = Answer(text="")
+    _files.set(result.files)
+    _wants_file.set(bool(FILE_WORDS.search(question)))
     async with OpenRouterClient(
         agent=AGENT, run_id=run_id,
         model_override=settings.ops_manager_bot_model, fallback_override=settings.ops_manager_bot_fallback_models,

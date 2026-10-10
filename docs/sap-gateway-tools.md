@@ -111,7 +111,7 @@ ORDER BY T0."WhsCode"
 
 ### 4. `get_supplier_balances` — supplier debt (asked 2026-10-09)
 
-For the Director's 1C ↔ SAP payables comparison (`scripts/ap_reconcile.py`,
+For the Director's 1C ↔ SAP payables comparison (OPS Manager Bot, `scripts/ap_reconcile.py`,
 `docs/agent-specs/21-ap-reconcile.md`). One row per supplier with a balance.
 `Balance` is SAP's local currency (USD), `BalanceSys` its system currency
 (so'm) — the one compared with 1C; on the 09.10 data a debt to a supplier is

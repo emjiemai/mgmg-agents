@@ -1779,9 +1779,25 @@ async def _answer_question(
                     run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools},
                 )
                 await _reply_and_log(director_id, run_id, sanitize_model_html(result.text))
+                await _send_files(director_id, run_id, result.files)
                 return
             log.warning("Analyst returned nothing, answering from {} alone", agent_slug)
     await _answer_from_agent(director_id, agent_slug, question, run_id, history)
+
+
+async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[bytes, str]]) -> None:
+    """Files the analyst made for its answer (the 1C ↔ SAP supplier-debt workbook), after the text."""
+    if not files:
+        return
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for content, filename in files:
+            try:
+                await bot.send_file(content, filename, str(director_id))
+            except Exception as exc:  # noqa: BLE001 — the text answer already went
+                log.error("Sending {} to the Director failed: {}", filename, type(exc).__name__)
+                await bot.send_message("Файлни юбориб бўлмади — бироздан кейин яна сўранг.", chat_id=str(director_id))
 
 
 async def _answer_from_agent(

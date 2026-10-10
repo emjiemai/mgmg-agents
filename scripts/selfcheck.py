@@ -2557,6 +2557,7 @@ def test_analyst() -> None:
     import asyncio
     import contextlib
     import inspect
+    import io
     import json
     import uuid
     from datetime import date, datetime, timezone
@@ -2831,6 +2832,116 @@ def test_analyst() -> None:
         check("switched off: the old answer", old_path, ["finance_agent", "pul_qoldigi"])
     finally:
         restore()
+    # ---- 2026-10-10: supplier debt 1C ↔ SAP from the bot — a text comparison, and the .xlsx on request
+    # (invented figures — no real supplier or amount in the repo, the Director's order of 07.10)
+    from integrations.onec import payables
+
+    onec_data = {
+        "as_of": "2026-10-10T09:00:00",
+        "chart": [{"Ref_Key": "a6010", "Code": "6010", "Description": "Поставщики"},
+                  {"Ref_Key": "a4310", "Code": "4310", "Description": "Авансы"}],
+        "parties": [{"Ref_Key": "p1", "Description": "Namuna MChJ", "ИНН": "300000011"},
+                    {"Ref_Key": "p2", "Description": "Ikkinchi firma", "ИНН": "300000012"},
+                    {"Ref_Key": "p3", "Description": "Faqat birinchi", "ИНН": ""}],
+        "rows": [{"Account_Key": "a6010", "ExtDimension1": "p1", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+                  "СуммаBalanceCr": 3_000_000},
+                 {"Account_Key": "a6010", "ExtDimension1": "p2", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+                  "СуммаBalanceCr": 2_000_000},
+                 {"Account_Key": "a4310", "ExtDimension1": "p3", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты",
+                  "СуммаBalanceDr": 500_000}],
+    }
+    sap_rows = [{"CardCode": "S1", "CardName": "Namuna", "LicTradNum": "300000011", "CardType": "S",
+                 "Balance": "250", "BalanceSys": "3000000"},
+                {"CardCode": "S2", "CardName": "Ikkinchi firma", "LicTradNum": "300000012", "CardType": "S",
+                 "Balance": "100", "BalanceSys": "1200000"},
+                {"CardCode": "S3", "CardName": "Faqat SAP", "LicTradNum": "", "CardType": "S",
+                 "Balance": "50", "BalanceSys": "600000"}]
+    compared = payables.compare(onec_data, sap_rows, "SAP шлюзи, 10.10.2026 08:30")
+    text = payables.summary(compared)
+    check_true("the summary: both totals, counts, the biggest difference with its reason",
+               "TOTAL 1C" in text and "net 4 500 000 сўм" in text and "TOTAL SAP: net 4 800 000 сўм" in text
+               and "agree 1, differ 1. Only in 1C: 1. Only in SAP: 1." in text
+               and "Ikkinchi firma: 1C 2 000 000 сўм / SAP 1 200 000 сўм / 800 000 сўм — Сумма фарқли" in text)
+    check_true("no SAP data yet: said, 1C side still given",
+               "hasn't pushed" in payables.summary(payables.compare(onec_data, [], "йўқ")))
+    from openpyxl import load_workbook as _load_wb
+
+    check("the workbook builds in memory (no file on the server)",
+          _load_wb(io.BytesIO(payables.workbook_bytes(compared))).sheetnames,
+          ["Солиштириш", "Фақат 1C", "Фақат SAP", "1C тафсилот", "Изоҳ"])
+
+    async def fake_onec(agent="x"):
+        return onec_data
+
+    async def fake_pushed(close=False):
+        check_true("the service never closes the shared database pool", close is False)
+        return sap_rows, "SAP шлюзи, 10.10.2026 08:30"
+
+    patch(payables, "read_onec", fake_onec)
+    patch(payables, "pushed_sap_rows", fake_pushed)
+    for name, value in (("onec_odata_url", "https://clobus.uz/x/odata/standard.odata/"), ("onec_login", "bot"),
+                        ("onec_password", SecretStr("x"))):
+        patch(settings, name, value)
+    try:
+        files: list = []
+        analyst._files.set(files)
+        analyst._wants_file.set(False)
+        text = asyncio.run(analyst.supplier_debt_compare({}))
+        check_true("asked in words: a text comparison, no file", "agree 1, differ 1" in text and files == [])
+        asyncio.run(analyst.supplier_debt_compare({"excel": True}))
+        asyncio.run(analyst.supplier_debt_compare({"excel": True}))
+        check_true("excel=true: one .xlsx for the answer (asked twice, sent once)",
+                   len(files) == 1 and files[0][1].startswith("kreditorlik-1C-SAP-") and files[0][1].endswith(".xlsx")
+                   and files[0][0][:2] == b"PK")
+        files.clear()
+        analyst._wants_file.set(True)
+        asyncio.run(analyst.supplier_debt_compare({}))
+        check("the Director's own word «солиштир» sends the file even if the model forgot", len(files), 1)
+    finally:
+        analyst._files.set(None)
+        analyst._wants_file.set(False)
+        restore()
+    check_true("file words: солиштир / excel / файл, not a plain question",
+               all(analyst.FILE_WORDS.search(q) for q in ("1C ва SAP кредиторликни солиштириб беринг",
+                                                          "excel qilib bering", "файлини юборинг"))
+               and not analyst.FILE_WORDS.search("кредиторлик қанча?"))
+    check_true("supplier debt: the prompt sends the analyst to the comparison tool",
+               "supplier_debt_compare" in analyst.ANALYST_SYSTEM_PROMPT and "sap_records ap_open" not in analyst.ANALYST_SYSTEM_PROMPT)
+
+    uploads: list[tuple[str, str]] = []
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_file(self, content, filename, chat_id, caption=None, photo=False):
+            uploads.append((filename, chat_id))
+
+        async def send_message(self, text, chat_id=None, reply_markup=None):
+            uploads.append(("text", text))
+
+    async def with_file(question, history, run_id, hint=None):
+        return analyst.Answer(text="1C ва SAP ...", tools=["supplier_debt_compare"], rounds=2,
+                              files=[(b"PK..", "kreditorlik-1C-SAP-2026-10-10.xlsx")])
+
+    replies.clear()
+    patch(ops_manager, "_reply_and_log", reply)
+    patch(ops_manager, "log_action", no_log)
+    patch(ops_manager, "TelegramBot", FakeBot)
+    patch(analyst, "answer", with_file)
+    patch(settings, "ops_analyst_enabled", True)
+    try:
+        asyncio.run(ops_manager._answer_question(7, "finance_agent", "солиштириб беринг", uuid.uuid4()))
+        check("the text first, then the workbook to the Director", (replies, uploads),
+              (["1C ва SAP ..."], [("kreditorlik-1C-SAP-2026-10-10.xlsx", "7")]))
+    finally:
+        restore()
     check_true("the Director's words and the figures aren't logged",
                "data[:200]" not in inspect.getsource(ops_manager._answer_from_agent)
                and "answer[:300]" not in inspect.getsource(ops_manager._answer_from_agent)
@@ -3102,15 +3213,11 @@ def uuid_module():
 
 def test_ap_reconcile() -> None:
     """2026-10-09: supplier debt, 1C against SAP B1 — read-only, matched by ИНН then name."""
-    print("supplier debt 1C vs SAP (scripts/ap_reconcile.py)")
-    import importlib.util
+    print("supplier debt 1C vs SAP (integrations/onec/payables.py)")
     import inspect
     import tempfile
 
-    spec = importlib.util.spec_from_file_location("ap_reconcile", Path(__file__).resolve().parent / "ap_reconcile.py")
-    ar = importlib.util.module_from_spec(spec)
-    sys.modules["ap_reconcile"] = ar  # dataclasses look their module up there
-    spec.loader.exec_module(ar)
+    from integrations.onec import payables as ar
 
     data = {
         "as_of": "2026-10-09T10:00:00",
@@ -3175,7 +3282,7 @@ def test_ap_reconcile() -> None:
     check("the workbook: comparison, only-1C, only-SAP, 1C detail, notes", (sheets, counts),
           (["Солиштириш", "Фақат 1C", "Фақат SAP", "1C тафсилот", "Изоҳ"],
            {"matched": 2, "differ": 1, "only_1c": 1, "only_sap": 1}))
-    source = inspect.getsource(ar)
+    source = inspect.getsource(ar) + (Path(__file__).resolve().parent / "ap_reconcile.py").read_text(encoding="utf-8")
     check_true("read-only: no write to 1C, the database or Telegram, and no amounts printed",
                not any(w in source for w in ("execute(", "INSERT", ".post(", "send_message", "TelegramBot"))
                and "counts only, never amounts" in source)
@@ -4235,15 +4342,7 @@ def test_sap_gateway_code() -> None:
     check_true("the HANA client binds parameters", "connection.exec(sql, params," in sources["hana.js"])
 
     # the 1C <-> SAP comparison reads the gateway's rows as they come
-    import importlib.util
-    import sys as _sys
-
-    ar = _sys.modules.get("ap_reconcile")
-    if ar is None:
-        spec = importlib.util.spec_from_file_location("ap_reconcile", root / "scripts" / "ap_reconcile.py")
-        ar = importlib.util.module_from_spec(spec)
-        _sys.modules["ap_reconcile"] = ar  # dataclasses look their module up here
-        spec.loader.exec_module(ar)
+    from integrations.onec import payables as ar
     pushed = [{"CardCode": "S001", "CardName": "Primus LLC", "LicTradNum": "301234567", "CardType": "S",
                "Currency": "UZS", "Balance": "-800.00", "BalanceSys": "-9400000.00", "BalanceFC": "-9400000.00"},
               {"CardCode": "S002", "CardName": "Tanita", "LicTradNum": "", "CardType": "S", "Currency": "USD",

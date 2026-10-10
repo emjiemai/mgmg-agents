@@ -136,14 +136,15 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **The Director's questions go to the analyst** (2026-10-07, `docs/agent-specs/19-director-analyst.md`):
   the AI looks things up itself with read-only tools (SAP pushed data, 1C balances/turnovers by
   counterparty, BILLZ, Verifix, the bot's records) and **never asks "which system?"**; debt = SAP
-  and 1C both. No tool can write; the old one-source answer is the fallback.
+  and 1C both. No tool can write; the old one-source answer is the fallback. Supplier debt 1C ↔ SAP
+  (2026-10-10, `integrations/onec/payables.py`, spec 21): a short text comparison; with «солиштир» /
+  «excel» / «файл» the bot also sends the `.xlsx` workbook (built on the server).
 
 ## Open items
 - SAP: push every 30 min as Windows task "MGMG SAP push" (`install-task.ps1`). The missing columns
   (so'm totals, `SlpName`, `CreateDate`/`CreateTS`, `ObjType`, `CodeBars`, credit notes, entered-late
-  sales) and the new `get_supplier_balances` are **written in `sap-gateway/` (2026-10-09) but not yet
-  deployed**: copy `sap-gateway/src/` to the gateway computer, restart, run `push-ar-aging.ps1 -Check`
-  (the new push script too). Billz → SAP check is on **trial** (results to the admin) until the owner
+  sales) and `get_supplier_balances` are written in `sap-gateway/` (2026-10-09); supplier balances
+  **arrive** (09.10, every column). An older duplicate Windows task also runs at :17/:47 — delete it. Billz → SAP check is on **trial** (results to the admin) until the owner
   confirms them, then `BILLZ_SAP_CHECK_TRIAL=false`. Admin to tick "эркин график" people in `/grafik`.
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

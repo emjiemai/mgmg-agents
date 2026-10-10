@@ -27,7 +27,7 @@ the first run after it appears — nothing to change in the script:
 | `get_open_invoices` | `ar_open` | customer debt (paid part taken off), receivables alert |
 | `get_sales_by_date` (last 14 days) | `sales`, `sales_lines` | yesterday's sales, the Billz → SAP check |
 | `get_stock_value` | `stock_value` | stock value |
-| `get_supplier_balances` | `supplier_balances` | supplier debt for the 1C ↔ SAP comparison (`scripts/ap_reconcile.py --sap-pushed`) |
+| `get_supplier_balances` | `supplier_balances` | supplier debt for the 1C ↔ SAP comparison (the Director asks OPS Manager Bot; `scripts/ap_reconcile.py --sap-pushed`) |
 
 ## Setup
 
