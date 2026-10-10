@@ -57,9 +57,12 @@ reasons, the workbook's sheets, nothing written anywhere.
 
 ## SAP's sign (fixed 2026-10-09)
 
-SAP stores a supplier advance as a negative balance. The first run guessed
-the sign from the majority of balances and turned every advance into a
-debt, doubling each "difference" (the exchange's 32,419,520.78 advance, equal
-to the tiyin in both systems, showed as 64.8 mln). The sign is now chosen by
+SAP stores a supplier advance as a negative balance (and a debt as positive).
+The first run guessed the sign from the majority of balances and turned every
+advance into a debt, doubling each "difference" (an advance equal to the tiyin
+in both systems showed as twice its size). The sign is now chosen by
 agreement with 1C on the suppliers found in both (`choose_sign`): on the
-09.10 data 32 matched, 15 agree, 17 differ.
+09.10 data 32 matched, 15 agree, 17 differ. With no supplier in both systems
+the majority guess is the fallback, and the workbook's «Изоҳ» says so.
+No real supplier or amount is written here or in the tests (the Director's
+order of 07.10).
