@@ -9,6 +9,8 @@ a long brief never gets truncated or breaks a tag mid-way.
 
 from __future__ import annotations
 
+import asyncio
+
 import html
 import uuid
 from pathlib import Path
@@ -36,6 +38,69 @@ SEVERITY_EMOJI: dict[str, str] = {
 
 class TelegramError(RuntimeError):
     """Raised when the Telegram Bot API rejects a request."""
+
+
+# One kept-alive connection pool per bot token and event loop (2026-10-13).
+# Opening a new HTTPS connection for every call cost ~400–650 ms each (the
+# audit log: answerCallbackQuery 458 ms, editMessageText 663 ms on average),
+# and one button press makes 2–4 calls — buttons felt slow. A reused
+# connection skips the TCP + TLS handshake. Keyed by loop as well: a cron run
+# has its own ``asyncio.run`` loop, and a client must not outlive its loop.
+_SHARED: dict[str, tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = {}
+
+
+def _shared_client(bot_token: str) -> httpx.AsyncClient:
+    loop = asyncio.get_running_loop()
+    entry = _SHARED.get(bot_token)
+    if entry is not None and entry[0] is loop and not entry[1].is_closed:
+        return entry[1]
+    client = httpx.AsyncClient(
+        base_url=f"https://api.telegram.org/bot{bot_token}",
+        timeout=httpx.Timeout(30.0),
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=120.0),
+    )
+    _SHARED[bot_token] = (loop, client)
+    return client
+
+
+async def close_shared_clients() -> None:
+    """Close the kept-alive connections of this loop (the API service's shutdown)."""
+    loop = asyncio.get_running_loop()
+    for token, (owner, client) in list(_SHARED.items()):
+        if owner is loop:
+            await client.aclose()
+            _SHARED.pop(token, None)
+
+
+# Button presses already answered (answerCallbackQuery may be sent once).
+_ACKED: dict[str, None] = {}
+_ACK_TASKS: set[asyncio.Task] = set()
+ACK_AFTER = 0.25  # seconds: a handler slower than this gets its spinner stopped for it
+
+
+def ack_soon(bot_token: str, callback_query_id: str, delay: float = ACK_AFTER) -> None:
+    """Stop a button's spinner within ``delay`` seconds even if its handler is still working (2026-10-13).
+
+    A handler that answers first keeps its own text ("OK", "Аллақачон ҳал
+    қилинган"); one that is slower gets a silent answer here, and its own
+    later answer is skipped (``_answer_callback``).
+    """
+    if not callback_query_id or not bot_token:
+        return
+
+    async def later() -> None:
+        await asyncio.sleep(delay)
+        if callback_query_id in _ACKED:
+            return
+        try:
+            async with TelegramBot(agent="telegram-ack", bot_token=bot_token) as bot:
+                await bot._answer_callback(callback_query_id, "")
+        except Exception as exc:  # noqa: BLE001 — a late ack is a nicety, never an error
+            log.warning("Early button answer failed: {}", type(exc).__name__)
+
+    task = asyncio.get_running_loop().create_task(later())
+    _ACK_TASKS.add(task)
+    task.add_done_callback(_ACK_TASKS.discard)
 
 
 class TelegramBot:
@@ -80,17 +145,12 @@ class TelegramBot:
         if not self._bot_token:
             raise TelegramError("No bot token given — this bot's *_TELEGRAM_BOT_TOKEN is not configured")
 
-        self._client = httpx.AsyncClient(
-            base_url=f"https://api.telegram.org/bot{self._bot_token}",
-            timeout=httpx.Timeout(30.0),
-        )
+        self._client = _shared_client(self._bot_token)
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Close the HTTP client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Let go of the client — the connection stays open for the next call (``_shared_client``)."""
+        self._client = None
 
     # ---------------------------------------------------------------- sending
 
@@ -238,9 +298,12 @@ class TelegramBot:
     # -------------------------------------------------------------- callbacks
 
     async def _answer_callback(self, callback_query_id: str, text: str) -> None:
-        """Acknowledge a button press so the client stops its spinner."""
-        if not callback_query_id:
+        """Acknowledge a button press so the client stops its spinner — once (see ``ack_soon``)."""
+        if not callback_query_id or callback_query_id in _ACKED:
             return
+        _ACKED[callback_query_id] = None
+        while len(_ACKED) > 2000:
+            _ACKED.pop(next(iter(_ACKED)))
         try:
             await self._call(
                 "answerCallbackQuery",

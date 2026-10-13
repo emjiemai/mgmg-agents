@@ -244,6 +244,7 @@ before they're saved or sent; numbers are never guessed — partial data says
 | Symptom | Look at |
 | ------- | ------- |
 | Bots don't answer | `mgmg-api` logs; `BOTS_FROZEN`; the webhook (`https://api.telegram.org/bot<TOKEN>/getWebhookInfo`) |
+| Buttons slow | `/db` → `agent_actions`, `duration_ms` of `telegram_*` rows: a warm call is ~100–200 ms; much more means Telegram or Render is slow, not the bot |
 | No morning brief | `mgmg-morning-agents` logs; is there an active Director in `/xodimlar`? |
 | SAP numbers "камида" / "ўқилмади" | on the gateway machine: `C:\mgmg-push\push-ar-aging.log` and `push-ar-aging.ps1 -Check`; Admin Bot `/sifat` lists missing columns |
 | SAP numbers out of date | the Windows task (`Get-ScheduledTaskInfo -TaskName "MGMG SAP push"`); is the laptop on and the gateway (`npm start`) running? |
@@ -292,6 +293,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-13 | **Faster buttons:** each Telegram call used to open a new HTTPS connection (~400–650 ms each, 2–4 per button press). Now one kept-alive connection per bot is reused (`integrations/telegram/bot.py`, `_shared_client`), and if a handler hasn't answered a button within 0.25 s the bot stops the spinner itself (`ack_soon`). |
 | 2026-10-10 | **Data for accounting and finance:** on `/xodimlar` the admin gives SAP / 1C / Billz to people in Бухгалтерия or Молия; they ask in OPS Manager Bot and the analyst uses only their systems' tools (never attendance or the bot's records). The Director is told of every change with ⛔ to close it; a role change or removal closes it. **AI language per person** (ўзбекча / русча) — the accountant gets Russian answers. The supplier-debt `.xlsx` now comes in Uzbek **and Russian**, each with every column explained under the table (SAP's own column names). `docs/agent-specs/22-data-access.md`. |
 | 2026-10-10 | **Database backups (IT-5):** the server makes an encrypted `pg_dump` (owner's GnuPG public key) on request; an office computer fetches one daily, checks its SHA-256, keeps 30 days + 12 months and a second copy; monthly restore test script; the technical report shows the last copy. New settings `BACKUP_SECRET`, `BACKUP_PUBLIC_KEY`; the image now has `gnupg` and `postgresql-client-16`. `scripts/backup/README.md`. |
 | 2026-10-10 | `docs/links.md` (every link) and `docs/it-instruction-2026-10.md` (the owner's IT instruction against what exists). The bot's company knowledge now names three businesses: PRIMUS (B2B equipment), LONDRY (self-service laundries), Garmin. |

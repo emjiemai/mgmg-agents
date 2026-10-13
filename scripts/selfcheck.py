@@ -3307,6 +3307,71 @@ def uuid_module():
     return uuid
 
 
+def test_fast_buttons() -> None:
+    """2026-10-13: buttons were slow — one kept-alive Telegram connection per bot, the spinner stopped within 0.25 s."""
+    print("fast buttons")
+    import asyncio
+
+    from integrations.telegram import bot as tg
+
+    async def clients():
+        async with tg.TelegramBot(bot_token="T1") as a:
+            first = a._client
+        async with tg.TelegramBot(bot_token="T1") as b:
+            second = b._client
+        async with tg.TelegramBot(bot_token="T2") as c:
+            other = c._client
+        await tg.close_shared_clients()
+        return first, second, other
+
+    first, second, other = asyncio.run(clients())
+    check_true("one connection pool per bot, reused across calls; each bot its own", first is second and first is not other)
+    again, _, _ = asyncio.run(clients())
+    check_true("a new event loop (a cron run) gets a fresh client, never one from a closed loop", again is not first)
+
+    calls: list[tuple[str, str]] = []
+    real_call = tg.TelegramBot._call
+
+    async def fake_call(self, method, payload, **kwargs):
+        calls.append((method, payload.get("text", "")))
+        return {}
+
+    tg.TelegramBot._call = fake_call
+    try:
+        async def twice():
+            async with tg.TelegramBot(bot_token="T1") as b:
+                await b._answer_callback("q-1", "OK")
+                await b._answer_callback("q-1", "again")
+
+        asyncio.run(twice())
+        check("a button is answered once (Telegram allows one answer)", calls, [("answerCallbackQuery", "OK")])
+
+        async def slow_handler():
+            tg.ack_soon("T1", "q-2", delay=0.05)
+            await asyncio.sleep(0.15)  # the handler still working
+            async with tg.TelegramBot(bot_token="T1") as b:
+                await b._answer_callback("q-2", "late text")
+
+        calls.clear()
+        asyncio.run(slow_handler())
+        check("a slow handler: the spinner is stopped for it, its late answer skipped", calls, [("answerCallbackQuery", "")])
+
+        async def fast_handler():
+            tg.ack_soon("T1", "q-3", delay=0.05)
+            async with tg.TelegramBot(bot_token="T1") as b:
+                await b._answer_callback("q-3", "OK")
+            await asyncio.sleep(0.15)
+
+        calls.clear()
+        asyncio.run(fast_handler())
+        check("a fast handler keeps its own text, no second answer", calls, [("answerCallbackQuery", "OK")])
+    finally:
+        tg.TelegramBot._call = real_call
+    app_src = load_source("integrations/api/app.py")
+    check_true("both bots' webhooks stop the spinner early; the service closes the connections on shutdown",
+               app_src.count("ack_soon(settings.") == 2 and "close_shared_clients" in app_src)
+
+
 def test_data_access() -> None:
     """2026-10-10, the Director: accounting and finance look up 1C, SAP and Billz through the bot."""
     print("data access for accounting and finance")
@@ -5877,6 +5942,7 @@ def main() -> int:
         test_it_restrictions,
         test_tech_report_errors_fixed,
         test_review_pages,
+        test_fast_buttons,
         test_data_access,
         test_backup,
         test_knowledge,

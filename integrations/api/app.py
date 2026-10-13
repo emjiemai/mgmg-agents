@@ -50,6 +50,7 @@ from integrations.garmin import leads as garmin_leads
 from integrations.org_bot import admin as org_admin
 from integrations.org_bot import ops_manager as org_ops_manager
 from integrations.sap import push_handler as sap_push_handler
+from integrations.telegram.bot import ack_soon
 
 AGENT = "api"
 log = setup_logging(AGENT)
@@ -68,7 +69,10 @@ app.include_router(review_page.router)
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
-    """Close the PostgreSQL pool when the service stops."""
+    """Close the PostgreSQL pool and the kept-alive Telegram connections when the service stops."""
+    from integrations.telegram.bot import close_shared_clients
+
+    await close_shared_clients()
     await close_pool()
 
 
@@ -144,6 +148,7 @@ async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
 
     callback = update.get("callback_query")
     if callback:
+        ack_soon(settings.admin_bot_telegram_bot_token.get_secret_value(), callback.get("id", ""))
         outcome = await org_admin.handle_admin_callback(callback, run_id)
         return {"status": outcome}
 
@@ -185,6 +190,8 @@ async def ops_manager_bot_webhook(secret: str, request: Request, background: Bac
         return {"status": "frozen"}
 
     update = await request.json()
+    if update.get("callback_query"):
+        ack_soon(settings.ops_manager_bot_telegram_bot_token.get_secret_value(), update["callback_query"].get("id", ""))
     outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
     return {"status": outcome}
 
