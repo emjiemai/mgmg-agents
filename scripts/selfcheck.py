@@ -3475,6 +3475,159 @@ def test_task_register() -> None:
             setattr(obj, name, value)
 
 
+def test_complaint_tickets() -> None:
+    """2026-10-13 (the owner: complaints go to the department, not the Boss): routed tickets, ✅ + reason, hourly check."""
+    print("complaint tickets (A4/A5)")
+    import asyncio
+    import uuid
+    from datetime import datetime
+
+    from integrations.common.config import settings
+    from integrations.org_bot import feedback, ops_manager, routes, store
+
+    people = {"londry": [{"telegram_user_id": 301, "role": "londry"}],
+              "garmin_sotuv": [{"telegram_user_id": 401, "role": "garmin_sotuv"}, {"telegram_user_id": 402, "role": "garmin_sotuv"}],
+              "operatsion_direktor": [{"telegram_user_id": 9, "role": "operatsion_direktor"}]}
+
+    async def by_role(role):
+        return list(people.get(role, []))
+
+    saved = [(store, "active_employees_by_role", store.active_employees_by_role)]
+    store.active_employees_by_role = by_role
+    try:
+        check("Londry complaints go to the Londry role, not the Boss",
+              asyncio.run(routes.recipients("complaint:laundry")), ([{"telegram_user_id": 301, "role": "londry"}], False))
+        check("Garmin complaints go to everyone in Garmin sales", [p["telegram_user_id"] for p in asyncio.run(routes.recipients("complaint:garmin"))[0]],
+              [401, 402])
+        people["londry"] = []
+        check("nobody in the role: the Boss gets it, flagged", asyncio.run(routes.recipients("complaint:laundry")),
+              ([{"telegram_user_id": 9, "role": "operatsion_direktor"}], True))
+        people["londry"] = [{"telegram_user_id": 301, "role": "londry"}]
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    row = {"id": 12, "code": "T-2026-10-0031", "place": "laundry", "branch": "yunusobod", "message": "<b>машина</b> ишламади",
+           "phone": "+998901234567", "contact_name": "", "ticket_status": "open", "cards": [{"chat": 301, "message": 70}]}
+    text = feedback.ticket_text(row)
+    check_true("the ticket card: code, branch, the client's words escaped, the phone",
+               "T-2026-10-0031" in text and "Юнусобод" in text and "&lt;b&gt;" in text and "+998901234567" in text)
+    check("one button: ✅ Ҳал бўлди", [b["text"] for r in feedback.ticket_keyboard(row)["inline_keyboard"] for b in r], ["✅ Ҳал бўлди"])
+    reasons = [b["callback_data"] for r in feedback.ticket_keyboard(row, picking_reason=True)["inline_keyboard"] for b in r]
+    check_true("then a reason code, every button within 64 bytes",
+               len(reasons) == len(feedback.REASONS) and all(len(d.encode()) <= 64 for d in reasons))
+    check("a resolved card says who and why, no buttons",
+          ("Ҳал бўлди — Зиёда, сабаби: Машина ёки тўлов" in feedback.ticket_text({**row, "ticket_status": "resolved",
+                                                                                 "resolved_by": "Зиёда", "reason_code": "machine"}),
+           feedback.ticket_keyboard({**row, "ticket_status": "resolved"})), (True, {"inline_keyboard": []}))
+
+    # submit: stored, made a ticket, sent to the department
+    sent: list = []
+    edits: list = []
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+            return [500 + len(sent)]
+
+        async def _edit_message(self, **kwargs):
+            edits.append((kwargs["chat_id"], kwargs["text"], kwargs.get("reply_markup")))
+
+        async def _answer_callback(self, *args):
+            return None
+
+    stored: dict = {}
+
+    async def save(**kwargs):
+        stored.update({"id": 12, **kwargs, "cards": []})
+        return dict(stored)
+
+    async def open_ticket(fid, routed):
+        stored.update({"code": "T-2026-10-0031", "ticket_status": "open", "routed_to": routed})
+        return dict(stored)
+
+    async def set_cards(fid, cards):
+        stored["cards"] = stored.get("cards", []) + cards
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    saved = [(store, n, getattr(store, n)) for n in ("save_client_feedback", "open_complaint_ticket", "set_complaint_cards",
+                                                       "mark_client_feedback_sent", "active_employees_by_role",
+                                                       "get_client_feedback", "resolve_complaint", "complaint_not_yet",
+                                                       "complaints_due_status_check")]
+    saved += [(feedback, "TelegramBot", feedback.TelegramBot), (ops_manager, "TelegramBot", ops_manager.TelegramBot),
+              (ops_manager, "_answer", ops_manager._answer), (ops_manager, "log_action", ops_manager.log_action),
+              (settings, "bots_frozen", settings.bots_frozen)]
+    store.save_client_feedback, store.open_complaint_ticket, store.set_complaint_cards = save, open_ticket, set_cards
+    store.mark_client_feedback_sent, store.active_employees_by_role = nothing, by_role
+    feedback.TelegramBot = ops_manager.TelegramBot = FakeBot
+    ops_manager._answer = ops_manager.log_action = nothing
+    settings.bots_frozen = False
+    try:
+        sub = feedback.Submission(place="laundry", branch="yunusobod", kind=feedback.KIND, message="кир чиқмади",
+                                  name="", phone="", lang="uz_cyrl")
+        n = asyncio.run(feedback.submit(sub))
+        check_true("a Londry complaint: a ticket, sent to the Londry person only — the Boss gets nothing",
+                   n == 1 and [c for c, _t, _k in sent] == ["301"] and "T-2026-10-0031" in sent[0][1]
+                   and stored["routed_to"] == "complaint:laundry" and stored["cards"] == [{"chat": 301, "message": 501}])
+
+        async def get_fb(fid):
+            return dict(stored)
+
+        async def resolve(fid, by, reason):
+            stored.update({"ticket_status": "resolved", "resolved_by": by, "reason_code": reason})
+            return dict(stored)
+
+        store.get_client_feedback, store.resolve_complaint = get_fb, resolve
+        stranger = {"id": "q", "data": "cfok:12", "from": {"id": 777}, "message": {"message_id": 501, "chat": {"id": 777}}}
+        check("someone the ticket wasn't sent to can't press it", asyncio.run(ops_manager._handle_callback(stranger, uuid.uuid4())),
+              "unrecognized")
+        tap = {**stranger, "from": {"id": 301}, "message": {"message_id": 501, "chat": {"id": 301}}}
+        check("✅ asks the reason", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "complaint_reason_asked")
+        check_true("...on the same card", "Сабаби нима эди?" in edits[-1][1] and "cfr:12:" in str(edits[-1][2]))
+        pick = {**tap, "data": "cfr:12:machine"}
+        check("the reason closes the ticket", asyncio.run(ops_manager._handle_callback(pick, uuid.uuid4())), "complaint_resolved")
+        check_true("every card shows it resolved, with the reason", stored["reason_code"] == "machine"
+                   and "Машина ёки тўлов" in edits[-1][1] and edits[-1][2] == {"inline_keyboard": []})
+        check("a second tap does nothing", asyncio.run(ops_manager._handle_callback(pick, uuid.uuid4())), "complaint_closed")
+
+        # the hourly question
+        stored.update({"ticket_status": "open"})
+        sent.clear()
+
+        async def due(max_asks=3):
+            return [dict(stored)]
+
+        store.complaints_due_status_check = due
+        check("outside 09:00–20:00 nobody is asked", asyncio.run(feedback.ask_status(datetime(2026, 10, 13, 22, 0))), 0)
+        check("in working hours an hour-old open ticket is asked about", asyncio.run(feedback.ask_status(datetime(2026, 10, 13, 11, 0))), 1)
+        check_true("...with ✅ / ❌, to the department", sent[-1][0] == "301" and "ҳал бўлдими" in sent[-1][1]
+                   and "cfno:12" in str(sent[-1][2]))
+        store.complaint_not_yet = nothing
+        no = {**tap, "data": "cfno:12", "message": {"message_id": 900, "chat": {"id": 301}}}
+        check("❌ is noted, asked again later", asyncio.run(ops_manager._handle_callback(no, uuid.uuid4())), "complaint_not_yet")
+        settings.bots_frozen = True
+        sent.clear()
+        check("the emergency stop: stored, nothing sent", (asyncio.run(feedback.submit(sub)), sent), (0, []))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    store_src = load_source("integrations/org_bot/store.py")
+    check_true("the database: a ticket closes once, the hourly question is claimed once, at most three times",
+               "WHERE id = %s AND ticket_status = 'open' RETURNING *" in store_src and "asks < %s" in store_src)
+    check_true("the always-on service runs the hourly check", "_complaint_status_loop" in load_source("integrations/api/app.py"))
+
+
 def test_fast_buttons() -> None:
     """2026-10-13: buttons were slow — one kept-alive Telegram connection per bot, the spinner stopped within 0.25 s."""
     print("fast buttons")
@@ -6111,6 +6264,7 @@ def main() -> int:
         test_tech_report_errors_fixed,
         test_review_pages,
         test_task_register,
+        test_complaint_tickets,
         test_fast_buttons,
         test_data_access,
         test_backup,

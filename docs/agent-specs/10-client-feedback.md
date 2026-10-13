@@ -6,6 +6,27 @@
 **Runs inside:** `mgmg-api` — no new service
 **Stored in:** `client_feedback` (`place` = `laundry` | `garmin`, `kind` = `complaint`)
 
+## Tickets for the department (2026-10-13)
+
+The owner's spec of 11.10 (A4 LONDRY-CARE, A5 GARMIN-CARE) and his answer of
+13.10: complaints go to the department, **not to the Boss**.
+
+- `integrations/org_bot/routes.py` — the route table: `complaint:laundry` →
+  the **Londry** role, `complaint:garmin` → **Garmin сотув** (everyone
+  active in the role). Nobody in the role → the Boss, with a note saying why.
+- Every complaint becomes a ticket: a code from the task sequence
+  (T-2026-10-0031), `ticket_status` open → resolved, the cards each person
+  got (`cards`). The card: **✅ Ҳал бўлди** → a reason code (Сифат, Хизмат /
+  муомала, Машина ёки тўлов, Кечикиш, Бошқа) → every card shows who closed it
+  and why. Only the people it was sent to can press.
+- An hour after it arrived (or after the last question), if still open:
+  "ҳал бўлдими?" with ✅ / ❌ — between 09:00 and 20:00, at most three times
+  (`feedback.ask_status`, run every 5 minutes inside `mgmg-api`).
+- The Boss can still ask the bot about complaints («шикоятлар бормы?»).
+- Complaints from before 13.10 are not tickets (no status) and are never asked about.
+
+Next from the spec: escalation (2 h → department head, 4 h → coordinator).
+
 ## What a client does
 
 1. Scans the business's QR card — red card, black code on a white square.

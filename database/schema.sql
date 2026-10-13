@@ -818,6 +818,22 @@ ALTER TABLE client_feedback ALTER COLUMN place DROP NOT NULL;
 -- 2026-10-04: the branch the client picked (beshqozon / vuzgorodok / abay / minor);
 -- NULL on complaints from before the choice existed.
 ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS branch TEXT;
+-- 2026-10-13 (the owner's spec of 11.10, A4/A5): a complaint is a ticket that
+-- goes to its department (routes.py), not to the Boss: a code from the task
+-- sequence, open → resolved (with a reason code), the cards each recipient
+-- got, and when the 1-hour status question went out. NULL status = a
+-- complaint from before tickets.
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS ticket_status TEXT CHECK (ticket_status IN ('open', 'resolved'));
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS routed_to TEXT;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS cards JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS asked_at TIMESTAMPTZ;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS not_yet_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS asks INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS resolved_by TEXT;
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS reason_code TEXT;
+CREATE INDEX IF NOT EXISTS idx_client_feedback_open ON client_feedback (created_at) WHERE ticket_status = 'open';
 
 -- ---------------------------------------------------------------------------
 -- cheer_messages / cheer_deliveries — the three friendly messages a day

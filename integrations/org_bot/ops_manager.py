@@ -246,6 +246,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_task_step(prefix, rest, callback, run_id)
     if prefix in ("taskok", "taskback"):
         return await _handle_task_verify(prefix == "taskok", rest, callback, run_id)
+    if prefix in ("cfok", "cfr", "cfno"):
+        return await _handle_complaint_button(prefix, rest, callback, run_id)
     if prefix == "dispatchrole":
         return await _handle_dispatch_role(rest, callback, run_id)
     if prefix == "taskdue":
@@ -649,6 +651,63 @@ async def _handle_task_verify(accept: bool, task_id: str, callback: dict[str, An
                 else f"↩️ {code} қайтарилди: қайта бажариб, ✅ Бажардим орқали янги далил юборинг.")
         await _reply(full["employee_telegram_user_id"], run_id, note)
     return "task_closed" if accept else "task_returned"
+
+
+async def _handle_complaint_button(prefix: str, rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """A complaint ticket's buttons (feedback.py): ✅ → the reason → resolved on every card; ❌ → asked again later.
+
+    Only someone the ticket was sent to can press them.
+    """
+    from integrations.org_bot import feedback
+
+    query_id = callback.get("id", "")
+    clicker = callback.get("from") or {}
+    ticket_part, _, reason = rest.partition(":")
+    if not ticket_part.isdigit():
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    row = await store.get_client_feedback(int(ticket_part))
+    if row is None or clicker.get("id") not in {c.get("chat") for c in (row.get("cards") or [])}:
+        await _answer(query_id, "Рухсат йўқ")
+        return "unrecognized"
+    if row.get("ticket_status") != "open":
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "complaint_closed"
+    message = callback.get("message") or {}
+
+    async def edit_pressed(text: str, keyboard: dict[str, Any]) -> None:
+        if message.get("message_id") and (message.get("chat") or {}).get("id"):
+            async with TelegramBot(
+                agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+            ) as bot:
+                await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                    chat_id=str(message["chat"]["id"]), message_id=message["message_id"], text=text, reply_markup=keyboard)
+
+    if prefix == "cfok":
+        await _answer(query_id, "Сабабини танланг")
+        await edit_pressed(feedback.ticket_text(row) + "\n\n<b>Сабаби нима эди?</b>",
+                           feedback.ticket_keyboard(row, picking_reason=True))
+        return "complaint_reason_asked"
+    if prefix == "cfno":
+        await store.complaint_not_yet(row["id"])
+        await _answer(query_id, "Қайд этилди")
+        await edit_pressed(feedback.ask_text(row) + "\n\n❌ Ҳали ҳал бўлмаган — 1 соатдан кейин яна сўралади.",
+                           {"inline_keyboard": []})
+        return "complaint_not_yet"
+    if reason not in feedback.REASONS:
+        await _answer(query_id, "Номаълум сабаб")
+        return "unrecognized"
+    resolved = await store.resolve_complaint(row["id"], await _actor_display_name(clicker), reason)
+    if resolved is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "complaint_closed"
+    await _answer(query_id, "Ҳал бўлди")
+    await feedback.update_cards(resolved, run_id)
+    if message.get("message_id") not in {c.get("message") for c in (resolved.get("cards") or [])}:
+        await edit_pressed(feedback.ticket_text(resolved), {"inline_keyboard": []})
+    await log_action(agent=AGENT, action="complaint_resolved", target_system="postgres", status="success",
+                     run_id=run_id, target_ref=str(resolved.get("code")), mode="write", payload={"reason": reason})
+    return "complaint_resolved"
 
 
 async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:

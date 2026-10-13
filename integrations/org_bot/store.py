@@ -1592,6 +1592,60 @@ async def save_client_feedback(
     )
 
 
+async def open_complaint_ticket(feedback_id: int, routed_to: str) -> dict[str, Any] | None:
+    """Make a stored complaint a ticket: a code from the task sequence, status open (feedback.py)."""
+    return await fetch_one(
+        """
+        UPDATE client_feedback SET ticket_status = 'open', routed_to = %s,
+               code = 'T-' || to_char(now() AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM') || '-'
+                      || lpad(nextval('task_code_seq')::text, 4, '0')
+        WHERE id = %s RETURNING *
+        """,
+        (routed_to, feedback_id),
+    )
+
+
+async def set_complaint_cards(feedback_id: int, cards: list[dict[str, int]]) -> None:
+    """The (chat, message) of every card sent for a ticket, so all of them can be updated."""
+    await execute("UPDATE client_feedback SET cards = cards || %s::jsonb WHERE id = %s",
+                  (json.dumps(cards), feedback_id))
+
+
+async def get_client_feedback(feedback_id: int) -> dict[str, Any] | None:
+    return await fetch_one("SELECT * FROM client_feedback WHERE id = %s", (feedback_id,))
+
+
+async def resolve_complaint(feedback_id: int, by: str, reason_code: str) -> dict[str, Any] | None:
+    """✅ with a reason: closed, once."""
+    return await fetch_one(
+        """
+        UPDATE client_feedback SET ticket_status = 'resolved', resolved_at = now(), resolved_by = %s, reason_code = %s
+        WHERE id = %s AND ticket_status = 'open' RETURNING *
+        """,
+        (by, reason_code, feedback_id),
+    )
+
+
+async def complaint_not_yet(feedback_id: int) -> dict[str, Any] | None:
+    """❌ to the status question: still open; asked again an hour after this question."""
+    return await fetch_one(
+        "UPDATE client_feedback SET not_yet_count = not_yet_count + 1 WHERE id = %s AND ticket_status = 'open' RETURNING *",
+        (feedback_id,),
+    )
+
+
+async def complaints_due_status_check(max_asks: int = 3) -> list[dict[str, Any]]:
+    """Open tickets whose last question (or creation) was an hour ago — claimed once per run, at most ``max_asks``."""
+    return await fetch_all(
+        """
+        UPDATE client_feedback SET asked_at = now(), asks = asks + 1
+        WHERE ticket_status = 'open' AND COALESCE(asked_at, created_at) < now() - interval '1 hour' AND asks < %s
+        RETURNING *
+        """,
+        (max_asks,),
+    )
+
+
 async def mark_client_feedback_sent(feedback_id: int, message_id: int) -> None:
     """Record that a client message reached the Director."""
     await execute("UPDATE client_feedback SET director_message_id = %s WHERE id = %s", (message_id, feedback_id))

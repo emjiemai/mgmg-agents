@@ -37,7 +37,7 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | 16:00 | Daily report ask (A1) | employees | `agents/daily-reports/ --ask` |
 | 17:00 | Report reminder; on Fridays the weekly task scorecard | employees; Director | `agents/daily-reports/ --remind`, `task-tracker --weekly` |
 | on request | Written permission requests (B1) with approvals | requester, approvers | `integrations/org_bot/permission_flow.py` |
-| on a QR scan | Client complaints — Londry `/f`, Garmin `/f/garmin` | Director (🔴) | `integrations/api/feedback_page.py` |
+| on a QR scan | Client complaints — Londry `/f`, Garmin `/f/garmin` — a ticket with ✅ Ҳал бўлди + reason; asked "ҳал бўлдими?" every hour (09–20, max 3) | the Londry role / Garmin сотув (the Boss only if nobody holds the role) | `integrations/org_bot/feedback.py`, `routes.py` |
 | daily, 13:00 | Encrypted database backup fetched by an office computer — the copy outside Render (IT-5) | stays on that computer + a second disk | `integrations/backup/`, `scripts/backup/` |
 
 The brief reaches the Director as one designed **picture**; the cash
@@ -299,6 +299,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-13 | **Complaints go to the department, not the Boss** (his answer of 13.10; spec A4/A5): the route table `integrations/org_bot/routes.py` sends Londry complaints to the Londry role and Garmin ones to Garmin сотув. Each complaint is a ticket (code T-…) with ✅ Ҳал бўлди → reason code; an hour later, if open, "ҳал бўлдими?" ✅/❌ (09:00–20:00, max 3). Nobody in the role → the Boss. "Director" = the owner = the Boss. |
 | 2026-10-13 | **Task register (the owner's spec of 11.10, Day 1):** every task has a code (T-2026-10-0147, old tasks too) and a state — Яратилди, Қабул қилинди, Тўсиқ бор, Текширувда, Ёпилди. The card's buttons: ▶️ Қабул қилдим · ⛔ Тўсиқ бор · ✅ Бажардим. ✅ asks for proof (photo, file or text); the assigner gets it with ✅ Қабул / ↩️ Қайтариш; ⛔ sends the reason. Every step in `task_events`. `integrations/org_bot/task_register.py`, `docs/agent-specs/08-task-tracker.md`. |
 | 2026-10-13 | **Faster buttons:** each Telegram call used to open a new HTTPS connection (~400–650 ms each, 2–4 per button press). Now one kept-alive connection per bot is reused (`integrations/telegram/bot.py`, `_shared_client`), and if a handler hasn't answered a button within 0.25 s the bot stops the spinner itself (`ack_soon`). |
 | 2026-10-10 | **Data for accounting and finance:** on `/xodimlar` the admin gives SAP / 1C / Billz to people in Бухгалтерия or Молия; they ask in OPS Manager Bot and the analyst uses only their systems' tools (never attendance or the bot's records). The Director is told of every change with ⛔ to close it; a role change or removal closes it. **AI language per person** (ўзбекча / русча) — the accountant gets Russian answers. The supplier-debt `.xlsx` now comes in Uzbek **and Russian**, each with every column explained under the table (SAP's own column names). `docs/agent-specs/22-data-access.md`. |

@@ -90,10 +90,25 @@ async def _log_ai_config() -> None:
         log.error("AI config check failed: {}", exc)
 
 
+async def _complaint_status_loop() -> None:
+    """Every 5 minutes: open complaint tickets an hour old get "ҳал бўлдими?" (feedback.ask_status)."""
+    from integrations.org_bot import feedback
+
+    while True:
+        await asyncio.sleep(300)
+        try:
+            asked = await feedback.ask_status()
+            if asked:
+                log.info("Asked about {} open complaint ticket(s)", asked)
+        except Exception as exc:  # noqa: BLE001 — a missed round is retried in 5 minutes
+            log.error("Complaint status check failed: {}", type(exc).__name__)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
-    """Run the AI config check in the background so startup isn't delayed."""
+    """Run the AI config check in the background so startup isn't delayed; start the complaint check."""
     app.state.ai_config_check = asyncio.create_task(_log_ai_config())
+    app.state.complaint_loop = asyncio.create_task(_complaint_status_loop())
 
 
 @app.get("/health")
