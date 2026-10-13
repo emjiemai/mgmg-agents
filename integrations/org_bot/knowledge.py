@@ -69,7 +69,9 @@ the Director calls): they are never counted late or absent.
   - The leads Google Sheet ("POSSIBLE Leads") — companies and tenders the Lead
     Agent finds every morning. Handing leads to B2B sales people was stopped
     by the Director on 2026-10-07; only the history of that is kept.
-  - The bot's own records — tasks the Director gave and their status; the
+  - The bot's own records — tasks the Director gave (each with a code like
+    T-2026-10-0147 and a state: created / accepted / blocked / in review /
+    closed — "done" needs proof and the assigner's acceptance); the
     employees' daily reports (asked 16:00, reminder 17:00); KPI (goals,
     results, the Director's ratings, the monthly score on the 1st); written
     permission requests (procedure EMJ-SOP-ADM-01, numbers like
@@ -105,8 +107,11 @@ the Director calls): they are never counted late or absent.
 
 EMPLOYEE_BOT_GUIDE = """\
 What this bot does for an employee (tell them when it helps):
-- Tasks from the Director arrive as cards: ▶️ Бошладим, ✅ Бажардим. Replying
-  to a card with a question brings them here.
+- Tasks arrive as cards with a code (T-2026-10-0147): ▶️ Қабул қилдим,
+  ⛔ Тўсиқ бор (then write what blocks it), ✅ Бажардим — then send PROOF
+  (a photo, a file or a short text of what was done); without proof a task
+  doesn't close. The one who assigned it accepts it or returns it to be redone.
+  Replying to a card with a question brings them here.
 - The daily report is asked at 16:00 (reminder 17:00) unless the admin
   switched it off for them; they answer in the chat. /hisobot shows,
   changes or deletes TODAY'S report only.

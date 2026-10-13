@@ -452,8 +452,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS has_media BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_by TEXT;
-ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
-ALTER TABLE tasks ADD CONSTRAINT tasks_status_check CHECK (status IN ('sent', 'started', 'done'));
 
 -- A3 task tracker: the deadline the Director stated (or picked with one tap),
 -- and when the one reminder / one overdue notice went out, so a cron retry
@@ -463,8 +461,43 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS overdue_notified_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks (due_date) WHERE due_date IS NOT NULL;
 
+-- The one task register (the owner's spec of 11.10.2026, Day 1;
+-- integrations/org_bot/task_register.py). Every task has a code
+-- (T-2026-10-0001), states sent (created) → started (accepted) → blocked /
+-- review (done, proof sent, waiting for the one who assigned it) → done
+-- (closed) or back to started (returned), or cancelled; "done" needs proof.
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
+    CHECK (status IN ('sent', 'started', 'blocked', 'review', 'done', 'cancelled'));
+CREATE SEQUENCE IF NOT EXISTS task_code_seq;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS code TEXT;
+UPDATE tasks SET code = 'T-' || to_char(created_at AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM') || '-'
+                        || lpad(nextval('task_code_seq')::text, 4, '0')
+WHERE code IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_code ON tasks (code);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS awaiting TEXT CHECK (awaiting IN ('evidence', 'blocker'));
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS awaiting_since TIMESTAMPTZ;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_text TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_message_id BIGINT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocker TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS review_message_id BIGINT;
+
+-- Every step of every task, append-only: who, when, what (and the blocker /
+-- proof text). Holds work content — not in /db.
+CREATE TABLE IF NOT EXISTS task_events (
+    id         BIGSERIAL    PRIMARY KEY,
+    task_id    UUID         NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    event      TEXT         NOT NULL CHECK (event IN ('created', 'accepted', 'blocked', 'unblocked', 'submitted',
+                                                      'closed', 'returned', 'cancelled')),
+    actor      TEXT,
+    note       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events (task_id, at);
+
 DROP INDEX IF EXISTS idx_tasks_open;
-CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started');
+CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started', 'blocked', 'review');
 
 -- ---------------------------------------------------------------------------
 -- pending_dispatches — a Director's media/file with no (or an ambiguous)

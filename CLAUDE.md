@@ -130,6 +130,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **Director's tasks are confirmed before sending** (2026-10-02): a card lists
   everyone as tick-boxes with the bot's guess ticked; nothing goes out before
   📨 Юбориш (`task_picker.py`, `task_drafts`). Files too.
+- **Task register** (2026-10-13, the owner's spec «EMJIEM AI ТЕХ ЗАД» of 11.10, Day 1; spec in
+  `docs/agent-specs/08-task-tracker.md`): code T-YYYY-MM-NNNN, states sent/started/blocked/review/done/
+  cancelled, ✅ needs proof → the assigner accepts or returns; ⛔ with reason; `task_events` history.
+  Proof and blocker text reach the assigner (task data — the one exception to the no-relay rule).
+  Next from the spec: positions + deputies, route table, escalation; then Day 2 complaint tickets.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
 - **IT sees no company figures** (the Director's order of 07.10.2026, «Маълумотларга кириш

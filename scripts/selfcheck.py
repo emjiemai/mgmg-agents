@@ -3307,6 +3307,174 @@ def uuid_module():
     return uuid
 
 
+def test_task_register() -> None:
+    """The owner's spec of 11.10.2026, Day 1: one task register — code, states, proof, check, history."""
+    print("task register (Day 1)")
+    import asyncio
+    import uuid
+    from datetime import date, datetime, timezone
+
+    from integrations.org_bot import ops_manager, store, task_register as tr, task_tracker
+
+    root = Path(__file__).resolve().parents[1]
+    tid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    base = {"id": tid, "code": "T-2026-10-0147", "task_summary": "Принтерни текширинг", "director_telegram_user_id": 9,
+            "raw_message": "x", "has_media": False, "due_date": None, "telegram_message_id": 55}
+
+    def buttons(task):
+        return [b["text"] for row in tr.keyboard(task)["inline_keyboard"] for b in row]
+
+    check("new: accept, blocked, done", buttons({**base, "status": "sent"}), ["▶️ Қабул қилдим", "⛔ Тўсиқ бор", "✅ Бажардим"])
+    check("accepted: blocked, done", buttons({**base, "status": "started"}), ["⛔ Тўсиқ бор", "✅ Бажардим"])
+    check("blocked: continue, done", buttons({**base, "status": "blocked"}), ["▶️ Давом эттирдим", "✅ Бажардим"])
+    check("waiting for proof: only cancel", buttons({**base, "status": "started", "awaiting": "evidence"}), ["↩️ Бекор қилиш"])
+    check("in review or closed: no buttons for the employee",
+          (buttons({**base, "status": "review"}), buttons({**base, "status": "done"})), ([], []))
+    every = [b["callback_data"] for st in ("sent", "started", "blocked") for row in tr.keyboard({**base, "status": st})["inline_keyboard"]
+             for b in row] + [b["callback_data"] for b in tr.review_keyboard(tid)["inline_keyboard"][0]]
+    check_true("every button fits Telegram's 64 bytes", all(len(d.encode()) <= 64 for d in every))
+    check_true("waiting for proof: the card says no proof, no closing",
+               "Далилсиз топшириқ ёпилмайди" in tr.status_line({**base, "status": "started", "awaiting": "evidence"}))
+    check("blocked shows its reason", tr.status_line({**base, "status": "blocked", "blocker": "қоғоз йўқ"}), "⛔ Тўсиқ бор: қоғоз йўқ")
+    check("proof: text", tr.evidence_of({"text": " тузатилди "}), ("тузатилди", False))
+    check("proof: a photo without text", tr.evidence_of({"photo": [{}]}), ("фото", True))
+    check("proof: nothing", tr.evidence_of({"text": "  "}), None)
+    check_true("the review card: code, what, who, the proof",
+               all(x in tr.review_text({**base, "evidence_text": "фото"}, "Алишер") for x in ("T-2026-10-0147", "Принтерни", "Алишер", "Далил:")))
+    check_true("a task with proof counts as finished on time (the check comes later)",
+               task_tracker.completed_on_time({"status": "review", "due_date": date(2026, 10, 13),
+                                                "completed_at": datetime(2026, 10, 13, 5, 0, tzinfo=timezone.utc)}) is True)
+
+    schema = (root / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("the database: the six states, a code for every task (old ones too), the history table",
+               "CHECK (status IN ('sent', 'started', 'blocked', 'review', 'done', 'cancelled'))" in schema
+               and "CREATE SEQUENCE IF NOT EXISTS task_code_seq" in schema and "WHERE code IS NULL" in schema
+               and "CREATE TABLE IF NOT EXISTS task_events" in schema and "uq_tasks_code" in schema)
+    src = load_source("integrations/org_bot/store.py")
+    check_true("closing needs proof, and only the one who assigned it can accept or return",
+               "AND awaiting = 'evidence'" in src and "director_telegram_user_id = %s AND status = 'review'" in src
+               and "nextval('task_code_seq')" in src)
+
+    # the flow, with the database and Telegram faked
+    state = {"task": {**base, "status": "started", "awaiting": None}}
+    events: list = []
+    sent: list = []
+    replies: list = []
+
+    async def await_input(task_id, kind, tg):
+        if tg != 501:
+            return None
+        state["task"] = {**state["task"], "awaiting": kind}
+        return state["task"]
+
+    async def awaiting(tg):
+        return state["task"] if tg == 501 and state["task"].get("awaiting") else None
+
+    async def submit(task_id, by, text, msg_id):
+        if state["task"].get("awaiting") != "evidence":
+            return None
+        state["task"] = {**state["task"], "status": "review", "awaiting": None, "evidence_text": text}
+        events.append(("submitted", text, msg_id))
+        return state["task"]
+
+    async def block(task_id, by, reason):
+        state["task"] = {**state["task"], "status": "blocked", "awaiting": None, "blocker": reason}
+        events.append(("blocked", reason))
+        return state["task"]
+
+    async def verify(task_id, clicker, accept, by):
+        if clicker != 9 or state["task"]["status"] != "review":
+            return None
+        state["task"] = {**state["task"], "status": "done" if accept else "started"}
+        events.append(("closed" if accept else "returned", by))
+        return state["task"]
+
+    async def with_employee(task_id):
+        return {**state["task"], "employee_telegram_user_id": 501, "display_name": "Алишер Каримов"}
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+        replies.append((chat_id, text))
+        return [1]
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None):
+            sent.append(("text", chat_id, text, reply_markup))
+            return [77]
+
+        async def _call(self, method, payload, **kwargs):
+            sent.append((method, payload["chat_id"], payload.get("caption"), payload.get("reply_markup")))
+            return {"message_id": 78}
+
+        async def _edit_message(self, **kwargs):
+            sent.append(("edit", kwargs.get("chat_id"), kwargs.get("text"), kwargs.get("reply_markup")))
+
+        async def _answer_callback(self, *args):
+            return None
+
+    saved = [(store, n, getattr(store, n)) for n in ("await_task_input", "task_awaiting_input", "submit_task", "block_task",
+                                                       "verify_task", "task_with_employee", "set_task_review_message")]
+    saved += [(ops_manager, n, getattr(ops_manager, n)) for n in ("_reply", "TelegramBot", "_answer")]
+    store.await_task_input, store.task_awaiting_input, store.submit_task = await_input, awaiting, submit
+    store.block_task, store.verify_task, store.task_with_employee = block, verify, with_employee
+    store.set_task_review_message = nothing
+    ops_manager._reply, ops_manager.TelegramBot, ops_manager._answer = fake_reply, FakeBot, nothing
+    employee = {"telegram_user_id": 501, "full_name": "Алишер Каримов", "display_name": "A", "role": "it"}
+    try:
+        tap = {"id": "q", "data": f"taskdone:{tid}", "from": {"id": 501}, "message": {"message_id": 55, "chat": {"id": 501}}}
+        check("✅ Бажардим doesn't close it — it asks for proof", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())),
+              "evidence_asked")
+        check_true("...the card now asks for proof, with only a cancel button",
+                   sent and "далил" in sent[-1][2] and "taskx:" in str(sent[-1][3]))
+        out = asyncio.run(ops_manager._handle_employee_message(employee, {"message_id": 60, "text": "картриж алмаштирилди"}, uuid.uuid4()))
+        check("the next message is the proof: the task goes to review", (out, state["task"]["status"]), ("task_submitted", "review"))
+        review = [x for x in sent if x[0] == "text" and x[1] == "9"]
+        check_true("the one who assigned it gets the proof with ✅ Қабул / ↩️ Қайтариш",
+                   review and "картриж алмаштирилди" in review[-1][2] and "taskok:" in str(review[-1][3])
+                   and "taskback:" in str(review[-1][3]))
+        check_true("the employee is told it went for review", any("текширувга юборилди" in t for c, t in replies if c == 501))
+        stranger = {"id": "q", "data": f"taskok:{tid}", "from": {"id": 777}, "message": {"message_id": 80, "chat": {"id": 777}}}
+        check("nobody else can accept it", asyncio.run(ops_manager._handle_callback(stranger, uuid.uuid4())), "verify_closed")
+        back = {**stranger, "data": f"taskback:{tid}", "from": {"id": 9}, "message": {"message_id": 80, "chat": {"id": 9}, "text": "x"}}
+        check("↩️ Қайтариш sends it back to the employee", (asyncio.run(ops_manager._handle_callback(back, uuid.uuid4())),
+                                                             state["task"]["status"]), ("task_returned", "started"))
+        check_true("...who is told to do it again with new proof", "янги далил" in replies[-1][1])
+        asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4()))
+        sent.clear()
+        asyncio.run(ops_manager._handle_employee_message(employee, {"message_id": 61, "photo": [{"file_id": "f"}], "caption": ""},
+                                                         uuid.uuid4()))
+        check_true("a photo as proof is copied to the one who assigned it, with the buttons",
+                   any(x[0] == "copyMessage" and x[1] == "9" and "taskok:" in str(x[3]) for x in sent)
+                   and events[-1] == ("submitted", "фото", 61))
+        ok = {**back, "data": f"taskok:{tid}", "message": {"message_id": 81, "chat": {"id": 9}, "caption": "x"}}
+        check("✅ Қабул closes it", (asyncio.run(ops_manager._handle_callback(ok, uuid.uuid4())), state["task"]["status"]),
+              ("task_closed", "done"))
+        state["task"] = {**base, "status": "started", "awaiting": "blocker"}
+        replies.clear()
+        sent.clear()
+        out = asyncio.run(ops_manager._handle_employee_message(employee, {"message_id": 62, "text": "қоғоз тугаган"}, uuid.uuid4()))
+        check_true("⛔ then the reason: blocked, and the one who assigned it gets the reason",
+                   out == "task_blocked" and state["task"]["blocker"] == "қоғоз тугаган"
+                   and any(c == 9 and "Сабаби:" in t for c, t in replies))
+        state["task"] = {**base, "status": "started", "awaiting": "evidence"}
+        check("a command is not taken as proof", asyncio.run(ops_manager._handle_employee_message(
+            employee, {"message_id": 63, "text": "/hisobot"}, uuid.uuid4())) != "task_submitted", True)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_fast_buttons() -> None:
     """2026-10-13: buttons were slow — one kept-alive Telegram connection per bot, the spinner stopped within 0.25 s."""
     print("fast buttons")
@@ -5942,6 +6110,7 @@ def main() -> int:
         test_it_restrictions,
         test_tech_report_errors_fixed,
         test_review_pages,
+        test_task_register,
         test_fast_buttons,
         test_data_access,
         test_backup,

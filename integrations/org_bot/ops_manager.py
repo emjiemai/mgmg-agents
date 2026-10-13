@@ -33,7 +33,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
     admin, ai_chat, cheer, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
-    task_picker, task_tracker,
+    task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
 from integrations.org_bot.prompt import (
@@ -242,6 +242,10 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_task_start(rest, callback, run_id)
     if prefix == "taskdone":
         return await _handle_task_done(rest, callback, run_id)
+    if prefix in ("taskblock", "taskgo", "taskx"):
+        return await _handle_task_step(prefix, rest, callback, run_id)
+    if prefix in ("taskok", "taskback"):
+        return await _handle_task_verify(prefix == "taskok", rest, callback, run_id)
     if prefix == "dispatchrole":
         return await _handle_dispatch_role(rest, callback, run_id)
     if prefix == "taskdue":
@@ -291,7 +295,7 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
     return "unrecognized"
 
 
-def _task_card_text(task_summary: str, raw_message: str | None = None, due_date: date | None = None) -> str:
+def _task_card_text(task_summary: str, raw_message: str | None = None, due_date: date | None = None, code: str = "") -> str:
     """The base text/caption every task card starts with — recomputed (not
     stored) so edits can append a status line without needing to fetch or
     guess the message's current content.
@@ -303,7 +307,7 @@ def _task_card_text(task_summary: str, raw_message: str | None = None, due_date:
     summary might have compressed away or gotten wrong — a real fallback for
     "the AI's phrasing is confusing", not just a formatting nicety.
     """
-    text = f"📋 <b>Янги топшириқ</b>\n\n{sanitize_model_html(task_summary)}"
+    text = f"📋 <b>Янги топшириқ{' · ' + escape(code) if code else ''}</b>\n\n{sanitize_model_html(task_summary)}"
     if raw_message and raw_message.strip() and raw_message.strip() != task_summary.strip():
         text += f"\n\n<i>Директордан:</i>\n{escape(raw_message.strip())}"
     deadline = task_tracker.deadline_line(due_date, today_local())
@@ -478,82 +482,173 @@ async def _actor_display_name(clicker: dict[str, Any]) -> str:
     return name or "Номаълум ходим"
 
 
+async def _refresh_task_card(task: dict[str, Any], run_id: uuid.UUID) -> None:
+    """Redraw the employee's task card: text, code, where it is, the buttons for that state."""
+    full = await store.task_with_employee(str(task["id"]))
+    if not full or not full.get("telegram_message_id"):
+        return
+    text = (_task_card_text(full["task_summary"], None if full.get("has_media") else full.get("raw_message"),
+                            full.get("due_date"), task_register.code_of(full))
+            + "\n\n" + task_register.status_line(full))
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await _edit_task_card(bot, str(full["employee_telegram_user_id"]), full["telegram_message_id"],
+                              bool(full.get("has_media")), text, task_register.keyboard(full))
+
+
+async def _tell_assigner(task: dict[str, Any], text: str, run_id: uuid.UUID) -> None:
+    try:
+        await _reply(task["director_telegram_user_id"], run_id, text)
+    except TelegramError as exc:
+        log.warning("Could not tell the assigner about {}: {}", task_register.code_of(task), exc)
+
+
 async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Resolve a "Start" button press and notify the Director."""
+    """▶️ Қабул қилдим: the employee accepted the task; the one who assigned it is told."""
     query_id = callback.get("id", "")
     clicker = callback.get("from", {})
     started_by = clicker.get("username") or str(clicker.get("id", "unknown"))
 
     task = await store.mark_task_started(task_id, started_by)
     if task is None:
-        await _answer(query_id, "Аллақачон бошланган ёки бажарилган")
+        await _answer(query_id, "Аллақачон қабул қилинган")
         return "already_started"
-
-    message = callback.get("message") or {}
-    async with TelegramBot(
-        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
-    ) as bot:
-        if message.get("message_id") and message.get("chat", {}).get("id"):
-            text = (
-                _task_card_text(task["task_summary"], task.get("raw_message"), task.get("due_date"))
-                + "\n\n▶️ Бошланди"
-            )
-            keyboard = _task_keyboard(str(task["id"]), started=True)
-            await _edit_task_card(
-                bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text, keyboard
-            )
-        await bot._answer_callback(query_id, "Бошланди")  # noqa: SLF001
-
-    try:
-        actor = await _actor_display_name(clicker)
-        await _reply(
-            task["director_telegram_user_id"],
-            run_id,
-            f"▶️ Бошланди: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
-        )
-    except TelegramError as exc:
-        log.warning("Could not notify Director that a task started: {}", exc)
-
+    await _answer(query_id, "Қабул қилинди")
+    await _refresh_task_card(task, run_id)
+    actor = await _actor_display_name(clicker)
+    await _tell_assigner(task, f"▶️ {escape(task_register.code_of(task))} қабул қилинди: "
+                               f"{sanitize_model_html(task['task_summary'])}\n— {escape(actor)}", run_id)
     return "started"
 
 
 async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Resolve a "Mark Done" button press and notify the Director."""
+    """✅ Бажардим: nothing closes yet — the bot asks for proof (the next message)."""
     query_id = callback.get("id", "")
-    clicker = callback.get("from", {})
-    completed_by = clicker.get("username") or str(clicker.get("id", "unknown"))
-
-    task = await store.mark_task_done(task_id, completed_by)
+    clicker_id = (callback.get("from") or {}).get("id")
+    task = await store.await_task_input(task_id, "evidence", clicker_id) if clicker_id else None
     if task is None:
-        await _answer(query_id, "Аллақачон бажарилган")
+        await _answer(query_id, "Аллақачон юборилган ёки ёпилган")
         return "already_done"
+    await _answer(query_id, "Далил юборинг")
+    await _refresh_task_card(task, run_id)
+    return "evidence_asked"
 
-    message = callback.get("message") or {}
+
+async def _handle_task_step(prefix: str, task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """⛔ Тўсиқ бор (asks the reason), ▶️ Давом эттирдим, ↩️ Бекор қилиш (stop waiting for proof / reason)."""
+    query_id = callback.get("id", "")
+    clicker = callback.get("from") or {}
+    clicker_id = clicker.get("id")
+    if clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    if prefix == "taskblock":
+        task = await store.await_task_input(task_id, "blocker", clicker_id)
+        outcome, toast = "blocker_asked", "Тўсиқни ёзинг"
+    elif prefix == "taskgo":
+        task = await store.unblock_task(task_id, clicker_id, clicker.get("username") or str(clicker_id))
+        outcome, toast = "unblocked", "Давом этяпти"
+    else:
+        task = await store.cancel_task_input(task_id, clicker_id)
+        outcome, toast = "input_cancelled", "Бекор қилинди"
+    if task is None:
+        await _answer(query_id, "Бу топшириқда бу амал мумкин эмас")
+        return "task_step_refused"
+    await _answer(query_id, toast)
+    await _refresh_task_card(task, run_id)
+    if prefix == "taskgo":
+        actor = await _actor_display_name(clicker)
+        await _tell_assigner(task, f"▶️ {escape(task_register.code_of(task))}: тўсиқ ҳал бўлди, давом этяпти — "
+                                   f"{escape(actor)}", run_id)
+    return outcome
+
+
+async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], message: dict[str, Any],
+                              run_id: uuid.UUID) -> str:
+    """The message right after ✅ (proof) or ⛔ (reason): saved on the task, sent to the one who assigned it."""
+    telegram_user_id = employee["telegram_user_id"]
+    who = names.person_name(employee)
+    by = employee.get("telegram_username") or str(telegram_user_id)
+    if task.get("awaiting") == "blocker":
+        reason = (message.get("text") or message.get("caption") or "").strip()[:task_register.BLOCKER_MAX]
+        if not reason:
+            await _reply(telegram_user_id, run_id, "Тўсиқни қисқа матн билан ёзинг.")
+            return "blocker_needs_text"
+        blocked = await store.block_task(str(task["id"]), by, reason)
+        if blocked is None:
+            return "task_input_stale"
+        await _refresh_task_card(blocked, run_id)
+        await _reply(telegram_user_id, run_id, "Тўсиқ ёзилди ва топшириқ берган кишига юборилди.")
+        await _tell_assigner(blocked, task_register.blocked_text(blocked, who), run_id)
+        return "task_blocked"
+
+    evidence = task_register.evidence_of(message)
+    if evidence is None:
+        await _reply(telegram_user_id, run_id, "Далил сифатида фото, файл ёки қисқа матн юборинг.")
+        return "evidence_empty"
+    text, has_file = evidence
+    submitted = await store.submit_task(str(task["id"]), by, text, message.get("message_id") if has_file else None)
+    if submitted is None:
+        return "task_input_stale"
+    await _refresh_task_card(submitted, run_id)
+    await _reply(telegram_user_id, run_id, f"Раҳмат, {escape(task_register.code_of(submitted))} текширувга юборилди.")
+    review = task_register.review_text(submitted, who)
+    keyboard = task_register.review_keyboard(str(submitted["id"]))
+    review_id = None
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        if message.get("message_id") and message.get("chat", {}).get("id"):
-            text = (
-                _task_card_text(task["task_summary"], task.get("raw_message"), task.get("due_date"))
-                + "\n\n✅ Бажарилди"
-            )
-            await _edit_task_card(
-                bot, str(message["chat"]["id"]), message["message_id"], bool(task.get("has_media")), text,
-                {"inline_keyboard": []},
-            )
-        await bot._answer_callback(query_id, "Бажарилди")  # noqa: SLF001
+        try:
+            if has_file:
+                result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                    "copyMessage",
+                    {"chat_id": str(submitted["director_telegram_user_id"]), "from_chat_id": str(telegram_user_id),
+                     "message_id": message.get("message_id"), "caption": review[:1024], "parse_mode": "HTML",
+                     "reply_markup": keyboard},
+                    mode="notify", target_ref=str(submitted["director_telegram_user_id"]),
+                )
+                review_id = (result or {}).get("message_id")
+            else:
+                ids = await bot.send_message(review, chat_id=str(submitted["director_telegram_user_id"]),
+                                             reply_markup=keyboard)
+                review_id = ids[0] if ids else None
+        except TelegramError as exc:
+            log.warning("Could not send {} for review: {}", task_register.code_of(submitted), exc)
+    await store.set_task_review_message(str(submitted["id"]), review_id)
+    return "task_submitted"
 
-    try:
-        actor = await _actor_display_name(clicker)
-        await _reply(
-            task["director_telegram_user_id"],
-            run_id,
-            f"✅ Бажарилди: {sanitize_model_html(task['task_summary'])}\n— {escape(actor)}",
-        )
-    except TelegramError as exc:
-        log.warning("Could not notify Director of task completion: {}", exc)
 
-    return "done"
+async def _handle_task_verify(accept: bool, task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """✅ Қабул (closed) or ↩️ Қайтариш (back to the employee) — only by the one who assigned it."""
+    query_id = callback.get("id", "")
+    clicker = callback.get("from") or {}
+    clicker_id = clicker.get("id")
+    task = await store.verify_task(task_id, clicker_id, accept, clicker.get("username") or str(clicker_id)) \
+        if clicker_id else None
+    if task is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "verify_closed"
+    await _answer(query_id, "Қабул қилинди" if accept else "Қайтарилди")
+    code = escape(task_register.code_of(task))
+    message = callback.get("message") or {}
+    if message.get("message_id") and (message.get("chat") or {}).get("id"):
+        status = "✅ Қабул қилинди — ёпилди" if accept else "↩️ Қайтарилди — ходим қайта бажаради"
+        base = task_register.review_text(task, (await store.task_with_employee(task_id) or {}).get("display_name") or "")
+        async with TelegramBot(
+            agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+        ) as bot:
+            is_media = message.get("caption") is not None and message.get("text") is None
+            body = f"{base}\n\n{status}"
+            await _edit_task_card(bot, str(message["chat"]["id"]), message["message_id"], is_media,
+                                  (status + "\n\n" + base)[:1024] if is_media else body, {"inline_keyboard": []})
+    await _refresh_task_card(task, run_id)
+    full = await store.task_with_employee(task_id)
+    if full:
+        note = (f"✅ {code} қабул қилинди, раҳмат." if accept
+                else f"↩️ {code} қайтарилди: қайта бажариб, ✅ Бажардим орқали янги далил юборинг.")
+        await _reply(full["employee_telegram_user_id"], run_id, note)
+    return "task_closed" if accept else "task_returned"
 
 
 async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1300,6 +1395,13 @@ async def _handle_employee_message(
     their own flows and never reach this point.
     """
     telegram_user_id = employee["telegram_user_id"]
+    # Right after ✅ Бажардим / ⛔ Тўсиқ бор, the next message is that task's
+    # proof or blocker (task_register.py) — a file included.
+    first_text = (message.get("text") or message.get("caption") or "").strip()
+    if not first_text.startswith("/"):
+        awaiting = await store.task_awaiting_input(telegram_user_id)
+        if awaiting is not None:
+            return await _consume_task_input(employee, awaiting, message, run_id)
     # A photo, video or file: ask what it's for — it goes to the Director as
     # it is, never to the AI (report_tools.py).
     kind = report_tools.file_kind(message)
@@ -1717,9 +1819,9 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
                             "chat_id": str(employee["telegram_user_id"]),
                             "from_chat_id": str(director_id),
                             "message_id": draft["source_message_id"],
-                            "caption": _task_card_text(draft["task_summary"], due_date=due_date),
+                            "caption": _task_card_text(draft["task_summary"], due_date=due_date, code=task_register.code_of(task)),
                             "parse_mode": "HTML",
-                            "reply_markup": _task_keyboard(str(task["id"])),
+                            "reply_markup": task_register.keyboard(task),
                         },
                         mode="notify",
                         target_ref=str(employee["telegram_user_id"]),
@@ -1727,9 +1829,9 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
                     message_id = result.get("message_id") if result else None
                 else:
                     ids = await bot.send_message(
-                        _task_card_text(draft["task_summary"], draft["raw_message"], due_date),
+                        _task_card_text(draft["task_summary"], draft["raw_message"], due_date, task_register.code_of(task)),
                         chat_id=str(employee["telegram_user_id"]),
-                        reply_markup=_task_keyboard(str(task["id"])),
+                        reply_markup=task_register.keyboard(task),
                     )
                     message_id = ids[0] if ids else None
             except TelegramError as exc:
@@ -2180,6 +2282,8 @@ async def _fetch_task_tracker_data() -> str:
     today = today_local()
     open_tasks = await store.open_tasks_with_names()
     lines = [f"Today is {today.isoformat()}. Tasks the Director assigned through this bot."]
+    lines.append("States: Яратилди = not accepted yet; Қабул қилинди = in progress; Тўсиқ бор = blocked (reason shown); "
+                 "Текширувда = done with proof, waiting for the one who assigned it to accept (✅) or return (↩️).")
     if not open_tasks:
         lines.append("No open tasks: everything assigned has been marked done.")
     else:
@@ -2193,7 +2297,7 @@ async def _fetch_task_tracker_data() -> str:
             else:
                 state = f"due {due.isoformat()}"
             lines.append(
-                f"- {task['display_name']} ({task['role']}) | {task['status']} | {state} | "
+                f"- {task['display_name']} ({task['role']}) | {task_register.answer_line(task)} | {state} | "
                 f"assigned {task['created_at'].date().isoformat()} | {' '.join(task['task_summary'].split())}"
             )
 

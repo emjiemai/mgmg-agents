@@ -9,6 +9,33 @@
 **Source:** the owner's plan *ЭМЖИЕМ AI Агентлар Тизими* (25.08.2026), agents
 A3 and B1, and its И coefficient
 
+## The one task register (2026-10-13, the owner's spec of 11.10, Day 1)
+
+`integrations/org_bot/task_register.py`. Every task has a **code**
+(`T-2026-10-0147`, `tasks.code` from `task_code_seq`; old tasks got one
+too) and a **state**: `sent` Яратилди → `started` Қабул қилинди →
+`blocked` Тўсиқ бор (reason) / `review` Текширувда → `done` Ёпилди (or
+`cancelled`). The employee's card: **▶️ Қабул қилдим · ⛔ Тўсиқ бор ·
+✅ Бажардим**.
+
+- ✅ doesn't close anything: the bot asks for **proof** — a photo, a file or a
+  short text; the employee's next message is taken as it (`tasks.awaiting`,
+  24 h; a /command is never taken). Without proof the task stays open.
+- The proof goes to **the one who assigned it** (a file is copied as it is)
+  with **✅ Қабул** (→ `done`) and **↩️ Қайтариш** (→ back to `started`, the
+  employee is told to redo it with new proof). Only that person can press them.
+- ⛔ asks what blocks it; the reason is saved and sent to the assigner;
+  **▶️ Давом эттирдим** ends the block.
+- Every step is in `task_events` (created, accepted, blocked, unblocked,
+  submitted, closed, returned — who, when, the reason / proof text).
+- On time = the proof went in by the deadline (`review` counts as finished).
+- The proof and the blocker reason are task data, so they reach the
+  assigner — the one exception to "no text between employees and the
+  Director"; everything else stays as it was.
+
+Still to come from the same spec: positions with deputies, the route table
+(which message goes to which position) and escalation by time.
+
 ## A3 — task tracker
 
 The plan's audit: 11 projects started, 2 finished; "employees don't work

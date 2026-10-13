@@ -519,12 +519,14 @@ async def create_task(
         The new row, or None if this exact (director, message, employee)
         combination was already dispatched (duplicate webhook delivery).
     """
-    return await fetch_one(
+    row = await fetch_one(
         """
         INSERT INTO tasks
             (director_telegram_user_id, source_message_id, raw_message,
-             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media, due_date)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media, due_date, code)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                'T-' || to_char(now() AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM') || '-'
+                     || lpad(nextval('task_code_seq')::text, 4, '0'))
         ON CONFLICT ON CONSTRAINT uq_task_dispatch DO NOTHING
         RETURNING *
         """,
@@ -541,6 +543,9 @@ async def create_task(
             due_date,
         ),
     )
+    if row is not None:
+        await log_task_event(str(row["id"]), "created", str(director_telegram_user_id))
+    return row
 
 
 # ------------------------------------------------------ A3: task deadlines
@@ -563,7 +568,7 @@ async def set_dispatch_due_date(
         SET due_date = %s
         FROM employees e
         WHERE t.director_telegram_user_id = %s AND t.source_message_id = %s
-          AND t.due_date IS NULL AND t.status IN ('sent', 'started')
+          AND t.due_date IS NULL AND t.status IN ('sent', 'started', 'blocked', 'review')
           AND e.id = t.assigned_employee_id
         RETURNING t.*, e.telegram_user_id AS employee_telegram_user_id,
                   COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
@@ -580,7 +585,7 @@ async def tasks_needing_reminder(today: date) -> list[dict[str, Any]]:
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE t.status IN ('sent', 'started') AND t.reminded_at IS NULL
+        WHERE t.status IN ('sent', 'started', 'blocked') AND t.reminded_at IS NULL
           AND t.due_date BETWEEN %s AND %s::date + 1
           AND e.status = 'active'
         ORDER BY t.due_date, t.created_at
@@ -602,7 +607,7 @@ async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE t.status IN ('sent', 'started') AND t.overdue_notified_at IS NULL
+        WHERE t.status IN ('sent', 'started', 'blocked') AND t.overdue_notified_at IS NULL
           AND t.due_date < %s
         ORDER BY t.director_telegram_user_id, t.due_date
         """,
@@ -635,11 +640,11 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
     """Every unfinished task, oldest deadline first, for the Director's questions."""
     return await fetch_all(
         """
-        SELECT t.task_summary, t.status, t.due_date, t.created_at,
+        SELECT t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE t.status IN ('sent', 'started')
+        WHERE t.status IN ('sent', 'started', 'blocked', 'review')
         ORDER BY t.due_date NULLS LAST, t.created_at
         LIMIT %s
         """,
@@ -698,7 +703,7 @@ async def mark_task_started(task_id: str, started_by: str) -> dict[str, Any] | N
         and only from 'sent' — tapping Start after Done is a no-op), else
         None — callers must treat None as "already started or done", not an error.
     """
-    return await fetch_one(
+    row = await fetch_one(
         """
         UPDATE tasks
         SET status = 'started', started_at = now(), started_by = %s
@@ -707,29 +712,132 @@ async def mark_task_started(task_id: str, started_by: str) -> dict[str, Any] | N
         """,
         (started_by, task_id),
     )
+    if row is not None:
+        await log_task_event(task_id, "accepted", started_by)
+    return row
 
 
-async def mark_task_done(task_id: str, completed_by: str) -> dict[str, Any] | None:
-    """Resolve a task as done, idempotently.
+async def log_task_event(task_id: str, event: str, actor: str | None, note: str | None = None) -> None:
+    """One step in a task's history (``task_events``, append-only)."""
+    await execute("INSERT INTO task_events (task_id, event, actor, note) VALUES (%s, %s, %s, %s)",
+                  (task_id, event, actor, note))
 
-    Args:
-        task_id: ``tasks.id``.
-        completed_by: The tapping employee's identifier.
 
-    Returns:
-        The updated row if this call actually changed it (first tap wins;
-        valid from either 'sent' or 'started' — Done doesn't require Start
-        to have been tapped first), else None — callers must treat None as
-        "already done", not an error.
-    """
+async def task_events(task_id: str) -> list[dict[str, Any]]:
+    return await fetch_all("SELECT event, actor, note, at FROM task_events WHERE task_id = %s ORDER BY at, id", (task_id,))
+
+
+async def await_task_input(task_id: str, kind: str, telegram_user_id: int) -> dict[str, Any] | None:
+    """The employee tapped ✅ or ⛔: their next message is the proof / the blocker. Only their own open task."""
     return await fetch_one(
         """
-        UPDATE tasks
-        SET status = 'done', completed_at = now(), completed_by = %s
-        WHERE id = %s AND status IN ('sent', 'started')
+        UPDATE tasks t SET awaiting = %s, awaiting_since = now()
+        FROM employees e
+        WHERE t.id = %s AND e.id = t.assigned_employee_id AND e.telegram_user_id = %s
+          AND t.status IN ('sent', 'started', 'blocked')
+        RETURNING t.*
+        """,
+        (kind, task_id, telegram_user_id),
+    )
+
+
+async def cancel_task_input(task_id: str, telegram_user_id: int) -> dict[str, Any] | None:
+    return await fetch_one(
+        """
+        UPDATE tasks t SET awaiting = NULL, awaiting_since = NULL
+        FROM employees e
+        WHERE t.id = %s AND e.id = t.assigned_employee_id AND e.telegram_user_id = %s AND t.awaiting IS NOT NULL
+        RETURNING t.*
+        """,
+        (task_id, telegram_user_id),
+    )
+
+
+async def task_awaiting_input(telegram_user_id: int) -> dict[str, Any] | None:
+    """The task whose proof / blocker this person's next message is — the latest, within a day."""
+    return await fetch_one(
+        """
+        SELECT t.* FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE e.telegram_user_id = %s AND t.awaiting IS NOT NULL AND t.awaiting_since > now() - interval '24 hours'
+          AND t.status IN ('sent', 'started', 'blocked')
+        ORDER BY t.awaiting_since DESC LIMIT 1
+        """,
+        (telegram_user_id,),
+    )
+
+
+async def submit_task(task_id: str, by: str, evidence_text: str, evidence_message_id: int | None) -> dict[str, Any] | None:
+    """Done, with proof: waits for the one who assigned it (status 'review'). Once."""
+    row = await fetch_one(
+        """
+        UPDATE tasks SET status = 'review', completed_at = now(), completed_by = %s, evidence_text = %s,
+                         evidence_message_id = %s, awaiting = NULL, awaiting_since = NULL
+        WHERE id = %s AND status IN ('sent', 'started', 'blocked') AND awaiting = 'evidence'
         RETURNING *
         """,
-        (completed_by, task_id),
+        (by, evidence_text, evidence_message_id, task_id),
+    )
+    if row is not None:
+        await log_task_event(task_id, "submitted", by, evidence_text)
+    return row
+
+
+async def block_task(task_id: str, by: str, reason: str) -> dict[str, Any] | None:
+    row = await fetch_one(
+        """
+        UPDATE tasks SET status = 'blocked', blocker = %s, awaiting = NULL, awaiting_since = NULL,
+                         started_at = COALESCE(started_at, now())
+        WHERE id = %s AND status IN ('sent', 'started', 'blocked') AND awaiting = 'blocker'
+        RETURNING *
+        """,
+        (reason, task_id),
+    )
+    if row is not None:
+        await log_task_event(task_id, "blocked", by, reason)
+    return row
+
+
+async def unblock_task(task_id: str, telegram_user_id: int, by: str) -> dict[str, Any] | None:
+    row = await fetch_one(
+        """
+        UPDATE tasks t SET status = 'started', blocker = NULL
+        FROM employees e
+        WHERE t.id = %s AND e.id = t.assigned_employee_id AND e.telegram_user_id = %s AND t.status = 'blocked'
+        RETURNING t.*
+        """,
+        (task_id, telegram_user_id),
+    )
+    if row is not None:
+        await log_task_event(task_id, "unblocked", by)
+    return row
+
+
+async def verify_task(task_id: str, verifier_telegram_user_id: int, accept: bool, by: str) -> dict[str, Any] | None:
+    """The one who assigned it accepts (closed) or returns it (back to the employee). Once, only them."""
+    if accept:
+        query = """UPDATE tasks SET status = 'done', verified_at = now()
+                   WHERE id = %s AND director_telegram_user_id = %s AND status = 'review' RETURNING *"""
+    else:
+        query = """UPDATE tasks SET status = 'started', completed_at = NULL, completed_by = NULL
+                   WHERE id = %s AND director_telegram_user_id = %s AND status = 'review' RETURNING *"""
+    row = await fetch_one(query, (task_id, verifier_telegram_user_id))
+    if row is not None:
+        await log_task_event(task_id, "closed" if accept else "returned", by)
+    return row
+
+
+async def set_task_review_message(task_id: str, message_id: int | None) -> None:
+    await execute("UPDATE tasks SET review_message_id = %s WHERE id = %s", (message_id, task_id))
+
+
+async def task_with_employee(task_id: str) -> dict[str, Any] | None:
+    return await fetch_one(
+        """
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
+        FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id WHERE t.id = %s
+        """,
+        (task_id,),
     )
 
 
@@ -910,7 +1018,7 @@ async def open_tasks_for_employee(employee_telegram_user_id: int) -> list[dict[s
         """
         SELECT t.* FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE e.telegram_user_id = %s AND t.status IN ('sent', 'started')
+        WHERE e.telegram_user_id = %s AND t.status IN ('sent', 'started', 'blocked', 'review')
         ORDER BY t.created_at DESC
         """,
         (employee_telegram_user_id,),
@@ -935,7 +1043,7 @@ async def find_open_task_for_employee(employee_telegram_user_id: int) -> dict[st
         """
         SELECT t.* FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE e.telegram_user_id = %s AND t.status IN ('sent', 'started')
+        WHERE e.telegram_user_id = %s AND t.status IN ('sent', 'started', 'blocked', 'review')
         ORDER BY t.created_at DESC
         """,
         (employee_telegram_user_id,),

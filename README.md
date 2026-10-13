@@ -124,6 +124,12 @@ Accept card in Admin Bot → they pick a role → the admin confirms the role �
 they type their full name. The **Director** is simply the person whose role
 is "Операцион директор".
 
+**Tasks** — each card has a code (T-2026-10-0147). The employee taps
+▶️ Қабул қилдим, ⛔ Тўсиқ бор (then writes the reason) or ✅ Бажардим (then
+sends proof: a photo, a file or a short text). The one who assigned it gets
+the proof with ✅ Қабул (closed) or ↩️ Қайтариш (redo). Without proof a
+task never closes.
+
 **OPS Manager Bot commands** — Director: `/maqsad`, `/maqsadlar`, `/kpi`,
 `/baho`; employees: `/hisobot` (change or delete today's report), `/kpi`,
 `/natija`, `/ism`, `/ruxsat` (written permission request), `/bekor`.
@@ -293,6 +299,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-13 | **Task register (the owner's spec of 11.10, Day 1):** every task has a code (T-2026-10-0147, old tasks too) and a state — Яратилди, Қабул қилинди, Тўсиқ бор, Текширувда, Ёпилди. The card's buttons: ▶️ Қабул қилдим · ⛔ Тўсиқ бор · ✅ Бажардим. ✅ asks for proof (photo, file or text); the assigner gets it with ✅ Қабул / ↩️ Қайтариш; ⛔ sends the reason. Every step in `task_events`. `integrations/org_bot/task_register.py`, `docs/agent-specs/08-task-tracker.md`. |
 | 2026-10-13 | **Faster buttons:** each Telegram call used to open a new HTTPS connection (~400–650 ms each, 2–4 per button press). Now one kept-alive connection per bot is reused (`integrations/telegram/bot.py`, `_shared_client`), and if a handler hasn't answered a button within 0.25 s the bot stops the spinner itself (`ack_soon`). |
 | 2026-10-10 | **Data for accounting and finance:** on `/xodimlar` the admin gives SAP / 1C / Billz to people in Бухгалтерия or Молия; they ask in OPS Manager Bot and the analyst uses only their systems' tools (never attendance or the bot's records). The Director is told of every change with ⛔ to close it; a role change or removal closes it. **AI language per person** (ўзбекча / русча) — the accountant gets Russian answers. The supplier-debt `.xlsx` now comes in Uzbek **and Russian**, each with every column explained under the table (SAP's own column names). `docs/agent-specs/22-data-access.md`. |
 | 2026-10-10 | **Database backups (IT-5):** the server makes an encrypted `pg_dump` (owner's GnuPG public key) on request; an office computer fetches one daily, checks its SHA-256, keeps 30 days + 12 months and a second copy; monthly restore test script; the technical report shows the last copy. New settings `BACKUP_SECRET`, `BACKUP_PUBLIC_KEY`; the image now has `gnupg` and `postgresql-client-16`. `scripts/backup/README.md`. |

@@ -129,7 +129,8 @@ def completed_on_time(task: dict[str, Any]) -> bool | None:
     """
     due = task.get("due_date")
     completed = task.get("completed_at")
-    if due is None or task.get("status") != "done" or completed is None:
+    # 'review' = done, proof sent, waiting for the check (task_register.py): finished when the proof went in.
+    if due is None or task.get("status") not in ("done", "review") or completed is None:
         return None
     finished = to_local(completed).date() if isinstance(completed, datetime) else completed
     return finished <= due
