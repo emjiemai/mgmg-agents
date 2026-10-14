@@ -148,8 +148,9 @@ class Settings(BaseSettings):
     billz_sap_check_trial: bool = True
     billz_sap_warehouses: str = "G.A._01,05,G.A._02"
     # Who else gets it besides the Director: role slugs, comma-separated
-    # (e.g. "garmin_sotuv,buxgalteriya"). Empty = the Director only.
-    billz_sap_check_roles: str = ""
+    # (e.g. "garmin_manager,buxgalteriya"). The Garmin manager runs the shops
+    # (2026-10-14); his morning brief also shows the result while on trial.
+    billz_sap_check_roles: str = "garmin_manager"
 
     # --- Garmin AI bot leads (POST /webhooks/garmin-lead/{secret}) ---
     # The same long random value goes into the Garmin bot's COMMAND_CENTER_SECRET.

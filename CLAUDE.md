@@ -93,6 +93,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   Complaints are **tickets for the department, not the Boss** (2026-10-13, `routes.py`): Londry → Londry
   role, Garmin → Garmin сотув; ✅ Ҳал бўлди + reason code; "ҳал бўлдими?" hourly 09–20, max 3. No Uzbek Latin.
   "Director" = the owner = the Boss (2026-10-13). Positions = the roles people register with.
+  **Garmin complaints → the Garmin manager** (2026-10-14, role `garmin_manager`, not Garmin сотув).
+- **Garmin manager** (2026-10-14, `docs/agent-specs/23-garmin-manager.md`): every Garmin complaint; SAP + Billz +
+  Garmin data through the bot by role (`data_access.ROLE_SCOPES`, never 1C); Garmin morning brief
+  (`agents/garmin-brief/`, same picture as the Director's); Billz → SAP check recipient.
   Mobile app: not now.
 - **Google reviews: separate pages and QR codes** (2026-10-08, `docs/agent-specs/20-google-reviews.md`):
   `/r` Londry, `/r/garmin` Garmin — the branch button opens that branch's Google review page

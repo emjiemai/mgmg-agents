@@ -1067,6 +1067,9 @@ async def _handle_employee_action(
             if closed is not None:
                 after = closed
                 await _tell_director_data_access(closed, decided_by, run_id)
+        if after["role"] in data_access.ROLE_SCOPES or before["role"] in data_access.ROLE_SCOPES:
+            # Data that comes with the role opened or closed: the Director is told either way.
+            await _tell_director_data_access(after, decided_by, run_id)
         old_label = ROLE_LABELS.get(before["role"], before["role"])
         new_label = ROLE_LABELS.get(after["role"], after["role"])
         await _tell_employee(
@@ -1241,6 +1244,8 @@ async def _handle_role_decision(
             approved_by=decided_by,
         )
         await ops_manager.send_registration_confirmed(request, run_id, employee)
+        if employee.get("role") in data_access.ROLE_SCOPES:  # a role that opens company data: the Director is told
+            await _tell_director_data_access(employee, decided_by, run_id)
         target_ref, action = str(employee["id"]), "employee_registered"
     else:
         await ops_manager.send_role_picker(request, run_id, retry=True)

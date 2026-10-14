@@ -26,22 +26,34 @@ from integrations.telegram.bot import escape
 
 SYSTEMS: dict[str, str] = {"sap": "SAP", "1c": "1C", "billz": "Billz"}
 ROLES = ("buxgalteriya", "moliya")
+# Access that comes with the role itself, not the admin's toggles (2026-10-14,
+# the owner): the Garmin manager sees SAP, Billz and Garmin's own records
+# (Garmin bot leads, Garmin complaints, the catalog). Taking the role away is
+# how it's closed; the Director is told when someone gets the role.
+ROLE_SCOPES: dict[str, frozenset[str]] = {"garmin_manager": frozenset({"sap", "billz", "garmin"})}
+NAMES = {**SYSTEMS, "garmin": "Garmin (лидлар, шикоятлар, каталог)"}
 
 
 def granted(employee: dict[str, Any] | None) -> set[str]:
     """The systems this person may ask about now: none unless active and in Бухгалтерия / Молия."""
-    if not employee or employee.get("status", "active") != "active" or employee.get("role") not in ROLES:
+    if not employee or employee.get("status", "active") != "active":
+        return set()
+    if employee.get("role") in ROLE_SCOPES:
+        return set(ROLE_SCOPES[employee["role"]])
+    if employee.get("role") not in ROLES:
         return set()
     return {s for s in (employee.get("data_access") or []) if s in SYSTEMS}
 
 
 def label(systems: set[str] | list[str]) -> str:
     """"SAP, 1C" — in a fixed order."""
-    return ", ".join(SYSTEMS[s] for s in SYSTEMS if s in set(systems))
+    return ", ".join(NAMES[s] for s in NAMES if s in set(systems))
 
 
 def card_line(employee: dict[str, Any]) -> str:
     """The /xodimlar card's line."""
+    if employee.get("role") in ROLE_SCOPES:
+        return f"Маълумотга кириш (ролига кўра): {label(ROLE_SCOPES[employee['role']])}"
     if employee.get("role") not in ROLES:
         return "Маълумотга кириш (SAP, 1C, Billz): фақат Бухгалтерия ва Молия учун"
     have = granted(employee)
@@ -67,6 +79,11 @@ def person(employee: dict[str, Any]) -> str:
 def director_notice(employee: dict[str, Any], by: str) -> tuple[str, dict[str, Any] | None]:
     """What the Director sees after every change, with a button that closes it all."""
     have = granted(employee)
+    if have and employee.get("role") in ROLE_SCOPES:
+        # Comes with the role: closed by changing the role (Admin Bot), not by ⛔.
+        return (f"🔐 <b>Маълумотга кириш</b>\n{escape(person(employee))} — ролига кўра бот орқали "
+                f"<b>{escape(label(have))}</b> маълумотларини кўради.\nРолни берган: админ ({escape(by)}). "
+                "Ёпиш учун админ ролни ўзгартиради."), None
     if have:
         text = (f"🔐 <b>Маълумотга кириш</b>\n{escape(person(employee))} энди бот орқали "
                 f"<b>{escape(label(have))}</b> маълумотларини сўраши мумкин.\nБерган: админ ({escape(by)}).")
@@ -83,11 +100,16 @@ def employee_notice(employee: dict[str, Any]) -> str:
         return ("🔐 Доступ к данным через бота закрыт." if ru
                 else "🔐 Бот орқали маълумот сўраш имконингиз ёпилди.")
     systems = label(have)
+    accounting = "1c" in have
     if ru:
+        example = ("«какая кредиторская задолженность?» или «остаток в кассе»" if accounting
+                   else "«сколько продали вчера в магазине?» или «какие жалобы по Garmin?»")
         return (f"🔐 Вам открыт доступ к данным <b>{escape(systems)}</b> через этого бота. Просто напишите вопрос, "
-                "например: «какая кредиторская задолженность?» или «остаток в кассе».")
+                f"например: {example}.")
+    example = ("«кредиторлик қанча?» ёки «кассада қанча пул бор?»" if accounting
+               else "«кеча дўконда қанча сотилди?» ёки «Garmin шикоятлари қандай?»")
     return (f"🔐 Сизга бот орқали <b>{escape(systems)}</b> маълумотларини сўраш имкони берилди. Саволингизни ёзинг, "
-            "масалан: «кредиторлик қанча?» ёки «кассада қанча пул бор?».")
+            f"масалан: {example}.")
 
 
 def lang_label(employee: dict[str, Any]) -> str:

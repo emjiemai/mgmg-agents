@@ -141,6 +141,10 @@ TOOLS: list[dict] = [
         "Use it for 'кредиторлик', 'етказиб берувчиларга қарз', '1C ва SAP солиштир'. Reads 1C live (slow, ~20 s).",
         {"excel": {"type": "boolean", "description": "true when the Director wants the file / Excel / table / "
                    "full comparison — the bot then sends him the .xlsx workbook with every supplier"}}),
+    _fn("garmin_data", "The Garmin business's own records: Garmin AI bot leads (customers from Instagram and the "
+        "web catalog), Garmin client complaints (tickets from the /f/garmin QR page, with their state), and the Garmin "
+        "product catalog with prices.",
+        {"source": {"type": "string", "enum": ["leads", "complaints", "catalog"]}}, ("source",)),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -158,6 +162,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "onec_turnovers": {"1c"},
     "billz_sales": {"billz"},
     "supplier_debt_compare": {"sap", "1c"},
+    "garmin_data": {"garmin"},
     "attendance": None,
     "company_data": None,
 }
@@ -255,6 +260,15 @@ that the admin can open more only with the Director's approval. A message
 that isn't about data (help with a letter, Excel, a work question): answer
 it briefly and helpfully, without tools.
 """)
+    if "garmin" in scope:
+        prompt += """
+# THIS PERSON RUNS GARMIN
+Focus on the Garmin business: its shops (billz_sales), its SAP figures (the
+Garmin warehouses' codes start with "G.A." — use sap_records with search, e.g.
+sales_lines / inventory / stock_value), its bot leads and complaints
+(garmin_data). SAP holds the other businesses too: when a figure isn't
+Garmin's, say so rather than mixing it in.
+"""
     if lang == "ru":
         prompt += """
 # LANGUAGE — THIS PERSON: RUSSIAN
@@ -622,6 +636,27 @@ async def supplier_debt_compare(args: dict[str, Any]) -> str:
     return text
 
 
+async def garmin_data(args: dict[str, Any]) -> str:
+    """Garmin's own records (2026-10-14, for the Garmin manager): bot leads, Garmin complaints, the catalog."""
+    from integrations.org_bot import feedback, ops_manager, store
+
+    source = args.get("source")
+    if source == "leads":
+        return await ops_manager._fetch_agent_data("garmin_lidlar")
+    if source == "catalog":
+        return await ops_manager._fetch_agent_data("garmin_catalog")
+    if source == "complaints":
+        rows = [r for r in await store.recent_client_feedback() if r.get("place") == "garmin"]
+        lines = [feedback.describe(rows)]
+        tickets = [r for r in rows if r.get("ticket_status")]
+        if tickets:
+            lines.append("Ticket states: " + "; ".join(
+                f"{r.get('code')}: {'open' if r['ticket_status'] == 'open' else 'resolved (' + str(r.get('reason_code')) + ')'}"
+                for r in tickets[:40]))
+        return "\n".join(lines)
+    return "source must be one of: leads, complaints, catalog."
+
+
 async def company_data(args: dict[str, Any]) -> str:
     from integrations.org_bot import ops_manager
 
@@ -640,6 +675,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "billz_sales": billz_sales,
     "attendance": attendance,
     "supplier_debt_compare": supplier_debt_compare,
+    "garmin_data": garmin_data,
     "company_data": company_data,
 }
 

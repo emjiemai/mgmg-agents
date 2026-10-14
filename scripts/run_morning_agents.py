@@ -36,6 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = [
     "agents/ceo-daily-brief/agent.py",
     "agents/billz-sap-check/agent.py",  # did every shop cheque reach SAP? (needs the full SAP push)
+    "agents/garmin-brief/agent.py",  # the Garmin manager's brief (after the check: it shows its result)
     "agents/lead-agent/agent.py",
     "agents/receivables/agent.py",
     "agents/task-tracker/agent.py --morning",

@@ -26,7 +26,8 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | always | **Admin Bot** — access requests, roles, names, days off, announcements, system checks | admin | `integrations/org_bot/admin.py` |
 | always | **Data for accounting and finance** — people the admin gives SAP / 1C / Billz to ask about it in OPS Manager Bot (only their systems; Russian answers if set); the Director is told and can close it | accountant, finance | `integrations/org_bot/data_access.py`, `docs/agent-specs/22-data-access.md` |
 | 08:00 | Morning brief (A2): cash (1C), yesterday's sales, stock, customer debt, today's payments, shop sales (BILLZ), who didn't report, attendance (Verifix) | Director | `agents/ceo-daily-brief/` |
-| 08:00 | Billz → SAP check: every shop cheque must be in SAP the same day | Director (on trial: the admin, counts only) | `agents/billz-sap-check/` |
+| 08:00 | Billz → SAP check: every shop cheque must be in SAP the same day | Director + Garmin manager (on trial: the admin, counts only) | `agents/billz-sap-check/` |
+| 08:00 | **Garmin brief** — the same picture as the Director's, Garmin only: shop sales (Billz), SAP sales and stock of the Garmin warehouses, open complaints, Garmin bot leads, Billz → SAP, who didn't report | Garmin manager | `agents/garmin-brief/` |
 | 08:00 | Lead Agent (F2): new tenders/leads into the Google sheet | Director | `agents/lead-agent/` |
 | 08:00 | Receivables alert: overdue customer debt by age | Director | `agents/receivables/` |
 | 08:00 | Task reminders and overdue notices (A3) | employees, Director | `agents/task-tracker/` |
@@ -37,7 +38,7 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | 16:00 | Daily report ask (A1) | employees | `agents/daily-reports/ --ask` |
 | 17:00 | Report reminder; on Fridays the weekly task scorecard | employees; Director | `agents/daily-reports/ --remind`, `task-tracker --weekly` |
 | on request | Written permission requests (B1) with approvals | requester, approvers | `integrations/org_bot/permission_flow.py` |
-| on a QR scan | Client complaints — Londry `/f`, Garmin `/f/garmin` — a ticket with ✅ Ҳал бўлди + reason; asked "ҳал бўлдими?" every hour (09–20, max 3) | the Londry role / Garmin сотув (the Boss only if nobody holds the role) | `integrations/org_bot/feedback.py`, `routes.py` |
+| on a QR scan | Client complaints — Londry `/f`, Garmin `/f/garmin` — a ticket with ✅ Ҳал бўлди + reason; asked "ҳал бўлдими?" every hour (09–20, max 3) | the Londry role / the Garmin manager (the Boss only if nobody holds the role) | `integrations/org_bot/feedback.py`, `routes.py` |
 | daily, 13:00 | Encrypted database backup fetched by an office computer — the copy outside Render (IT-5) | stays on that computer + a second disk | `integrations/backup/`, `scripts/backup/` |
 
 The brief reaches the Director as one designed **picture**; the cash
@@ -311,6 +312,8 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-14 | **New role «Garmin менежер»** (`garmin_manager`, picked at registration, approved in Admin Bot): every Garmin complaint goes to him (not Garmin сотув); SAP, Billz and Garmin's own records through the bot come with the role; a **Garmin morning brief** at 08:00 (the same picture as the Director's, Garmin only); the Billz → SAP check goes to him once off trial. The Director is told when the role is given or taken. `docs/agent-specs/23-garmin-manager.md`. |
+| 2026-10-14 | **Fixes from a project scan:** the hourly complaint question reached people who then couldn't press it (now they can, and it follows whoever holds the role); the weekly data check missed blocked / in-review tasks; 1C's comparison read the machine's clock instead of Tashkent's; the work AI's Garmin catalog, IT's report and the bot's company knowledge didn't know the new role. |
 | 2026-10-14 | **Cheque photos → accounting** (the owner): a photo the Director sends to OPS Manager Bot is read by the AI (`integrations/org_bot/cheques.py`). A cheque with all eight details (фискал белги, ФМ рақами, чек рақами, сана, RRN, сумма, товар, ИНН) goes to Бухгалтерия as the photo with the details under it; anything missing or wrong (bad ИНН / RRN, future or 90+ day date, not so'm, already sent) → the Director is asked (📨 send anyway / 📋 not a cheque / ❌ cancel). Not a cheque → the people list as before. Readings kept in `cheques` (not in `/db`); logs keep counts only. The owner's exception to "the AI never reads files" — the Director's photos only. `docs/agent-specs/23-cheques.md`. Also: selfcheck no longer needs a database (three older suites reached it). |
 | 2026-10-13 | **Complaints go to the department, not the Boss** (his answer of 13.10; spec A4/A5): the route table `integrations/org_bot/routes.py` sends Londry complaints to the Londry role and Garmin ones to Garmin сотув. Each complaint is a ticket (code T-…) with ✅ Ҳал бўлди → reason code; an hour later, if open, "ҳал бўлдими?" ✅/❌ (09:00–20:00, max 3). Nobody in the role → the Boss. "Director" = the owner = the Boss. |
 | 2026-10-13 | **Task register (the owner's spec of 11.10, Day 1):** every task has a code (T-2026-10-0147, old tasks too) and a state — Яратилди, Қабул қилинди, Тўсиқ бор, Текширувда, Ёпилди. The card's buttons: ▶️ Қабул қилдим · ⛔ Тўсиқ бор · ✅ Бажардим. ✅ asks for proof (photo, file or text); the assigner gets it with ✅ Қабул / ↩️ Қайтариш; ⛔ sends the reason. Every step in `task_events`. `integrations/org_bot/task_register.py`, `docs/agent-specs/08-task-tracker.md`. |

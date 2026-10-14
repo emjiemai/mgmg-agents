@@ -7,7 +7,8 @@ every active person holding the role. Nobody in the role: it falls back to
 the Director (the Boss), so nothing is lost — and the message says so.
 
 The Boss gets only company totals and decisions; ordinary complaints and
-leads go to the departments (2026-10-13).
+leads go to the departments (2026-10-13); Garmin complaints to the Garmin
+manager (2026-10-14).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from integrations.org_bot.roles import DIRECTOR_ROLE
 # kind -> the roles that get it, in order of who's first in line.
 ROUTES: dict[str, tuple[str, ...]] = {
     "complaint:laundry": ("londry",),        # Londry complaints → the Londry team (Зиёда)
-    "complaint:garmin": ("garmin_sotuv",),   # Garmin complaints → Garmin sales (Ширин, …)
+    "complaint:garmin": ("garmin_manager",),  # Garmin complaints → the Garmin manager (2026-10-14), not Garmin sales
 }
 
 

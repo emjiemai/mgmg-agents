@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS employees (
     role              TEXT         NOT NULL
                           CHECK (role IN ('b2b_sotuv','it','buxgalteriya','moliya','hr','ombor',
                                            'operatsion_direktor','mobilograf','aloqa_markazi',
-                                           'garmin_sotuv','londry')),
+                                           'garmin_sotuv','londry','garmin_manager')),
     status            TEXT         NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
     approved_by       TEXT,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -384,7 +384,7 @@ ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_role_check;
 ALTER TABLE employees ADD CONSTRAINT employees_role_check
     CHECK (role IN ('b2b_sotuv','it','buxgalteriya','moliya','hr','ombor',
                      'operatsion_direktor','mobilograf','aloqa_markazi',
-                     'garmin_sotuv','londry'));
+                     'garmin_sotuv','londry','garmin_manager'));
 
 -- ---------------------------------------------------------------------------
 -- access_requests — pending join requests, decided by the admin via Admin Bot.

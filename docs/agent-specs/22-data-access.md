@@ -50,6 +50,12 @@ Director's approval". A non-data work question is answered briefly without
 tools. Same daily limit as the work AI (60). A reply to a task card still
 goes to the work AI.
 
+## By role (2026-10-14)
+
+`data_access.ROLE_SCOPES`: the **Garmin manager** gets SAP, Billz and
+Garmin's own records with the role itself — no toggles, no ⛔; the Director
+is told when the role is given or taken (`23-garmin-manager.md`).
+
 ## Language
 
 `employees.lang = 'ru'`: the analyst and the work AI answer in Russian; the

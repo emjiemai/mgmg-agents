@@ -42,6 +42,9 @@ ROLES: list[Role] = [
     Role("mobilograf", "Мобилограф"),
     Role("aloqa_markazi", "Алоқа маркази"),
     Role("garmin_sotuv", "Garmin сотув"),
+    # Runs the Garmin business (2026-10-14, the owner): every Garmin complaint,
+    # SAP + Billz + Garmin data through the bot, a Garmin morning brief.
+    Role("garmin_manager", "Garmin менежер"),
     Role("londry", "Londry"),  # Primus Londry's own team — the brand, never "Laundry" (2026-10-02)
 ]
 

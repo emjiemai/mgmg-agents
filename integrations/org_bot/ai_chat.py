@@ -126,7 +126,7 @@ def work_context(
 def system_prompt(employee: dict[str, Any], context: str) -> str:
     """The AI's rules for this person; Garmin sales also get the public catalog."""
     role = employee.get("role") or ""
-    catalog = f"\nThe public Garmin catalog (prices may have changed):\n{GARMIN_CATALOG}\n" if role == "garmin_sotuv" else ""
+    catalog = f"\nThe public Garmin catalog (prices may have changed):\n{GARMIN_CATALOG}\n" if role in ("garmin_sotuv", "garmin_manager") else ""
     name = (employee.get("full_name") or "").strip() or employee.get("display_name") or "employee"
     prompt = SYSTEM_PROMPT.format(
         name=name, role=ROLE_LABELS.get(role, role) or "employee", context=context, company=_COMPANY, catalog=catalog,

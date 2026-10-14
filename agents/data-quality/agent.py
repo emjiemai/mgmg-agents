@@ -269,7 +269,7 @@ async def gather_inputs(today: date) -> Inputs:
         if e["role"] != DIRECTOR_ROLE and names.needs_name(e)
     ]
     rows = await fetch_all(
-        "SELECT count(*) AS n FROM tasks WHERE status IN ('sent', 'started') AND due_date IS NULL "
+        "SELECT count(*) AS n FROM tasks WHERE status IN ('sent', 'started', 'blocked', 'review') AND due_date IS NULL "
         "AND created_at < now() - make_interval(days => %s)",
         (OLD_DAYS,),
     )

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_ui.html" import icon, head %}
-{% block title %}CEO кунлик ҳисоботи — {{ date }}{% endblock %}
+{% block title %}{{ title | default("CEO кунлик ҳисоботи") }} — {{ date }}{% endblock %}
 {% block style %}
 .figures { margin-top: 4px; }
 .fig { display: grid; grid-template-columns: 24px 1fr auto; column-gap: 11px; align-items: start; padding: 14px 0 13px; border-bottom: 1px solid var(--rule); }
@@ -25,7 +25,7 @@
 {% block body %}
 <header class="masthead">
   <div>
-    <h1>CEO кунлик ҳисоботи</h1>
+    <h1>{{ title | default("CEO кунлик ҳисоботи") }}</h1>
     <p class="when">{{ when }}</p>
   </div>
   <div class="mark">ЭМЖИЕМ</div>
@@ -66,6 +66,6 @@
 
 <footer class="foot">
   {% if lower_bound %}<p class="lowerbound">«камида» — SAP'дан ёзувларнинг бир қисми келди, ҳақиқий рақам бундан катта.</p>{% endif %}
-  <p>Касса — 1C · сотув, захира, қарз — SAP · дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.</p>
+  <p>{{ foot | default("Касса — 1C · сотув, захира, қарз — SAP · дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.") }}</p>
 </footer>
 {% endblock %}

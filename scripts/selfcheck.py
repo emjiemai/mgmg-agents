@@ -3476,6 +3476,127 @@ def test_task_register() -> None:
             setattr(obj, name, value)
 
 
+def test_garmin_manager() -> None:
+    """2026-10-14, the owner: the Garmin manager — every Garmin complaint, SAP + Billz + Garmin data, a Garmin brief."""
+    print("Garmin manager")
+    import asyncio
+    import importlib.util
+    from datetime import date, datetime, timezone
+
+    from integrations.billz.sales import DaySales, ShopDay
+    from integrations.common.config import settings
+    from integrations.org_bot import ai_chat, analyst, data_access, feedback, roles, routes, store
+    from integrations.reports import render
+
+    root = Path(__file__).resolve().parents[1]
+    check("a role the admin can approve, named for people", roles.ROLE_LABELS.get("garmin_manager"), "Garmin менежер")
+    check_true("...offered in the role picker", "setrole:garmin_manager:" in str(roles.role_picker_keyboard("r1")))
+    check("Garmin complaints go to it", routes.ROUTES["complaint:garmin"], ("garmin_manager",))
+    gm = {"id": "g1", "telegram_user_id": 451, "status": "active", "role": "garmin_manager", "full_name": "Синов Менежер",
+          "display_name": "G", "data_access": []}
+    check("its data comes with the role: SAP, Billz, Garmin — never 1C", data_access.granted(gm), {"sap", "billz", "garmin"})
+    check("taken away with the role", data_access.granted({**gm, "role": "garmin_sotuv"}), set())
+    check("no admin toggles for it (the role decides)", data_access.card_buttons(gm), [])
+    text, keyboard = data_access.director_notice(gm, "admin1")
+    check_true("the Boss is told; closing = changing the role, so no ⛔", "ролига кўра" in text and keyboard is None)
+    tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(gm))]
+    check("its tools: SAP, Billz and Garmin's own records — no 1C, attendance or the Boss's records",
+          tools, ["data_sources", "sap_receivables", "sap_records", "billz_sales", "garmin_data"])
+    prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(gm))
+    check_true("its prompt keeps it on Garmin (SAP holds the other businesses too)", "THIS PERSON RUNS GARMIN" in prompt)
+    check_true("the work AI gives it the public Garmin catalog too", "Garmin catalog" in ai_chat.system_prompt(gm, "ctx"))
+
+    async def recent(days=60):
+        return [{"place": "garmin", "kind": "complaint", "message": "соат ишламаяпти", "phone": None, "contact_name": None,
+                 "created_at": datetime(2026, 10, 13, 9, 0, tzinfo=timezone.utc), "branch": "abay", "code": "T-2026-10-0035",
+                 "ticket_status": "open"},
+                {"place": "laundry", "kind": "complaint", "message": "кир", "phone": None, "contact_name": None,
+                 "created_at": datetime(2026, 10, 13, 9, 0, tzinfo=timezone.utc), "branch": "yunusobod"}]
+
+    saved = store.recent_client_feedback
+    store.recent_client_feedback = recent
+    try:
+        out = asyncio.run(analyst.garmin_data({"source": "complaints"}))
+        check_true("garmin_data complaints: Garmin's only, with the ticket state", "соат ишламаяпти" in out
+                   and "кир" not in out and "T-2026-10-0035: open" in out)
+    finally:
+        store.recent_client_feedback = saved
+
+    # the morning brief
+    spec = importlib.util.spec_from_file_location("garmin_brief", root / "agents" / "garmin-brief" / "agent.py")
+    gb = importlib.util.module_from_spec(spec)
+    sys.modules["garmin_brief"] = gb
+    spec.loader.exec_module(gb)
+    sales = [{"ObjType": "13", "DocEntry": 1, "DocNum": 10, "DocDate": "2026-10-13", "CANCELED": "N", "DocTotalSy": "5000000"},
+             {"ObjType": "13", "DocEntry": 2, "DocNum": 11, "DocDate": "2026-10-13", "CANCELED": "N", "DocTotalSy": "9000000"},
+             {"ObjType": "14", "DocEntry": 3, "DocNum": 12, "DocDate": "2026-10-13", "CANCELED": "N", "DocTotalSy": "1000000"},
+             {"ObjType": "13", "DocEntry": 4, "DocNum": 13, "DocDate": "2026-10-12", "CANCELED": "N", "DocTotalSy": "7000000"}]
+    lines = [{"ObjType": "13", "DocEntry": 1, "WhsCode": "G.A._01"}, {"ObjType": "13", "DocEntry": 2, "WhsCode": "PR_01"},
+             {"ObjType": "14", "DocEntry": 3, "WhsCode": "05"}, {"ObjType": "13", "DocEntry": 4, "WhsCode": "G.A._01"}]
+    codes = frozenset({"G.A._01", "05"})
+    check("SAP sales: yesterday, Garmin warehouses only, credit notes taken off", gb.sap_sales(sales, lines, date(2026, 10, 13), codes),
+          (4000000, 2, 0))
+    check("stock: only the Garmin warehouses", gb.stock_value([{"WhsCode": "G.A._01", "StockValue": "100.5"},
+                                                               {"WhsCode": "PR_01", "StockValue": "900"}], codes), 100.5)
+    data = gb.GarminData(day=date(2026, 10, 13),
+                         shop_sales=DaySales(day=date(2026, 10, 13), shops=[ShopDay("GARMIN ABAY", 18_400_000, 18_400_000, 4, 0)]),
+                         sap_amount=4_000_000, sap_docs=2, stock_usd=100.5,
+                         complaints_open=[{"code": "T-2026-10-0035", "place": "garmin", "branch": "abay",
+                                           "created_at": datetime(2026, 10, 13, 9, 0, tzinfo=timezone.utc)}],
+                         complaints_new=1, leads=6, leads_now=2,
+                         check={"missing": [{"number": "1043", "shop": "GARMIN ABAY"}], "amount_diff": []},
+                         reports=[{"report_date": date(2026, 10, 13), "status": "missed", "display_name": "Абдурашид",
+                                   "role": "garmin_sotuv"}])
+    v = gb.view(data, datetime(2026, 10, 14, 8, 5))
+    check("five Garmin figures, nothing of the Boss's (no cash, customer debt, payments)",
+          [f["label"] for f in v["figures"]],
+          ["Дўкон савдоси (Billz)", "SAP'даги сотув", "Garmin захираси", "Очиқ шикоятлар", "Garmin бот лидлари"])
+    check("blocks: Billz → SAP, who didn't report, open complaints", [b["title"] for b in v["blocks"]],
+          ["Billz → SAP", "Ҳисобот юбормаганлар", "Очиқ шикоятлар"])
+    check_true("an open complaint shows its age in hours", "18 соат" in v["blocks"][-1]["rows"][0]["what"])
+    picture = render.image("brief.html", **v)
+    check_true("the same designed picture as the Boss's brief, titled for Garmin", picture[:8] == b"\x89PNG\r\n\x1a\n"
+               and "Garmin кунлик ҳисоботи" in render.render_html("brief.html", image=True, page_width=540, page_height=6000,
+                                                                     sentinel="#ff00ff", **v))
+    check_true("the text fallback carries the same", "Billz → SAP" in gb.text(v) and "18,4 млн" in gb.text(v))
+    check_true("the 08:00 job runs it after the Billz → SAP check",
+               load_source("scripts/run_morning_agents.py").index("garmin-brief") >
+               load_source("scripts/run_morning_agents.py").index("billz-sap-check"))
+    check("the Billz → SAP check also goes to the Garmin manager (once off trial)", settings.billz_sap_check_roles, "garmin_manager")
+
+    # the hourly complaint question: whoever is asked can press its buttons
+    added: list = []
+
+    async def due(max_asks=3):
+        return [{"id": 7, "code": "T-2026-10-0035", "place": "garmin", "branch": "abay", "routed_to": "complaint:garmin",
+                 "ticket_status": "open"}]
+
+    async def by_role(role):
+        return [{"telegram_user_id": 451}] if role == "garmin_manager" else []
+
+    async def add_cards(fid, cards):
+        added.append((fid, cards))
+
+    async def fake_send(row, people, text, keyboard, run_id):
+        return [{"chat": p["telegram_user_id"], "message": 900} for p in people]
+
+    saved = [(store, "complaints_due_status_check", store.complaints_due_status_check),
+             (store, "active_employees_by_role", store.active_employees_by_role),
+             (store, "set_complaint_cards", store.set_complaint_cards), (feedback, "_send_cards", feedback._send_cards)]
+    store.complaints_due_status_check, store.active_employees_by_role = due, by_role
+    store.set_complaint_cards, feedback._send_cards = add_cards, fake_send
+    try:
+        asyncio.run(feedback.ask_status(datetime(2026, 10, 14, 11, 0)))
+        check("the question's message joins the ticket's cards (so the one asked can press ✅/❌)",
+              added, [(7, [{"chat": 451, "message": 900}])])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("1C is read at Tashkent time on any machine", "now_local().strftime" in load_source("integrations/onec/payables.py"))
+    check_true("the weekly data check counts blocked and in-review tasks as open",
+               "('sent', 'started', 'blocked', 'review')" in load_source("agents/data-quality/agent.py"))
+
+
 def test_complaint_tickets() -> None:
     """2026-10-13 (the owner: complaints go to the department, not the Boss): routed tickets, ✅ + reason, hourly check."""
     print("complaint tickets (A4/A5)")
@@ -3487,7 +3608,8 @@ def test_complaint_tickets() -> None:
     from integrations.org_bot import feedback, ops_manager, routes, store
 
     people = {"londry": [{"telegram_user_id": 301, "role": "londry"}],
-              "garmin_sotuv": [{"telegram_user_id": 401, "role": "garmin_sotuv"}, {"telegram_user_id": 402, "role": "garmin_sotuv"}],
+              "garmin_sotuv": [{"telegram_user_id": 401, "role": "garmin_sotuv"}],
+              "garmin_manager": [{"telegram_user_id": 451, "role": "garmin_manager"}, {"telegram_user_id": 452, "role": "garmin_manager"}],
               "operatsion_direktor": [{"telegram_user_id": 9, "role": "operatsion_direktor"}]}
 
     async def by_role(role):
@@ -3498,8 +3620,8 @@ def test_complaint_tickets() -> None:
     try:
         check("Londry complaints go to the Londry role, not the Boss",
               asyncio.run(routes.recipients("complaint:laundry")), ([{"telegram_user_id": 301, "role": "londry"}], False))
-        check("Garmin complaints go to everyone in Garmin sales", [p["telegram_user_id"] for p in asyncio.run(routes.recipients("complaint:garmin"))[0]],
-              [401, 402])
+        check("Garmin complaints go to the Garmin manager(s), not Garmin sales (2026-10-14)",
+              [p["telegram_user_id"] for p in asyncio.run(routes.recipients("complaint:garmin"))[0]], [451, 452])
         people["londry"] = []
         check("nobody in the role: the Boss gets it, flagged", asyncio.run(routes.recipients("complaint:laundry")),
               ([{"telegram_user_id": 9, "role": "operatsion_direktor"}], True))
@@ -6520,6 +6642,7 @@ def main() -> int:
         test_tech_report_errors_fixed,
         test_review_pages,
         test_task_register,
+        test_garmin_manager,
         test_complaint_tickets,
         test_cheques,
         test_fast_buttons,

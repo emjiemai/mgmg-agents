@@ -12,8 +12,10 @@ The owner's spec of 11.10 (A4 LONDRY-CARE, A5 GARMIN-CARE) and his answer of
 13.10: complaints go to the department, **not to the Boss**.
 
 - `integrations/org_bot/routes.py` — the route table: `complaint:laundry` →
-  the **Londry** role, `complaint:garmin` → **Garmin сотув** (everyone
-  active in the role). Nobody in the role → the Boss, with a note saying why.
+  the **Londry** role, `complaint:garmin` → the **Garmin менежер** role
+  (2026-10-14 — not Garmin сотув; `23-garmin-manager.md`), everyone active
+  in the role. The hourly question goes to whoever holds the role then, and
+  joins the ticket's cards so they can press ✅ / ❌. Nobody in the role → the Boss, with a note saying why.
 - Every complaint becomes a ticket: a code from the task sequence
   (T-2026-10-0031), `ticket_status` open → resolved, the cards each person
   got (`cards`). The card: **✅ Ҳал бўлди** → a reason code (Сифат, Хизмат /

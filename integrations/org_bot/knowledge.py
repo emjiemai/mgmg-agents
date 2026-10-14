@@ -46,8 +46,12 @@ so or the conversation makes it clear:
     BILLZ tills is GARMIN ABAY; it enters each cheque into SAP as a sales
     invoice, often a day or more later. The Garmin AI Telegram bot
     (@garminofficialuzbot) brings customers from Instagram and the web catalog.
-People: the Operations Director (Директор, раҳбар) runs every department and
-both businesses — he is the one who writes to you. Departments (role slugs):
+    The Garmin manager (garmin_manager) runs Garmin: every Garmin complaint
+    goes to him, and he gets his own Garmin morning brief.
+People: the Operations Director (Директор, раҳбар, the owner, "the Boss") runs
+every department and all three businesses — he is the one who writes to you.
+Ordinary complaints go to the departments, not to him (Londry → the Londry
+team, Garmin → the Garmin manager). Departments (role slugs):
 {_DEPARTMENTS}. Some staff work on "эркин график" (come when needed or when
 the Director calls): they are never counted late or absent.
 

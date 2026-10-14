@@ -31,7 +31,6 @@ import io
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
 
@@ -145,13 +144,15 @@ def onec_parties(data: dict[str, Any]) -> dict[str, OneCParty]:
 async def read_onec(agent: str = "ap-reconcile") -> dict[str, Any]:
     """What the comparison needs from 1C, read now (GET only): the 60/43 accounts, their balances by
     counterparty and contract, the counterparties (with ИНН), contracts and currencies."""
+    from integrations.common.timeutil import now_local
     from integrations.onec.client import OneCClient
 
     async with OneCClient(agent=agent) as client:
         chart = (await client.get("ChartOfAccounts_Хозрасчетный", {"$select": "Ref_Key,Code,Description"})).get("value", [])
         chart = [a for a in chart if str(a.get("Code", "")).startswith(("60", "43"))]
         keys = {a["Ref_Key"] for a in chart}
-        moment = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        # 1C keeps Tashkent time: the moment on that clock, whatever machine runs this.
+        moment = now_local().strftime("%Y-%m-%dT%H:%M:%S")
         rows = (await client.get(f"AccountingRegister_Хозрасчетный/Balance(Period=datetime'{moment}')")).get("value", [])
         return {
             "as_of": moment,

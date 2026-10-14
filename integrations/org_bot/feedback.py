@@ -241,7 +241,8 @@ async def submit(sub: Submission) -> int:
         return 0
     kind = f"complaint:{sub.place}"
     people, fell_back = await routes.recipients(kind)
-    ticket = await store.open_complaint_ticket(row["id"], "director" if fell_back else kind) or row
+    # The kind, not who got it: the hourly question goes to whoever holds the role then.
+    ticket = await store.open_complaint_ticket(row["id"], kind) or row
     text = ticket_text({**ticket, "lang": sub.lang})
     if fell_back:
         text += "\n\n<i>Бу бўлимда ҳозир ҳеч ким рўйхатдан ўтмаган — шунинг учун сизга келди.</i>"
@@ -277,8 +278,12 @@ async def ask_status(now: Any = None) -> int:
     run_id = uuid.uuid4()
     for row in due:
         kind = row.get("routed_to") or f"complaint:{row.get('place')}"
-        people, _fell_back = await routes.recipients(kind if kind != "director" else "")
-        await _send_cards(row, people, ask_text(row), ask_keyboard(row), run_id)
+        people, _fell_back = await routes.recipients(kind)
+        asked = await _send_cards(row, people, ask_text(row), ask_keyboard(row), run_id)
+        # The question's messages join the ticket's cards: whoever was asked can press ✅ / ❌ (even
+        # someone who took the role after the complaint came), and they're updated when it's resolved.
+        if asked:
+            await store.set_complaint_cards(row["id"], asked)
     return len(due)
 
 
