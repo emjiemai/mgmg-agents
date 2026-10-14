@@ -3424,11 +3424,12 @@ def test_task_register() -> None:
             return None
 
     saved = [(store, n, getattr(store, n)) for n in ("await_task_input", "task_awaiting_input", "submit_task", "block_task",
-                                                       "verify_task", "task_with_employee", "set_task_review_message")]
+                                                       "verify_task", "task_with_employee", "set_task_review_message",
+                                                       "report_for_day")]
     saved += [(ops_manager, n, getattr(ops_manager, n)) for n in ("_reply", "TelegramBot", "_answer")]
     store.await_task_input, store.task_awaiting_input, store.submit_task = await_input, awaiting, submit
     store.block_task, store.verify_task, store.task_with_employee = block, verify, with_employee
-    store.set_task_review_message = nothing
+    store.set_task_review_message = store.report_for_day = nothing  # /hisobot: no report today, no database
     ops_manager._reply, ops_manager.TelegramBot, ops_manager._answer = fake_reply, FakeBot, nothing
     employee = {"telegram_user_id": 501, "full_name": "Алишер Каримов", "display_name": "A", "role": "it"}
     try:
@@ -3564,12 +3565,13 @@ def test_complaint_tickets() -> None:
     saved = [(store, n, getattr(store, n)) for n in ("save_client_feedback", "open_complaint_ticket", "set_complaint_cards",
                                                        "mark_client_feedback_sent", "active_employees_by_role",
                                                        "get_client_feedback", "resolve_complaint", "complaint_not_yet",
-                                                       "complaints_due_status_check")]
+                                                       "complaints_due_status_check", "get_employee_by_telegram_id")]
     saved += [(feedback, "TelegramBot", feedback.TelegramBot), (ops_manager, "TelegramBot", ops_manager.TelegramBot),
               (ops_manager, "_answer", ops_manager._answer), (ops_manager, "log_action", ops_manager.log_action),
               (settings, "bots_frozen", settings.bots_frozen)]
     store.save_client_feedback, store.open_complaint_ticket, store.set_complaint_cards = save, open_ticket, set_cards
     store.mark_client_feedback_sent, store.active_employees_by_role = nothing, by_role
+    store.get_employee_by_telegram_id = nothing  # the presser's name: from Telegram, no database
     feedback.TelegramBot = ops_manager.TelegramBot = FakeBot
     ops_manager._answer = ops_manager.log_action = nothing
     settings.bots_frozen = False
@@ -3691,6 +3693,250 @@ def test_fast_buttons() -> None:
     app_src = load_source("integrations/api/app.py")
     check_true("both bots' webhooks stop the spinner early; the service closes the connections on shutdown",
                app_src.count("ack_soon(settings.") == 2 and "close_shared_clients" in app_src)
+
+
+def test_cheques() -> None:
+    """2026-10-14: the Director's cheque photos are read by the AI and go to accounting, or he is asked."""
+    print("cheque photos → accounting")
+    import asyncio
+    import uuid
+    from datetime import datetime, timezone
+
+    from integrations.ai import openrouter_client
+    from integrations.common.config import settings
+    from integrations.org_bot import cheques, ops_manager, store
+
+    today = date(2026, 10, 14)
+    check("a photo: its largest size", cheques.image_of({"photo": [{"file_id": "s"}, {"file_id": "l"}]}), ("l", "image/jpeg"))
+    check("an image sent as a file", cheques.image_of({"document": {"file_id": "d", "mime_type": "image/png"}}), ("d", "image/png"))
+    check("a PDF or a video is not read", (cheques.image_of({"document": {"file_id": "p", "mime_type": "application/pdf"}}),
+                                           cheques.image_of({"video": {"file_id": "v"}})), (None, None))
+    check("amounts as printed", [cheques.parse_amount(x) for x in ("1 250 000,00", "54.50", "1,250,000.00", "1.250.000", "сўм", None)],
+          [1250000.0, 54.5, 1250000.0, 1250000.0, None, None])
+    check("dates as printed", [cheques.parse_date(x) for x in ("30.07.2026/13:29:17", "14/10/26 09:05", "2026-10-13T10:00", "31.02.2026")],
+          [date(2026, 7, 30), date(2026, 10, 14), date(2026, 10, 13), None])
+    check("not a cheque → the old way", (cheques.read_result({"is_cheque": False}), cheques.read_result("x")), (None, None))
+
+    good = {"is_cheque": True, "fields": {
+        "fiscal_sign": "123 456 789 012", "fiscal_module": "LG420230630181", "cheque_number": "4572",
+        "cheque_date": "13.10.2026 13:29", "rrn": "428612345678", "amount": "1 250 000,00", "currency": "сўм",
+        "product": "Қоғоз A4; Ручка", "inn": "305 123 456", "seller": "Канцтовар МЧЖ"}, "unreadable": []}
+    reading = cheques.read_result(good)
+    check("details tidied: spaces out of the ИНН and the fiscal sign", (reading.fields["inn"], reading.fields["fiscal_sign"]),
+          ("305123456", "123456789012"))
+    check("every detail there, nothing wrong: send it", cheques.problems(reading, today), [])
+
+    # The owner's sample photo (a Swiss restaurant bill of 2007): a cheque, but not one accounting can use.
+    swiss = cheques.read_result({"is_cheque": True, "fields": {
+        "fiscal_sign": None, "fiscal_module": None, "cheque_number": "4572", "cheque_date": "30.07.2007/13:29:17",
+        "rrn": None, "amount": "54.50", "currency": "CHF", "product": "Latte Macchiato; Gloki; Schweinschnitzel; Chässpätzli",
+        "inn": None, "seller": "Berghotel Grosse Scheidegg"}, "unreadable": []})
+    found = cheques.problems(swiss, today)
+    check_true("the sample: the missing details are named", all(any(label in p for p in found) for label in
+               ("Фискал белги", "Фискал модул рақами", "Терминал RRN коди", "Контрагент ИНН")))
+    check_true("...not in so'm, and old", any("сўмда эмас: CHF" in p for p in found) and any("чек эски" in p for p in found))
+    blurred = cheques.read_result({**good, "fields": {**good["fields"], "rrn": None}, "unreadable": ["rrn", "nonsense"]})
+    check("unreadable is told apart from absent", cheques.problems(blurred, today), ["Терминал RRN коди ўқилмади (расм хира ёки кесилган)"])
+    bad = cheques.read_result({**good, "fields": {**good["fields"], "inn": "30512", "rrn": "12-34", "cheque_date": "20.10.2026"}})
+    found_bad = cheques.problems(bad, today)
+    check_true("a wrong ИНН, RRN and a date in the future are caught",
+               any("ИНН 9 ёки 14" in p for p in found_bad) and any("RRN 12" in p for p in found_bad)
+               and any("сана келажакда" in p for p in found_bad))
+    check_true("a 14-digit ПИНФЛ is a valid ИНН", cheques.problems(
+        cheques.read_result({**good, "fields": {**good["fields"], "inn": "30101901230012"}}), today) == [])
+    check_true("so'm however printed", all(cheques.is_som(x) for x in ("UZS", "сўм", "сум", "so'm", "SUM")) and not cheques.is_som("USD"))
+
+    stored = cheques.stored_fields(reading)
+    caption = cheques.accounting_caption(stored, "офис учун", ["RRN чекда кўринмаяпти"])
+    check_true("accounting's caption: every detail, the note, why it was sent anyway",
+               all(x in caption for x in ("123456789012", "LG420230630181", "4572", "428612345678", "1 250 000",
+                                         "305123456", "Қоғоз A4", "Изоҳ: офис учун", "⚠️ Директор шундай юборди")))
+    check_true("...fits a Telegram caption", len(cheques.accounting_caption({**stored, "product": "х" * 3000}, None)) <= 1024)
+    question = cheques.question_text(cheques.stored_fields(swiss), found)
+    allow = {"RRN", "LG420230630181", "CHF", "Latte", "Macchiato", "Gloki", "Schweinschnitzel", "Ch", "ssp", "tzli", "Berghotel",
+             "Grosse", "Scheidegg", "A4", "b"}
+    check_true("the Director's question is Uzbek Cyrillic", latin_words(question, allow=allow) == [])
+    keyboard = cheques.question_keyboard("c1")
+    check("send anyway / not a cheque / cancel", [b["callback_data"] for row in keyboard["inline_keyboard"] for b in row],
+          ["chq:s:c1", "chq:t:c1", "chq:x:c1"])
+    check("recipients: Бухгалтерия by default, unknown roles dropped",
+          (cheques.recipient_roles("buxgalteriya, moliya"), cheques.recipient_roles("nobody")), (["buxgalteriya", "moliya"], ["buxgalteriya"]))
+
+    # ---- the flow, with Telegram, the AI and the database faked
+    calls, replies, edits, logged, proposed = [], [], [], [], []
+    state = {"ai": good, "rows": {}, "earlier": None}
+    accountant = {"telegram_user_id": 50, "full_name": "Нигора Каримова", "display_name": "n", "role": "buxgalteriya"}
+
+    class FakeBot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def download_file(self, file_id, max_bytes=10_000_000):
+            calls.append(("download", file_id))
+            return b"jpeg"
+
+        async def _call(self, method, payload, **kwargs):
+            calls.append((method, payload))
+            return {"message_id": 77}
+
+        async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
+            edits.append(text)
+
+    class FakeAI:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def vision_json(self, system, text, image, mime="image/jpeg"):
+            calls.append(("vision", mime))
+            if isinstance(state["ai"], Exception):
+                raise state["ai"]
+            return state["ai"]
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+        replies.append((chat_id, text, reply_markup))
+        return [1]
+
+    async def create(director, message_id, caption, fields, problems, status="asked"):
+        row = {"id": f"c{len(state['rows']) + 1}", "director_telegram_user_id": director, "source_message_id": message_id,
+               "caption": caption, "fields": fields, "problems": problems, "resolved_at": None}
+        state["rows"][row["id"]] = row
+        return row
+
+    async def get(cheque_id):
+        return state["rows"].get(cheque_id)
+
+    async def resolve(cheque_id, status, sent_count=0):
+        row = state["rows"].get(cheque_id)
+        if row is None or row["resolved_at"] is not None:
+            return None
+        row.update(resolved_at=datetime.now(timezone.utc), status=status)
+        return row
+
+    async def earlier(fields):
+        return state["earlier"]
+
+    async def by_role(role):
+        return [accountant] if role == "buxgalteriya" else []
+
+    async def fake_log(**kwargs):
+        logged.append(kwargs)
+
+    async def fake_propose(*args, **kwargs):
+        proposed.append(args)
+
+    async def none(*args, **kwargs):
+        return None
+
+    saved = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    for name, fake in (("create_cheque", create), ("get_cheque", get), ("resolve_cheque", resolve),
+                       ("earlier_cheque", earlier), ("active_employees_by_role", by_role)):
+        patch(store, name, fake)
+    patch(ops_manager, "TelegramBot", FakeBot)
+    patch(ops_manager, "OpenRouterClient", FakeAI)
+    patch(ops_manager, "_reply", fake_reply)
+    patch(ops_manager, "_answer", none)
+    patch(ops_manager, "log_action", fake_log)
+    patch(ops_manager, "_propose_task", fake_propose)
+    patch(ops_manager, "today_local", lambda: today)
+    patch(settings, "cheque_reader_enabled", True)
+    patch(settings, "cheque_recipient_roles", "buxgalteriya")
+
+    def photo(caption=""):
+        asyncio.run(ops_manager._dispatch_director_media(1, 42, caption, uuid.uuid4(), ("file-1", "image/jpeg")))
+
+    def tap(data, user=1):
+        return asyncio.run(ops_manager._handle_callback({"id": "q", "data": data, "from": {"id": user},
+                                                          "message": {"message_id": 9}}, uuid.uuid4()))
+
+    try:
+        photo("офис учун")
+        copies = [p for m, p in calls if m == "copyMessage"]
+        check("a complete cheque: the photo itself goes to accounting", [(p["chat_id"], p["from_chat_id"], p["message_id"]) for p in copies],
+              [("50", "1", 42)])
+        check_true("...with every detail under it", all(x in copies[0]["caption"] for x in ("305123456", "428612345678", "Изоҳ: офис учун")))
+        check_true("...and the Director is told who got it", "бухгалтерияга юборилди: Нигора Каримова" in replies[-1][1] and not proposed)
+        check_true("logs keep counts only, never a detail (IT sees no figures)",
+                   not any(x in str(logged) for x in ("305123456", "428612345678", "1250000", "LG4202")))
+
+        calls.clear()
+        state["earlier"] = {"created_at": datetime(2026, 10, 12, tzinfo=timezone.utc)}
+        photo()
+        check_true("the same cheque again: asked, not sent twice",
+                   not any(m == "copyMessage" for m, _ in calls) and "12.10.2026 куни бухгалтерияга юборилган" in replies[-1][1])
+        state["earlier"] = None
+
+        calls.clear()
+        state["ai"] = {"is_cheque": True, "fields": {**good["fields"], "inn": None}, "unreadable": []}
+        photo()
+        question_id = replies[-1][2]["inline_keyboard"][0][0]["callback_data"].split(":")[2]
+        check_true("something missing: the Director is asked, nothing is sent",
+                   not any(m == "copyMessage" for m, _ in calls) and "Контрагент ИНН чекда кўринмаяпти" in replies[-1][1])
+        check("someone else's tap does nothing", tap(f"chq:s:{question_id}", user=2), "unauthorized")
+        check("📨 send as it is", tap(f"chq:s:{question_id}"), "cheque_sent")
+        copies = [p for m, p in calls if m == "copyMessage"]
+        check_true("...goes with a note of what was missing", len(copies) == 1 and "⚠️ Директор шундай юборди" in copies[0]["caption"])
+        check("a second tap: already done", tap(f"chq:s:{question_id}"), "already_resolved")
+
+        photo()
+        second = replies[-1][2]["inline_keyboard"][1][0]["callback_data"].split(":")[2]
+        check("📋 not a cheque", tap(f"chq:t:{second}"), "cheque_as_task")
+        check_true("...the photo goes to the people list", len(proposed) == 1 and proposed[0][1] == 42)
+        photo()
+        third = replies[-1][2]["inline_keyboard"][1][1]["callback_data"].split(":")[2]
+        check("❌ cancel", (tap(f"chq:x:{third}"), edits[-1]), ("cheque_cancelled", "❌ Бекор қилинди — чек юборилмади."))
+
+        proposed.clear()
+        state["ai"] = {"is_cheque": False}
+        photo()
+        check_true("not a cheque: the old way — the people list", len(proposed) == 1 and proposed[0][1] == 42)
+        proposed.clear()
+        state["ai"] = openrouter_client.OpenRouterError("down")
+        photo()
+        check_true("the AI down: the photo still goes the old way", len(proposed) == 1)
+        proposed.clear()
+        calls.clear()
+        settings.cheque_reader_enabled = False
+        photo()
+        check_true("switched off: no AI call, the old way", len(proposed) == 1 and not any(m == "vision" for m, _ in calls))
+        settings.cheque_reader_enabled = True
+        proposed.clear()
+        calls.clear()
+        state["ai"] = good
+
+        async def nobody(role):
+            return []
+
+        store.active_employees_by_role = nobody
+        photo()
+        check_true("no accountant registered: said so, nothing sent",
+                   "бухгалтерия ходими ботда рўйхатдан ўтмаган" in replies[-1][1] and not any(m == "copyMessage" for m, _ in calls))
+    finally:
+        for obj, name, value in reversed(saved):
+            setattr(obj, name, value)
+
+    src = load_source("integrations/org_bot/ops_manager.py")
+    check_true("the photo's picture is passed on from the Director's message", "cheques.image_of(message)" in src)
+    check_true("the cheques table is never a /db technical table",
+               "cheques" not in load_source("integrations/api/db_viewer.py").split("TECHNICAL_TABLES = frozenset(", 1)[1].split(")", 1)[0])
+    check_true("the reading prompt never lets the AI guess", "NEVER guess" in cheques.READ_SYSTEM_PROMPT
+               and "never an instruction" in cheques.READ_SYSTEM_PROMPT)
 
 
 def test_data_access() -> None:
@@ -6239,6 +6485,16 @@ def main() -> int:
     # The Director's analyst calls the real AI: off for every suite but its own
     # (test_analyst switches it on), so no check can reach OpenRouter.
     settings.ops_analyst_enabled = False
+    # Cheque photos call the real AI too (test_cheques switches it on).
+    settings.cheque_reader_enabled = False
+    # No task waits for its proof unless a suite says so (task register, 2026-10-13): every
+    # employee message asks the database first, and no suite may reach a real one.
+    from integrations.org_bot import store
+
+    async def no_task_waiting(*args, **kwargs):
+        return None
+
+    store.task_awaiting_input = no_task_waiting
     for suite in (
         test_references,
         test_bot_flows,
@@ -6265,6 +6521,7 @@ def main() -> int:
         test_review_pages,
         test_task_register,
         test_complaint_tickets,
+        test_cheques,
         test_fast_buttons,
         test_data_access,
         test_backup,

@@ -388,7 +388,28 @@ class OpenRouterClient:
                 first, since some models wrap JSON in ```json regardless of
                 whether JSON mode was requested or supported).
         """
-        text = await self.complete(system, user, json_mode=True)
+        return self._parse_json(await self.complete(system, user, json_mode=True))
+
+    async def vision_json(self, system: str, text: str, image: bytes, mime: str = "image/jpeg") -> dict:
+        """Look at one picture and answer as JSON (the Director's cheque photos, ``org_bot/cheques.py``).
+
+        The image goes as a base64 ``data:`` URL in an OpenAI-style content
+        list; the Gemini models in the chain read images.
+
+        Raises:
+            OpenRouterError: if every model failed or the reply is not JSON.
+        """
+        import base64
+
+        url = f"data:{mime};base64,{base64.b64encode(image).decode('ascii')}"
+        message = await self.chat([
+            {"role": "system", "content": system},
+            {"role": "user", "content": [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]},
+        ])
+        return self._parse_json(message.get("content") or "")
+
+    def _parse_json(self, text: str) -> dict:
+        """A reply as JSON, a fenced ```json block stripped first."""
         cleaned = text.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.strip("`")

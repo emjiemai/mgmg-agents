@@ -2408,3 +2408,66 @@ async def delete_report(report_id: str, telegram_user_id: int, report_date: date
         """,
         (report_id, telegram_user_id, report_date),
     )
+
+
+# ------------------------------------------------------------------ cheques
+
+
+async def create_cheque(
+    director_telegram_user_id: int, source_message_id: int, caption: str | None, fields: dict[str, Any],
+    problems: list[str], status: str = "asked",
+) -> dict[str, Any]:
+    """Record a cheque photo the Director sent, as the AI read it (``cheques.py``)."""
+    row = await fetch_one(
+        """
+        INSERT INTO cheques (director_telegram_user_id, source_message_id, caption, fields, problems,
+                             fiscal_sign, fiscal_module, rrn, status)
+        VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (director_telegram_user_id, source_message_id, caption or None, json.dumps(fields, ensure_ascii=False),
+         json.dumps(problems, ensure_ascii=False), fields.get("fiscal_sign"), fields.get("fiscal_module"),
+         fields.get("rrn"), status),
+    )
+    assert row is not None
+    return row
+
+
+async def get_cheque(cheque_id: str) -> dict[str, Any] | None:
+    """One cheque by id (a button on its question card)."""
+    try:
+        return await fetch_one("SELECT * FROM cheques WHERE id = %s", (cheque_id,))
+    except Exception:  # noqa: BLE001 — a malformed id from an old button is "not found"
+        return None
+
+
+async def earlier_cheque(fields: dict[str, Any]) -> dict[str, Any] | None:
+    """The same cheque already sent to accounting: same fiscal module and sign, or the same terminal RRN.
+
+    Only sent ones count — a photo asked about and then re-sent clearer is not a repeat.
+    """
+    sign, module, rrn = fields.get("fiscal_sign"), fields.get("fiscal_module"), fields.get("rrn")
+    if not (sign and module) and not rrn:
+        return None
+    return await fetch_one(
+        """
+        SELECT * FROM cheques
+        WHERE status = 'sent'
+          AND ((%s::text IS NOT NULL AND %s::text IS NOT NULL AND fiscal_sign = %s AND fiscal_module = %s)
+               OR (%s::text IS NOT NULL AND rrn = %s))
+        ORDER BY created_at LIMIT 1
+        """,
+        (sign, module, sign, module, rrn, rrn),
+    )
+
+
+async def resolve_cheque(cheque_id: str, status: str, sent_count: int = 0) -> dict[str, Any] | None:
+    """Close a cheque once: sent / cancelled / as a task / no one to send to. None if already closed."""
+    return await fetch_one(
+        """
+        UPDATE cheques SET status = %s, sent_count = %s, resolved_at = now()
+        WHERE id = %s AND resolved_at IS NULL
+        RETURNING *
+        """,
+        (status, sent_count, cheque_id),
+    )
