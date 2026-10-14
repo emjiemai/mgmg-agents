@@ -192,6 +192,12 @@ class Settings(BaseSettings):
     # answer. Rounds = how many times it may look something up per question.
     ops_analyst_enabled: bool = True
     ops_analyst_max_rounds: int = 6
+    # Cheque photos (2026-10-14, org_bot/cheques.py): a photo the Director sends
+    # is read by the AI; a cheque with every detail goes to these roles
+    # (comma-separated role slugs) with the photo, otherwise the bot asks him.
+    # Off = every photo goes to the people list as before.
+    cheque_reader_enabled: bool = True
+    cheque_recipient_roles: str = "buxgalteriya"
 
     # --- Lead Agent on/off ---
     # Off unless explicitly turned on: every run spends SerpAPI, Tavily and

@@ -130,6 +130,17 @@ sends proof: a photo, a file or a short text). The one who assigned it gets
 the proof with ✅ Қабул (closed) or ↩️ Қайтариш (redo). Without proof a
 task never closes.
 
+**Cheque photos** (2026-10-14) — the Director sends a photo of a cheque to
+OPS Manager Bot. The AI reads the eight details (фискал белги, фискал модул
+рақами, чек рақами, санаси, терминал RRN коди, суммаси, товар номи,
+контрагент ИНН). All there and nothing wrong → the photo with the details
+goes to everyone in Бухгалтерия, and the Director is told who got it.
+Something missing, unreadable or wrong (ИНН not 9/14 digits, RRN not 12, date
+in the future or over 90 days old, not in so'm, the same cheque already sent)
+→ the bot asks him: 📨 Шундай юбориш · 📋 Бу чек эмас (→ the people list) ·
+❌ Бекор, or he sends a clearer photo. A photo that isn't a cheque goes the
+old way (the people list). Off: `CHEQUE_READER_ENABLED=false`.
+
 **OPS Manager Bot commands** — Director: `/maqsad`, `/maqsadlar`, `/kpi`,
 `/baho`; employees: `/hisobot` (change or delete today's report), `/kpi`,
 `/natija`, `/ism`, `/ruxsat` (written permission request), `/bekor`.
@@ -203,6 +214,7 @@ Every setting with its meaning is in **`.env.example`**; the defaults are in
 | Leads | `LEAD_AGENT_ENABLED`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_LEADS_SHEET_ID`, `AGENT_WRITES_ENABLED` (lets the Lead Agent write to the sheet) |
 | Systems | `ONEC_ODATA_URL` / `ONEC_LOGIN` / `ONEC_PASSWORD`; `BILLZ_SECRET_TOKEN`; `VERIFIX_LOGIN` / `VERIFIX_PASSWORD` / `VERIFIX_FILIAL_ID`; `GARMIN_LEADS_SECRET` |
 | Billz → SAP | `BILLZ_SAP_WAREHOUSES` (the shops' warehouses in SAP), `BILLZ_SAP_CHECK_TRIAL` (true = only to the admin), `BILLZ_SAP_CHECK_ROLES` |
+| Cheques | `CHEQUE_READER_ENABLED` (true), `CHEQUE_RECIPIENT_ROLES` (`buxgalteriya`; comma-separated role slugs) |
 | Switches | `DAILY_REPORTS_ENABLED`, `TASK_TRACKER_ENABLED`, `PERMISSIONS_ENABLED`, `LEAD_HANDOUT_ENABLED`, `TEAM_CHEER_ENABLED`, `FEEDBACK_ENABLED`, `BOTS_FROZEN` |
 | Other | `PERMISSION_APPROVAL_TIERS` (payment limits), `PUBLIC_BASE_URL` (address on the QR codes — `/f` is already printed, never move it), `DB_VIEWER_PASSWORD` |
 | Backups | `BACKUP_SECRET` (the same value goes into `pull-backup.ps1`), `BACKUP_PUBLIC_KEY` (the owner's GnuPG **public** key — never the private one) |
@@ -299,6 +311,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-14 | **Cheque photos → accounting** (the owner): a photo the Director sends to OPS Manager Bot is read by the AI (`integrations/org_bot/cheques.py`). A cheque with all eight details (фискал белги, ФМ рақами, чек рақами, сана, RRN, сумма, товар, ИНН) goes to Бухгалтерия as the photo with the details under it; anything missing or wrong (bad ИНН / RRN, future or 90+ day date, not so'm, already sent) → the Director is asked (📨 send anyway / 📋 not a cheque / ❌ cancel). Not a cheque → the people list as before. Readings kept in `cheques` (not in `/db`); logs keep counts only. The owner's exception to "the AI never reads files" — the Director's photos only. `docs/agent-specs/23-cheques.md`. Also: selfcheck no longer needs a database (three older suites reached it). |
 | 2026-10-13 | **Complaints go to the department, not the Boss** (his answer of 13.10; spec A4/A5): the route table `integrations/org_bot/routes.py` sends Londry complaints to the Londry role and Garmin ones to Garmin сотув. Each complaint is a ticket (code T-…) with ✅ Ҳал бўлди → reason code; an hour later, if open, "ҳал бўлдими?" ✅/❌ (09:00–20:00, max 3). Nobody in the role → the Boss. "Director" = the owner = the Boss. |
 | 2026-10-13 | **Task register (the owner's spec of 11.10, Day 1):** every task has a code (T-2026-10-0147, old tasks too) and a state — Яратилди, Қабул қилинди, Тўсиқ бор, Текширувда, Ёпилди. The card's buttons: ▶️ Қабул қилдим · ⛔ Тўсиқ бор · ✅ Бажардим. ✅ asks for proof (photo, file or text); the assigner gets it with ✅ Қабул / ↩️ Қайтариш; ⛔ sends the reason. Every step in `task_events`. `integrations/org_bot/task_register.py`, `docs/agent-specs/08-task-tracker.md`. |
 | 2026-10-13 | **Faster buttons:** each Telegram call used to open a new HTTPS connection (~400–650 ms each, 2–4 per button press). Now one kept-alive connection per bot is reused (`integrations/telegram/bot.py`, `_shared_client`), and if a handler hasn't answered a button within 0.25 s the bot stops the spinner itself (`ack_soon`). |

@@ -1148,3 +1148,28 @@ CREATE TABLE IF NOT EXISTS attendance_flexible (
     set_by      TEXT,
     set_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- cheques (2026-10-14): a cheque photo the Director sent, as the AI read it
+-- (org_bot/cheques.py). Sent to accounting when every detail is there; asked
+-- about otherwise. The fiscal keys find a cheque sent twice. Company data —
+-- never in the /db viewer's technical tables.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cheques (
+    id                         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    director_telegram_user_id  BIGINT       NOT NULL,
+    source_message_id          BIGINT       NOT NULL,
+    caption                    TEXT,
+    fields                     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    problems                   JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    fiscal_sign                TEXT,
+    fiscal_module              TEXT,
+    rrn                        TEXT,
+    status                     TEXT         NOT NULL DEFAULT 'asked'
+                               CHECK (status IN ('asked', 'sent', 'cancelled', 'as_task', 'no_recipient')),
+    sent_count                 INTEGER      NOT NULL DEFAULT 0,
+    resolved_at                TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_cheques_fiscal ON cheques (fiscal_module, fiscal_sign) WHERE fiscal_sign IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cheques_rrn ON cheques (rrn) WHERE rrn IS NOT NULL;

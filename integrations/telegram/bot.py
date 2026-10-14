@@ -295,6 +295,26 @@ class TelegramBot:
                 raise TelegramError(f"Telegram {method} failed: {body.get('description', response.text[:300])}")
             return (body.get("result") or {}).get("message_id")
 
+    async def download_file(self, file_id: str, max_bytes: int = 10_000_000) -> bytes:
+        """A file someone sent the bot, as bytes (getFile, then the file URL).
+
+        Raises:
+            TelegramError: if Telegram has no such file, it is larger than
+                ``max_bytes``, or the download fails.
+        """
+        assert self._client is not None
+        info = await self._call("getFile", {"file_id": file_id}, mode="read") or {}
+        path = info.get("file_path")
+        if not path:
+            raise TelegramError("Telegram getFile returned no file_path")
+        if int(info.get("file_size") or 0) > max_bytes:
+            raise TelegramError(f"file too large ({info.get('file_size')} bytes)")
+        # The file URL is /file/bot<token>/<path>, beside the API root /bot<token>.
+        response = await self._client.get(f"https://api.telegram.org/file/bot{self._bot_token}/{path}")
+        if response.status_code != 200 or len(response.content) > max_bytes:
+            raise TelegramError(f"Telegram file download failed: HTTP {response.status_code}")
+        return response.content
+
     # -------------------------------------------------------------- callbacks
 
     async def _answer_callback(self, callback_query_id: str, text: str) -> None:

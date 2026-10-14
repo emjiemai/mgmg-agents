@@ -129,6 +129,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - Daily reports accepted only until midnight of that day; one follow-up
   question max for vague reports; a question during the report window gets
   "ҳисоботми ёки савол?".
+- **Cheque photos → accounting** (2026-10-14, `integrations/org_bot/cheques.py`, spec 23): the AI reads a
+  photo **the Director** sends (the one exception to "the AI never reads files" — employees' files stay
+  unread). A cheque with all eight details (фискал белги, ФМ рақами, чек рақами, сана, RRN, сумма, товар,
+  контрагент ИНН) goes straight to Бухгалтерия (`CHEQUE_RECIPIENT_ROLES`) as the photo + details; missing /
+  wrong / already sent → he is asked (📨 / 📋 not a cheque / ❌). Never guessed; counts-only logs.
 - **Director's tasks are confirmed before sending** (2026-10-02): a card lists
   everyone as tick-boxes with the bot's guess ticked; nothing goes out before
   📨 Юбориш (`task_picker.py`, `task_drafts`). Files too.

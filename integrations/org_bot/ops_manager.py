@@ -32,7 +32,7 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheer, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheer, cheques, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -271,6 +271,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_data_access_close(rest, callback, run_id)
     if prefix == "fp":
         return await _handle_file_purpose(rest, callback, run_id)
+    if prefix == "chq":
+        return await _handle_cheque_button(rest, callback, run_id)
     if prefix in ("rpe", "rpd", "rpdy", "rpn"):
         return await _handle_report_button(prefix, rest, callback, run_id)
     if prefix == "asrep":
@@ -828,7 +830,8 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     await _show_typing(telegram_user_id, run_id)
 
     if has_media:
-        background.add_task(_dispatch_director_media, telegram_user_id, message.get("message_id"), caption, run_id)
+        background.add_task(_dispatch_director_media, telegram_user_id, message.get("message_id"), caption, run_id,
+                            cheques.image_of(message))
     else:
         background.add_task(_dispatch_director_task, telegram_user_id, text, message.get("message_id"), run_id)
     return "queued"
@@ -1958,7 +1961,8 @@ async def _handle_task_due(rest: str, callback: dict[str, Any], run_id: uuid.UUI
 
 
 async def _dispatch_director_media(
-    director_telegram_user_id: int, source_message_id: int | None, caption: str, run_id: uuid.UUID
+    director_telegram_user_id: int, source_message_id: int | None, caption: str, run_id: uuid.UUID,
+    image: tuple[str, str] | None = None,
 ) -> None:
     """Classify a Director's media/file by its caption and dispatch it.
 
@@ -1974,11 +1978,20 @@ async def _dispatch_director_media(
             to ``copyMessage`` it later.
         caption: The original caption, if any.
         run_id: UUID grouping this webhook call's audit rows.
+        image: The picture's (file_id, mime) when the media is one — read
+            first as a possible cheque (``cheques.py``, 2026-10-14).
     """
     if source_message_id is None:
         log.warning("Media message from {} had no message_id, cannot forward", director_telegram_user_id)
         await _safe_notify_failure(director_telegram_user_id, run_id)
         return
+
+    if image is not None and settings.cheque_reader_enabled:
+        try:
+            if await _handle_cheque_photo(director_telegram_user_id, source_message_id, caption, image, run_id):
+                return
+        except Exception as exc:  # noqa: BLE001 — a failed read leaves the photo to the old path
+            log.error("Cheque reading failed ({}), the photo goes to the people list", type(exc).__name__)
 
     validated = None
     refusal_text: str | None = None
@@ -2028,6 +2041,118 @@ async def _dispatch_director_media(
             status="failure", run_id=run_id, error_message=str(exc), mode="write",
         )
         await _safe_notify_failure(director_telegram_user_id, run_id)
+
+
+async def _handle_cheque_photo(
+    director_id: int, source_message_id: int, caption: str, image: tuple[str, str], run_id: uuid.UUID
+) -> bool:
+    """A Director's photo read as a cheque (``cheques.py``). False = not a cheque, the old path takes it."""
+    file_id, mime = image
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        picture = await bot.download_file(file_id)
+    async with OpenRouterClient(
+        agent=AGENT, run_id=run_id, model_override=settings.ops_manager_bot_model,
+        fallback_override=settings.ops_manager_bot_fallback_models,
+    ) as ai:
+        result = await ai.vision_json(cheques.READ_SYSTEM_PROMPT, cheques.READ_USER_TEXT, picture, mime)
+    reading = cheques.read_result(result)
+    if reading is None:
+        log.info("A Director's photo is not a cheque — the people list")
+        return False
+
+    stored = cheques.stored_fields(reading)
+    found = cheques.problems(reading, today_local())
+    earlier = await store.earlier_cheque(stored)
+    if earlier is not None:
+        found.append(cheques.repeat_problem(earlier))
+    cheque = await store.create_cheque(director_id, source_message_id, caption, stored, found)
+    # Counts only — a cheque's details are company figures (the Director's order of 07.10).
+    await log_action(
+        agent=AGENT, action="cheque_read", target_system="openrouter", status="success", run_id=run_id,
+        mode="read", payload={"complete": not found, "problems": len(found)},
+    )
+    if found:
+        await _reply(director_id, run_id, cheques.question_text(stored, found), cheques.question_keyboard(str(cheque["id"])))
+    else:
+        await _reply(director_id, run_id, await _send_cheque(cheque, run_id))
+    return True
+
+
+async def _send_cheque(cheque: dict[str, Any], run_id: uuid.UUID, forced: list[str] | None = None) -> str:
+    """The photo with its details to accounting; returns the line for the Director."""
+    recipients = [
+        person for role in cheques.recipient_roles(settings.cheque_recipient_roles)
+        for person in await store.active_employees_by_role(role)
+    ]
+    if not recipients:
+        await store.resolve_cheque(str(cheque["id"]), "no_recipient")
+        return cheques.no_recipient_text()
+    if await store.resolve_cheque(str(cheque["id"]), "sent", len(recipients)) is None:
+        return "Аллақачон ҳал қилинган."
+    caption = cheques.accounting_caption(cheque.get("fields") or {}, cheque.get("caption"), forced)
+    delivered: list[str] = []
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for person in recipients:
+            try:
+                await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                    "copyMessage",
+                    {"chat_id": str(person["telegram_user_id"]), "from_chat_id": str(cheque["director_telegram_user_id"]),
+                     "message_id": cheque["source_message_id"], "caption": caption, "parse_mode": "HTML"},
+                    mode="notify", target_ref=str(person["telegram_user_id"]),
+                )
+                delivered.append(names.person_name(person))
+            except TelegramError as exc:
+                log.error("Could not send a cheque to accounting: {}", type(exc).__name__)
+    await log_action(
+        agent=AGENT, action="cheque_sent", target_system="telegram", status="success" if delivered else "failure",
+        run_id=run_id, mode="write", payload={"recipients": len(recipients), "delivered": len(delivered)},
+    )
+    return cheques.sent_text(delivered) if delivered else "🧾 Чекни бухгалтерияга юбориб бўлмади — бироздан кейин яна юборинг."
+
+
+async def _handle_cheque_button(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """📨 send as it is / 📋 not a cheque / ❌ cancel on a cheque question."""
+    query_id = callback.get("id", "")
+    action, _, cheque_id = rest.partition(":")
+    cheque = await store.get_cheque(cheque_id)
+    if cheque is None or action not in ("s", "t", "x"):
+        await _answer(query_id, "Топилмади")
+        return "not_found"
+    if callback.get("from", {}).get("id") != cheque["director_telegram_user_id"]:
+        await _answer(query_id, "Бу сизнинг сўровингиз эмас")
+        return "unauthorized"
+    if cheque.get("resolved_at") is not None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "already_resolved"
+    await _answer(query_id, "OK")
+    message = callback.get("message") or {}
+    if action == "s":
+        outcome = await _send_cheque(cheque, run_id, forced=list(cheque.get("problems") or []))
+        result = "cheque_sent"
+    elif action == "t":
+        if await store.resolve_cheque(cheque_id, "as_task") is None:
+            return "already_resolved"
+        outcome = "📋 Чек эмас — ким учун эканини танланг."
+        result = "cheque_as_task"
+    else:
+        if await store.resolve_cheque(cheque_id, "cancelled") is None:
+            return "already_resolved"
+        outcome = "❌ Бекор қилинди — чек юборилмади."
+        result = "cheque_cancelled"
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot._edit_message(  # noqa: SLF001
+            str(cheque["director_telegram_user_id"]), message.get("message_id"), outcome, {"inline_keyboard": []},
+        )
+    if action == "t":
+        await _ask_media_target(cheque["director_telegram_user_id"], cheque["source_message_id"],
+                                cheque.get("caption") or "", run_id)
+    return result
 
 
 async def _ask_media_target(
