@@ -60,6 +60,10 @@ is in that language. Telegram HTML only.
 Someone given company data (Бухгалтерия / Молия, `22-data-access.md`) is
 answered by the analyst instead, except when replying to a task card.
 
+One person's messages are answered one at a time, in order, each as a reply
+to its question (2026-10-14 — quick questions used to get mixed answers).
+Removing a person deletes this memory; registering again starts empty.
+
 ## Admin
 
 Admin Bot `/xodimlar` → the person → **🤖 AI ёрдамчи: ✅ ёқилган** — tap to

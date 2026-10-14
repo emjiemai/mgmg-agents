@@ -1284,10 +1284,10 @@ async def _handle_remove_user(
     if employee is None:
         await _answer(query_id, "Аллақачон ўчирилган")
         return "already_removed"
-    # Removed = no data access either, even if they register again (data_access.py).
-    closed = await store.clear_data_access(employee_id, removed_by)
-    if closed is not None:
-        await _tell_director_data_access({**closed, "data_access": []}, removed_by, run_id)
+    # revoke_employee closed everything (data access, AI memory, open tasks); the Director
+    # is told when data access was open (data_access.py).
+    if employee.get("had_data_access"):
+        await _tell_director_data_access({**employee, "data_access": []}, removed_by, run_id)
 
     message = callback.get("message") or {}
     async with TelegramBot(

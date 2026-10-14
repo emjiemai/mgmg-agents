@@ -16,6 +16,7 @@ registered can trigger:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -269,8 +270,6 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_clarification(rest, callback, run_id, background)
     if prefix == "dax":
         return await _handle_data_access_close(rest, callback, run_id)
-    if prefix in ("dacok", "dacno"):
-        return await _handle_role_access_decision(prefix == "dacok", rest, callback, run_id)
     if prefix == "fp":
         return await _handle_file_purpose(rest, callback, run_id)
     if prefix == "chq":
@@ -379,9 +378,9 @@ async def send_registration_confirmed(
         access_request: The ``access_requests`` row, role now approved.
         run_id: UUID grouping this webhook call's audit rows.
         employee: Their ``employees`` row as just saved. Someone removed and
-            registered again keeps the name they gave before — they're not
-            asked for it, since their answer would no longer be read as a
-            name and would go to the work AI as a question.
+            registered again starts afresh (``store.create_employee`` clears
+            the name and settings, 2026-10-14) and is asked their name like
+            anyone new — the account may now be someone else's.
     """
     role = ROLE_LABELS.get(access_request["requested_role"], access_request["requested_role"])
     text = f"✅ Сиз <b>{escape(role)}</b> сифатида рўйхатдан ўтдингиз."
@@ -393,6 +392,10 @@ async def send_registration_confirmed(
     elif access_request["requested_role"] != DIRECTOR_ROLE:
         text += f"\n\n{names.ASK_TEXT}"
         await store.mark_name_asked(access_request["telegram_user_id"])
+    if access_request["requested_role"] in data_access.ROLE_SCOPES:
+        # Data that comes with the role: say what opened, and how to ask (data_access.py).
+        text += "\n\n" + data_access.employee_notice({**(employee or {}), "role": access_request["requested_role"],
+                                                         "status": "active"})
     await _reply(access_request["telegram_user_id"], run_id, text)
 
 
@@ -854,9 +857,35 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     return "queued"
 
 
+# One person's questions are answered one at a time, in order (the 14.10 test: two quick
+# questions ran at once, the answers mixed them and arrived a question late). Keyed by the
+# event loop too — a lock belongs to its loop.
+_PERSON_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+
+
+def _person_lock(telegram_user_id: int) -> asyncio.Lock:
+    key = (id(asyncio.get_running_loop()), int(telegram_user_id))
+    if key not in _PERSON_LOCKS:
+        if len(_PERSON_LOCKS) > 500:
+            _PERSON_LOCKS.clear()  # idle locks only matter while held; a rare reset is harmless
+        _PERSON_LOCKS[key] = asyncio.Lock()
+    return _PERSON_LOCKS[key]
+
+
+async def _answer_reply(telegram_user_id: int, run_id: uuid.UUID, text: str, reply_to: int | None) -> None:
+    """An AI answer, shown as a reply to the question it answers (when its message id is known)."""
+    if not reply_to:
+        await _reply(telegram_user_id, run_id, text)
+        return
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        await bot.send_message(text, chat_id=str(telegram_user_id), reply_to_message_id=reply_to)
+
+
 async def _route_to_ai(
     employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
-    background: BackgroundTasks | None,
+    background: BackgroundTasks | None, reply_to: int | None = None,
 ) -> str:
     """An employee's message about their work goes to the AI (``ai_chat.py``), never to a person.
 
@@ -869,22 +898,29 @@ async def _route_to_ai(
     if scope and task is None:
         await _show_typing(telegram_user_id, run_id)
         if background is not None:
-            background.add_task(_answer_data_question, employee, text, scope, run_id)
+            background.add_task(_answer_data_question, employee, text, scope, run_id, reply_to)
         else:
-            await _answer_data_question(employee, text, scope, run_id)
+            await _answer_data_question(employee, text, scope, run_id, reply_to)
         return "data_question"
     if employee.get("ai_chat_off"):
         await _reply(telegram_user_id, run_id, ai_chat.off_text())
         return "ai_off"
     await _show_typing(telegram_user_id, run_id)
     if background is not None:
-        background.add_task(_answer_ai_chat, employee, text, task, run_id)
+        background.add_task(_answer_ai_chat, employee, text, task, run_id, reply_to)
     else:
-        await _answer_ai_chat(employee, text, task, run_id)
+        await _answer_ai_chat(employee, text, task, run_id, reply_to)
     return "ai_chat"
 
 
-async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID) -> None:
+async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
+                          reply_to: int | None = None) -> None:
+    async with _person_lock(employee["telegram_user_id"]):
+        await _answer_ai_chat_now(employee, text, task, run_id, reply_to)
+
+
+async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
+                              reply_to: int | None) -> None:
     """Answer one message — with the person's own tasks and duties, nothing of anyone else's."""
     telegram_user_id = employee["telegram_user_id"]
     try:
@@ -906,7 +942,7 @@ async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, A
             )
         answer = ai_chat.clean_answer(raw)
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
-        await _reply(telegram_user_id, run_id, answer)
+        await _answer_reply(telegram_user_id, run_id, answer, reply_to)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("AI chat failed for {}: {}", telegram_user_id, exc)
         try:
@@ -915,7 +951,14 @@ async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, A
             pass
 
 
-async def _answer_data_question(employee: dict[str, Any], text: str, scope: set[str], run_id: uuid.UUID) -> None:
+async def _answer_data_question(employee: dict[str, Any], text: str, scope: set[str], run_id: uuid.UUID,
+                                reply_to: int | None = None) -> None:
+    async with _person_lock(employee["telegram_user_id"]):
+        await _answer_data_question_now(employee, text, scope, run_id, reply_to)
+
+
+async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: set[str], run_id: uuid.UUID,
+                                    reply_to: int | None) -> None:
     """An accountant's / finance person's question: the analyst with their systems only, in their language."""
     from integrations.org_bot import analyst
 
@@ -937,7 +980,7 @@ async def _answer_data_question(employee: dict[str, Any], text: str, scope: set[
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="success",
                          run_id=run_id, mode="read",
                          payload={"systems": sorted(scope), "tools": result.tools, "rounds": result.rounds})
-        await _reply(telegram_user_id, run_id, answer)
+        await _answer_reply(telegram_user_id, run_id, answer, reply_to)
         await _send_files(telegram_user_id, run_id, result.files)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("Data question failed for {}: {}", telegram_user_id, type(exc).__name__)
@@ -978,50 +1021,6 @@ async def _handle_data_access_close(employee_id: str, callback: dict[str, Any], 
     await log_action(agent=AGENT, action="data_access_closed", target_system="postgres", status="success",
                      run_id=run_id, target_ref=employee_id, mode="write", payload={"by": "director"})
     return "data_access_closed"
-
-
-async def _handle_role_access_decision(approve: bool, employee_id: str, callback: dict[str, Any],
-                                       run_id: uuid.UUID) -> str:
-    """The Director's ✅ / ❌ for data that comes with a role (the Garmin manager, data_access.py)."""
-    query_id = callback.get("id", "")
-    clicker_id = (callback.get("from") or {}).get("id")
-    clicker = await store.get_employee_by_telegram_id(clicker_id) if clicker_id else None
-    if clicker is None or clicker.get("role") != DIRECTOR_ROLE or clicker.get("status") != "active":
-        await _answer(query_id, "Фақат Директор")
-        return "unrecognized"
-    message = callback.get("message") or {}
-
-    async def edit(text: str, keyboard: dict[str, Any]) -> None:
-        if message.get("message_id") and (message.get("chat") or {}).get("id"):
-            async with TelegramBot(
-                agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
-            ) as bot:
-                await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
-                    chat_id=str(message["chat"]["id"]), message_id=message["message_id"], text=text, reply_markup=keyboard)
-
-    if not approve:
-        employee = await store.get_employee(employee_id)
-        await _answer(query_id, "Рад этилди")
-        who = escape(data_access.person(employee)) if employee else "ходим"
-        await edit(f"🔐 {who}: маълумотга кириш <b>рад этилди</b> — ёпиқ қолади.", {"inline_keyboard": []})
-        await admin.tell_admin(f"🔐 Директор {who} учун ролга кўра маълумотга киришни рад этди — ролни ўзгартиринг.",
-                               run_id)
-        await log_action(agent=AGENT, action="role_access_rejected", target_system="postgres", status="success",
-                         run_id=run_id, target_ref=employee_id, mode="write")
-        return "role_access_rejected"
-    confirmed = await store.confirm_role_access(employee_id, f"director:{clicker_id}")
-    if confirmed is None:
-        await _answer(query_id, "Аллақачон ҳал қилинган")
-        return "role_access_closed"
-    await _answer(query_id, "Тасдиқланди")
-    who = escape(data_access.person(confirmed))
-    await edit(f"🔐 {who}: <b>{escape(data_access.label(data_access.granted(confirmed)))}</b> — тасдиқланди.",
-               {"inline_keyboard": [[{"text": "⛔ Ёпиш", "callback_data": f"dax:{employee_id}"}]]})
-    await _reply(confirmed["telegram_user_id"], run_id, data_access.employee_notice(confirmed))
-    await admin.tell_admin(f"🔐 Директор {who} учун маълумотга киришни тасдиқлади.", run_id)
-    await log_action(agent=AGENT, action="role_access_confirmed", target_system="postgres", status="success",
-                     run_id=run_id, target_ref=employee_id, mode="write")
-    return "role_access_confirmed"
 
 
 async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1562,7 +1561,7 @@ async def _handle_employee_message(
     task = None
     if reply_to.get("message_id"):
         task = await store.find_task_by_message_id(reply_to["message_id"], telegram_user_id)
-    return await _route_to_ai(employee, text, task, run_id, background)
+    return await _route_to_ai(employee, text, task, run_id, background, message.get("message_id"))
 
 
 def _plain(text: str | None) -> str:

@@ -53,9 +53,9 @@ goes to the work AI.
 ## By role (2026-10-14)
 
 `data_access.ROLE_SCOPES`: the **Garmin manager** gets Garmin's SAP (its
-warehouses only), Billz and Garmin's own records with the role — no
-toggles — but only after the Director's ✅ (`confirmed`); ⛔ closes it, any
-role change clears it (`23-garmin-manager.md`).
+warehouses only), Billz and Garmin's own records with the role itself — no
+toggles, no confirmation (the owner, 14.10); the Director is told; changing
+the role closes it (`23-garmin-manager.md`).
 
 ## Language
 

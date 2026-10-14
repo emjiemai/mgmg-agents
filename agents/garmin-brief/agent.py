@@ -283,8 +283,8 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
     today = today_local()
     from integrations.org_bot import data_access
 
-    # Figures only to a Garmin manager whose access the Director confirmed (data_access.py).
-    people = [p for p in await org_store.active_employees_by_role(ROLE) if data_access.granted(p)]
+    managers = await org_store.active_employees_by_role(ROLE)
+    people = [p for p in managers if data_access.granted(p)]
     if not people and not settings.dry_run:
         log.info("No confirmed Garmin manager — no Garmin brief")
         return 0

@@ -165,8 +165,12 @@ class TelegramBot:
         *,
         reply_markup: dict[str, Any] | None = None,
         disable_notification: bool = False,
+        reply_to_message_id: int | None = None,
     ) -> list[int]:
         """Send an HTML message, splitting it if it exceeds Telegram's limit.
+
+        ``reply_to_message_id``: shown as a reply to that message (the first chunk), so an
+        answer sits under its own question; sent anyway if that message is gone.
 
         Args:
             text: HTML body (use ``escape`` for untrusted substrings).
@@ -195,6 +199,8 @@ class TelegramBot:
             }
             if reply_markup is not None and index == len(chunks):
                 payload["reply_markup"] = reply_markup
+            if reply_to_message_id and index == 1:
+                payload["reply_parameters"] = {"message_id": reply_to_message_id, "allow_sending_without_reply": True}
 
             result = await self._call("sendMessage", payload, mode="notify", target_ref=str(chat))
             if result is not None:

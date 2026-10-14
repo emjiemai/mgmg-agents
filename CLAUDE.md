@@ -96,7 +96,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   **Garmin complaints → the Garmin manager** (2026-10-14, role `garmin_manager`, not Garmin сотув).
 - **Garmin manager** (2026-10-14, `docs/agent-specs/23-garmin-manager.md`): every Garmin complaint; Garmin's SAP
   (`garmin_sap`, its warehouses only) + Billz + Garmin data by role (`data_access.ROLE_SCOPES`, never 1C) — **opens
-  only after the Director's ✅** (admin approval alone opens nothing); Garmin morning brief (`agents/garmin-brief/`,
+  with the role, no Boss confirmation** (the owner, 2026-10-14; the Boss is told); Garmin morning brief (`agents/garmin-brief/`,
   same picture as the Director's, shared `integrations/reports/brief_parts.py`); Billz → SAP check recipient.
   Mobile app: not now.
 - **Google reviews: separate pages and QR codes** (2026-10-08, `docs/agent-specs/20-google-reviews.md`):
@@ -147,6 +147,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   cancelled, ✅ needs proof → the assigner accepts or returns; ⛔ with reason; `task_events` history.
   Proof and blocker text reach the assigner (task data — the one exception to the no-relay rule).
   Next from the spec: positions + deputies, route table, escalation; then Day 2 complaint tickets.
+- **Removal is a clean end; re-registration a fresh start** (2026-10-14): `store.revoke_employee` deletes the work-AI
+  memory, closes held messages/files, cancels open tasks, clears data access; `create_employee` on a revoked row
+  clears the name (asked again), duties, settings and language. One person's AI questions are answered one at
+  a time, each as a reply to its question.
 - Signatures on the SOP permission form are by hand; never use Telegram profile names.
 - In-house CRM, amoCRM, MS Planner/Teams: not used (removed).
 - **IT sees no company figures** (the Director's order of 07.10.2026, «Маълумотларга кириш

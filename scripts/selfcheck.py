@@ -3588,9 +3588,9 @@ def test_review_fixes() -> None:
     admin_src = load_source("integrations/org_bot/admin.py")
     check_true("a role change clears role-given access and sends the Director one notice",
                "scoped = after[\"role\"] in data_access.ROLE_SCOPES" in admin_src and admin_src.count("_tell_director_data_access(after") == 1)
-    check_true("only the Director confirms; the database refuses other roles",
-               "role = ANY(%s) AND NOT (%s = ANY(data_access))" in store_src and "_handle_role_access_decision" in load_source(
-                   "integrations/org_bot/ops_manager.py"))
+    check_true("no confirmation step for the Garmin role (the owner, 14.10)",
+               "_handle_role_access_decision" not in load_source("integrations/org_bot/ops_manager.py")
+               and "confirm_role_access" not in store_src)
 
     # 5: Garmin's SAP — the Garmin warehouses only
     rows_by_tool = {
@@ -3639,11 +3639,106 @@ def test_review_fixes() -> None:
                '" · ".join(notes)' in gb_src and "brief_parts.figure_row" in gb_src
                and "brief_parts" in load_source("agents/ceo-daily-brief/agent.py"))
     # 14: the old Start/Done keyboard is gone
-    check_true("the Garmin brief's figures go only to a manager the Director confirmed",
-               "if data_access.granted(p)" in gb_src)
+    check_true("the Garmin brief goes to whoever holds the role", "if data_access.granted(p)" in gb_src)
     check_true("one task keyboard (task_register.keyboard), the old one removed",
                "def _task_keyboard" not in load_source("integrations/org_bot/ops_manager.py"))
     _ = (admin, data_access)
+
+
+def test_reregistration_and_order() -> None:
+    """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
+    print("re-registration and answer order (review 2026-10-14)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import ops_manager, store
+    from integrations.telegram import bot as tg
+
+    store_src = load_source("integrations/org_bot/store.py")
+    create = store_src[store_src.index("async def create_employee("):store_src.index("async def active_employees_by_role(")]
+    check_true("registering again after removal starts afresh: name, duties, settings, language, data access",
+               all(f in create for f in ("full_name = CASE WHEN employees.status = 'revoked' THEN NULL",
+                                          "responsibilities = CASE WHEN employees.status = 'revoked' THEN NULL",
+                                          "lang = CASE WHEN employees.status = 'revoked' THEN 'uz'",
+                                          "cheer_off = employees.cheer_off AND employees.status <> 'revoked'",
+                                          "data_access = CASE WHEN employees.status = 'revoked' THEN '{}'",
+                                          "telegram_username = EXCLUDED.telegram_username", "revoked_at = NULL")))
+    revoke = store_src[store_src.index("async def revoke_employee("):store_src.index("# ------------------------------------------------------------- access requests")]
+    check_true("removal ends everything tied to the person: AI memory, held messages and files, open tasks, data access",
+               all(f in revoke for f in ("DELETE FROM ai_chat_turns", "UPDATE pending_relays", "UPDATE employee_files",
+                                          "SET status = 'cancelled'", "data_access = '{}'", "had_data_access")))
+    check_true("people who left aren't in overdue notices or the open-task answers",
+               store_src.count("AND e.status = 'active'") >= 3)
+    check_true("the Admin Bot handler relies on removal itself (no cleanup of its own)",
+               "employee.get(\"had_data_access\")" in load_source("integrations/org_bot/admin.py"))
+
+    # the registration message: the name is asked when the row has none (it was reset)
+    replies: list = []
+    asked: list = []
+
+    async def fake_reply(chat, run_id, text, reply_markup=None):
+        replies.append(text)
+        return [1]
+
+    async def mark(tg_id):
+        asked.append(tg_id)
+
+    saved = [(ops_manager, "_reply", ops_manager._reply), (store, "mark_name_asked", store.mark_name_asked)]
+    ops_manager._reply, store.mark_name_asked = fake_reply, mark
+    try:
+        asyncio.run(ops_manager.send_registration_confirmed(
+            {"requested_role": "garmin_manager", "telegram_user_id": 77}, uuid.uuid4(),
+            {"id": "e", "role": "garmin_manager", "status": "active", "full_name": None, "data_access": []}))
+        check_true("a re-registered person is asked their name like anyone new", asked == [77] and "Исмингиз:" not in replies[-1])
+        check_true("a Garmin manager is told at once what the role opened and how to ask",
+                   "SAP (Garmin омборлари)" in replies[-1] and "сўраш имкони берилди" in replies[-1])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # one person's questions one at a time, in order
+    log: list = []
+
+    async def slow(employee, text, task, run_id, reply_to):
+        log.append(("start", text))
+        await asyncio.sleep(0.05)
+        log.append(("end", text))
+
+    saved = ops_manager._answer_ai_chat_now
+    ops_manager._answer_ai_chat_now = slow
+    try:
+        async def two_quick():
+            emp = {"telegram_user_id": 501}
+            await asyncio.gather(ops_manager._answer_ai_chat(emp, "биринчи", None, uuid.uuid4(), 10),
+                                 ops_manager._answer_ai_chat(emp, "иккинчи", None, uuid.uuid4(), 11))
+
+        asyncio.run(two_quick())
+        check("two quick questions: the second waits until the first is answered", log,
+              [("start", "биринчи"), ("end", "биринчи"), ("start", "иккинчи"), ("end", "иккинчи")])
+    finally:
+        ops_manager._answer_ai_chat_now = saved
+
+    payloads: list = []
+    real_call = tg.TelegramBot._call
+
+    async def fake_call(self, method, payload, **kwargs):
+        payloads.append(payload)
+        return {"message_id": 1}
+
+    tg.TelegramBot._call = fake_call
+    try:
+        async def threaded():
+            async with tg.TelegramBot(bot_token="T9") as bot:
+                await bot.send_message("жавоб", chat_id="501", reply_to_message_id=42)
+
+        asyncio.run(threaded())
+        check("an answer is sent as a reply to its own question (kept even if that message is gone)",
+              payloads[-1].get("reply_parameters"), {"message_id": 42, "allow_sending_without_reply": True})
+    finally:
+        tg.TelegramBot._call = real_call
+    check_true("the employee's message id reaches the answer",
+               "_route_to_ai(employee, text, task, run_id, background, message.get(\"message_id\"))"
+               in load_source("integrations/org_bot/ops_manager.py"))
 
 
 def test_garmin_manager() -> None:
@@ -3664,17 +3759,13 @@ def test_garmin_manager() -> None:
     check("Garmin complaints go to it", routes.ROUTES["complaint:garmin"], ("garmin_manager",))
     gm = {"id": "g1", "telegram_user_id": 451, "status": "active", "role": "garmin_manager", "full_name": "Синов Менежер",
           "display_name": "G", "data_access": []}
-    check("the role alone opens nothing — the Director must confirm it (review 2026-10-14)", data_access.granted(gm), set())
-    ok_gm = {**gm, "data_access": [data_access.CONFIRMED]}
-    check("confirmed: Garmin's SAP, Billz, Garmin records — never 1C or all of SAP", data_access.granted(ok_gm),
-          {"sap_garmin", "billz", "garmin"})
-    check("taken away with the role", data_access.granted({**ok_gm, "role": "garmin_sotuv"}), set())
+    ok_gm = gm
+    check("the role opens Garmin's SAP, Billz and Garmin records — no Boss confirmation (the owner, 14.10); never 1C "
+          "or all of SAP", data_access.granted(gm), {"sap_garmin", "billz", "garmin"})
+    check("taken away with the role", data_access.granted({**gm, "role": "garmin_sotuv"}), set())
     check("no admin toggles for it (the role decides)", data_access.card_buttons(gm), [])
     text, keyboard = data_access.director_notice(gm, "admin1")
-    check_true("the Boss is asked: ✅ confirm / ❌ reject", "тасдиқлашингиз керак" in text
-               and [b["callback_data"] for b in keyboard["inline_keyboard"][0]] == ["dacok:g1", "dacno:g1"])
-    check_true("confirmed: a ⛔ closes it like any other access",
-               "dax:g1" in str(data_access.director_notice(ok_gm, "admin1")[1]))
+    check_true("the Boss is told (no buttons: changing the role closes it)", "ролига кўра" in text and keyboard is None)
     tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(ok_gm))]
     check("its tools: Garmin's SAP only, Billz, Garmin records — no general SAP, 1C, attendance or the Boss's records",
           tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data"])
@@ -4344,7 +4435,7 @@ def test_data_access() -> None:
     async def fake_send_files(chat_id, run_id, files):
         sent.append((chat_id, [f[1] for f in files]))
 
-    async def fake_work_ai(employee, text, task, run_id):
+    async def fake_work_ai(employee, text, task, run_id, reply_to=None):
         work_ai.append(text)
 
     async def zero(*args, **kwargs):
@@ -6819,6 +6910,7 @@ def main() -> int:
         test_review_pages,
         test_task_register,
         test_review_fixes,
+        test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,
         test_cheques,

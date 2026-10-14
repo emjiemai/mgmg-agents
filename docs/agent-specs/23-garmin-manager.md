@@ -13,9 +13,9 @@ database's role checks list it (`schema.sql`, both `employees_role_check`s).
 | What | How |
 | ---- | ---- |
 | Every Garmin complaint | `routes.py`: `complaint:garmin` → `garmin_manager` (tickets, ✅ + reason, hourly "ҳал бўлдими?" — `10-client-feedback.md`). Nobody in the role → the Director. |
-| Garmin's SAP, Billz and Garmin's own records through the bot | `data_access.ROLE_SCOPES` — comes with the role, but **opens only after the Director confirms it** (✅ Тасдиқлаш / ❌ Рад этиш in OPS Manager Bot; `employees.data_access = {confirmed}`); the admin approving the role is not enough (the code review of 14.10: IT must not be able to open figures for itself). Any role change clears it. The analyst offers `garmin_sap` (**the Garmin warehouses only** — invoices / credit notes with a line in them, their lines, stock, stock value; never other businesses' customers, debts or payments), `billz_sales`, `garmin_data` (Garmin bot leads, Garmin complaints with their ticket state, the catalog) and `data_sources`. Never 1C, attendance or the Director's records. |
-| The Director is told | when someone gets the role (registration or a role change) — with ✅ / ❌ — and when access closes; once confirmed, ⛔ closes it. |
-| A morning brief | `agents/garmin-brief/agent.py`, 08:00 after the Billz → SAP check — only once the Director confirmed the access. |
+| Garmin's SAP, Billz and Garmin's own records through the bot | `data_access.ROLE_SCOPES` — comes with the role — **no confirmation by the Director** (the owner, 14.10: "we don't need access from the Boss when he is Garmin Manager"); changing the role closes it. The analyst offers `garmin_sap` (**the Garmin warehouses only** — invoices / credit notes with a line in them, their lines, stock, stock value; never other businesses' customers, debts or payments), `billz_sales`, `garmin_data` (Garmin bot leads, Garmin complaints with their ticket state, the catalog) and `data_sources`. Never 1C, attendance or the Director's records. |
+| The Director is told | when someone gets the role (registration or a role change) and when it's taken away. |
+| A morning brief | `agents/garmin-brief/agent.py`, 08:00 after the Billz → SAP check. |
 | The Billz → SAP check | `BILLZ_SAP_CHECK_ROLES` defaults to `garmin_manager` (once the check leaves its trial); its morning brief shows the result meanwhile. |
 | The Garmin catalog in the work AI | like Garmin сотув. |
 

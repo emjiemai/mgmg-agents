@@ -235,7 +235,24 @@ async def create_employee(
         INSERT INTO employees (telegram_user_id, telegram_username, display_name, role, approved_by)
         VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (telegram_user_id) DO UPDATE
-            SET role = EXCLUDED.role, status = 'active', approved_by = EXCLUDED.approved_by
+            SET role = EXCLUDED.role, status = 'active', approved_by = EXCLUDED.approved_by,
+                telegram_username = EXCLUDED.telegram_username, display_name = EXCLUDED.display_name,
+                -- Removed, then registered again (2026-10-14): a fresh start — the account may now be
+                -- someone else's (a shared shop phone). Name asked again, every setting back to default.
+                full_name = CASE WHEN employees.status = 'revoked' THEN NULL ELSE employees.full_name END,
+                name_asked_at = CASE WHEN employees.status = 'revoked' THEN NULL ELSE employees.name_asked_at END,
+                name_change_requested_at = CASE WHEN employees.status = 'revoked' THEN NULL
+                                                ELSE employees.name_change_requested_at END,
+                responsibilities = CASE WHEN employees.status = 'revoked' THEN NULL ELSE employees.responsibilities END,
+                address_form = CASE WHEN employees.status = 'revoked' THEN NULL ELSE employees.address_form END,
+                lang = CASE WHEN employees.status = 'revoked' THEN 'uz' ELSE employees.lang END,
+                ai_chat_off = employees.ai_chat_off AND employees.status <> 'revoked',
+                cheer_off = employees.cheer_off AND employees.status <> 'revoked',
+                reports_off = employees.reports_off AND employees.status <> 'revoked',
+                works_saturday = employees.works_saturday AND employees.status <> 'revoked',
+                works_sunday = employees.works_sunday AND employees.status <> 'revoked',
+                data_access = CASE WHEN employees.status = 'revoked' THEN '{}' ELSE employees.data_access END,
+                revoked_at = NULL, revoked_by = NULL
         RETURNING *
         """,
         (telegram_user_id, telegram_username, display_name, role, approved_by),
@@ -279,15 +296,36 @@ async def revoke_employee(employee_id: str, revoked_by: str) -> dict[str, Any] |
         The updated row if this call actually changed it, else None —
         callers must treat None as "already revoked / not found", not an error.
     """
-    return await fetch_one(
+    before = await fetch_one("SELECT data_access FROM employees WHERE id = %s", (employee_id,))
+    row = await fetch_one(
         """
         UPDATE employees
-        SET status = 'revoked', revoked_at = now(), revoked_by = %s
+        SET status = 'revoked', revoked_at = now(), revoked_by = %s, data_access = '{}'
         WHERE id = %s AND status = 'active'
         RETURNING *
         """,
         (revoked_by, employee_id),
     )
+    if row is None:
+        return None
+    # Removed = everything tied to the person ends here (2026-10-14), whoever revokes —
+    # so nothing comes back if the Telegram account registers again:
+    tg = row["telegram_user_id"]
+    await execute("DELETE FROM ai_chat_turns WHERE telegram_user_id = %s", (tg,))  # the work AI's memory and day count
+    await execute("UPDATE pending_relays SET resolved_at = now(), outcome = 'cancelled' "
+                  "WHERE employee_telegram_user_id = %s AND resolved_at IS NULL", (tg,))
+    await execute("UPDATE employee_files SET resolved_at = now(), purpose = 'cancelled' "
+                  "WHERE telegram_user_id = %s AND resolved_at IS NULL", (tg,))
+    cancelled = await fetch_all(
+        """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL
+           WHERE assigned_employee_id = %s AND status IN ('sent', 'started', 'blocked', 'review') RETURNING id""",
+        (employee_id,),
+    )
+    for task in cancelled:
+        await log_task_event(str(task["id"]), "cancelled", revoked_by, "ходим ўчирилди")
+    if before and before.get("data_access"):
+        await log_employee_change(employee_id, "data_access", ",".join(sorted(before["data_access"])), "", revoked_by)
+    return {**row, "had_data_access": list((before or {}).get("data_access") or []), "tasks_cancelled": len(cancelled)}
 
 
 # ------------------------------------------------------------- access requests
@@ -608,7 +646,7 @@ async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
         WHERE t.status IN ('sent', 'started', 'blocked') AND t.overdue_notified_at IS NULL
-          AND t.due_date < %s
+          AND t.due_date < %s AND e.status = 'active'
         ORDER BY t.director_telegram_user_id, t.due_date
         """,
         (today,),
@@ -644,7 +682,7 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE t.status IN ('sent', 'started', 'blocked', 'review')
+        WHERE t.status IN ('sent', 'started', 'blocked', 'review') AND e.status = 'active'
         ORDER BY t.due_date NULLS LAST, t.created_at
         LIMIT %s
         """,
@@ -2249,23 +2287,6 @@ async def clear_data_access(employee_id: str, changed_by: str) -> dict[str, Any]
     if after is not None:
         await log_employee_change(employee_id, "data_access", ",".join(sorted((before or {}).get("data_access") or [])),
                                   "", changed_by)
-    return after
-
-
-async def confirm_role_access(employee_id: str, changed_by: str) -> dict[str, Any] | None:
-    """The Director's ✅ for data that comes with a role (the Garmin manager); once. None if not that role."""
-    from integrations.org_bot.data_access import CONFIRMED, ROLE_SCOPES
-
-    after = await fetch_one(
-        """
-        UPDATE employees SET data_access = ARRAY[%s]::text[]
-        WHERE id = %s AND status = 'active' AND role = ANY(%s) AND NOT (%s = ANY(data_access))
-        RETURNING *
-        """,
-        (CONFIRMED, employee_id, list(ROLE_SCOPES), CONFIRMED),
-    )
-    if after is not None:
-        await log_employee_change(employee_id, "data_access", "", CONFIRMED, changed_by)
     return after
 
 

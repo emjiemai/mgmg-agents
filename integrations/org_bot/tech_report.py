@@ -221,7 +221,7 @@ async def gather(now: datetime | None = None) -> TechReport:
     granted = await fetch_read_only(
         """SELECT count(*) AS n FROM employees WHERE status = 'active'
            AND ((role IN ('buxgalteriya', 'moliya') AND cardinality(data_access) > 0)
-                OR (role = 'garmin_manager' AND 'confirmed' = ANY(data_access)))"""
+                OR role = 'garmin_manager')"""
     )
     report.data_access = int(granted[0]["n"]) if granted else 0
     pending = await fetch_read_only("SELECT count(*) AS n FROM access_requests WHERE status = 'pending'")
