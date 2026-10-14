@@ -179,7 +179,7 @@ def ticket_text(row: dict[str, Any]) -> str:
         contact = " · ".join(p for p in (escape(row.get("phone") or ""), escape(row.get("contact_name") or "")) if p)
         lines.append(f"📞 {contact}")
     if row.get("lang") and row["lang"] != DEFAULT_LANG:
-        lines.append(f"🌐 Мижоз тили: {LANGS[row['lang']]}")
+        lines.append(f"🌐 Мижоз тили: {LANGS.get(row['lang'], row['lang'])}")
     if row.get("ticket_status") == "resolved":
         lines += ["", f"✅ Ҳал бўлди — {escape(row.get('resolved_by') or '')}, сабаби: "
                       f"{REASONS.get(row.get('reason_code') or '', row.get('reason_code') or '')}"]
@@ -232,18 +232,20 @@ async def submit(sub: Submission) -> int:
     """
     row = await store.save_client_feedback(
         place=sub.place, branch=sub.branch, kind=sub.kind, message=sub.message,
-        contact_name=sub.name or None, phone=sub.phone or None,
+        contact_name=sub.name or None, phone=sub.phone or None, lang=sub.lang,
     )
     if row is None:
         return 0
-    if settings.bots_frozen:  # the emergency stop: stored, nothing sent
-        log.info("Bots frozen — complaint stored, not sent")
-        return 0
     kind = f"complaint:{sub.place}"
-    people, fell_back = await routes.recipients(kind)
     # The kind, not who got it: the hourly question goes to whoever holds the role then.
     ticket = await store.open_complaint_ticket(row["id"], kind) or row
-    text = ticket_text({**ticket, "lang": sub.lang})
+    if settings.bots_frozen:
+        # The emergency stop: a ticket, but nothing sent — the first hourly check after
+        # unfreezing sends the whole card (it has no cards yet), not just "ҳал бўлдими?".
+        log.info("Bots frozen — complaint ticket stored, not sent")
+        return 0
+    people, fell_back = await routes.recipients(kind)
+    text = ticket_text(ticket)
     if fell_back:
         text += "\n\n<i>Бу бўлимда ҳозир ҳеч ким рўйхатдан ўтмаган — шунинг учун сизга келди.</i>"
     run_id = uuid.uuid4()
@@ -272,14 +274,17 @@ async def update_cards(row: dict[str, Any], run_id: uuid.UUID) -> None:
 async def ask_status(now: Any = None) -> int:
     """The hourly question for open tickets (09:00–20:00); returns how many tickets were asked about."""
     now = now or now_local()
-    if not ASK_HOURS[0] <= now.hour < ASK_HOURS[1]:
+    if settings.bots_frozen or not ASK_HOURS[0] <= now.hour < ASK_HOURS[1]:
         return 0
     due = await store.complaints_due_status_check()
     run_id = uuid.uuid4()
     for row in due:
         kind = row.get("routed_to") or f"complaint:{row.get('place')}"
         people, _fell_back = await routes.recipients(kind)
-        asked = await _send_cards(row, people, ask_text(row), ask_keyboard(row), run_id)
+        if row.get("cards"):
+            asked = await _send_cards(row, people, ask_text(row), ask_keyboard(row), run_id)
+        else:  # never delivered (it came while the bots were frozen): the whole ticket, not just the question
+            asked = await _send_cards(row, people, ticket_text(row), ticket_keyboard(row), run_id)
         # The question's messages join the ticket's cards: whoever was asked can press ✅ / ❌ (even
         # someone who took the role after the complaint came), and they're updated when it's resolved.
         if asked:

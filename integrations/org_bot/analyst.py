@@ -141,6 +141,13 @@ TOOLS: list[dict] = [
         "Use it for 'кредиторлик', 'етказиб берувчиларга қарз', '1C ва SAP солиштир'. Reads 1C live (slow, ~20 s).",
         {"excel": {"type": "boolean", "description": "true when the Director wants the file / Excel / table / "
                    "full comparison — the bot then sends him the .xlsx workbook with every supplier"}}),
+    _fn("garmin_sap", "Garmin's part of SAP only — the Garmin warehouses (codes starting G.A. and the shop's): "
+        "sales = invoices and credit notes with a line in them; sales_lines = those lines; inventory = stock by item; "
+        "stock_value = stock value per warehouse. Sums worked out like sap_records.",
+        {"kind": {"type": "string", "enum": list(("sales", "sales_lines", "inventory", "stock_value"))},
+         "search": {"type": "string", "description": "text that must appear in the row (customer, item), optional"},
+         "date_from": _DATE, "date_to": _DATE,
+         "limit": {"type": "integer", "description": "rows to list (default 80, max 400)"}}, ("kind",)),
     _fn("garmin_data", "The Garmin business's own records: Garmin AI bot leads (customers from Instagram and the "
         "web catalog), Garmin client complaints (tickets from the /f/garmin QR page, with their state), and the Garmin "
         "product catalog with prices.",
@@ -162,6 +169,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "onec_turnovers": {"1c"},
     "billz_sales": {"billz"},
     "supplier_debt_compare": {"sap", "1c"},
+    "garmin_sap": {"sap_garmin"},
     "garmin_data": {"garmin"},
     "attendance": None,
     "company_data": None,
@@ -260,14 +268,12 @@ that the admin can open more only with the Director's approval. A message
 that isn't about data (help with a letter, Excel, a work question): answer
 it briefly and helpfully, without tools.
 """)
-    if "garmin" in scope:
+    if "garmin" in scope or "sap_garmin" in scope:
         prompt += """
 # THIS PERSON RUNS GARMIN
-Focus on the Garmin business: its shops (billz_sales), its SAP figures (the
-Garmin warehouses' codes start with "G.A." — use sap_records with search, e.g.
-sales_lines / inventory / stock_value), its bot leads and complaints
-(garmin_data). SAP holds the other businesses too: when a figure isn't
-Garmin's, say so rather than mixing it in.
+Focus on the Garmin business: its shops (billz_sales), its SAP figures
+(garmin_sap — the Garmin warehouses only; the other businesses' SAP data is
+not in this person's access), its bot leads and complaints (garmin_data).
 """
     if lang == "ru":
         prompt += """
@@ -419,7 +425,8 @@ def _cancelled(raw: dict[str, Any]) -> bool:
     return str(raw.get("CANCELED") or "").upper() in ("Y", "C")
 
 
-async def sap_records(args: dict[str, Any]) -> str:
+async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], list[dict]] | None = None) -> str:
+    """``keep``: narrows the rows (the Garmin manager's ``garmin_sap`` — the Garmin warehouses only)."""
     from integrations.org_bot import ops_manager
 
     kind = args.get("kind")
@@ -438,6 +445,8 @@ async def sap_records(args: dict[str, Any]) -> str:
     if not rows:
         return f"{freshness}\nNo SAP {kind} rows" + (f" matching '{search}'" if search else "") + " in the latest push."
     raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
+    if keep is not None:
+        raws = keep(kind, raws)
     if start:
         raws = [x for x in raws if (d := _row_day(x)) is not None and start <= d <= end]
     raws.sort(key=lambda x: str(_row_day(x) or ""), reverse=True)
@@ -636,6 +645,34 @@ async def supplier_debt_compare(args: dict[str, Any]) -> str:
     return text
 
 
+GARMIN_SAP_KINDS = ("sales", "sales_lines", "inventory", "stock_value")
+
+
+async def garmin_sap(args: dict[str, Any]) -> str:
+    """Garmin's part of SAP only (2026-10-14, the Garmin manager): rows of the Garmin warehouses
+    (``BILLZ_SAP_WAREHOUSES``), and the invoices / credit notes with a line in them — never the
+    other businesses' customers, debts or payments."""
+    from integrations.billz import sap_check
+
+    kind = args.get("kind")
+    if kind not in GARMIN_SAP_KINDS:
+        return f"Unknown kind {kind!r}; one of: {', '.join(GARMIN_SAP_KINDS)}."
+    codes = {c for group in sap_check.warehouse_map(settings.billz_sap_warehouses).values() for c in group}
+    docs: set[tuple[str, str]] = set()
+    if kind == "sales":
+        for row in await fetch_read_only("SELECT raw FROM v_sap_gateway_latest WHERE tool = 'sales_lines'"):
+            line = row["raw"] if isinstance(row["raw"], dict) else json.loads(row["raw"] or "{}")
+            if str(line.get("WhsCode") or "").strip() in codes:
+                docs.add((str(line.get("ObjType") or "13"), str(line.get("DocEntry"))))
+
+    def keep(kind_: str, raws: list[dict]) -> list[dict]:
+        if kind_ == "sales":
+            return [x for x in raws if (str(x.get("ObjType") or "13"), str(x.get("DocEntry"))) in docs]
+        return [x for x in raws if str(x.get("WhsCode") or "").strip() in codes]
+
+    return await sap_records(args, keep)
+
+
 async def garmin_data(args: dict[str, Any]) -> str:
     """Garmin's own records (2026-10-14, for the Garmin manager): bot leads, Garmin complaints, the catalog."""
     from integrations.org_bot import feedback, ops_manager, store
@@ -675,6 +712,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "billz_sales": billz_sales,
     "attendance": attendance,
     "supplier_debt_compare": supplier_debt_compare,
+    "garmin_sap": garmin_sap,
     "garmin_data": garmin_data,
     "company_data": company_data,
 }

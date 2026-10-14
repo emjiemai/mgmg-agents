@@ -29,7 +29,6 @@ from integrations.common.money import (
 from integrations.common.timeutil import TASHKENT, days_between, parse_sap_date, to_local, to_utc
 from integrations.org_bot.ops_manager import (
     _task_card_text,
-    _task_keyboard,
     parse_callback_data,
     parse_role_and_request,
     validate_classification,
@@ -670,10 +669,12 @@ def test_org_bot() -> None:
     check_true("agent vocabulary is non-empty", len(AGENT_SLUGS) > 0)
 
     check_true("task card text carries the summary", "Ombor" in _task_card_text("Ombor tekshiruvi"))
-    fresh_kb = _task_keyboard("task-1")
-    check("fresh task has Start + Done buttons", len(fresh_kb["inline_keyboard"][0]), 2)
-    started_kb = _task_keyboard("task-1", started=True)
-    check("started task has only the Done button", len(started_kb["inline_keyboard"][0]), 1)
+    from integrations.org_bot.task_register import keyboard as _task_keyboard_for
+
+    fresh_kb = _task_keyboard_for({"id": "task-1", "status": "sent"})
+    check("fresh task has accept, blocked and done buttons", sum(len(r) for r in fresh_kb["inline_keyboard"]), 3)
+    started_kb = _task_keyboard_for({"id": "task-1", "status": "started"})
+    check("accepted task has blocked + done", sum(len(r) for r in started_kb["inline_keyboard"]), 2)
     check_true("Start button carries the right callback_data", "taskstart:task-1" in str(fresh_kb))
     check_true("Done button carries the right callback_data", "taskdone:task-1" in str(fresh_kb))
     check_true("started keyboard has no Start button left", "taskstart:" not in str(started_kb))
@@ -3367,7 +3368,7 @@ def test_task_register() -> None:
         state["task"] = {**state["task"], "awaiting": kind}
         return state["task"]
 
-    async def awaiting(tg):
+    async def awaiting(tg, minutes=30):
         return state["task"] if tg == 501 and state["task"].get("awaiting") else None
 
     async def submit(task_id, by, text, msg_id):
@@ -3476,6 +3477,175 @@ def test_task_register() -> None:
             setattr(obj, name, value)
 
 
+def test_review_fixes() -> None:
+    """The code review of 2026-10-14: stuck reviews, stale proof, lost toasts, Garmin access, small gaps."""
+    print("code-review fixes (2026-10-14)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import admin, analyst, data_access, feedback, ops_manager, store, task_register as tr
+    from integrations.telegram import bot as tg
+
+    # 1 / 6: captions within 1024, never cut inside a tag or an entity
+    long = {"code": "T-2026-10-0001", "evidence_text": "<b>" + "а&" * 900}
+    cap = tr.review_caption(long, "Алишер", "✅ Қабул қилинди")
+    check_true("a file's review caption fits 1024 and ends on whole entities",
+               len(cap) <= 1024 and cap.endswith("…") and not cap.rstrip("…").endswith(("&", "&amp", "&a")))
+    check("a short proof is kept whole", tr.review_caption({"code": "T", "evidence_text": "тайёр"}, "A").endswith("тайёр"), True)
+
+    calls: list = []
+
+    class FailingBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def _call(self, method, payload, **kwargs):
+            calls.append(method)
+            raise ops_manager.TelegramError("can't parse entities")
+
+        async def send_message(self, text, chat_id=None, reply_markup=None):
+            calls.append("sendMessage")
+            raise ops_manager.TelegramError("chat not found")
+
+        async def _edit_message(self, **kwargs):
+            return None
+
+    task = {"id": "t1", "code": "T-1", "task_summary": "x", "director_telegram_user_id": 9, "awaiting": "evidence",
+            "status": "started", "telegram_message_id": 5}
+    reopened: list = []
+    replies: list = []
+
+    async def submit(task_id, by, text, msg_id):
+        return {**task, "status": "review", "evidence_text": text}
+
+    async def reopen(task_id):
+        reopened.append(task_id)
+        return {**task, "status": "started", "awaiting": "evidence"}
+
+    async def fake_reply(chat, run_id, text, reply_markup=None):
+        replies.append(text)
+        return [1]
+
+    async def nothing(*a, **k):
+        return None
+
+    saved = [(store, "submit_task", store.submit_task), (store, "reopen_submission", store.reopen_submission),
+             (store, "task_with_employee", store.task_with_employee), (store, "set_task_review_message", store.set_task_review_message),
+             (ops_manager, "TelegramBot", ops_manager.TelegramBot), (ops_manager, "_reply", ops_manager._reply)]
+    store.submit_task, store.reopen_submission, store.task_with_employee = submit, reopen, nothing
+    store.set_task_review_message, ops_manager.TelegramBot, ops_manager._reply = nothing, FailingBot, fake_reply
+    try:
+        out = asyncio.run(ops_manager._consume_task_input({"telegram_user_id": 501, "full_name": "Али"}, task,
+                                                          {"message_id": 7, "photo": [{}], "caption": "тайёр"}, uuid.uuid4()))
+        check_true("the review card can't be sent: tried as a file, then as text, then the task goes back for proof",
+                   out == "task_review_failed" and calls == ["copyMessage", "sendMessage"] and reopened == ["t1"]
+                   and "қайта юборинг" in replies[-1])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    store_src = load_source("integrations/org_bot/store.py")
+    check_true("reopening: back to 'send the proof', never stuck in review",
+               "awaiting = 'evidence', awaiting_since = now()" in store_src and "WHERE id = %s AND status = 'review'" in store_src)
+
+    # 2: the proof window is short, and a Reply to another message is not proof
+    consumed: list = []
+
+    async def awaiting(tg_id, minutes=30):
+        consumed.append(("asked", minutes))
+        return {"id": "t1", "awaiting": "evidence", "telegram_message_id": 5}
+
+    async def consume(employee, task_, message, run_id):
+        consumed.append("consumed")
+        return "task_submitted"
+
+    saved = [(store, "task_awaiting_input", store.task_awaiting_input), (ops_manager, "_consume_task_input", ops_manager._consume_task_input)]
+    store.task_awaiting_input, ops_manager._consume_task_input = awaiting, consume
+    try:
+        asyncio.run(ops_manager._handle_employee_message({"telegram_user_id": 501}, {"message_id": 8, "text": "тайёр"}, uuid.uuid4()))
+        check("right after ✅ the next message is the proof, within 30 minutes", consumed, [("asked", 30), "consumed"])
+        consumed.clear()
+        try:
+            asyncio.run(ops_manager._handle_employee_message(
+                {"telegram_user_id": 501}, {"message_id": 9, "text": "ҳисобот", "reply_to_message": {"message_id": 77}}, uuid.uuid4()))
+        except Exception:  # noqa: BLE001 — the report flow beyond this point needs the database; only the routing matters
+            pass
+        check("a Reply to another message (the report ask) is not taken as proof", "consumed" in consumed, False)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 3: the early answer waits long enough, and never takes a cheer reply's pop-up
+    check_true("early answer after 1 s; cheer buttons never answered early",
+               tg.ACK_AFTER >= 1.0 and "cheer:" in tg.NO_EARLY_ACK and "data=str(" in load_source("integrations/api/app.py"))
+
+    # 4 / 10: the Garmin role's data waits for the Director; one notice on a role change
+    admin_src = load_source("integrations/org_bot/admin.py")
+    check_true("a role change clears role-given access and sends the Director one notice",
+               "scoped = after[\"role\"] in data_access.ROLE_SCOPES" in admin_src and admin_src.count("_tell_director_data_access(after") == 1)
+    check_true("only the Director confirms; the database refuses other roles",
+               "role = ANY(%s) AND NOT (%s = ANY(data_access))" in store_src and "_handle_role_access_decision" in load_source(
+                   "integrations/org_bot/ops_manager.py"))
+
+    # 5: Garmin's SAP — the Garmin warehouses only
+    rows_by_tool = {
+        "sales_lines": [{"ObjType": "13", "DocEntry": 1, "WhsCode": "G.A._01"}, {"ObjType": "13", "DocEntry": 2, "WhsCode": "PR_01"}],
+        "sales": [{"ObjType": "13", "DocEntry": 1, "CardName": "Garmin мижоз", "DocDate": "2026-10-13"},
+                  {"ObjType": "13", "DocEntry": 2, "CardName": "Primus меҳмонхона", "DocDate": "2026-10-13"}],
+    }
+
+    async def read(query, params=None, timeout="10s"):
+        tool = (params or {}).get("k") if isinstance(params, dict) else "sales_lines"
+        from datetime import datetime, timezone
+        return [{"raw": r, "captured_at": datetime(2026, 10, 14, 3, 0, tzinfo=timezone.utc)} for r in rows_by_tool.get(tool, [])]
+
+    async def fresh():
+        return "SAP fresh", False
+
+    saved = [(analyst, "fetch_read_only", analyst.fetch_read_only), (ops_manager, "sap_freshness", ops_manager.sap_freshness)]
+    analyst.fetch_read_only, ops_manager.sap_freshness = read, fresh
+    try:
+        out = asyncio.run(analyst.garmin_sap({"kind": "sales"}))
+        check_true("Garmin's SAP: only invoices with a line in a Garmin warehouse — Primus customers never shown",
+                   "Garmin мижоз" in out and "Primus" not in out)
+        check("other kinds (customers' debts, payments) aren't offered", "Unknown kind" in asyncio.run(analyst.garmin_sap({"kind": "ar_open"})), True)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 7 / 8: returned tasks come back to the tracker; finished-with-proof counts in KPI
+    check_true("a returned task's reminder and overdue notice may go out again",
+               "reminded_at = NULL, overdue_notified_at = NULL" in store_src)
+    check_true("KPI counts work finished with proof (in review) like the on-time index", store_src.count("status IN ('done', 'review')") >= 2)
+
+    # 9 / 12: a complaint during the emergency stop is still a ticket; the client's language is kept
+    fb_src = load_source("integrations/org_bot/feedback.py")
+    check_true("frozen: the ticket is opened, and its first hourly check sends the whole card",
+               fb_src.index("open_complaint_ticket") < fb_src.index("if settings.bots_frozen:")
+               and "if row.get(\"cards\"):" in fb_src)
+    check_true("the client's language is stored and shown on every card, also once resolved",
+               "lang=sub.lang" in fb_src and "🌐 Мижоз тили: русча" in feedback.ticket_text(
+                   {"place": "garmin", "branch": "abay", "message": "x", "ticket_status": "resolved", "lang": "ru",
+                    "resolved_by": "A", "reason_code": "other"}))
+
+    # 11 / 13: both SAP warnings in the Garmin brief; the two briefs share their template pieces
+    gb_src = load_source("agents/garmin-brief/agent.py")
+    check_true("the Garmin brief keeps both SAP warnings, and builds rows with the shared pieces",
+               '" · ".join(notes)' in gb_src and "brief_parts.figure_row" in gb_src
+               and "brief_parts" in load_source("agents/ceo-daily-brief/agent.py"))
+    # 14: the old Start/Done keyboard is gone
+    check_true("the Garmin brief's figures go only to a manager the Director confirmed",
+               "if data_access.granted(p)" in gb_src)
+    check_true("one task keyboard (task_register.keyboard), the old one removed",
+               "def _task_keyboard" not in load_source("integrations/org_bot/ops_manager.py"))
+    _ = (admin, data_access)
+
+
 def test_garmin_manager() -> None:
     """2026-10-14, the owner: the Garmin manager — every Garmin complaint, SAP + Billz + Garmin data, a Garmin brief."""
     print("Garmin manager")
@@ -3494,16 +3664,22 @@ def test_garmin_manager() -> None:
     check("Garmin complaints go to it", routes.ROUTES["complaint:garmin"], ("garmin_manager",))
     gm = {"id": "g1", "telegram_user_id": 451, "status": "active", "role": "garmin_manager", "full_name": "Синов Менежер",
           "display_name": "G", "data_access": []}
-    check("its data comes with the role: SAP, Billz, Garmin — never 1C", data_access.granted(gm), {"sap", "billz", "garmin"})
-    check("taken away with the role", data_access.granted({**gm, "role": "garmin_sotuv"}), set())
+    check("the role alone opens nothing — the Director must confirm it (review 2026-10-14)", data_access.granted(gm), set())
+    ok_gm = {**gm, "data_access": [data_access.CONFIRMED]}
+    check("confirmed: Garmin's SAP, Billz, Garmin records — never 1C or all of SAP", data_access.granted(ok_gm),
+          {"sap_garmin", "billz", "garmin"})
+    check("taken away with the role", data_access.granted({**ok_gm, "role": "garmin_sotuv"}), set())
     check("no admin toggles for it (the role decides)", data_access.card_buttons(gm), [])
     text, keyboard = data_access.director_notice(gm, "admin1")
-    check_true("the Boss is told; closing = changing the role, so no ⛔", "ролига кўра" in text and keyboard is None)
-    tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(gm))]
-    check("its tools: SAP, Billz and Garmin's own records — no 1C, attendance or the Boss's records",
-          tools, ["data_sources", "sap_receivables", "sap_records", "billz_sales", "garmin_data"])
-    prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(gm))
-    check_true("its prompt keeps it on Garmin (SAP holds the other businesses too)", "THIS PERSON RUNS GARMIN" in prompt)
+    check_true("the Boss is asked: ✅ confirm / ❌ reject", "тасдиқлашингиз керак" in text
+               and [b["callback_data"] for b in keyboard["inline_keyboard"][0]] == ["dacok:g1", "dacno:g1"])
+    check_true("confirmed: a ⛔ closes it like any other access",
+               "dax:g1" in str(data_access.director_notice(ok_gm, "admin1")[1]))
+    tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(ok_gm))]
+    check("its tools: Garmin's SAP only, Billz, Garmin records — no general SAP, 1C, attendance or the Boss's records",
+          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data"])
+    prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(ok_gm))
+    check_true("its prompt keeps it on Garmin", "THIS PERSON RUNS GARMIN" in prompt and "garmin_sap" in prompt)
     check_true("the work AI gives it the public Garmin catalog too", "Garmin catalog" in ai_chat.system_prompt(gm, "ctx"))
 
     async def recent(days=60):
@@ -3569,7 +3745,7 @@ def test_garmin_manager() -> None:
 
     async def due(max_asks=3):
         return [{"id": 7, "code": "T-2026-10-0035", "place": "garmin", "branch": "abay", "routed_to": "complaint:garmin",
-                 "ticket_status": "open"}]
+                 "ticket_status": "open", "message": "соат", "cards": [{"chat": 9, "message": 1}]}]
 
     async def by_role(role):
         return [{"telegram_user_id": 451}] if role == "garmin_manager" else []
@@ -6642,6 +6818,7 @@ def main() -> int:
         test_tech_report_errors_fixed,
         test_review_pages,
         test_task_register,
+        test_review_fixes,
         test_garmin_manager,
         test_complaint_tickets,
         test_cheques,

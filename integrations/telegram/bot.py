@@ -75,17 +75,21 @@ async def close_shared_clients() -> None:
 # Button presses already answered (answerCallbackQuery may be sent once).
 _ACKED: dict[str, None] = {}
 _ACK_TASKS: set[asyncio.Task] = set()
-ACK_AFTER = 0.25  # seconds: a handler slower than this gets its spinner stopped for it
+# Seconds: a handler slower than this gets its spinner stopped for it. Long enough that a
+# normal handler answers first with its own text ("Рухсат йўқ", "Аллақачон ҳал қилинган").
+ACK_AFTER = 1.0
+# Buttons whose answer IS the content (the team-cheer reply is only the pop-up): never answered early.
+NO_EARLY_ACK = ("cheer:",)
 
 
-def ack_soon(bot_token: str, callback_query_id: str, delay: float = ACK_AFTER) -> None:
+def ack_soon(bot_token: str, callback_query_id: str, delay: float = ACK_AFTER, data: str = "") -> None:
     """Stop a button's spinner within ``delay`` seconds even if its handler is still working (2026-10-13).
 
     A handler that answers first keeps its own text ("OK", "Аллақачон ҳал
     қилинган"); one that is slower gets a silent answer here, and its own
     later answer is skipped (``_answer_callback``).
     """
-    if not callback_query_id or not bot_token:
+    if not callback_query_id or not bot_token or data.startswith(NO_EARLY_ACK):
         return
 
     async def later() -> None:

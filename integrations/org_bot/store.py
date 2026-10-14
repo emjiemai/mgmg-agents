@@ -753,16 +753,17 @@ async def cancel_task_input(task_id: str, telegram_user_id: int) -> dict[str, An
     )
 
 
-async def task_awaiting_input(telegram_user_id: int) -> dict[str, Any] | None:
-    """The task whose proof / blocker this person's next message is — the latest, within a day."""
+async def task_awaiting_input(telegram_user_id: int, minutes: int = 30) -> dict[str, Any] | None:
+    """The task whose proof / blocker this person's next message is — the latest, within ``minutes`` of the tap."""
     return await fetch_one(
         """
         SELECT t.* FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE e.telegram_user_id = %s AND t.awaiting IS NOT NULL AND t.awaiting_since > now() - interval '24 hours'
+        WHERE e.telegram_user_id = %s AND t.awaiting IS NOT NULL
+          AND t.awaiting_since > now() - make_interval(mins => %s)
           AND t.status IN ('sent', 'started', 'blocked')
         ORDER BY t.awaiting_since DESC LIMIT 1
         """,
-        (telegram_user_id,),
+        (telegram_user_id, minutes),
     )
 
 
@@ -818,12 +819,26 @@ async def verify_task(task_id: str, verifier_telegram_user_id: int, accept: bool
         query = """UPDATE tasks SET status = 'done', verified_at = now()
                    WHERE id = %s AND director_telegram_user_id = %s AND status = 'review' RETURNING *"""
     else:
-        query = """UPDATE tasks SET status = 'started', completed_at = NULL, completed_by = NULL
+        # Back with the employee: its reminder and overdue notice may go out again.
+        query = """UPDATE tasks SET status = 'started', completed_at = NULL, completed_by = NULL,
+                                    reminded_at = NULL, overdue_notified_at = NULL
                    WHERE id = %s AND director_telegram_user_id = %s AND status = 'review' RETURNING *"""
     row = await fetch_one(query, (task_id, verifier_telegram_user_id))
     if row is not None:
         await log_task_event(task_id, "closed" if accept else "returned", by)
     return row
+
+
+async def reopen_submission(task_id: str) -> dict[str, Any] | None:
+    """The proof couldn't reach the assigner: back to "send the proof again", not stuck in review."""
+    return await fetch_one(
+        """
+        UPDATE tasks SET status = CASE WHEN started_at IS NULL THEN 'sent' ELSE 'started' END,
+                         completed_at = NULL, completed_by = NULL, awaiting = 'evidence', awaiting_since = now()
+        WHERE id = %s AND status = 'review' RETURNING *
+        """,
+        (task_id,),
+    )
 
 
 async def set_task_review_message(task_id: str, message_id: int | None) -> None:
@@ -1332,7 +1347,7 @@ async def count_tasks_completed(employee_id: str, day: date) -> int:
     row = await fetch_one(
         """
         SELECT count(*) AS done FROM tasks
-        WHERE assigned_employee_id = %s AND status = 'done'
+        WHERE assigned_employee_id = %s AND status IN ('done', 'review')
           AND (completed_at AT TIME ZONE 'Asia/Tashkent')::date = %s
         """,
         (employee_id, day),
@@ -1579,16 +1594,17 @@ async def permission_registry(days: int = 60) -> list[dict[str, Any]]:
 
 
 async def save_client_feedback(
-    *, place: str, branch: str | None = None, kind: str, message: str, contact_name: str | None, phone: str | None
+    *, place: str, branch: str | None = None, kind: str, message: str, contact_name: str | None, phone: str | None,
+    lang: str | None = None,
 ) -> dict[str, Any] | None:
-    """Store one client complaint from the QR code."""
+    """Store one client complaint from the QR code (with the page's language, shown on every card)."""
     return await fetch_one(
         """
-        INSERT INTO client_feedback (place, branch, kind, message, contact_name, phone)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO client_feedback (place, branch, kind, message, contact_name, phone, lang)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
-        (place, branch, kind, message, contact_name, phone),
+        (place, branch, kind, message, contact_name, phone, lang),
     )
 
 
@@ -1970,7 +1986,7 @@ async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any
     )
     done = await fetch_all(
         """SELECT assigned_employee_id AS employee_id, count(*) AS n FROM tasks
-           WHERE status = 'done' AND assigned_employee_id IS NOT NULL
+           WHERE status IN ('done', 'review') AND assigned_employee_id IS NOT NULL
              AND (completed_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s
            GROUP BY assigned_employee_id""",
         (start, end),
@@ -2233,6 +2249,23 @@ async def clear_data_access(employee_id: str, changed_by: str) -> dict[str, Any]
     if after is not None:
         await log_employee_change(employee_id, "data_access", ",".join(sorted((before or {}).get("data_access") or [])),
                                   "", changed_by)
+    return after
+
+
+async def confirm_role_access(employee_id: str, changed_by: str) -> dict[str, Any] | None:
+    """The Director's ✅ for data that comes with a role (the Garmin manager); once. None if not that role."""
+    from integrations.org_bot.data_access import CONFIRMED, ROLE_SCOPES
+
+    after = await fetch_one(
+        """
+        UPDATE employees SET data_access = ARRAY[%s]::text[]
+        WHERE id = %s AND status = 'active' AND role = ANY(%s) AND NOT (%s = ANY(data_access))
+        RETURNING *
+        """,
+        (CONFIRMED, employee_id, list(ROLE_SCOPES), CONFIRMED),
+    )
+    if after is not None:
+        await log_employee_change(employee_id, "data_access", "", CONFIRMED, changed_by)
     return after
 
 

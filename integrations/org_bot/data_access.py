@@ -27,11 +27,14 @@ from integrations.telegram.bot import escape
 SYSTEMS: dict[str, str] = {"sap": "SAP", "1c": "1C", "billz": "Billz"}
 ROLES = ("buxgalteriya", "moliya")
 # Access that comes with the role itself, not the admin's toggles (2026-10-14,
-# the owner): the Garmin manager sees SAP, Billz and Garmin's own records
-# (Garmin bot leads, Garmin complaints, the catalog). Taking the role away is
-# how it's closed; the Director is told when someone gets the role.
-ROLE_SCOPES: dict[str, frozenset[str]] = {"garmin_manager": frozenset({"sap", "billz", "garmin"})}
-NAMES = {**SYSTEMS, "garmin": "Garmin (лидлар, шикоятлар, каталог)"}
+# the owner): the Garmin manager sees Garmin's SAP (the Garmin warehouses
+# only — never the other businesses' customers or debts), Billz and Garmin's
+# own records (bot leads, complaints, the catalog). It opens only after the
+# Director confirms it (``CONFIRMED`` in ``employees.data_access``) — the admin
+# (IT) approving the role is not enough; any role change clears it.
+ROLE_SCOPES: dict[str, frozenset[str]] = {"garmin_manager": frozenset({"sap_garmin", "billz", "garmin"})}
+CONFIRMED = "confirmed"
+NAMES = {**SYSTEMS, "sap_garmin": "SAP (Garmin омборлари)", "garmin": "Garmin (лидлар, шикоятлар, каталог)"}
 
 
 def granted(employee: dict[str, Any] | None) -> set[str]:
@@ -39,10 +42,15 @@ def granted(employee: dict[str, Any] | None) -> set[str]:
     if not employee or employee.get("status", "active") != "active":
         return set()
     if employee.get("role") in ROLE_SCOPES:
-        return set(ROLE_SCOPES[employee["role"]])
+        return set(ROLE_SCOPES[employee["role"]]) if confirmed(employee) else set()
     if employee.get("role") not in ROLES:
         return set()
     return {s for s in (employee.get("data_access") or []) if s in SYSTEMS}
+
+
+def confirmed(employee: dict[str, Any]) -> bool:
+    """The Director confirmed this person's role-given access."""
+    return CONFIRMED in (employee.get("data_access") or [])
 
 
 def label(systems: set[str] | list[str]) -> str:
@@ -53,7 +61,8 @@ def label(systems: set[str] | list[str]) -> str:
 def card_line(employee: dict[str, Any]) -> str:
     """The /xodimlar card's line."""
     if employee.get("role") in ROLE_SCOPES:
-        return f"Маълумотга кириш (ролига кўра): {label(ROLE_SCOPES[employee['role']])}"
+        state = "Директор тасдиқлаган" if confirmed(employee) else "Директор тасдиқлашини кутмоқда — ҳозир ёпиқ"
+        return f"Маълумотга кириш (ролига кўра): {label(ROLE_SCOPES[employee['role']])} — {state}"
     if employee.get("role") not in ROLES:
         return "Маълумотга кириш (SAP, 1C, Billz): фақат Бухгалтерия ва Молия учун"
     have = granted(employee)
@@ -79,11 +88,13 @@ def person(employee: dict[str, Any]) -> str:
 def director_notice(employee: dict[str, Any], by: str) -> tuple[str, dict[str, Any] | None]:
     """What the Director sees after every change, with a button that closes it all."""
     have = granted(employee)
-    if have and employee.get("role") in ROLE_SCOPES:
-        # Comes with the role: closed by changing the role (Admin Bot), not by ⛔.
-        return (f"🔐 <b>Маълумотга кириш</b>\n{escape(person(employee))} — ролига кўра бот орқали "
-                f"<b>{escape(label(have))}</b> маълумотларини кўради.\nРолни берган: админ ({escape(by)}). "
-                "Ёпиш учун админ ролни ўзгартиради."), None
+    if employee.get("status", "active") == "active" and employee.get("role") in ROLE_SCOPES and not have:
+        # The role was given: nothing opens until the Director confirms it.
+        scope = label(ROLE_SCOPES[employee["role"]])
+        return (f"🔐 <b>Маълумотга кириш — тасдиқлашингиз керак</b>\n{escape(person(employee))} ролини олди "
+                f"(админ: {escape(by)}). Тасдиқласангиз, бот орқали <b>{escape(scope)}</b> маълумотларини кўради."), \
+            {"inline_keyboard": [[{"text": "✅ Тасдиқлаш", "callback_data": f"dacok:{employee['id']}"},
+                                  {"text": "❌ Рад этиш", "callback_data": f"dacno:{employee['id']}"}]]}
     if have:
         text = (f"🔐 <b>Маълумотга кириш</b>\n{escape(person(employee))} энди бот орқали "
                 f"<b>{escape(label(have))}</b> маълумотларини сўраши мумкин.\nБерган: админ ({escape(by)}).")

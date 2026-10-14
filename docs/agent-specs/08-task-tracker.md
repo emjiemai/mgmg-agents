@@ -19,8 +19,14 @@ too) and a **state**: `sent` Яратилди → `started` Қабул қили�
 ✅ Бажардим**.
 
 - ✅ doesn't close anything: the bot asks for **proof** — a photo, a file or a
-  short text; the employee's next message is taken as it (`tasks.awaiting`,
-  24 h; a /command is never taken). Without proof the task stays open.
+  short text; the employee's next message within **30 minutes** is taken as it
+  (`tasks.awaiting`; never a /command, never a Reply to another message such as
+  the 16:00 report ask). Without proof the task stays open.
+- If the proof card can't reach the assigner (as a file, then as text), the
+  task goes back to "send the proof" — never stuck in review with no buttons.
+  A file's caption is fitted to 1024 characters without cutting a tag.
+- Returned (↩️): its reminder and overdue notice can go out again. KPI counts
+  a task finished when its proof went in (in review), like the on-time index.
 - The proof goes to **the one who assigned it** (a file is copied as it is)
   with **✅ Қабул** (→ `done`) and **↩️ Қайтариш** (→ back to `started`, the
   employee is told to redo it with new proof). Only that person can press them.

@@ -52,9 +52,10 @@ goes to the work AI.
 
 ## By role (2026-10-14)
 
-`data_access.ROLE_SCOPES`: the **Garmin manager** gets SAP, Billz and
-Garmin's own records with the role itself — no toggles, no ⛔; the Director
-is told when the role is given or taken (`23-garmin-manager.md`).
+`data_access.ROLE_SCOPES`: the **Garmin manager** gets Garmin's SAP (its
+warehouses only), Billz and Garmin's own records with the role — no
+toggles — but only after the Director's ✅ (`confirmed`); ⛔ closes it, any
+role change clears it (`23-garmin-manager.md`).
 
 ## Language
 

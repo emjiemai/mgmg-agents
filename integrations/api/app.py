@@ -163,7 +163,8 @@ async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
 
     callback = update.get("callback_query")
     if callback:
-        ack_soon(settings.admin_bot_telegram_bot_token.get_secret_value(), callback.get("id", ""))
+        ack_soon(settings.admin_bot_telegram_bot_token.get_secret_value(), callback.get("id", ""),
+                 data=str(callback.get("data") or ""))
         outcome = await org_admin.handle_admin_callback(callback, run_id)
         return {"status": outcome}
 
@@ -206,7 +207,9 @@ async def ops_manager_bot_webhook(secret: str, request: Request, background: Bac
 
     update = await request.json()
     if update.get("callback_query"):
-        ack_soon(settings.ops_manager_bot_telegram_bot_token.get_secret_value(), update["callback_query"].get("id", ""))
+        query = update["callback_query"]
+        ack_soon(settings.ops_manager_bot_telegram_bot_token.get_secret_value(), query.get("id", ""),
+                 data=str(query.get("data") or ""))
     outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
     return {"status": outcome}
 

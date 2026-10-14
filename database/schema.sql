@@ -833,6 +833,8 @@ ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS asks INTEGER NOT NULL DEFAU
 ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
 ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS resolved_by TEXT;
 ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS reason_code TEXT;
+-- The page's language the client wrote in, so every card (also once resolved) shows it.
+ALTER TABLE client_feedback ADD COLUMN IF NOT EXISTS lang TEXT;
 CREATE INDEX IF NOT EXISTS idx_client_feedback_open ON client_feedback (created_at) WHERE ticket_status = 'open';
 
 -- ---------------------------------------------------------------------------

@@ -269,6 +269,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_clarification(rest, callback, run_id, background)
     if prefix == "dax":
         return await _handle_data_access_close(rest, callback, run_id)
+    if prefix in ("dacok", "dacno"):
+        return await _handle_role_access_decision(prefix == "dacok", rest, callback, run_id)
     if prefix == "fp":
         return await _handle_file_purpose(rest, callback, run_id)
     if prefix == "chq":
@@ -318,15 +320,6 @@ def _task_card_text(task_summary: str, raw_message: str | None = None, due_date:
     if deadline:
         text += f"\n\n{deadline}"
     return text
-
-
-def _task_keyboard(task_id: str, started: bool = False) -> dict[str, Any]:
-    """The Start+Done (or just Done, once started) inline keyboard."""
-    buttons = []
-    if not started:
-        buttons.append({"text": "▶️ Бошладим", "callback_data": f"taskstart:{task_id}"})
-    buttons.append({"text": "✅ Бажардим", "callback_data": f"taskdone:{task_id}"})
-    return {"inline_keyboard": [buttons]}
 
 
 async def _edit_task_card(
@@ -486,14 +479,25 @@ async def _actor_display_name(clicker: dict[str, Any]) -> str:
     return name or "Номаълум ходим"
 
 
-async def _refresh_task_card(task: dict[str, Any], run_id: uuid.UUID) -> None:
-    """Redraw the employee's task card: text, code, where it is, the buttons for that state."""
-    full = await store.task_with_employee(str(task["id"]))
+async def _refresh_task_card(task: dict[str, Any], run_id: uuid.UUID, full: dict[str, Any] | None = None) -> None:
+    """Redraw the employee's task card: text, code, where it is, the buttons for that state.
+
+    ``full``: the task with the employee's ids, when the caller has it already (one query less).
+    """
+    full = full or await store.task_with_employee(str(task["id"]))
     if not full or not full.get("telegram_message_id"):
         return
-    text = (_task_card_text(full["task_summary"], None if full.get("has_media") else full.get("raw_message"),
-                            full.get("due_date"), task_register.code_of(full))
-            + "\n\n" + task_register.status_line(full))
+    status = task_register.status_line(full)
+    if full.get("has_media"):
+        # A file's caption: at most 1024 characters — the summary shortened, never cut inside a tag.
+        code = task_register.code_of(full)
+        head = f"📋 <b>Янги топшириқ{' · ' + escape(code) if code else ''}</b>\n\n"
+        deadline = task_tracker.deadline_line(full.get("due_date"), today_local())
+        tail = (f"\n\n{deadline}" if deadline else "") + f"\n\n{status}"
+        text = task_register.fit(head, task_register.plain(full["task_summary"]), tail)
+    else:
+        text = (_task_card_text(full["task_summary"], full.get("raw_message"), full.get("due_date"),
+                                task_register.code_of(full)) + "\n\n" + status)
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
@@ -595,30 +599,42 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
     submitted = await store.submit_task(str(task["id"]), by, text, message.get("message_id") if has_file else None)
     if submitted is None:
         return "task_input_stale"
-    await _refresh_task_card(submitted, run_id)
-    await _reply(telegram_user_id, run_id, f"Раҳмат, {escape(task_register.code_of(submitted))} текширувга юборилди.")
     review = task_register.review_text(submitted, who)
     keyboard = task_register.review_keyboard(str(submitted["id"]))
+    assigner = str(submitted["director_telegram_user_id"])
     review_id = None
+    delivered = False
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        try:
-            if has_file:
+        if has_file:
+            try:
                 result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
                     "copyMessage",
-                    {"chat_id": str(submitted["director_telegram_user_id"]), "from_chat_id": str(telegram_user_id),
-                     "message_id": message.get("message_id"), "caption": review[:1024], "parse_mode": "HTML",
+                    {"chat_id": assigner, "from_chat_id": str(telegram_user_id), "message_id": message.get("message_id"),
+                     "caption": task_register.review_caption(submitted, who), "parse_mode": "HTML",
                      "reply_markup": keyboard},
-                    mode="notify", target_ref=str(submitted["director_telegram_user_id"]),
+                    mode="notify", target_ref=assigner,
                 )
-                review_id = (result or {}).get("message_id")
-            else:
-                ids = await bot.send_message(review, chat_id=str(submitted["director_telegram_user_id"]),
-                                             reply_markup=keyboard)
-                review_id = ids[0] if ids else None
-        except TelegramError as exc:
-            log.warning("Could not send {} for review: {}", task_register.code_of(submitted), exc)
+                review_id, delivered = (result or {}).get("message_id"), True
+            except TelegramError as exc:
+                log.warning("Could not copy {}'s proof for review, sending the text: {}",
+                            task_register.code_of(submitted), exc)
+        if not delivered:
+            try:
+                ids = await bot.send_message(review, chat_id=assigner, reply_markup=keyboard)
+                review_id, delivered = (ids[0] if ids else None), True
+            except TelegramError as exc:
+                log.error("Could not send {} for review: {}", task_register.code_of(submitted), exc)
+    if not delivered:
+        # Nobody has the ✅ / ↩️ buttons: don't leave it stuck in review — ask for the proof again.
+        reopened = await store.reopen_submission(str(submitted["id"]))
+        if reopened is not None:
+            await _refresh_task_card(reopened, run_id)
+        await _reply(telegram_user_id, run_id, "Далилни текширувга юбориб бўлмади — бироздан кейин қайта юборинг.")
+        return "task_review_failed"
+    await _refresh_task_card(submitted, run_id)
+    await _reply(telegram_user_id, run_id, f"Раҳмат, {escape(task_register.code_of(submitted))} текширувга юборилди.")
     await store.set_task_review_message(str(submitted["id"]), review_id)
     return "task_submitted"
 
@@ -635,19 +651,20 @@ async def _handle_task_verify(accept: bool, task_id: str, callback: dict[str, An
         return "verify_closed"
     await _answer(query_id, "Қабул қилинди" if accept else "Қайтарилди")
     code = escape(task_register.code_of(task))
+    full = await store.task_with_employee(task_id)
+    who = (full or {}).get("display_name") or ""
     message = callback.get("message") or {}
     if message.get("message_id") and (message.get("chat") or {}).get("id"):
         status = "✅ Қабул қилинди — ёпилди" if accept else "↩️ Қайтарилди — ходим қайта бажаради"
-        base = task_register.review_text(task, (await store.task_with_employee(task_id) or {}).get("display_name") or "")
         async with TelegramBot(
             agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
         ) as bot:
             is_media = message.get("caption") is not None and message.get("text") is None
-            body = f"{base}\n\n{status}"
-            await _edit_task_card(bot, str(message["chat"]["id"]), message["message_id"], is_media,
-                                  (status + "\n\n" + base)[:1024] if is_media else body, {"inline_keyboard": []})
-    await _refresh_task_card(task, run_id)
-    full = await store.task_with_employee(task_id)
+            text = (task_register.review_caption(task, who, status) if is_media
+                    else f"{task_register.review_text(task, who)}\n\n{status}")
+            await _edit_task_card(bot, str(message["chat"]["id"]), message["message_id"], is_media, text,
+                                  {"inline_keyboard": []})
+    await _refresh_task_card(task, run_id, full)
     if full:
         note = (f"✅ {code} қабул қилинди, раҳмат." if accept
                 else f"↩️ {code} қайтарилди: қайта бажариб, ✅ Бажардим орқали янги далил юборинг.")
@@ -961,6 +978,50 @@ async def _handle_data_access_close(employee_id: str, callback: dict[str, Any], 
     await log_action(agent=AGENT, action="data_access_closed", target_system="postgres", status="success",
                      run_id=run_id, target_ref=employee_id, mode="write", payload={"by": "director"})
     return "data_access_closed"
+
+
+async def _handle_role_access_decision(approve: bool, employee_id: str, callback: dict[str, Any],
+                                       run_id: uuid.UUID) -> str:
+    """The Director's ✅ / ❌ for data that comes with a role (the Garmin manager, data_access.py)."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    clicker = await store.get_employee_by_telegram_id(clicker_id) if clicker_id else None
+    if clicker is None or clicker.get("role") != DIRECTOR_ROLE or clicker.get("status") != "active":
+        await _answer(query_id, "Фақат Директор")
+        return "unrecognized"
+    message = callback.get("message") or {}
+
+    async def edit(text: str, keyboard: dict[str, Any]) -> None:
+        if message.get("message_id") and (message.get("chat") or {}).get("id"):
+            async with TelegramBot(
+                agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+            ) as bot:
+                await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
+                    chat_id=str(message["chat"]["id"]), message_id=message["message_id"], text=text, reply_markup=keyboard)
+
+    if not approve:
+        employee = await store.get_employee(employee_id)
+        await _answer(query_id, "Рад этилди")
+        who = escape(data_access.person(employee)) if employee else "ходим"
+        await edit(f"🔐 {who}: маълумотга кириш <b>рад этилди</b> — ёпиқ қолади.", {"inline_keyboard": []})
+        await admin.tell_admin(f"🔐 Директор {who} учун ролга кўра маълумотга киришни рад этди — ролни ўзгартиринг.",
+                               run_id)
+        await log_action(agent=AGENT, action="role_access_rejected", target_system="postgres", status="success",
+                         run_id=run_id, target_ref=employee_id, mode="write")
+        return "role_access_rejected"
+    confirmed = await store.confirm_role_access(employee_id, f"director:{clicker_id}")
+    if confirmed is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "role_access_closed"
+    await _answer(query_id, "Тасдиқланди")
+    who = escape(data_access.person(confirmed))
+    await edit(f"🔐 {who}: <b>{escape(data_access.label(data_access.granted(confirmed)))}</b> — тасдиқланди.",
+               {"inline_keyboard": [[{"text": "⛔ Ёпиш", "callback_data": f"dax:{employee_id}"}]]})
+    await _reply(confirmed["telegram_user_id"], run_id, data_access.employee_notice(confirmed))
+    await admin.tell_admin(f"🔐 Директор {who} учун маълумотга киришни тасдиқлади.", run_id)
+    await log_action(agent=AGENT, action="role_access_confirmed", target_system="postgres", status="success",
+                     run_id=run_id, target_ref=employee_id, mode="write")
+    return "role_access_confirmed"
 
 
 async def _request_name_change(employee: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1461,8 +1522,10 @@ async def _handle_employee_message(
     # proof or blocker (task_register.py) — a file included.
     first_text = (message.get("text") or message.get("caption") or "").strip()
     if not first_text.startswith("/"):
-        awaiting = await store.task_awaiting_input(telegram_user_id)
-        if awaiting is not None:
+        awaiting = await store.task_awaiting_input(telegram_user_id, task_register.AWAIT_MINUTES)
+        replied = (message.get("reply_to_message") or {}).get("message_id")
+        # A Reply to another message (the 16:00 report ask, a cheer) is that, not this task's proof.
+        if awaiting is not None and (not replied or replied == awaiting.get("telegram_message_id")):
             return await _consume_task_input(employee, awaiting, message, run_id)
     # A photo, video or file: ask what it's for — it goes to the Director as
     # it is, never to the AI (report_tools.py).

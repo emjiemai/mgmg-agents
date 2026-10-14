@@ -1061,14 +1061,16 @@ async def _handle_employee_action(
             await _answer(query_id, "Роль ўзгармади")
             return "role_unchanged"
         before, after = changed
-        # Data access belongs to Бухгалтерия / Молия: another role closes it (data_access.py).
-        if after["role"] not in data_access.ROLES and after.get("data_access"):
+        # Data access belongs to Бухгалтерия / Молия, and a role-given one (Garmin manager) to that
+        # role as the Director confirmed it: any change involving them clears it (data_access.py).
+        scoped = after["role"] in data_access.ROLE_SCOPES or before["role"] in data_access.ROLE_SCOPES
+        had = data_access.granted(before)
+        if (after["role"] not in data_access.ROLES or scoped) and after.get("data_access"):
             closed = await store.clear_data_access(employee_id, decided_by)
             if closed is not None:
                 after = closed
-                await _tell_director_data_access(closed, decided_by, run_id)
-        if after["role"] in data_access.ROLE_SCOPES or before["role"] in data_access.ROLE_SCOPES:
-            # Data that comes with the role opened or closed: the Director is told either way.
+        # One notice to the Director: the new role's confirmation request, or that access closed.
+        if after["role"] in data_access.ROLE_SCOPES or had:
             await _tell_director_data_access(after, decided_by, run_id)
         old_label = ROLE_LABELS.get(before["role"], before["role"])
         new_label = ROLE_LABELS.get(after["role"], after["role"])

@@ -27,6 +27,7 @@ Pure helpers here (tested offline); ``ops_manager`` runs the flow.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from integrations.telegram.bot import escape, sanitize_model_html
@@ -43,6 +44,29 @@ STATUS_LABELS = {
 STATUS_ICONS = {"sent": "🆕", "started": "▶️", "blocked": "⛔", "review": "🔎", "done": "✅", "cancelled": "✖️"}
 EVIDENCE_MAX = 1500
 BLOCKER_MAX = 500
+CAPTION_MAX = 1024  # Telegram's limit for a photo / file caption
+AWAIT_MINUTES = 30  # after ✅ / ⛔, only a message within this long is taken as the proof / reason
+
+
+def plain(html_text: str | None) -> str:
+    """AI-written card text without its tags, on one line — safe to cut and escape."""
+    return " ".join(re.sub(r"<[^>]+>", "", html_text or "").split())
+
+
+def fit(head: str, body_plain: str, tail: str = "", limit: int = CAPTION_MAX) -> str:
+    """``head`` + the escaped ``body_plain`` + ``tail``, the body shortened (never mid-tag) to fit ``limit``."""
+    room = limit - len(head) - len(tail)
+    body = escape(body_plain)
+    if len(body) > room:
+        low, high = 0, len(body_plain)  # the longest prefix whose escaped form + "…" fits
+        while low < high:
+            mid = (low + high + 1) // 2
+            if len(escape(body_plain[:mid])) + 1 <= room:
+                low = mid
+            else:
+                high = mid - 1
+        body = escape(body_plain[:low]) + "…" if low else ""
+    return head + body + tail
 
 
 def code_of(task: dict[str, Any]) -> str:
@@ -102,6 +126,13 @@ def review_text(task: dict[str, Any], who: str) -> str:
     """The card the one who assigned it gets: what, who, the proof — accept or return."""
     return (f"🔎 <b>{escape(code_of(task))} — текширувда</b>\n{sanitize_model_html(task['task_summary'])}\n"
             f"— {escape(who)}\n\n<b>Далил:</b> {escape(str(task.get('evidence_text') or ''))}")
+
+
+def review_caption(task: dict[str, Any], who: str, status: str = "") -> str:
+    """``review_text`` as a file's caption: within 1024 characters, the proof shortened, never cut mid-tag."""
+    head = (f"🔎 <b>{escape(code_of(task))} — текширувда</b>\n— {escape(who)}\n"
+            + (f"{status}\n" if status else "") + "\n<b>Далил:</b> ")
+    return fit(head, str(task.get("evidence_text") or ""))
 
 
 def blocked_text(task: dict[str, Any], who: str) -> str:

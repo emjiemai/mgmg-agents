@@ -71,6 +71,7 @@ from integrations.sap.models import ARAging, ARInvoice, doc_balance
 from integrations.telegram.bot import escape
 from integrations.billz import sales as billz_sales
 from integrations.onec import cash as onec_cash
+from integrations.reports import brief_parts
 from integrations.verifix import attendance
 
 AGENT = "ceo-daily-brief"
@@ -358,11 +359,8 @@ async def _fetch_push(action: str) -> dict[str, Any] | None:
 
 async def _fetch_gateway(tool: str) -> tuple[date | None, list[dict[str, Any]]]:
     """The latest pushed snapshot of one SAP gateway tool: (its day, raw rows)."""
-    rows = await fetch_all("SELECT snapshot_date, raw FROM v_sap_gateway_latest WHERE tool = %s", (tool,))
-    if not rows:
-        return None, []
-    raw = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"]) for r in rows]
-    return rows[0]["snapshot_date"], raw
+    day, _arrived, raw = await brief_parts.gateway_snapshot(tool)
+    return day, raw
 
 
 async def _fetch_payments_due(day: date) -> PaymentsDue:
@@ -597,10 +595,7 @@ def _render_attendance(data: BriefData) -> str | None:
 NBSP = " "
 
 
-def _split(value: str) -> tuple[str, str]:
-    """"4,57 млрд сўм" -> ("4,57", "млрд сўм"): the number large, its unit small."""
-    number, _, unit = value.partition(NBSP)
-    return number, unit.replace(NBSP, " ")
+_split = brief_parts.split_value
 
 
 def _delta(key: str, totals: dict[str, int], data: BriefData, comparable: bool) -> tuple[str, str] | None:
@@ -616,8 +611,7 @@ def _delta(key: str, totals: dict[str, int], data: BriefData, comparable: bool) 
 
 
 def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_word: str, data: BriefData) -> dict[str, Any]:
-    row: dict[str, Any] = {"label": label, "icon": icon, "tone": "plain", "detail": None, "number": "",
-                           "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
+    row = brief_parts.figure_row(label, icon)
     if figure is None:
         return {**row, "tone": "muted", "number": "маълумот йўқ"}
     if figure.status == "no_data":
@@ -641,10 +635,7 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
     return row
 
 
-def _people_block(title: str, icon: str, day: str | None, summary: str, tone: str,
-                  rows: list[dict[str, Any]], empty: str | None = None) -> dict[str, Any]:
-    return {"title": title, "icon": icon, "day": day, "summary": summary, "tone": tone,
-            "rows": rows[:MAX_LINES], "more": max(len(rows) - MAX_LINES, 0), "empty": empty}
+_people_block = brief_parts.people_block
 
 
 def view(data: BriefData) -> dict[str, Any]:

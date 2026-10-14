@@ -39,13 +39,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from integrations.billz import sales as billz_sales  # noqa: E402
 from integrations.billz import sap_check  # noqa: E402
 from integrations.common.config import settings  # noqa: E402
-from integrations.common.db import close_pool, fetch_all, fetch_one, log_action  # noqa: E402
+from integrations.common.db import close_pool, fetch_one, log_action  # noqa: E402
 from integrations.common.logging_setup import setup_logging  # noqa: E402
 from integrations.common.money import format_money  # noqa: E402
 from integrations.common.timeutil import fmt_date, now_local, to_local, today_local  # noqa: E402
 from integrations.onec import cash as onec_cash  # noqa: E402
 from integrations.org_bot import feedback  # noqa: E402
 from integrations.org_bot import store as org_store  # noqa: E402
+from integrations.reports import brief_parts  # noqa: E402
 from integrations.telegram.bot import TelegramBot, TelegramError  # noqa: E402
 
 AGENT = "garmin-brief"
@@ -80,9 +81,8 @@ def warehouses() -> frozenset[str]:
 
 
 async def _latest(tool: str) -> tuple[list[dict[str, Any]], datetime | None]:
-    rows = await fetch_all("SELECT raw, captured_at FROM v_sap_gateway_latest WHERE tool = %s", (tool,))
-    raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
-    return raws, max((r["captured_at"] for r in rows), default=None)
+    _day, arrived, raws = await brief_parts.gateway_snapshot(tool)
+    return raws, arrived
 
 
 def sap_sales(sales: list[dict[str, Any]], lines: list[dict[str, Any]], day: date,
@@ -149,20 +149,9 @@ async def collect(today: date | None = None) -> GarminData:
     return data
 
 
-def _split(value: str) -> tuple[str, str]:
-    number, _, unit = value.replace(NBSP, " ").rpartition(" ")
-    return (number, unit) if number else (value, "")
-
-
-def _row(label: str, icon: str) -> dict[str, Any]:
-    return {"label": label, "icon": icon, "tone": "plain", "detail": None, "number": "", "unit": "",
-            "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
-
-
-def _block(title: str, icon: str, day: str | None, summary: str, tone: str, rows: list[dict[str, Any]],
-           empty: str | None = None) -> dict[str, Any]:
-    return {"title": title, "icon": icon, "day": day, "summary": summary, "tone": tone,
-            "rows": rows[:MAX_LINES], "more": max(len(rows) - MAX_LINES, 0), "empty": empty}
+_split = brief_parts.split_value
+_row = brief_parts.figure_row
+_block = brief_parts.people_block
 
 
 def _hours_open(created: datetime, now: datetime) -> int:
@@ -197,10 +186,13 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
     else:
         number, unit = _split(onec_cash.som(data.sap_amount))
         sap.update(number=number, unit=unit, detail=f"{data.sap_docs} та ҳужжат · Garmin омборлари")
-        if data.sap_unknown:
-            sap.update(sub=f"{data.sap_unknown} тасида сўмдаги сумма йўқ", sub_alert=True)
+    notes = []
+    if data.sap_unknown:
+        notes.append(f"{data.sap_unknown} тасида сўмдаги сумма йўқ")
     if data.sap_as_of is not None and to_local(data.sap_as_of).date() < today:
-        sap.update(sub=f"SAP {to_local(data.sap_as_of):%d.%m %H:%M} ҳолатида", sub_alert=True)
+        notes.append(f"SAP {to_local(data.sap_as_of):%d.%m %H:%M} ҳолатида")
+    if notes:  # both warnings when both hold — neither hides the other
+        sap.update(sub=" · ".join(notes), sub_alert=True)
 
     stock = _row("Garmin захираси", "stock")
     if data.stock_usd is None:
@@ -289,9 +281,12 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
     if dry_run:
         settings.dry_run = True
     today = today_local()
-    people = await org_store.active_employees_by_role(ROLE)
+    from integrations.org_bot import data_access
+
+    # Figures only to a Garmin manager whose access the Director confirmed (data_access.py).
+    people = [p for p in await org_store.active_employees_by_role(ROLE) if data_access.granted(p)]
     if not people and not settings.dry_run:
-        log.info("Nobody holds the Garmin manager role — no Garmin brief")
+        log.info("No confirmed Garmin manager — no Garmin brief")
         return 0
     if not force and not settings.dry_run and await _sent_today(today):
         log.info("Garmin brief already sent today")
