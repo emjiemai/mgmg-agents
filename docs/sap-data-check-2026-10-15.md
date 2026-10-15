@@ -13,7 +13,7 @@ Legend: ✅ right · ⚠ right arithmetic, misleading · ❌ wrong · 🔧 fixed
 
 | Our name | SAP table | Gateway tool | Rows now | Complete? | Used by | Status |
 | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| `ar_open` → `ar_aging_snapshots` | OINV, open (DocStatus O, not cancelled) | `get_open_invoices` | 44 invoices | ✅ complete | brief «Мижоз қарзи», receivables alert, cash calendar, `sap_receivables` | ❌ **overwritten every :17 / :47** by the old `get_invoices` (100 rows, no PaidToDate — every invoice at its full total) from an **old duplicate Windows task**. 🔧 now ignored when the complete list is newer; ✋ delete the old task. |
+| `ar_open` → `ar_aging_snapshots` | OINV, open (DocStatus O, not cancelled) | `get_open_invoices` | 44 invoices | ✅ complete | brief «Мижоз қарзи», receivables alert, cash calendar, `sap_receivables` | ⚠ **17 of the 44 rows re-written every :17 / :47** by the old `get_invoices` (100 rows) from an **old duplicate Windows task**, and the list marked "capped" — so the brief said «камида». *Corrected later on 15.10:* the total stayed the same as the complete list's (the accountant's question at 17:30 gave the same 256,86 млн from the complete list). 🔧 the old push is now ignored when the complete list is newer (seen working at 12:17 and 12:47 UTC); ✋ delete the old task. |
 | `sales` | OINV + ORIN headers, dated or entered in the last 14 days | `get_sales_by_date` | 72 documents (all invoices, no credit notes; all DocCur = UZS) | ✅ | brief «Кечаги сотув», Billz → SAP, Garmin brief | ⚠ the brief sums `DocTotal` = SAP's local currency **USD**, though the documents are in so'm (`DocTotalSy`); and only invoices **dated** yesterday **and already entered** at 08:00 — the shop enters a day late. |
 | `sales_lines` | INV1 + RIN1 of those | `get_sales_by_date` | 112 lines; warehouses G.A._01, 15, 07, 14, 08, 02, 05, G.A._02 | ✅ | Billz → SAP, `garmin_sap` | ✅ |
 | `stock_value` | OITW (+ OITM) summed per warehouse | `get_stock_value` | 18 warehouses | ✅ | brief «Захира», Garmin brief, analyst | ❌ **StockValue = 0 in all 18**: the gateway multiplied OnHand by the item-level price OITM.AvgPrice, which is 0 here. 🔧 `sap-gateway/src/stock-value.js` now uses SAP's own per-warehouse value (OITW.StockValue, then OITW.AvgPrice). ✋ copy `sap-gateway/src/` to the gateway computer and restart. |
@@ -33,7 +33,7 @@ Legend: ✅ right · ⚠ right arithmetic, misleading · ❌ wrong · 🔧 fixed
 | **Касса** (4,64 млрд; банк / нақд; ↑ кечагига) | 1C, every class-5000 account with a balance | ⚠ | «банк» adds more than the bank: 5110.1, 5110.2 (расчётные), **5530.1** (прочие специальные), **5720** (продажи по картам — money not yet credited) and **5710** (переводы в пути, negative). The day's change moves with money in transit, not only the bank. ✋ Accounting decides what «касса / банк» is; proposal: 50xx + 51xx + 52xx as the figure, 55xx / 57xx shown apart as «махсус / йўлда». | 1C: ОСВ по счетам 50, 51, 52, 55, 57 на дату |
 | **Кечаги сотув** ($40.16, 1 ҳисоб-фактура) | SAP `sales` | ⚠ | Invoices **dated 14.10 and entered by 08:00**, summed in **USD**. The shop's 14.10 sales entered on 15.10 aren't in it. Proposal: so'm (`DocTotalSy`), and «SAP'га киритилгани» in the label. | SAP: Продажи → Счета клиентов, дата 14.10 |
 | **Захира** («ўқилмади») | SAP `stock_value` | ❌ → 🔧 | Every warehouse value 0 (the gateway's price). The brief rightly refused to show $0. Fixed in the gateway; shows after it's deployed. | SAP: Отчёты → Склад → «Отчёт о складских запасах» по складам |
-| **Мижоз қарзи** («камида» 256,86 млн; «муддати ўтгани» = all, 44; 8 > 90 кун) | SAP `ar_open` | ❌ → 🔧 | Read at 08:01 from the old capped push of 07:47 (the duplicate task) — hence «камида» and full totals. Also **due date = invoice date** in SAP (no payment terms), so every unpaid invoice counts as overdue from day one. | SAP: Анализ сроков дебиторской задолженности на 15.10 (44 счета) |
+| **Мижоз қарзи** («камида» 256,86 млн; «муддати ўтгани» = all, 44; 8 > 90 кун) | SAP `ar_open` | ⚠ → 🔧 | **The total is right** — the same as SAP's complete list of 44 open invoices (corrected 15.10, after the accountant's test; this page first said it was wrong). **«камида» was wrong**: the old duplicate push of 07:47 had marked the list "capped" (🔧 ignored now). **«муддати ўтгани» = all 44** because **due date = invoice date** in SAP (no payment terms), so every unpaid invoice counts as overdue from day one. The 8 over 90 days agree with the analyst. | SAP: Анализ сроков дебиторской задолженности на 15.10 (44 счета) |
 | **Бугунги тўловлар** («йўқ») | written permissions (EMJ-SOP-ADM-01) | ✅ | No approved payment request dated today. It only covers permissions, not SAP / bank. | OPS Manager: «рухсат сўровлари» |
 | **Дўконлар** (14.10 GARMIN MINOR, 1 чек) | Billz | ✅ | Matches Billz for 14.10. | Billz: отчёт по магазинам за 14.10 |
 | **Ҳисобот юбормаганлар** (7 / 11) | the bot's daily reports | ✅ | As recorded. People who don't report by agreement → switch their reports off (`/xodimlar` → 📝). | OPS Manager: «кеча ким ҳисобот юбормади?» |
@@ -51,7 +51,22 @@ Legend: ✅ right · ⚠ right arithmetic, misleading · ❌ wrong · 🔧 fixed
   number for the Garmin manager. 🔧 `garmin_data` → `billz_sap` (the check's
   results: not entered, wrong amount, entered late, by cheque).
 
-## 4. To do
+## 4. The Бухгалтер test (15.10, 17:29–17:39)
+
+| Asked | Verdict | Note |
+| ---- | ---- | ---- |
+| Касса / банк, 5110, 5530, 5720, 5710 | ✅ | 1C live, by account; «касса ва банк» = 5010 + 5110 only (more correct than the brief's «Касса», which adds 55 / 57) |
+| 6010, 4310, 6310, 4010, 6410, 94 | ✅ | by account and counterparty |
+| 9010 revenue, 9110 cost | ✅ honest / ✋ wrong question | this company posts revenue to **9020.1** (goods) and **9030.1** (services), cost to **9120.1** — 9010 / 9110 are empty. 🔧 the tool and `knowledge.py` say so; an empty account now names the ones with rows |
+| «Кредиторлик (6010)» vs the comparison | ✅ both | 6010 is so'm only; the comparison is 6010 + 6015 (currency) − 4310 − 4315 — different scopes, both stated |
+| SAP supplier balances «0 та» | ❌ → 🔧 | the rows have no date; a period asked dropped all 61. Undated kinds now ignore the period. `BalanceSys` now labelled so'm |
+| 1C ↔ SAP comparison + both `.xlsx` | ✅ / 🔧 | files right (Uzbek Cyrillic + Russian, column notes at the bottom). INSPIRED = SAP's PAYME (same ИНН — right). 🔧 'YaTT "UMAROVA …"' and 'Tintolav' now pair by name (33 → 35) |
+| Billz: yesterday, month vs SAP | ✅ | Billz 14.10 = one cheque at GARMIN MINOR; not in SAP yet |
+| «Қайси чеклар SAP'га киритилмаган?» | ❌ → 🔧 | accounting had no cheque-level tool; 🔧 `billz_sap_check` for Billz + SAP |
+| Attendance / KPI / overdue tasks | ✅ refused / 🔧 wording | it said the admin could open them — they are the Director's only; 🔧 the prompt says so |
+| First question saved as a report | — | the bot asked «ҳа, ҳисобот / йўқ, бу савол» and «ҳа, ҳисобот» was pressed |
+
+## 5. To do
 
 | Who | What |
 | ---- | ---- |

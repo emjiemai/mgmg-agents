@@ -42,6 +42,11 @@ analyst; logs keep the tool name and the file's size, never a figure.
 
 Matching: ИНН first, then the cleaned-up name (Latin → Cyrillic, legal forms
 and quotes dropped). Equal within 1,000 so'm or 0.5 % = «Мос».
+**15.10.2026:** Latin legal forms (YaTT, LTD, LLC, S.R.L., S.R.O., QK, AJ, ATB…)
+are dropped *before* the name goes into Cyrillic — until then SAP's
+'YaTT "UMAROVA …"' never met 1C's 'UMAROVA …' (the biggest creditor showed as
+"only in 1C") and 'Tintolav' never met 'Tintolav S.R.L.'. Apostrophes stay
+until after (Ta'minot → Таъминот). Live: 33 → 35 suppliers paired.
 
 ## The likely reasons it names
 

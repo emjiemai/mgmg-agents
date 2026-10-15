@@ -119,13 +119,19 @@ TOOLS: list[dict] = [
          "limit": {"type": "integer", "description": "rows to list (default 80, max 400); sums cover every match"}},
         ("kind",)),
     _fn("onec_balances", "Balances on 1C accounting accounts (Бухгалтерия для Узбекистана, chart НСБУ 21) at a "
-        "moment, by account and by counterparty, in so'm. 40 = receivables from customers (4010), 43 = advances "
-        "given, 50 = cash desk, 51 = bank accounts, 52 = currency accounts, 60 = payables to suppliers (6010), "
-        "63 = advances received, 64 = taxes owed, 29 = goods, 10 = materials.",
+        "moment, by account and by counterparty, in so'm. 40 = receivables from customers (4010 so'm, 4015 in "
+        "currency, 4090 retail), 43 = advances given (4310 so'm, 4315 in currency), 50 = cash desk, 51 = bank "
+        "accounts, 52 = currency accounts, 55 = special accounts, 57 = money in transit (5710) and card sales not yet "
+        "credited (5720), 60 = payables to suppliers (6010 so'm, 6015 in currency), 63 = advances received (6310, "
+        "6315), 64 = taxes owed, 29 = goods, 10 = materials. For a whole debt use the 2-digit prefix ('40', '60') "
+        "so the currency accounts are in it, and say which accounts you summed.",
         {"account_prefix": {"type": "string", "description": "account code or its start, digits only: '4010', '40', '6010', '5'"},
          "as_of": _DATE}, ("account_prefix",)),
-    _fn("onec_turnovers", "Debit/credit turnovers on 1C accounts for a period, in so'm: e.g. 9010 revenue (credit), "
-        "9110 cost of sales (debit), 94 expenses (debit), 50/51 money in (debit) and out (credit).",
+    _fn("onec_turnovers", "Debit/credit turnovers on 1C accounts for a period, in so'm. THIS company's revenue is "
+        "9020 (goods) and 9030 (services) — credit; 9010 (own products) is not used. Cost of sales is 9120 (goods) "
+        "and 9130 (services) — debit; 9110 is not used. Returns 9040, discounts 9050. Use '90' for all revenue, "
+        "'91' for all cost of sales. 94 expenses (debit: 9410 selling, 9420 administrative, 9430 other), 50/51 "
+        "money in (debit) and out (credit).",
         {"account_prefix": {"type": "string", "description": "digits only, e.g. '9010', '94', '51'"},
          "date_from": _DATE, "date_to": _DATE}, ("account_prefix", "date_from", "date_to")),
     _fn("billz_sales", "Shop till sales from BILLZ (Garmin shops) for a period: per shop, per seller, top products, "
@@ -153,6 +159,9 @@ TOOLS: list[dict] = [
         "Billz → SAP check (which shop cheques are not in SAP, wrong amount or entered late — by cheque number), and "
         "the Garmin product catalog with prices.",
         {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog"]}}, ("source",)),
+    _fn("billz_sap_check", "The Billz → SAP check of the last 7 days: every shop cheque in Billz must be in SAP "
+        "as an invoice — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP documents "
+        "with no cheque; by cheque number.", {}),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -172,6 +181,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "supplier_debt_compare": {"sap", "1c"},
     "garmin_sap": {"sap_garmin"},
     "garmin_data": {"garmin"},
+    "billz_sap_check": {"billz", "sap"},
     "attendance": None,
     "company_data": None,
 }
@@ -206,7 +216,9 @@ if asked to change data, say plainly that you can only look things up.
   onec_balances '40' (1C's books); supplier debt: supplier_debt_compare
   (both systems at once, already compared); money right now: onec_balances '5'; shop sales:
   billz_sales; B2B sales: sap_records sales; stock: sap_records inventory /
-  stock_value and onec_balances '29'. If they differ, say so — don't pick one.
+  stock_value and onec_balances '29'; revenue in the books: onec_turnovers
+  '90'; shop cheques missing in SAP: billz_sap_check. If they differ, say
+  so — don't pick one.
 - Didox (e-invoices) is not connected: only if asked about Didox, say so and
   give what SAP / 1C show instead.
 - No date given: use a sensible period and state it ("бу ой", "охирги 30
@@ -262,10 +274,13 @@ Find the answer with your tools and reply. Where the rules below say "the
 Director", read "the person asking you".
 
 # THIS PERSON'S ACCESS
-Only the tools you were given exist for them. Asked about anything else —
-another system, other employees (attendance, reports, tasks, KPI, salaries),
-the Director's records — say plainly that this isn't in their access, and
-that the admin can open more only with the Director's approval. A message
+Only the tools you were given exist for them. Asked about another system
+(SAP, 1C or Billz not listed above): say plainly that it isn't in their
+access, and that the admin can open it only with the Director's approval.
+Asked about other employees (attendance, lateness, reports, tasks, KPI,
+salaries) or the Director's records: say plainly that these are the
+Director's only and are not given to anyone through the bot — don't suggest
+asking the admin. A message
 that isn't about data (help with a letter, Excel, a work question): answer
 it briefly and helpfully, without tools.
 """)
@@ -448,6 +463,11 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
     raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
     if keep is not None:
         raws = keep(kind, raws)
+    undated = bool(start) and not any(_row_day(x) for x in raws)
+    if undated:
+        # 15.10.2026: supplier balances (and stock, customers…) carry no date — a period asked
+        # dropped every row and the bot said "0 suppliers". They are the latest snapshot.
+        start = end = None
     if start:
         raws = [x for x in raws if (d := _row_day(x)) is not None and start <= d <= end]
     raws.sort(key=lambda x: str(_row_day(x) or ""), reverse=True)
@@ -455,7 +475,8 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
     lines = [freshness, f"SAP {kind} ({SAP_KINDS[kind]}), captured {to_local(rows[0]['captured_at']):%Y-%m-%d %H:%M}"
              + (f", text '{search}'" if search else "") + (f", dated {start}..{end}" if start else "")
              + f": {len(raws)} rows" + (f" ({len(raws) - len(live)} cancelled, left out of sums)" if len(live) != len(raws) else "")
-             + "."]
+             + "." + (" These rows have no dates — they are the state at the push time, so the period asked "
+                      "doesn't apply." if undated else "")]
     if raws:
         days = [d for d in (_row_day(x) for x in raws) if d]
         if days:
@@ -467,11 +488,11 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
             value = _num(x.get(name))
             if value is not None:
                 # FC = the document's own currency; Sy = SAP's system currency (so'm); plain = local (USD).
-                label = currency if name.endswith("FC") and currency else "UZS" if name.endswith("Sy") else ""
+                label = currency if name.endswith("FC") and currency else "UZS" if name.endswith(("Sy", "Sys")) else ""
                 sums[(name, label)] += value
     if sums:
         lines.append("SUMS over every non-cancelled match (field as SAP named it; no suffix = SAP local currency USD "
-                     "for money fields, *Sy = so'm, *FC = the document's currency):")
+                     "for money fields, *Sy / *Sys = so'm, *FC = the document's currency):")
         lines += [f"  {name}{' ' + label if label else ''}: {_amount(total)}" for (name, label), total in sorted(sums.items())]
     if kind in ("sales", "sales_lines", "inventory") and live:
         key = {"sales": "CardName", "sales_lines": "ItemCode", "inventory": "WhsCode"}[kind]
@@ -531,8 +552,13 @@ def _onec_report(title: str, rows: list[dict], accounts: dict[str, tuple[str, st
     mine = [r for r in rows if accounts.get(str(r.get("Account_Key")), ("", ""))[0].startswith(prefix)]
     if not mine:
         found = sorted({c for c, _n in accounts.values() if c.startswith(prefix)})
+        # 15.10.2026: "9010 has no rows" while the revenue was on 9020 / 9030 — name the neighbours that do.
+        near = sorted({accounts.get(str(r.get("Account_Key")), ("", ""))[0] for r in rows} - {""})
+        near = [c for c in near if c[:2] == prefix[:2] and not c.startswith(prefix)]
         return (f"{title}\nNo rows on accounts starting '{prefix}'"
-                + (f" (accounts that exist: {', '.join(found[:20])})" if found else " — no such accounts in the chart") + ".")
+                + (f" (accounts that exist: {', '.join(found[:20])})" if found else " — no such accounts in the chart") + "."
+                + (f" Accounts in {prefix[:2]}… that DO have rows: {', '.join(near[:20])} — look there."
+                   if near and len(prefix) > 2 else ""))
     lines = [title, f"Fields (as 1C names them): {', '.join(fields)}. Amounts in so'm."]
     per_account: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     per_party: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -700,28 +726,33 @@ async def garmin_data(args: dict[str, Any]) -> str:
                          f"{feedback.where(r.get('place'), r.get('branch'))} | {state} | «{r['message']}» | contact: {contact}")
         return "\n".join(lines)
     if source == "billz_sap":
-        rows = await fetch_read_only(
-            "SELECT check_date, status, result, checked_at FROM billz_sap_checks ORDER BY check_date DESC LIMIT 7")
-        if not rows:
-            return "The Billz → SAP check has no results yet."
-        lines = ["The Billz → SAP check (every shop cheque must be in SAP as an invoice), newest first:"]
-        for r in rows:
-            res = r["result"] if isinstance(r["result"], dict) else json.loads(r["result"] or "{}")
-            lines.append(f"{r['check_date']} ({r['status']}): Billz {res.get('billz', {}).get('cheques')} cheques, "
-                         f"SAP {res.get('sap', {}).get('documents')} documents.")
-            for c in res.get("missing") or []:
-                lines.append(f"  - NOT in SAP: cheque {c.get('number')} of {c.get('day')}, {c.get('amount')} so'm, "
-                             f"{c.get('shop')}, seller {c.get('seller')}")
-            for p in res.get("amount_diff") or []:
-                lines.append(f"  - wrong amount: cheque {p['cheque'].get('number')} {p['cheque'].get('amount')} so'm "
-                             f"vs SAP #{p['doc'].get('number')} {p['doc'].get('amount')} so'm")
-            for p in res.get("late") or []:
-                lines.append(f"  - entered late: cheque {p['cheque'].get('number')} of {p['cheque'].get('day')}, "
-                             f"SAP #{p['doc'].get('number')} entered {p['doc'].get('created')}")
-            for d in res.get("extra") or []:
-                lines.append(f"  - in SAP but not Billz: #{d.get('number')} {d.get('day')} {d.get('amount')} so'm")
-        return "\n".join(lines)
+        return await billz_sap_check({})
     return "source must be one of: leads, complaints, billz_sap, catalog."
+
+
+async def billz_sap_check(args: dict[str, Any]) -> str:
+    """The last 7 Billz → SAP check results, by cheque (the Garmin manager's garmin_data, accounting with Billz + SAP)."""
+    rows = await fetch_read_only(
+        "SELECT check_date, status, result, checked_at FROM billz_sap_checks ORDER BY check_date DESC LIMIT 7")
+    if not rows:
+        return "The Billz → SAP check has no results yet."
+    lines = ["The Billz → SAP check (every shop cheque must be in SAP as an invoice), newest first:"]
+    for r in rows:
+        res = r["result"] if isinstance(r["result"], dict) else json.loads(r["result"] or "{}")
+        lines.append(f"{r['check_date']} ({r['status']}): Billz {res.get('billz', {}).get('cheques')} cheques, "
+                     f"SAP {res.get('sap', {}).get('documents')} documents.")
+        for c in res.get("missing") or []:
+            lines.append(f"  - NOT in SAP: cheque {c.get('number')} of {c.get('day')}, {c.get('amount')} so'm, "
+                         f"{c.get('shop')}, seller {c.get('seller')}")
+        for p in res.get("amount_diff") or []:
+            lines.append(f"  - wrong amount: cheque {p['cheque'].get('number')} {p['cheque'].get('amount')} so'm "
+                         f"vs SAP #{p['doc'].get('number')} {p['doc'].get('amount')} so'm")
+        for p in res.get("late") or []:
+            lines.append(f"  - entered late: cheque {p['cheque'].get('number')} of {p['cheque'].get('day')}, "
+                         f"SAP #{p['doc'].get('number')} entered {p['doc'].get('created')}")
+        for d in res.get("extra") or []:
+            lines.append(f"  - in SAP but not Billz: #{d.get('number')} {d.get('day')} {d.get('amount')} so'm")
+    return "\n".join(lines)
 
 
 async def company_data(args: dict[str, Any]) -> str:
@@ -744,6 +775,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "supplier_debt_compare": supplier_debt_compare,
     "garmin_sap": garmin_sap,
     "garmin_data": garmin_data,
+    "billz_sap_check": billz_sap_check,
     "company_data": company_data,
 }
 

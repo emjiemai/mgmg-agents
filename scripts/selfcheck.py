@@ -3784,6 +3784,88 @@ def test_employee_change_fields() -> None:
             setattr(obj, name, value)
 
 
+def test_accountant_test_fixes() -> None:
+    """15.10.2026, the Бухгалтер test: what the bot couldn't find or paired wrongly."""
+    print("accountant test fixes (15.10.2026)")
+    import asyncio
+    from datetime import datetime, timezone
+
+    from integrations.onec.payables import norm_name
+    from integrations.org_bot import analyst, data_access, knowledge, ops_manager
+
+    # 1C ↔ SAP supplier pairing: Latin legal forms are taken off before the name goes into Cyrillic
+    check_true("'YaTT \"UMAROVA …\"' (SAP) pairs with 'UMAROVA …' (1C) — the biggest creditor",
+               norm_name('YaTT "UMAROVA NAIMA MIRZAXIDOVNA"') == norm_name("UMAROVA NAIMA MIRZAXIDOVNA"))
+    check_true("'Tintolav S.R.L.' = 'Tintolav'; 'GARMIN EUROPE LTD' = 'Garmin Europe'; 'Aqua Care LLC' = 'AQUA CARE'",
+               norm_name("Tintolav S.R.L.") == norm_name("Tintolav")
+               and norm_name("GARMIN EUROPE LTD") == norm_name("Garmin Europe")
+               and norm_name("Aqua Care LLC") == norm_name("AQUA CARE"))
+    check_true("different suppliers stay apart", norm_name("Primus Parts") != norm_name("Primus FCA"))
+
+    saved = [(analyst, "fetch_read_only", analyst.fetch_read_only), (ops_manager, "sap_freshness", ops_manager.sap_freshness)]
+
+    async def freshness():
+        return "SAP data is current.", False
+
+    async def balances(query, params=None, timeout="10s"):
+        return [{"captured_at": datetime(2026, 10, 15, 12, tzinfo=timezone.utc), "raw": r} for r in (
+            {"CardCode": "S1", "CardName": "Coscom", "Balance": 10, "BalanceSys": 120000},
+            {"CardCode": "S2", "CardName": "Payme", "Balance": -2, "BalanceSys": -24000})]
+
+    try:
+        ops_manager.sap_freshness = freshness
+        analyst.fetch_read_only = balances
+        text = asyncio.run(analyst.sap_records({"kind": "supplier_balances", "date_from": "2026-10-01",
+                                                "date_to": "2026-10-15"}))
+        check_true("supplier balances with a period asked: every row kept, not '0 suppliers'",
+                   ": 2 rows." in text and "have no dates" in text and "BalanceSys UZS: 96,000" in text)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 1C: an account with no rows names the neighbours that have them (revenue is 9020 / 9030 here)
+    accounts = {"a": ("9010", "Доходы от реализации готовой продукции"), "b": ("9020.1", "Доходы от реализации товаров"),
+                "c": ("9030.1", "Доходы от услуг"), "d": ("9120.1", "Себестоимость товаров")}
+    rows = [{"Account_Key": "b", "СуммаTurnoverCr": 5.0}, {"Account_Key": "c", "СуммаTurnoverCr": 2.0},
+            {"Account_Key": "d", "СуммаTurnoverDr": 3.0}]
+    empty = analyst._onec_report("t", rows, accounts, {}, "9010", ["СуммаTurnoverCr"])
+    check_true("9010 empty: says 9020.1 and 9030.1 do have rows", "No rows on accounts starting '9010'" in empty
+               and "9020.1, 9030.1" in empty and "9120.1" not in empty)
+    check_true("'90' finds the revenue", "Account 9020.1" in analyst._onec_report("t", rows, accounts, {}, "90",
+                                                                                   ["СуммаTurnoverCr"]))
+    turnovers = next(t for t in analyst.TOOLS if t["function"]["name"] == "onec_turnovers")["function"]["description"]
+    check_true("the tool and the company knowledge name this company's revenue and cost accounts",
+               "9020 (goods) and 9030 (services)" in turnovers and "9120" in turnovers
+               and "9010 isn't used" in knowledge.COMPANY_KNOWLEDGE and "6015 in" in knowledge.COMPANY_KNOWLEDGE)
+
+    # the Billz → SAP check by cheque: for accounting given Billz + SAP, not Billz alone
+    names = lambda scope: {t["function"]["name"] for t in analyst.tools_for(scope)}  # noqa: E731
+    check_true("billz_sap_check: Billz + SAP only (the Garmin manager has it in garmin_data)",
+               "billz_sap_check" in names({"billz", "sap"}) and "billz_sap_check" not in names({"billz"})
+               and "billz_sap_check" not in names(data_access.granted({"role": "garmin_manager", "status": "active"})))
+
+    async def checks(query, params=None, timeout="10s"):
+        return [{"check_date": "2026-10-14", "status": "wrong", "checked_at": None,
+                 "result": {"billz": {"cheques": 2}, "sap": {"documents": 1},
+                            "missing": [{"number": "1043", "day": "2026-10-14", "amount": 25480000, "shop": "GARMIN MINOR",
+                                         "seller": "Ширина"}]}}]
+
+    try:
+        analyst.fetch_read_only = checks
+        out = asyncio.run(analyst.billz_sap_check({}))
+        same = asyncio.run(analyst.garmin_data({"source": "billz_sap"}))
+        check_true("lists the cheques not in SAP, by number; garmin_data gives the same",
+                   "NOT in SAP: cheque 1043" in out and out == same)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    prompt = " ".join(analyst.employee_prompt("Дониёр", "Бухгалтерия", {"sap", "1c", "billz"}).split())
+    check_true("refusals: other people's attendance / KPI / tasks are the Director's only — no 'ask the admin'",
+               "are the Director's only" in prompt and "don't suggest" in prompt
+               and "admin can open it only with the Director's approval" in prompt)
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -7051,6 +7133,7 @@ def main() -> int:
         test_review_fixes,
         test_data_check_fixes,
         test_employee_change_fields,
+        test_accountant_test_fixes,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

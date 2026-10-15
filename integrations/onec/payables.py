@@ -52,7 +52,13 @@ SAP_HEADERS = {
     "card_type": ("cardtype", "bp type", "тип бп", "тип"),
 }
 _LEGAL = re.compile(r"\b(ооо|мчж|mchj|llc|ltd|xk|хк|ип|ак|ao|ао|оао|зао|чп|xususiy|корхонаси|корхона|фирма|firm|"
-                    r"компания|company|group|груп|sp|сп|qk|кк|dk|дк|unitar|unitary|davlat)\b")
+                    r"компания|company|group|груп|sp|сп|qk|кк|dk|дк|unitar|unitary|davlat|"
+                    r"ятт|лтд|ллс|ллц|қк|аж|атб|срл|сро|гмбх)\b")
+# Legal forms written in Latin, taken off BEFORE the name is put into Cyrillic (15.10.2026: SAP's
+# 'YaTT "UMAROVA …"' and 'Tintolav' didn't meet 1C's 'UMAROVA …' and 'Tintolav S.R.L.' — the
+# biggest creditor showed as "only in 1C").
+_LEGAL_LATIN = re.compile(r"\b(yatt|ip|mchj|llc|ltd|limited|xk|qk|aj|atb|ooo|oao|zao|chp|gmbh|srl|sro|s r l|s r o|"
+                          r"inc|corp|plc|xususiy|korxonasi)\b")
 
 
 # ------------------------------------------------------------------ helpers
@@ -67,8 +73,10 @@ def norm_name(name: Any) -> str:
     from integrations.common.translit import latin_to_cyrillic
 
     text = str(name or "").lower().replace("ё", "е")
+    text = re.sub(r"[\"«»“”`.,()\-–—/\\]+", " ", text)  # apostrophes stay: Ta'minot → Таъминот
+    text = _LEGAL_LATIN.sub(" ", text)
     text = latin_to_cyrillic(text) if re.search(r"[a-z]", text) else text
-    text = re.sub(r"[\"'«»“”‘’`.,()\-–—/\\]+", " ", text)
+    text = re.sub(r"['‘’ʼ]+", " ", text)
     text = _LEGAL.sub(" ", text)
     return " ".join(text.split())
 

@@ -64,9 +64,12 @@ the Director calls): they are never counted late or absent.
     so it is at most about half an hour old (older if the gateway machine is off).
   - 1C «Бухгалтерия для Узбекистана» (on Clobus) — the accounting books, in
     so'm, read live: money in bank accounts and cash desks (accounts 50, 51,
-    52), customers' debt (40), payables to suppliers (60), advances given
-    (43) and received (63), taxes (64), goods (29), revenue (9010), cost of
-    sales (9110), expenses (94).
+    52; special 55; in transit 57), customers' debt (40: 4010 so'm, 4015 in
+    currency, 4090 retail), payables to suppliers (60: 6010 so'm, 6015 in
+    currency), advances given (43: 4310, 4315) and received (63), taxes (64),
+    goods (29), revenue (90: 9020 goods, 9030 services — 9010 isn't used),
+    cost of sales (91: 9120 goods, 9130 services — 9110 isn't used),
+    expenses (94: 9410 selling, 9420 administrative, 9430 other).
   - BILLZ — the Garmin shops' tills: cheques, sellers, products, returns, so'm.
   - Verifix — face-ID attendance: who came late, who didn't come, sick leave,
     vacation, arrival and leaving times.

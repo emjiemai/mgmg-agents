@@ -46,14 +46,17 @@ systems**:
 | 1C | `onec_balances`, `onec_turnovers` |
 | Billz | `billz_sales` |
 | SAP + 1C | also `supplier_debt_compare` (with the `.xlsx` in Uzbek and Russian) |
+| Billz + SAP | also `billz_sap_check` — which shop cheques aren't in SAP, by number (15.10.2026) |
 | always | `data_sources` (which systems are connected, how fresh) |
 | **never** | `attendance` (Verifix), `company_data` (tasks, KPI, reports, permissions, complaints, cash calendar) — the Director's only |
 
 The tools are filtered twice: only the granted ones are offered to the
 model, and `run_tool` refuses any other name even if the model sends it.
-The prompt tells the AI who is asking and what they may see; anything else
-gets "this isn't in your access — the admin can open more with the
-Director's approval". A non-data work question is answered briefly without
+The prompt tells the AI who is asking and what they may see. Another
+system gets "this isn't in your access — the admin can open it with the
+Director's approval"; other people's attendance, reports, tasks, KPI and the
+Director's records get "these are the Director's only" — never "ask the
+admin" (15.10.2026: the bot told the accountant the admin could open them). A non-data work question is answered briefly without
 tools. Same daily limit as the work AI (60). A reply to a task card still
 goes to the work AI.
 
