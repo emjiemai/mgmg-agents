@@ -66,7 +66,27 @@ Legend: ✅ right · ⚠ right arithmetic, misleading · ❌ wrong · 🔧 fixed
 | Attendance / KPI / overdue tasks | ✅ refused / 🔧 wording | it said the admin could open them — they are the Director's only; 🔧 the prompt says so |
 | First question saved as a report | — | the bot asked «ҳа, ҳисобот / йўқ, бу савол» and «ҳа, ҳисобот» was pressed |
 
-## 5. To do
+## 5. What the database keeps from SAP, 1C, Billz and Verifix (checked 15.10, for a clean-up)
+
+The owner asked to delete the platforms' data that comes back by itself. Counts on 15.10:
+
+| Table | What | Rows | Comes back by itself? | Delete? |
+| ---- | ---- | ---- | ---- | ---- |
+| `sap_gateway_snapshots` | SAP pushes (10 kinds), one copy per day since 23.08 | 20 640, 44 days | ✅ today's state at the next push (every 30 min; the gateway pushed every hour of the last 72, nights too). Old days: no feature reads them — everything reads `v_sap_gateway_latest` | ✅ safe |
+| `ar_aging_snapshots` | SAP open invoices, one copy per day since 23.08 | 1 190, 44 days | ✅ at the next complete push (:13 / :43). Old days: nothing reads them — everything reads `v_ar_aging_latest` | ✅ safe |
+| 1C, Billz, Verifix | read live on every question / report | — | nothing stored | — |
+| `billz_sap_checks` | Billz → SAP check results, one per day | 13 (02–14.10) | ❌ only today's is made each morning; the Garmin brief and «which cheques» read the last 7 | keep |
+| `daily_briefs` | every morning brief (its figures) | 71 (19.08–15.10) | ❌ the brief's «↑ кечагига» and the 14-day trend read it | keep |
+| `alerts` | receivables alerts | 107 | ❌ history the Director's questions read | keep |
+| `attendance_flexible` | people marked «эркин график» by Verifix id | 2 | ❌ the admin's settings | keep |
+| `cash_balance_snapshots`, `attendance_snapshots`, `sales_summary_snapshots` | old, unused | 0 | — | empty already |
+
+How (the owner runs it — direct writes need the Director's written permission, `docs/access-review-2026-10-07.md` §3):
+a minute before a complete push (:12 or :42), in one transaction
+`DELETE FROM sap_gateway_snapshots; DELETE FROM ar_aging_snapshots;`, then check `/db` → 🔒 the table → «Тури
+бўйича»: every kind back with today's date after :13 / :43.
+
+## 6. To do
 
 | Who | What |
 | ---- | ---- |

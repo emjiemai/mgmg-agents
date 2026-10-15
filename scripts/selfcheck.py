@@ -1275,8 +1275,13 @@ def test_db_viewer() -> None:
             return [{"n": 1}]
         return fake_rows["rows"]
 
-    original_read, original_password = db_viewer._read, settings.db_viewer_password
+    original_read, original_password, original_log = db_viewer._read, settings.db_viewer_password, db_viewer.log_action
     db_viewer._read = fake_read
+
+    async def no_audit(**kwargs):  # the test never writes to the real audit log
+        return None
+
+    db_viewer.log_action = no_audit
     client = TestClient(api_app.app)
     try:
         settings.db_viewer_password = SecretStr("")
@@ -1291,16 +1296,18 @@ def test_db_viewer() -> None:
         index = client.get("/db", headers=good)
         check("right password lets you in", index.status_code, 200)
         check_true("lists the tables", "agent_actions" in index.text and "1 қатор" in index.text)
-        check_true("closed tables listed with a lock and no link",
-                   "🔒 employees" in index.text and "/db/employees" not in index.text
-                   and "/db/v_ar_aging_latest" not in index.text and "href='/db/agent_actions'" in index.text)
+        check_true("closed tables listed with a lock; their link opens the structure only (15.10.2026)",
+                   "🔒 employees" in index.text and "href='/db/employees'" in index.text
+                   and "href='/db/agent_actions'" in index.text)
         check_true("never indexed or cached", index.headers.get("x-robots-tag", "").startswith("noindex")
                    and index.headers.get("cache-control") == "no-store")
 
         seen_queries.clear()
         closed = client.get("/db/v_ar_aging_latest", headers=good)
         check_true("a financial table is closed (Director's order 07.10.2026)", "Бу жадвал ёпиқ" in closed.text)
-        check_true("...its rows are never read", not any("v_ar_aging_latest" in q and "LIMIT" in q for q in seen_queries))
+        check_true("...its rows are never read", not any("v_ar_aging_latest" in q and ("SELECT *" in q or "t::text" in q)
+                                                         for q in seen_queries)
+                   and "&lt;script&gt;" not in closed.text and "<script>x" not in closed.text)
         page = client.get("/db/agent_actions", headers=good)
         check_true("shows a row", page.status_code == 200 and "full_name" in page.text)
         check_true("what the data holds is escaped", "&lt;script&gt;" in page.text and "<script>x" not in page.text)
@@ -1311,9 +1318,45 @@ def test_db_viewer() -> None:
         missing = client.get("/db/pg_authid", headers=good)
         check_true("a table outside the list is refused", "Бундай жадвал йўқ" in missing.text)
         check_true("...without ever being queried", not any("pg_authid" in q for q in seen_queries))
+
+        # ---- a closed table's structure (15.10.2026): counts, columns, when written — never a value
+        async def structure_read(query, params=None):
+            text = query if isinstance(query, str) else repr(query)
+            seen_queries.append(text)
+            if "pg_class" in text:
+                return [{"name": "sap_gateway_snapshots", "kind": "r"}]
+            if "information_schema.columns" in text:
+                return [{"column_name": "id", "data_type": "bigint"}, {"column_name": "tool", "data_type": "text"},
+                        {"column_name": "snapshot_date", "data_type": "date"},
+                        {"column_name": "captured_at", "data_type": "timestamp with time zone"},
+                        {"column_name": "raw", "data_type": "jsonb"}]
+            if "min(" in text:
+                return [{"oldest": datetime(2026, 8, 23, 3, tzinfo=timezone.utc),
+                         "newest": datetime(2026, 10, 15, 8, 43, tzinfo=timezone.utc)}]
+            if "AS day" in text:
+                return [{"day": date(2026, 10, 15), "n": 466}, {"day": date(2026, 10, 14), "n": 470}]
+            if "AS k" in text:
+                return [{"k": "supplier_balances", "n": 61, "last": datetime(2026, 10, 15, 8, 43, tzinfo=timezone.utc)}]
+            if "count(*)" in text:
+                return [{"n": 20640}]
+            return [{"raw": {"CardName": "SECRET CUSTOMER", "DocTotal": 987654}}]
+
+        db_viewer._read = structure_read
+        seen_queries.clear()
+        shape = client.get("/db/sap_gateway_snapshots", headers=good)
+        check_true("a closed table opens its structure: row count, columns and their types",
+                   shape.status_code == 200 and "20640 қатор" in shape.text and "Бу жадвал ёпиқ" in shape.text
+                   and "snapshot_date" in shape.text and "jsonb" in shape.text)
+        check_true("...when rows were written (Tashkent time), rows per day",
+                   "2026-10-15 13:43:00" in shape.text and "2026-08-23 08:00:00" in shape.text and ">466<" in shape.text)
+        check_true("...the SAP pushes per kind with the last write", "supplier_balances" in shape.text and ">61<" in shape.text)
+        check_true("...never a value: no row is selected, nothing of it is shown",
+                   "SECRET CUSTOMER" not in shape.text and "987654" not in shape.text
+                   and not any("SELECT *" in q or "t::text" in q for q in seen_queries))
     finally:
         db_viewer._read = original_read
         settings.db_viewer_password = original_password
+        db_viewer.log_action = original_log
 
 
 def test_plan_agents() -> None:

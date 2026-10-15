@@ -7,7 +7,9 @@ the API service that is already running (no extra cost):
   * ``/db``            every table and view, with row counts
   * ``/db/{table}``    rows, newest first, 50 per page, with a text search —
                        only for ``TECHNICAL_TABLES`` (2026-10-07); every other
-                       table is closed (financial or confidential data)
+                       table is closed (financial or confidential data) and
+                       shows its structure only (2026-10-15): columns, row
+                       count, when rows were written — never a value
 
 Safety, in layers:
   * Off unless ``DB_VIEWER_PASSWORD`` is set (404 otherwise), then HTTP Basic
@@ -38,7 +40,7 @@ from psycopg import sql
 from integrations.common.config import settings
 from integrations.common.db import connection, log_action
 from integrations.common.logging_setup import setup_logging
-from integrations.common.timeutil import to_local
+from integrations.common.timeutil import TASHKENT, to_local
 
 log = setup_logging("db-viewer")
 router = APIRouter(prefix="/db", include_in_schema=False)
@@ -62,12 +64,20 @@ TECHNICAL_TABLES = frozenset({
 })
 CLOSED_TEXT = ("Бу жадвал ёпиқ: молиявий ёки махфий маълумот. IT фақат техник жадвалларни кўради "
                "(Директор кўрсатмаси, 07.10.2026).")
+STRUCTURE_TEXT = "Қийматлар кўрсатилмайди — фақат тузилиши: устунлар, қаторлар сони ва қачон ёзилгани."
 
 # Newest-first ordering: the first of these a table has.
 _ORDER_COLUMNS = (
     "occurred_at", "created_at", "captured_at", "generated_at", "submitted_at",
     "asked_at", "decided_at", "snapshot_date", "report_date", "id",
 )
+# A closed table shows its shape, never a value (2026-10-15, the owner wants to see what is in the
+# tables; the Director's order keeps the values closed): its columns and their types, the row
+# count, when rows were written (the first of these columns it has: newest, oldest, rows per day)
+# and, for the SAP pushes, rows per kind — enough to watch data arrive, be deleted and come back.
+_WRITTEN_COLUMNS = tuple(c for c in _ORDER_COLUMNS if c != "id")
+GROUP_COLUMNS = {"sap_gateway_snapshots": "tool"}
+DAYS_SHOWN = 14
 
 _HEADERS = {
     "Cache-Control": "no-store",
@@ -84,6 +94,7 @@ _CSS = """
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1200px;margin:0 auto;padding:20px 16px 40px}
 h1{font-size:18px;font-weight:600;margin:0 0 16px}
+h2{font-size:15px;font-weight:600;margin:20px 0 8px}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
 .muted{color:var(--muted)}
 .list{list-style:none;padding:0;margin:0;border-top:1px solid var(--line)}
@@ -209,6 +220,56 @@ def _cell(value: Any) -> str:
     return f"<td title='{_e(text)}'>{_e(short)}</td>"
 
 
+def _grid(head: list[str], rows: list[list[Any]]) -> str:
+    return ("<div class='wrap'><table><thead><tr>" + "".join(f"<th>{_e(h)}</th>" for h in head)
+            + "</tr></thead><tbody>" + "".join("<tr>" + "".join(_cell(v) for v in row) + "</tr>" for row in rows)
+            + "</tbody></table></div>")
+
+
+async def _structure_page(table: str) -> Response:
+    """A closed table's shape — columns, row count, when rows were written, rows per kind — never a value."""
+    columns = await _read(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position",
+        (table,),
+    )
+    names = [c["column_name"] for c in columns]
+    total = await _count(table)
+    parts = [
+        "<p><a href='/db'>← Жадваллар</a></p>",
+        f"<h1>🔒 {_e(table)} <span class='muted'>{total if total is not None else '?'} қатор</span></h1>",
+        f"<p class='muted'>{_e(CLOSED_TEXT)} {_e(STRUCTURE_TEXT)}</p>",
+    ]
+    t = sql.Identifier(table)
+    written = next((c for c in _WRITTEN_COLUMNS if c in names), None)
+    try:
+        if written and total:
+            w = sql.Identifier(written)
+            is_date = next(c.get("data_type") for c in columns if c["column_name"] == written) == "date"
+            day = w if is_date else sql.SQL("({} AT TIME ZONE %s)::date").format(w)
+            span = (await _read(sql.SQL("SELECT min({w}) AS oldest, max({w}) AS newest FROM {t}").format(w=w, t=t)))[0]
+            per_day = await _read(
+                sql.SQL("SELECT {d} AS day, count(*) AS n FROM {t} GROUP BY 1 ORDER BY 1 DESC LIMIT %s").format(d=day, t=t),
+                [*([] if is_date else [TASHKENT.key]), DAYS_SHOWN],
+            )
+            parts.append(f"<h2>Қачон ёзилган ({_e(written)})</h2>"
+                         + _grid(["Энг эскиси", "Энг янгиси"], [[span["oldest"], span["newest"]]])
+                         + f"<p class='muted'>Кунлар бўйича, охирги {DAYS_SHOWN} кун:</p>"
+                         + _grid(["Кун", "Қатор"], [[r["day"], r["n"]] for r in per_day]))
+        group = GROUP_COLUMNS.get(table)
+        if group in names and total:
+            last = sql.SQL(", max({}) AS last").format(sql.Identifier(written)) if written else sql.SQL(", NULL AS last")
+            kinds = await _read(sql.SQL("SELECT {g} AS k, count(*) AS n{last} FROM {t} GROUP BY 1 ORDER BY 1").format(
+                g=sql.Identifier(group), last=last, t=t))
+            parts.append(f"<h2>Тури бўйича ({_e(group)})</h2>"
+                         + _grid(["Тури", "Қатор", "Охирги ёзилгани"], [[r["k"], r["n"], r["last"]] for r in kinds]))
+    except Exception as exc:  # noqa: BLE001 — the columns still show
+        log.warning("Structure of {} failed: {}", table, type(exc).__name__)
+    parts.append("<h2>Устунлар</h2>" + _grid(["Устун", "Маълумот тури"],
+                                             [[c["column_name"], c.get("data_type")] for c in columns]))
+    return _page(f"🔒 {table} — MGMG", "".join(parts))
+
+
 # ------------------------------------------------------------------ pages
 
 
@@ -230,8 +291,11 @@ async def tables(request: Request) -> Response:
         if name in TECHNICAL_TABLES:
             items.append(f"<li><a href='/db/{quote(name)}'>{_e(name)}</a>{size}</li>")
         else:
-            items.append(f"<li><span class='muted'>🔒 {_e(name)}</span>{size}</li>")
-    return _page("MGMG — база", f"<h1>Жадваллар</h1><ul class='list'>{''.join(items)}</ul>")
+            # closed: the link opens its structure only (no values)
+            items.append(f"<li><a href='/db/{quote(name)}'>🔒 {_e(name)}</a>{size}</li>")
+    return _page("MGMG — база", f"<h1>Жадваллар</h1><p class='muted'>🔒 — ёпиқ: фақат тузилиши кўринади "
+                                "(Директор кўрсатмаси, 07.10.2026).</p>"
+                                f"<ul class='list'>{''.join(items)}</ul>")
 
 
 @router.get("/{table}", response_class=HTMLResponse)
@@ -245,10 +309,10 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "") -
     if table not in names:
         return _page("Топилмади", "<p><a href='/db'>← Жадваллар</a></p><p>Бундай жадвал йўқ.</p>")
     if table not in TECHNICAL_TABLES:
-        log.info("Closed table {} asked for in /db — refused", table)
+        log.info("Closed table {} asked for in /db — values refused, structure shown", table)
         await log_action(agent="db-viewer", action="db_viewer_refused", target_system="postgres",
                          status="skipped", target_ref=table, mode="read")
-        return _page("Ёпиқ", f"<p><a href='/db'>← Жадваллар</a></p><p>{_e(CLOSED_TEXT)}</p>")
+        return await _structure_page(table)
 
     page = max(page, 1)
     search = q.strip()[:100]
