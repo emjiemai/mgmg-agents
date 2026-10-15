@@ -3645,6 +3645,82 @@ def test_review_fixes() -> None:
     _ = (admin, data_access)
 
 
+def test_data_check_fixes() -> None:
+    """15.10.2026: the Director's brief checked against SAP — the causes found and fixed."""
+    print("SAP data check fixes (15.10.2026)")
+    import asyncio
+    import importlib.util
+    import uuid
+    from datetime import datetime, timezone
+
+    from integrations.org_bot import analyst, store
+    from integrations.sap import push_handler
+
+    root = Path(__file__).resolve().parents[1]
+    # the old capped invoice push no longer overwrites the complete list
+    logged: list = []
+
+    async def recent_full(query, params=None):
+        return {"x": 1}
+
+    async def fake_log(**kwargs):
+        logged.append(kwargs["action"])
+
+    saved = [(push_handler, "fetch_one", push_handler.fetch_one), (push_handler, "log_action", push_handler.log_action)]
+    push_handler.fetch_one, push_handler.log_action = recent_full, fake_log
+    try:
+        out = asyncio.run(push_handler.handle_ar_aging_push({"invoices": [{"DocEntry": 1, "CardCode": "C", "DocStatus": "O",
+                                                                            "CANCELED": "N", "DocTotal": 5}]}, uuid.uuid4()))
+        check_true("a capped get_invoices push after the complete one is ignored (today's debt not overwritten)",
+                   out.get("ignored") and out["written"] == 0 and logged == ["ar_aging_push_ignored"])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    js = (root / "sap-gateway" / "src" / "stock-value.js").read_text(encoding="utf-8")
+    check_true("the gateway values stock with SAP's own per-warehouse value (OITW.StockValue, then OITW.AvgPrice)",
+               'NULLIF(W."StockValue", 0)' in js and 'W."OnHand" * W."AvgPrice"' in js)
+
+    spec = importlib.util.spec_from_file_location("garmin_brief_chk", root / "agents" / "garmin-brief" / "agent.py")
+    gb = importlib.util.module_from_spec(spec)
+    sys.modules["garmin_brief_chk"] = gb
+    spec.loader.exec_module(gb)
+    check("Garmin stock worth exactly 0 is 'no data', never $0.00", gb.stock_value([{"WhsCode": "G.A._01", "StockValue": 0.0}],
+                                                                                    frozenset({"G.A._01"})), None)
+
+    async def recent(days=60):
+        return [{"place": "garmin", "branch": "abay", "message": "test", "phone": None, "contact_name": None, "kind": "complaint",
+                 "created_at": datetime(2026, 10, 14, 12, 59, tzinfo=timezone.utc), "code": "T-2026-10-0031", "ticket_status": "open"},
+                {"place": "garmin", "branch": "abay", "message": "консультант", "phone": None, "contact_name": None,
+                 "kind": "complaint", "created_at": datetime(2026, 10, 5, 13, 39, tzinfo=timezone.utc)}]
+
+    saved = store.recent_client_feedback
+    store.recent_client_feedback = recent
+    try:
+        out = asyncio.run(analyst.garmin_data({"source": "complaints"}))
+        lines = out.splitlines()
+        check_true("each complaint carries its own code and state (the 05.10 one is not a ticket)",
+                   any("T-2026-10-0031" in ln and "«test»" in ln and "open ticket" in ln for ln in lines)
+                   and any("no code" in ln and "консультант" in ln and "not a ticket" in ln for ln in lines)
+                   and "QR page" in out)
+    finally:
+        store.recent_client_feedback = saved
+
+    async def checks(query, params=None, timeout="10s"):
+        return [{"check_date": "2026-10-14", "status": "wrong", "checked_at": None,
+                 "result": {"billz": {"cheques": 3}, "sap": {"documents": 2},
+                            "missing": [{"number": "1043", "day": "2026-10-14", "amount": 25480000, "shop": "GARMIN MINOR",
+                                         "seller": "Ширин"}]}}]
+
+    saved = analyst.fetch_read_only
+    analyst.fetch_read_only = checks
+    try:
+        out = asyncio.run(analyst.garmin_data({"source": "billz_sap"}))
+        check_true("the Garmin manager can see which cheques are not in SAP, by number", "NOT in SAP: cheque 1043" in out)
+    finally:
+        analyst.fetch_read_only = saved
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -3785,7 +3861,7 @@ def test_garmin_manager() -> None:
     try:
         out = asyncio.run(analyst.garmin_data({"source": "complaints"}))
         check_true("garmin_data complaints: Garmin's only, with the ticket state", "соат ишламаяпти" in out
-                   and "кир" not in out and "T-2026-10-0035: open" in out)
+                   and "кир" not in out and "T-2026-10-0035" in out and "open ticket" in out)
     finally:
         store.recent_client_feedback = saved
 
@@ -6910,6 +6986,7 @@ def main() -> int:
         test_review_pages,
         test_task_register,
         test_review_fixes,
+        test_data_check_fixes,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

@@ -149,9 +149,10 @@ TOOLS: list[dict] = [
          "date_from": _DATE, "date_to": _DATE,
          "limit": {"type": "integer", "description": "rows to list (default 80, max 400)"}}, ("kind",)),
     _fn("garmin_data", "The Garmin business's own records: Garmin AI bot leads (customers from Instagram and the "
-        "web catalog), Garmin client complaints (tickets from the /f/garmin QR page, with their state), and the Garmin "
-        "product catalog with prices.",
-        {"source": {"type": "string", "enum": ["leads", "complaints", "catalog"]}}, ("source",)),
+        "web catalog), Garmin client complaints (from the /f/garmin QR page — each with its own code and state), the "
+        "Billz → SAP check (which shop cheques are not in SAP, wrong amount or entered late — by cheque number), and "
+        "the Garmin product catalog with prices.",
+        {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog"]}}, ("source",)),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -684,14 +685,43 @@ async def garmin_data(args: dict[str, Any]) -> str:
         return await ops_manager._fetch_agent_data("garmin_catalog")
     if source == "complaints":
         rows = [r for r in await store.recent_client_feedback() if r.get("place") == "garmin"]
-        lines = [feedback.describe(rows)]
-        tickets = [r for r in rows if r.get("ticket_status")]
-        if tickets:
-            lines.append("Ticket states: " + "; ".join(
-                f"{r.get('code')}: {'open' if r['ticket_status'] == 'open' else 'resolved (' + str(r.get('reason_code')) + ')'}"
-                for r in tickets[:40]))
+        if not rows:
+            return "No Garmin client complaints in the last 60 days (they come from the /f/garmin QR page)."
+        # One line per complaint with ITS OWN code and state (15.10.2026: a separate list of
+        # codes let the AI give the 05.10 complaint the code of a 14.10 test).
+        lines = [f"Garmin client complaints from the QR page (/f/garmin), last 60 days: {len(rows)}, newest first. "
+                 "Complaints from before 13.10.2026 are not tickets (no code, no state)."]
+        for r in rows:
+            state = ("open ticket" if r.get("ticket_status") == "open"
+                     else f"resolved ({r.get('reason_code')}) by {r.get('resolved_by')}" if r.get("ticket_status")
+                     else "not a ticket")
+            contact = r.get("phone") or r.get("contact_name") or "anonymous"
+            lines.append(f"- {r.get('code') or 'no code'} | {to_local(r['created_at']):%Y-%m-%d %H:%M} | "
+                         f"{feedback.where(r.get('place'), r.get('branch'))} | {state} | «{r['message']}» | contact: {contact}")
         return "\n".join(lines)
-    return "source must be one of: leads, complaints, catalog."
+    if source == "billz_sap":
+        rows = await fetch_read_only(
+            "SELECT check_date, status, result, checked_at FROM billz_sap_checks ORDER BY check_date DESC LIMIT 7")
+        if not rows:
+            return "The Billz → SAP check has no results yet."
+        lines = ["The Billz → SAP check (every shop cheque must be in SAP as an invoice), newest first:"]
+        for r in rows:
+            res = r["result"] if isinstance(r["result"], dict) else json.loads(r["result"] or "{}")
+            lines.append(f"{r['check_date']} ({r['status']}): Billz {res.get('billz', {}).get('cheques')} cheques, "
+                         f"SAP {res.get('sap', {}).get('documents')} documents.")
+            for c in res.get("missing") or []:
+                lines.append(f"  - NOT in SAP: cheque {c.get('number')} of {c.get('day')}, {c.get('amount')} so'm, "
+                             f"{c.get('shop')}, seller {c.get('seller')}")
+            for p in res.get("amount_diff") or []:
+                lines.append(f"  - wrong amount: cheque {p['cheque'].get('number')} {p['cheque'].get('amount')} so'm "
+                             f"vs SAP #{p['doc'].get('number')} {p['doc'].get('amount')} so'm")
+            for p in res.get("late") or []:
+                lines.append(f"  - entered late: cheque {p['cheque'].get('number')} of {p['cheque'].get('day')}, "
+                             f"SAP #{p['doc'].get('number')} entered {p['doc'].get('created')}")
+            for d in res.get("extra") or []:
+                lines.append(f"  - in SAP but not Billz: #{d.get('number')} {d.get('day')} {d.get('amount')} so'm")
+        return "\n".join(lines)
+    return "source must be one of: leads, complaints, billz_sap, catalog."
 
 
 async def company_data(args: dict[str, Any]) -> str:

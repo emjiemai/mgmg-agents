@@ -40,7 +40,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from integrations.common.config import settings
-from integrations.common.db import audited, connection, execute, fetch_all
+from integrations.common.db import audited, connection, execute, fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import to_tiyin
 from integrations.common.timeutil import days_between, parse_sap_date, today_local
@@ -107,6 +107,23 @@ async def handle_ar_aging_push(payload: dict[str, Any], run_id: uuid.UUID) -> di
     as_of = today_local()
     written = 0
     skipped = 0
+
+    # The old capped tool (get_invoices, 100 rows, no PaidToDate) must not overwrite the
+    # complete open-invoice list (get_open_invoices). 15.10.2026: an older duplicate Windows
+    # task pushed it at :17/:47, four minutes after the complete push at :13/:43, so for part
+    # of every half hour today's debt held up to 100 invoices at their full totals — the
+    # 08:01 brief read that ("камида", wrong amounts). Ignored while a complete push is recent.
+    if await fetch_one(
+        """SELECT 1 AS x FROM agent_actions WHERE agent = 'sap-gateway-push' AND action = 'ar_aging_push'
+           AND status = 'success' AND payload->>'source' = 'gateway_full' AND occurred_at > now() - interval '6 hours'
+           LIMIT 1"""
+    ):
+        await log_action(agent="sap-gateway-push", action="ar_aging_push_ignored", target_system="postgres",
+                         status="skipped", run_id=run_id, target_ref="ar_aging_snapshots", mode="write",
+                         payload={"rows_received": len(raw_invoices), "reason": "complete open-invoice push is newer"})
+        log.warning("Capped get_invoices push ignored: the complete open-invoice list arrived recently "
+                    "(an old duplicate push task still runs — remove it)")
+        return {"ok": True, "written": 0, "skipped": len(raw_invoices), "ignored": "complete push is newer"}
 
     async with audited(
         agent="sap-gateway-push",

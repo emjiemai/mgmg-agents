@@ -176,6 +176,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (`director_clarifications`); never asks "which system?" or for a period.
 
 ## Open items
+- **Brief vs SAP check (15.10, `docs/sap-data-check-2026-10-15.md`):** delete the old duplicate push task
+  (:17/:47 — it overwrote customer debt; now ignored in code); deploy `sap-gateway/src/` (stock value fix);
+  accounting to decide what «касса / банк» counts (today: every class-5000 account incl. 5530/5710/5720) and
+  whether «Кечаги сотув» shows so'm by entry date; Garmin bot leads never arrive (check its webhook secret).
 - **The owner's IT instruction** (08.10–31.12.2026, received 10.10): phases Ф0–Ф3, 10 rules, 8 agents,
   А1–А8 — mapped in `docs/it-instruction-2026-10.md` with the owner's open decisions (personal data
   on a server in Uzbekistan + masking before AI — **not met today**; AmoCRM; who gets PULSE; n8n or

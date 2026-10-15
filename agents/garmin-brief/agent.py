@@ -96,7 +96,10 @@ def stock_value(rows: list[dict[str, Any]], codes: frozenset[str]) -> float | No
     mine = [r for r in rows if str(r.get("WhsCode") or "").strip() in codes]
     if not mine:
         return None
-    return sum(float(r.get("StockValue") or 0) for r in mine)
+    total = sum(float(r.get("StockValue") or 0) for r in mine)
+    # Stock worth exactly nothing while rows exist is a feed problem (15.10: the gateway's value
+    # came out 0 everywhere), never a real "$0.00" — shown as "маълумот йўқ".
+    return total or None
 
 
 async def collect(today: date | None = None) -> GarminData:
