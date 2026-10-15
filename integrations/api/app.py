@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import traceback
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request
@@ -161,17 +163,20 @@ async def admin_bot_webhook(secret: str, request: Request) -> dict[str, str]:
     update = await request.json()
     run_id = uuid.uuid4()
 
-    callback = update.get("callback_query")
-    if callback:
-        ack_soon(settings.admin_bot_telegram_bot_token.get_secret_value(), callback.get("id", ""),
-                 data=str(callback.get("data") or ""))
-        outcome = await org_admin.handle_admin_callback(callback, run_id)
-        return {"status": outcome}
+    try:
+        callback = update.get("callback_query")
+        if callback:
+            ack_soon(settings.admin_bot_telegram_bot_token.get_secret_value(), callback.get("id", ""),
+                     data=str(callback.get("data") or ""))
+            outcome = await org_admin.handle_admin_callback(callback, run_id)
+            return {"status": outcome}
 
-    message = update.get("message")
-    if message:
-        outcome = await org_admin.handle_admin_message(message, run_id)
-        return {"status": outcome}
+        message = update.get("message")
+        if message:
+            outcome = await org_admin.handle_admin_message(message, run_id)
+            return {"status": outcome}
+    except Exception as exc:  # noqa: BLE001 — see _update_failed: a 5xx makes Telegram replay the press
+        return _update_failed("Admin", exc)
 
     return {"status": "ignored"}
 
@@ -210,7 +215,10 @@ async def ops_manager_bot_webhook(secret: str, request: Request, background: Bac
         query = update["callback_query"]
         ack_soon(settings.ops_manager_bot_telegram_bot_token.get_secret_value(), query.get("id", ""),
                  data=str(query.get("data") or ""))
-    outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
+    try:
+        outcome = await org_ops_manager.handle_update(update, uuid.uuid4(), background)
+    except Exception as exc:  # noqa: BLE001 — see _update_failed: a 5xx makes Telegram replay the press
+        return _update_failed("OPS Manager", exc)
     return {"status": outcome}
 
 
@@ -331,6 +339,21 @@ async def garmin_lead_webhook(secret: str, request: Request) -> JSONResponse:
 
 
 # -------------------------------------------------------------------- helpers
+
+
+def _update_failed(bot: str, exc: Exception) -> dict[str, str]:
+    """A Telegram update's handler raised: log where, answer 200 anyway (2026-10-15).
+
+    Telegram re-sends an update that got a 5xx, again and again — a re-run
+    button flips a toggle back or does its work twice (15.10: every /xodimlar
+    SAP / 1C / Billz toggle flipped back and forth). The person presses again.
+    The log keeps the error's type and our line, never its text — a database
+    error's DETAIL carries the row (names, settings).
+    """
+    ours = [f for f in traceback.extract_tb(exc.__traceback__) if "/integrations/" in f.filename.replace("\\", "/")]
+    where = f"{Path(ours[-1].filename).name}:{ours[-1].lineno} {ours[-1].name}" if ours else "?"
+    log.error("{} bot update failed: {} at {}", bot, type(exc).__name__, where)
+    return {"status": "error"}
 
 
 # ------------------------------------------------------------------ backups

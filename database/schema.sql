@@ -761,8 +761,13 @@ CREATE TABLE IF NOT EXISTS employee_changes (
 );
 CREATE INDEX IF NOT EXISTS idx_employee_changes_employee ON employee_changes (employee_id, changed_at DESC);
 ALTER TABLE employee_changes DROP CONSTRAINT IF EXISTS employee_changes_field_check;
+-- Every field store.log_employee_change is called with (selfcheck compares them).
+-- 'data_access' and 'lang' (2026-10-10) were missing until 15.10: each /xodimlar
+-- SAP / 1C / Billz / language toggle failed after its update, Telegram re-sent
+-- the press and the toggle flipped back and forth.
 ALTER TABLE employee_changes ADD CONSTRAINT employee_changes_field_check
-    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat', 'cheer', 'reports'));
+    CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat', 'cheer', 'reports',
+                     'data_access', 'lang'));
 
 -- Who also works at the weekend (set by the admin on the /xodimlar card).
 -- Everyone works Monday–Friday; on Saturday/Sunday only these are asked for

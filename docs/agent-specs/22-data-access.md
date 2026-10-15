@@ -27,6 +27,13 @@ messages), `analyst.py` (`tools_for`, `employee_prompt`, `run_tool(allowed=…)`
 4. `🌐 AI тили: ўзбекча / русча` on the same card — the language the AI
    answers that person in. Set by the admin, never guessed.
 
+**Fixed 15.10.2026:** until then every toggle (SAP · 1C · Billz, 🌐) failed after
+saving — `employee_changes` didn't allow the fields `data_access` and `lang`;
+the bot answered an error, Telegram re-sent the press and the toggle flipped
+back and forth, with no notice to the Director. The schema allows them now
+(selfcheck checks every logged field against it) and the Telegram webhooks
+never answer 5xx, so a press is never replayed.
+
 ## What they can ask
 
 Their free messages (not a report, not a reply to a task card — those keep
@@ -78,4 +85,5 @@ the same as the work AI's and is not in `/db`.
 card and its buttons, the Director's notice and ⛔, tools per grant (never
 attendance or the bot's records), a sneaked tool call refused in code, the
 employee's prompt and Russian, routing (analyst vs work AI), the admin
-flow, the database guard, the technical report's count.
+flow, the database guard, the technical report's count; `test_employee_change_fields`: every
+logged field is allowed by the schema, a failed press answers 200.

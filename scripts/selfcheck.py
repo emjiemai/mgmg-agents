@@ -3721,6 +3721,69 @@ def test_data_check_fixes() -> None:
         analyst.fetch_read_only = saved
 
 
+def test_employee_change_fields() -> None:
+    """15.10.2026: every /xodimlar SAP / 1C / Billz / language toggle failed and flipped back and forth."""
+    print("employee change fields and replayed button presses (15.10.2026)")
+    import re
+
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from integrations.api import app as api_app
+    from integrations.common.config import settings
+
+    root = Path(__file__).resolve().parents[1]
+    used: set[str] = set()
+    for folder in ("integrations", "agents", "scripts"):
+        for path in (root / folder).rglob("*.py"):
+            if path.name != "selfcheck.py":
+                used |= set(re.findall(r"log_employee_change\(\s*[^,]+,\s*\"(\w+)\"", path.read_text(encoding="utf-8")))
+    schema = (root / "database" / "schema.sql").read_text(encoding="utf-8")
+    last = schema[schema.rindex("ADD CONSTRAINT employee_changes_field_check"):]
+    allowed = set(re.findall(r"'(\w+)'", last[:last.index(";")]))
+    check_true("the toggles' fields are found in the code", {"data_access", "lang", "role", "full_name"} <= used)
+    check("every field the code logs is allowed by the database", sorted(used - allowed), [])
+
+    # A handler that raises must not answer 5xx: Telegram would replay the press and flip the toggle again.
+    logged: list[str] = []
+
+    class FakeLog:
+        def error(self, fmt, *args):
+            logged.append(fmt.format(*args))
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("DETAIL: Failing row contains (Алишер Каримов, sap)")
+
+    saved = [(settings, "admin_bot_webhook_secret", settings.admin_bot_webhook_secret),
+             (settings, "ops_manager_bot_webhook_secret", settings.ops_manager_bot_webhook_secret),
+             (settings, "admin_bot_telegram_bot_token", settings.admin_bot_telegram_bot_token),
+             (settings, "ops_manager_bot_telegram_bot_token", settings.ops_manager_bot_telegram_bot_token),
+             (settings, "bots_frozen", settings.bots_frozen), (api_app, "log", api_app.log),
+             (api_app.org_admin, "handle_admin_callback", api_app.org_admin.handle_admin_callback),
+             (api_app.org_ops_manager, "handle_update", api_app.org_ops_manager.handle_update)]
+    try:
+        settings.admin_bot_webhook_secret = SecretStr("adm1n-s3cret-long")
+        settings.ops_manager_bot_webhook_secret = SecretStr("0ps-s3cret-long")
+        settings.admin_bot_telegram_bot_token = settings.ops_manager_bot_telegram_bot_token = SecretStr("")
+        settings.bots_frozen = False
+        api_app.log = FakeLog()
+        api_app.org_admin.handle_admin_callback = broken
+        api_app.org_ops_manager.handle_update = broken
+        client = TestClient(api_app.app, raise_server_exceptions=False)
+        press = {"callback_query": {"id": "1", "data": "dacc:sap:x", "from": {"id": 5}}}
+        admin = client.post("/webhooks/telegram/admin/adm1n-s3cret-long", json=press)
+        ops = client.post("/webhooks/telegram/ops/0ps-s3cret-long", json=press)
+        check_true("a failed Admin Bot press answers 200 — Telegram doesn't replay it",
+                   admin.status_code == 200 and admin.json() == {"status": "error"})
+        check_true("the same for OPS Manager Bot", ops.status_code == 200 and ops.json() == {"status": "error"})
+        check_true("the log names the error and our line, never the row's data",
+                   len(logged) == 2 and "RuntimeError" in logged[0] and "selfcheck.py" not in logged[0]
+                   and not any("Алишер" in line or "Failing row" in line for line in logged))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -5013,7 +5076,7 @@ def test_reports_off() -> None:
                "DELETE FROM daily_reports" in inspect.getsource(store.toggle_reports))
     schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
     check_true("schema has employees.reports_off and logs the change",
-               "ADD COLUMN IF NOT EXISTS reports_off" in schema and "'cheer', 'reports')" in schema)
+               "ADD COLUMN IF NOT EXISTS reports_off" in schema and "'cheer', 'reports'" in schema)
 
     # ---- the 📝 button on the admin card
     edits = []
@@ -6987,6 +7050,7 @@ def main() -> int:
         test_task_register,
         test_review_fixes,
         test_data_check_fixes,
+        test_employee_change_fields,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,
