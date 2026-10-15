@@ -3912,6 +3912,102 @@ def test_accountant_test_fixes() -> None:
                and "admin can open it only with the Director's approval" in prompt)
 
 
+def test_report_deadline_penalty() -> None:
+    """15.10.2026, the Director: reports until 22:00; no report = minus KPI points every day, and the person is told."""
+    print("daily reports: 22:00 and minus points (15.10.2026)")
+    import asyncio
+    import inspect
+    from datetime import datetime
+
+    from integrations.api import app as api_app
+    from integrations.common.config import settings
+    from integrations.common.timeutil import TASHKENT
+    from integrations.org_bot import kpi, kpi_score, ops_manager, report_close, store, tone
+
+    day = date(2026, 10, 15)
+    check_true("open at 21:59, closed at 22:00 and on another day",
+               store.reports_open(day, datetime(2026, 10, 15, 21, 59, tzinfo=TASHKENT))
+               and not store.reports_open(day, datetime(2026, 10, 15, 22, 0, tzinfo=TASHKENT))
+               and not store.reports_open(day, datetime(2026, 10, 16, 9, 0, tzinfo=TASHKENT)))
+    for fn in (store.pending_report, store.open_report_followup):
+        check_true(f"{fn.__name__} stops at 22:00 in SQL", "make_time(%s, 0, 0)" in inspect.getsource(fn))
+    check_true("✏️ / 🗑 on a report only until 22:00", "reports_open(today)" in inspect.getsource(ops_manager._handle_report_button))
+    check_true("the 16:00 ask and the 17:00 reminder say «соат 22:00 гача»",
+               "22:00" in kpi.build_request_text("Алишер ака", []) and "22:00" in kpi.build_reminder_text("Алишер ака", []))
+    text = kpi.build_penalty_text("Алишер ака", 1, 3)
+    check_true("the minus, told politely in red: name kept, 'сиз', −1 today and −3 this month",
+               text.startswith("Алишер ака,") and "1 балл" in text and "−3 балл" in text and text.endswith("🔴")
+               and "KPI" in text and tone.is_polite(text))
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("schema: penalty_points and penalized_at", "ADD COLUMN IF NOT EXISTS penalty_points" in schema
+               and "ADD COLUMN IF NOT EXISTS penalized_at" in schema)
+    check_true("the API checks every 5 minutes (no new cron)", "_report_close_loop" in inspect.getsource(api_app._startup))
+
+    # close_day: nothing before 22:00; at 22:00 each open ask closed once and its person told
+    sent: list[tuple[str, str]] = []
+    asked_close: list = []
+
+    async def fake_close(report_date, points):
+        asked_close.append((report_date, points))
+        return [{"telegram_user_id": 7, "full_name": "Алишер Каримов", "display_name": "a", "address_form": "aka",
+                 "month_points": 3}]
+
+    class FakeBot:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def send_message(self, text, chat_id):
+            sent.append((chat_id, text))
+            return [1]
+
+    async def no_log(**kwargs):
+        return None
+
+    saved = [(store, "close_missed_reports", store.close_missed_reports), (report_close, "TelegramBot", report_close.TelegramBot),
+             (report_close, "log_action", report_close.log_action), (settings, "report_miss_penalty", settings.report_miss_penalty)]
+    try:
+        store.close_missed_reports, report_close.TelegramBot, report_close.log_action = fake_close, FakeBot, no_log
+        settings.report_miss_penalty = 1
+        before = asyncio.run(report_close.close_day(datetime(2026, 10, 15, 21, 55, tzinfo=TASHKENT)))
+        check_true("before 22:00 nothing closes", before == 0 and not asked_close)
+        asyncio.run(report_close.close_day(datetime(2026, 10, 15, 22, 5, tzinfo=TASHKENT)))
+        check_true("15.10 (asked before the rule was told): closed at 22:00 with 0 points, nobody messaged",
+                   asked_close == [(day, 0)] and not sent)
+        asked_close.clear()
+        closed = asyncio.run(report_close.close_day(datetime(2026, 10, 16, 22, 5, tzinfo=TASHKENT)))
+        check_true("from 16.10 at 22:00: open asks closed with 1 point, the person told the month's −3",
+                   closed == 1 and asked_close == [(date(2026, 10, 16), 1)] and sent and sent[0][0] == "7"
+                   and "−3 балл" in sent[0][1])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("closing marks once and only active people who get asks",
+               "penalized_at IS NULL" in inspect.getsource(store.close_missed_reports)
+               and "NOT e.reports_off" in inspect.getsource(store.close_missed_reports))
+
+    # KPI: the minus comes off the month's total and shows in red
+    emp = [{"id": "e1", "full_name": "Алишер Каримов", "role": "londry"}]
+    reports = [{"employee_id": "e1", "report_date": date(2026, 10, d), "status": "asked", "submitted_at": None,
+                "penalty_points": 1, "display_name": "a"} for d in (13, 14)]
+    reports.append({"employee_id": "e1", "report_date": date(2026, 10, 15), "status": "submitted",
+                    "submitted_at": datetime(2026, 10, 15, 12, tzinfo=TASHKENT), "penalty_points": 0, "display_name": "a"})
+    with_minus = kpi_score.build(emp, reports, [], {}, [], [], date(2026, 10, 1), date(2026, 10, 31))[0]
+    without = kpi_score.build(emp, [{**r, "penalty_points": 0} for r in reports], [], {}, [], [],
+                              date(2026, 10, 1), date(2026, 10, 31))[0]
+    check_true("2 missed days: −2 off the total", with_minus.penalty == 2 and with_minus.missed_days == 2
+               and round(without.total - with_minus.total) == 2)
+    card = kpi_score.card_text(date(2026, 10, 1), with_minus)
+    check_true("/kpi card shows it in red", "🔴 Ҳисобот соат 22:00 гача келмагани учун: <b>−2</b> балл (2 кун)" in card)
+    check_true("the table and the PDF show it", "🔴−2" in kpi_score.table_text(date(2026, 10, 1), [with_minus], False)
+               and kpi_score.table_view(date(2026, 10, 1), [with_minus], False)["people"][0]["penalty"] == 2)
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -7180,6 +7276,7 @@ def main() -> int:
         test_data_check_fixes,
         test_employee_change_fields,
         test_accountant_test_fixes,
+        test_report_deadline_penalty,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

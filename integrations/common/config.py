@@ -243,6 +243,9 @@ class Settings(BaseSettings):
     # --- Monthly KPI (E1) ---
     # 08:00 on the 1st to the Director and HR: last month per person.
     monthly_kpi_enabled: bool = True
+    # A daily report not in by 22:00 (2026-10-15, the Director): this many KPI points off
+    # that month's total, and the person is told. 0 = no minus, the report still closes at 22:00.
+    report_miss_penalty: int = 1
 
     # --- Written permission requests (EMJ-SOP-ADM-01) ---
     # The SOP allows an electronic approval only in the system the director

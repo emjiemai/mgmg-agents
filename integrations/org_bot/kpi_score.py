@@ -180,6 +180,8 @@ class EmployeeMonth:
     ratings: dict[str, int] = field(default_factory=dict)
     attendance: Attendance | None = None
     leads: LeadScore = field(default_factory=LeadScore)
+    penalty: int = 0  # minus points: daily reports not in by 22:00 (2026-10-15, the Director)
+    missed_days: int = 0
     parts: dict[str, float | None] = field(default_factory=dict)
     total: float | None = None
 
@@ -225,6 +227,8 @@ def score(people: list[EmployeeMonth]) -> list[EmployeeMonth]:
         p.parts = parts
         weights = {k: PARTS[k][2] for k, v in parts.items() if v is not None}
         p.total = sum(parts[k] * w for k, w in weights.items()) / sum(weights.values()) if weights else None
+        if p.total is not None and p.penalty:
+            p.total = max(0.0, p.total - p.penalty)
     return sorted(people, key=lambda p: (p.total is None, -(p.total or 0), p.name))
 
 
@@ -271,9 +275,16 @@ def build(
                 ratings={k: int(rating[k]) for k in RATINGS if rating.get(k)},
                 attendance=(attendance or {}).get(eid),
                 leads=leads.get(eid, LeadScore()),
+                penalty=sum(int(r.get("penalty_points") or 0) for r in rows.get("reports", [])),
+                missed_days=sum(1 for r in rows.get("reports", []) if int(r.get("penalty_points") or 0) > 0),
             )
         )
     return score(people)
+
+
+def penalty_text(p: EmployeeMonth) -> str:
+    """" 🔴−3" after a total — the minus for reports not sent by 22:00."""
+    return f" 🔴−{p.penalty}" if p.penalty else ""
 
 
 def _goal_actual(goal: dict[str, Any], leads: LeadScore | None) -> float | None:
@@ -301,7 +312,7 @@ def table_text(month: date, people: list[EmployeeMonth], final: bool) -> str:
         return "\n".join(lines)
     for place, p in enumerate(measured, 1):
         role = f" ({escape(p.role_label)})" if p.role_label else ""
-        lines.append(f"{place}. {grade(p.total)} <b>{escape(p.name)}</b>{role} — <b>{round(p.total)}</b>")
+        lines.append(f"{place}. {grade(p.total)} <b>{escape(p.name)}</b>{role} — <b>{round(p.total)}</b>{penalty_text(p)}")
         lines.append(f"      {_parts_line(p)}")
     pending = [p.name for p in people if p.total is not None and not p.rating_complete]
     if pending and not final:
@@ -327,6 +338,7 @@ def table_view(month: date, people: list[EmployeeMonth], final: bool) -> dict[st
                 "place": place, "name": p.name, "role": p.role_label, "total": round(p.total),
                 "grade": "high" if p.total >= GREEN else "mid" if p.total >= YELLOW else "low",
                 "parts": [None if p.parts.get(k) is None else round(p.parts[k]) for k in PARTS],
+                "penalty": p.penalty,
             }
             for place, p in enumerate(measured, 1)
         ],
@@ -349,7 +361,10 @@ def table_caption(month: date, people: list[EmployeeMonth], final: bool) -> str:
 def card_text(month: date, p: EmployeeMonth) -> str:
     """One person's month in detail — what they see with /kpi."""
     total = "—" if p.total is None else str(round(p.total))
-    lines = [f"📈 <b>{escape(p.name)} — KPI, {month_title(month)}</b>", f"{grade(p.total)} Жами: <b>{total}</b> / 100", ""]
+    lines = [f"📈 <b>{escape(p.name)} — KPI, {month_title(month)}</b>", f"{grade(p.total)} Жами: <b>{total}</b> / 100"]
+    if p.penalty:
+        lines.append(f"🔴 Ҳисобот соат 22:00 гача келмагани учун: <b>−{p.penalty}</b> балл ({p.missed_days} кун) — жамидан айирилган")
+    lines.append("")
     for key, (emoji, label, weight) in PARTS.items():
         value = p.parts.get(key)
         shown = "—" if value is None else str(round(value))

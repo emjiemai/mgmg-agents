@@ -1130,6 +1130,10 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS data_access TEXT[] NOT NULL DEFAU
 -- Cyrillic, the rule) or 'ru' — set by the admin, never guessed.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uz';
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS media_count INTEGER NOT NULL DEFAULT 0;
+-- Reports close at 22:00 (2026-10-15, the Director); an ask still open then gets minus KPI
+-- points (REPORT_MISS_PENALTY) and the person is told — once (penalized_at).
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS penalty_points INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS penalized_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS employee_files (
     id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),

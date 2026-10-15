@@ -9,7 +9,7 @@ From the owner:
 - a report is never guessed: a typed one is confirmed first ("бу бугунги
   ҳисоботингизми?"), and only today's report counts;
 - things change, so today's report can be changed or deleted: /hisobot
-  shows it with ✏️ / 🗑 (until midnight; a deleted report is owed again).
+  shows it with ✏️ / 🗑 (until 22:00; a deleted report is owed again).
 
 Pure logic here (tested offline); ``ops_manager`` holds the files, edits the
 reports and forwards.
@@ -114,7 +114,7 @@ def delete_question_text() -> str:
 
 
 def deleted_text() -> str:
-    return casual("ҳисоботингиз ўчирилди, ярим тунгача қайта ёзиб юборишингиз мумкин", "🙂")
+    return casual("ҳисоботингиз ўчирилди, соат 22:00 гача қайта ёзиб юборишингиз мумкин", "🙂")
 
 
 def too_late_text() -> str:

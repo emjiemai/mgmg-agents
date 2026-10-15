@@ -106,11 +106,24 @@ async def _complaint_status_loop() -> None:
             log.error("Complaint status check failed: {}", type(exc).__name__)
 
 
+async def _report_close_loop() -> None:
+    """Every 5 minutes: from 22:00, close the day's unanswered report asks — minus KPI points, once (report_close.py)."""
+    from integrations.org_bot import report_close
+
+    while True:
+        await asyncio.sleep(300)
+        try:
+            await report_close.close_day()
+        except Exception as exc:  # noqa: BLE001 — a missed round is retried in 5 minutes
+            log.error("Report close failed: {}", type(exc).__name__)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     """Run the AI config check in the background so startup isn't delayed; start the complaint check."""
     app.state.ai_config_check = asyncio.create_task(_log_ai_config())
     app.state.complaint_loop = asyncio.create_task(_complaint_status_loop())
+    app.state.report_close_loop = asyncio.create_task(_report_close_loop())
 
 
 @app.get("/health")

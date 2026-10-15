@@ -45,6 +45,7 @@ tr.unmeasured td { color: var(--ink-3); }
       <td class="person"><div class="name">{{ r.name }}</div>{% if r.role %}<div class="role">{{ r.role }}</div>{% endif %}</td>
       <td class="total">
         <div class="score g-{{ r.grade }}"><span class="n num">{{ r.total }}</span><div class="bar"><span style="width: {{ r.total }}%"></span></div></div>
+        {% if r.penalty %}<div class="alert-text">−{{ r.penalty }} (ҳисобот)</div>{% endif %}
       </td>
       {% for v in r.parts %}<td class="part num{% if v is none %} none{% endif %}">{{ "—" if v is none else v }}</td>{% endfor %}
     </tr>

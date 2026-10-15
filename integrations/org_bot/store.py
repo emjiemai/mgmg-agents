@@ -14,11 +14,11 @@ double-tapping a button on a slow connection can't apply the same change twice.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from integrations.common.db import execute, fetch_all, fetch_one
-from integrations.common.timeutil import today_local
+from integrations.common.timeutil import now_local, today_local
 
 # ------------------------------------------------------------------ employees
 
@@ -1184,11 +1184,22 @@ async def set_report_prompt_message_id(report_id: str, message_id: int) -> None:
     )
 
 
+# Daily reports close at 22:00 Tashkent (2026-10-15, the Director; it was midnight).
+REPORT_CLOSE_HOUR = 22
+
+
+def reports_open(day: date, now: datetime | None = None) -> bool:
+    """Whether ``day``'s report can still be sent, changed or deleted: that day, before 22:00."""
+    now = now or now_local()
+    return now.date() == day and now.hour < REPORT_CLOSE_HOUR
+
+
 async def pending_report(telegram_user_id: int, report_date: date) -> dict[str, Any] | None:
     """The report this employee was asked for today and hasn't sent yet.
 
-    Reports are accepted until midnight of the day they were asked for (the
-    business's rule); after that the ask is closed and counts as missed.
+    Reports are accepted until 22:00 of the day they were asked for (the
+    Director, 2026-10-15); after that the ask is closed, counts as missed and
+    costs KPI points (``report_close.py``).
 
     Args:
         telegram_user_id: The employee's Telegram numeric id.
@@ -1201,8 +1212,9 @@ async def pending_report(telegram_user_id: int, report_date: date) -> dict[str, 
         """
         SELECT * FROM daily_reports
         WHERE telegram_user_id = %s AND report_date = %s AND status = 'asked'
+          AND now() < ((report_date + make_time(%s, 0, 0)) AT TIME ZONE 'Asia/Tashkent')
         """,
-        (telegram_user_id, report_date),
+        (telegram_user_id, report_date, REPORT_CLOSE_HOUR),
     )
 
 
@@ -1272,7 +1284,7 @@ async def mark_report_followup(report_id: str) -> None:
 
 
 # The follow-up question on a vague report waits this long for an answer,
-# and never past midnight (reports close with the day). After that it lapses
+# and never past 22:00 (reports close then). After that it lapses
 # quietly: the report stands as first sent, and a later message (a task
 # update, a question) is never glued onto it by mistake.
 REPORT_FOLLOWUP_HOURS = 3
@@ -1286,8 +1298,9 @@ async def open_report_followup(telegram_user_id: int, report_date: date) -> dict
         WHERE telegram_user_id = %s AND report_date = %s AND status = 'submitted'
           AND followup_asked_at > now() - make_interval(hours => %s)
           AND followup_answered_at IS NULL
+          AND now() < ((report_date + make_time(%s, 0, 0)) AT TIME ZONE 'Asia/Tashkent')
         """,
-        (telegram_user_id, report_date, REPORT_FOLLOWUP_HOURS),
+        (telegram_user_id, report_date, REPORT_FOLLOWUP_HOURS, REPORT_CLOSE_HOUR),
     )
 
 
@@ -1329,6 +1342,35 @@ async def merge_report_metrics(report_id: str, metrics: dict[str, int]) -> dict[
         RETURNING *
         """,
         (json.dumps(metrics), report_id),
+    )
+
+
+async def close_missed_reports(report_date: date, points: int) -> list[dict[str, Any]]:
+    """22:00: every ask of that day still unanswered gets its minus points — once (2026-10-15).
+
+    Only active people who still get report asks; a report switched off or a
+    day off was never asked, so it is never here.
+
+    Returns:
+        The closed rows with the person's name fields and the month's minus so far.
+    """
+    return await fetch_all(
+        """
+        WITH closed AS (
+            UPDATE daily_reports r SET penalty_points = %(p)s, penalized_at = now()
+            FROM employees e
+            WHERE e.id = r.employee_id AND e.status = 'active' AND NOT e.reports_off
+              AND r.report_date = %(d)s AND r.status = 'asked' AND r.penalized_at IS NULL
+            RETURNING r.id, r.employee_id, r.telegram_user_id, r.report_date, r.penalty_points,
+                      e.full_name, e.display_name, e.address_form
+        )
+        SELECT c.*, c.penalty_points + COALESCE((
+            SELECT sum(o.penalty_points) FROM daily_reports o
+            WHERE o.employee_id = c.employee_id AND o.id <> c.id
+              AND o.report_date BETWEEN date_trunc('month', %(d)s::date)::date AND %(d)s), 0) AS month_points
+        FROM closed c
+        """,
+        {"p": points, "d": report_date},
     )
 
 
@@ -2010,7 +2052,7 @@ async def mark_kpi_period(month: date, column: str) -> bool:
 async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any]]]:
     """Everything the KPI needs for ``[start, end]``, keyed by employee_id."""
     reports = await fetch_all(
-        """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, e.display_name
+        """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, r.penalty_points, e.display_name
            FROM daily_reports r JOIN employees e ON e.id = r.employee_id
            WHERE r.report_date BETWEEN %s AND %s""",
         (start, end),

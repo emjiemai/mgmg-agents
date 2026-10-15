@@ -1217,7 +1217,7 @@ async def _try_daily_report(
                 await _reply(employee["telegram_user_id"], run_id, casual("раҳмат каттакон, ҳисоботингизга қўшиб қўйдим", "😊"))
                 return "daily_report_followup"
 
-        # A reply to an earlier day's ask: reports close at midnight, so say
+        # A reply to an ask that has closed (22:00, or an earlier day), so say
         # so instead of relaying a stale report to the Director.
         if reply_to_message_id:
             expired = await store.expired_report_for_prompt(employee["telegram_user_id"], reply_to_message_id)
@@ -1227,7 +1227,7 @@ async def _try_daily_report(
                     run_id,
                     casual(
                         f"{expired['report_date'].strftime('%d.%m')} кунги ҳисоботнинг вақти ўтиб кетибди, "
-                        "ҳисоботлар шу куннинг ўзида соат 24:00 гача олинади",
+                        "ҳисоботлар шу куннинг ўзида соат 22:00 гача олинади",
                         "🙂",
                     ),
                 )
@@ -1416,6 +1416,9 @@ async def _handle_report_button(prefix: str, report_id: str, callback: dict[str,
     if report is None or str(report["id"]) != report_id or report["status"] != "submitted":
         await _answer(query_id, "фақат бугунги ҳисоботни ўзгартириш мумкин")
         return "report_not_today"
+    if not store.reports_open(today):
+        await _answer(query_id, "ҳисоботлар соат 22:00 гача ўзгартирилади")
+        return "report_closed"
     await _answer(query_id, "OK")
     if prefix == "rpe":
         await store.start_report_edit(report_id, clicker_id, today)

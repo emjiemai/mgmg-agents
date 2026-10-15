@@ -44,10 +44,10 @@ admin set it (`names.call_name`):
 | report saved | раҳмат каттакон, ҳисоботингиз қабул қилинди, чарчаманг 😊 |
 | vague report | the AI's one question, same voice: "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди? 🙂" |
 | answer added | раҳмат каттакон, ҳисоботингизга қўшиб қўйдим 😊 |
-| too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 24:00 гача олинади 🙂 |
+| too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 22:00 гача олинади 🙂 |
 | any typed message while the report is owed (not a Reply to the ask) | бу бугунги ҳисоботингизми? 🙂 — ҳа, ҳисобот · йўқ, бу савол (→ the work AI). **Never guessed** (2026-10-02). |
 | a photo / video / file | бу расм нима учун? 🙂 — бугунги ҳисобот · директорга юбориш · бекор қилиш; report or Director: the file itself is forwarded to the Director with who sent it; the AI never reads it |
-| /hisobot | today's report with ✏️ ўзгартириш (the next message is the new text) and 🗑 ўчириш (after «ҳа, ўчириш» it's owed again until midnight). Only today's, only one's own. |
+| /hisobot | today's report with ✏️ ўзгартириш (the next message is the new text) and 🗑 ўчириш (after «ҳа, ўчириш» it's owed again until 22:00). Only today's, only one's own. |
 
 `selfcheck.py` fails if any of these gains a capital letter, a line break,
 markup, or an emoji anywhere but the end. Task cards keep their format.
@@ -182,10 +182,29 @@ AI outages skip the check.
 
 ## Late replies
 
-- **Reports close at midnight** (Tashkent) of the day they were asked for.
+- **Reports close at 22:00** (Tashkent) of the day they were asked for (the Director, 2026-10-15; it was midnight).
   A report sent after that is not recorded; the employee counts as missed in
   the 08:00 brief. Replying to an old ask gets "hisobot muddati tugagan"
   (messages no longer go to the Director through the bot, 2026-10-02).
 - **Follow-up answer.** The one follow-up question on a vague report waits up
-  to 3 hours, and never past midnight. After that it lapses: the report
+  to 3 hours, and never past 22:00. After that it lapses: the report
   stands as first sent, and later messages are never glued onto it.
+
+## 22:00 and minus points (2026-10-15)
+
+The Director: «ҳисобот топширишни соат 22:00 гача қилиб қўй; ҳисобот
+топширмаганларга минус балл ёзилсин, ҳар куни; ўзига ҳам борсин».
+
+- The 16:00 ask and the 17:00 reminder say «соат 22:00 гача». After 22:00 a
+  report isn't taken (a reply gets «вақти ўтиб кетибди»), ✏️ / 🗑 stop.
+- At 22:00 (`integrations/org_bot/report_close.py`, checked every 5 minutes by
+  the API — no new cron) every ask of that day still open gets
+  `REPORT_MISS_PENALTY` points (default **1**) in `daily_reports.penalty_points`,
+  once (`penalized_at`). Only active people who get asks: 📝 off and days off
+  are never asked.
+- The person gets one polite line: «Алишер ака, бугунги ҳисоботингиз соат
+  22:00 гача келмади, шунинг учун KPI баллингиздан 1 балл айирилди, шу ойда
+  жами −3 балл, эртага вақтида юборишингизни сўраймиз 🔴».
+- The points come off that month's KPI total (`13-kpi.md`).
+- Starts with the asks of **16.10.2026** (15.10's ask didn't say 22:00 yet;
+  that day closes at 22:00 with 0 points and no message).

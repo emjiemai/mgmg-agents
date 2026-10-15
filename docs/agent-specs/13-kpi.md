@@ -30,6 +30,11 @@ checked:
 
 **KPI** is the weighted total: 🟢 80+, 🟡 60–79, 🔴 below 60.
 
+**Minus points** (2026-10-15, the Director): each daily report not in by 22:00
+costs `REPORT_MISS_PENALTY` points (default 1) off the month's total (`06-daily-reports.md`). `/kpi`
+shows «🔴 Ҳисобот соат 22:00 гача келмагани учун: −N балл (K кун)», the table «🔴−N» after the
+total, the PDF «−N (ҳисобот)» under it.
+
 A part with no data for someone (no goal set, no task due, never asked for
 a report, Verifix not connected or the name doesn't match) is **left out and
 the rest re-weighted** — never counted as zero. Someone with nothing
