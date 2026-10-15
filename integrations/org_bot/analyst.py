@@ -74,8 +74,9 @@ SAP_KINDS: dict[str, str] = {
     "payments": "incoming payments from customers (ORCT), last ~45 days",
     "payments_out": "outgoing payments to suppliers (OVPM), last ~45 days",
     "ap_open": "open supplier invoices (OPCH) — not pushed yet; supplier debt is supplier_balances",
-    "supplier_balances": "every supplier with a balance (OCRD): Balance USD, BalanceSys so'm "
-                         "(positive = we owe, negative = advance paid)",
+    "supplier_balances": "every supplier with a balance (OCRD): Balance USD, BalanceSys so'm. SIGN: NEGATIVE = "
+                         "WE OWE the supplier, POSITIVE = we paid ahead (advance) — checked against 1C on "
+                         "15.10.2026; a negative total means we owe. For supplier debt prefer supplier_debt_compare",
     "po_open": "open purchase order lines (OPOR + POR1)",
     "orders": "open sales orders (ORDR)",
     "inventory": "stock by item and warehouse (OITW + OITM), non-zero",

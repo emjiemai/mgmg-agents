@@ -3904,6 +3904,9 @@ def test_accountant_test_fixes() -> None:
             setattr(obj, name, value)
 
     prompt = " ".join(analyst.employee_prompt("Дониёр", "Бухгалтерия", {"sap", "1c", "billz"}).split())
+    sap_desc = analyst.SAP_KINDS["supplier_balances"]
+    check_true("SAP supplier balance sign: negative = we owe (checked against 1C, 15.10)",
+               "NEGATIVE = WE OWE" in sap_desc and "positive = we owe" not in sap_desc)
     check_true("refusals: other people's attendance / KPI / tasks are the Director's only — no 'ask the admin'",
                "are the Director's only" in prompt and "don't suggest" in prompt
                and "admin can open it only with the Director's approval" in prompt)

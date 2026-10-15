@@ -86,7 +86,7 @@ when asked and once, the text before the file, the shared pool never closed.
 
 ## SAP's sign (fixed 2026-10-09)
 
-SAP stores a supplier advance as a negative balance (and a debt as positive).
+SAP's supplier balance has the opposite sign to "we owe": checked 15.10.2026 on 35 suppliers in both systems, only `sign = -1` agrees with 1C (21 agree, 29 same direction; `+1`: 0 agree) — a **negative** SAP balance is our debt, a positive one an advance. (This line said the reverse until 15.10; the code always chose the sign from 1C.)
 The first run guessed the sign from the majority of balances and turned every
 advance into a debt, doubling each "difference" (an advance equal to the tiyin
 in both systems showed as twice its size). The sign is now chosen by
