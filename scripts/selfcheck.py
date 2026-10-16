@@ -6705,7 +6705,8 @@ def test_sap_full_push() -> None:
                set(script_cols["get_open_invoices"]) == set(push_handler.EXPECTED_COLUMNS["ar_open"])
                and set(script_cols["get_sales_by_date"]) == set(push_handler.EXPECTED_COLUMNS["sales"])
                | set(push_handler.EXPECTED_COLUMNS["sales_lines"])
-               and set(script_cols["get_stock_value"]) == set(push_handler.EXPECTED_COLUMNS["stock_value"]))
+               # get_stock_value sends item rows (summed on arrival, kept as stock_items): its own columns
+               and set(script_cols["get_stock_value"]) == {"ItemCode", "ItemName", "WhsCode", "WhsName", "OnHand", "StockValue"})
     per_warehouse = [{"WhsCode": "01", "StockValue": "300000.50"}, {"WhsCode": "08", "StockValue": "213344.65"}]
     whole = figures.inventory_value(per_warehouse, "USD", as_of=as_of, complete=True)
     check("stock value per warehouse adds up to the whole", (whole.totals, whole.capped), ({"USD": 51334515}, False))

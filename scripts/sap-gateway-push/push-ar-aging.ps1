@@ -55,7 +55,8 @@ $ExpectedColumns = @{
     "get_sales_by_date" = @("ObjType", "DocEntry", "DocNum", "CardCode", "CardName", "DocDate", "CreateDate",
         "CreateTS", "CANCELED", "DocCur", "DocTotal", "DocTotalFC", "DocTotalSy", "SlpCode", "UserSign", "LineNum",
         "ItemCode", "Dscription", "Quantity", "WhsCode", "CodeBars", "LineTotal")
-    "get_stock_value" = @("WhsCode", "WhsName", "Items", "OnHand", "StockValue")
+    # One row per item and warehouse; the Command Center sums them per warehouse (and keeps them as stock_items).
+    "get_stock_value" = @("ItemCode", "ItemName", "WhsCode", "WhsName", "OnHand", "StockValue")
     "get_supplier_balances" = @("CardCode", "CardName", "LicTradNum", "CardType", "Currency", "Balance",
         "BalanceSys", "BalanceFC")
     "get_customers_all" = @("CardCode", "CardName", "LicTradNum", "GroupName", "Balance", "BalanceSys", "SlpCode")
