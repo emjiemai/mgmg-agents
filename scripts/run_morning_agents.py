@@ -38,6 +38,7 @@ AGENTS = [
     "agents/billz-sap-check/agent.py",  # did every shop cheque reach SAP? (needs the full SAP push)
     "agents/garmin-brief/agent.py",  # the Garmin manager's brief (after the check: it shows its result)
     "agents/lead-agent/agent.py",
+    "agents/garmin-market/agent.py",  # new Garmin tenders daily; competitors on Mondays (to the Garmin manager)
     "agents/receivables/agent.py",
     "agents/task-tracker/agent.py --morning",
     "agents/data-quality/agent.py",  # sends only on Mondays

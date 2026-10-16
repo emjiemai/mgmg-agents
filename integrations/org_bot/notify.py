@@ -77,3 +77,32 @@ async def notify_directors(
                 log.error("Could not notify Director {} for {}: {}", chat_id, agent, exc)
 
     return message_ids
+
+
+async def notify_role(
+    role: str, text: str, *, agent: str, run_id: uuid.UUID | None = None, fallback_to_director: bool = True,
+) -> list[int]:
+    """Send one message to everyone active in ``role`` (e.g. ``garmin_manager``).
+
+    Nobody in the role → the Director gets it instead (``fallback_to_director``),
+    so a finding is never silently dropped while the role is unfilled.
+    """
+    if settings.bots_frozen:
+        log.info("Bots frozen (BOTS_FROZEN=true) — {} had nothing sent", agent)
+        return []
+    people = await store.active_employees_by_role(role)
+    if not people:
+        if fallback_to_director:
+            log.info("Nobody in role {} — {} goes to the Director", role, agent)
+            return await notify_directors(text, agent=agent, run_id=run_id)
+        return []
+    message_ids: list[int] = []
+    async with TelegramBot(
+        agent=agent, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for person in people:
+            try:
+                message_ids.extend(await bot.send_message(text, chat_id=str(person["telegram_user_id"])))
+            except TelegramError as exc:
+                log.error("Could not notify {} ({}) for {}: {}", person["telegram_user_id"], role, agent, exc)
+    return message_ids

@@ -210,6 +210,10 @@ class Settings(BaseSettings):
     # has LEAD_AGENT_ENABLED=true in Render's mgmg-shared group (the dashboard
     # owns it); false pauses it from the next 08:00 run.
     lead_agent_enabled: bool = False
+    # Garmin market watch (2026-10-16, agents/garmin-market): new state tenders
+    # for Garmin / Tanita / Tacx products daily (UzEx, free), competitors on
+    # Mondays (SerpAPI Google, ~12 searches). Results go to the Garmin manager.
+    garmin_market_enabled: bool = True
 
     # --- Daily reports on/off ---
     # Off unless explicitly turned on (paused 2026-09-18, not in use yet).

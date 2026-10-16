@@ -8,6 +8,10 @@
 **After it:** its leads went to B2B sales, one each, with a 15:00 check-in — stopped by the Director on 2026-10-07 (`14-lead-handout.md`); the leads stay in the sheet
 (`LEAD_AGENT_ENABLED=true` in Render's `mgmg-shared`; `false` pauses it again)
 
+**Garmin (2026-10-16):** leads for the Garmin / Tanita / Tacx business (`is_garmin_lead`) also go to
+the Garmin manager, with signal and source; tenders and competitors for Garmin are the Garmin market
+watch (`24-garmin-market.md`).
+
 ## Purpose
 
 Find businesses in Uzbekistan that will need industrial laundry equipment

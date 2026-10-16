@@ -39,7 +39,7 @@ from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient
 from integrations.search.tavily_client import TavilyClient
 from integrations.org_bot import leads as leads_sheet
-from integrations.org_bot.notify import notify_directors
+from integrations.org_bot.notify import notify_directors, notify_role
 from integrations.telegram.bot import escape
 from integrations.tenders.uzex_client import UzExClient
 from integrations.tenders.worldbank_client import WorldBankClient, WorldBankError
@@ -283,6 +283,14 @@ SPORTS_TECH_QUERIES = [
     ("корпоративные подарки часы Garmin Ташкент оптом компания", "equipment_sales"),
     ("government sports program Uzbekistan equipment tender GPS", "equipment_sales"),
     ("mall activation Tashkent wearable technology brand", "sponsorship_partnership"),
+    # More Garmin B2B buyers (2026-10-16): flight schools and airlines (Garmin
+    # avionics / aviation GPS), fishing and hunting clubs (echo sounders,
+    # handheld GPS), rescue and mountain services (inReach), triathlon events.
+    ("аэроклуб OR авиашкола Узбекистан самолет оборудование Garmin", "equipment_sales"),
+    ("O'zbekiston baliqchilik ovchilik klubi exolot GPS", "equipment_sales"),
+    ("МЧС Узбекистан горноспасатели спутниковый коммуникатор GPS закупка", "equipment_sales"),
+    ("триатлон Ташкент 2026 OR 2027 партнер старт", "sponsorship_partnership"),
+    ("велозаезд OR марафон Самарканд OR Бухара 2026 спонсор", "sponsorship_partnership"),
 ]
 SPORTS_TECH_TENDER_SITE_QUERIES = [
     ("site:bicotender.ru фитнес OR спорт оборудование тендер Узбекистан", "equipment_sales"),
@@ -830,6 +838,35 @@ async def notify_telegram(new_leads: list[dict], run_id: uuid.UUID) -> None:
         text = "\n".join(lines)
 
     await notify_directors(text, agent=AGENT, run_id=run_id)
+    garmin = [lead for lead in new_leads if is_garmin_lead(lead)]
+    if garmin:
+        # The Garmin business's own leads go to its manager too (the owner,
+        # 2026-10-16) — with the signal and the source, so they can act on it.
+        await notify_role("garmin_manager", garmin_leads_text(garmin), agent=AGENT, run_id=run_id)
+
+
+def is_garmin_lead(lead: dict) -> bool:
+    """A lead for the Garmin / Tanita / Tacx business: its track, or the products named in it."""
+    if lead.get("track") == "sponsorship_partnership":
+        return True
+    text = " ".join(str(lead.get(k) or "") for k in ("company_name", "project_name", "industry", "signal", "notes")).lower()
+    return any(kw.lower() in text for kw in SPORTS_TECH_KEYWORDS)
+
+
+def garmin_leads_text(leads: list[dict]) -> str:
+    """The Garmin manager's message: each lead with what was found and where."""
+    lines = [f"🎯 <b>Garmin учун янги лидлар — {len(leads)} та</b>", ""]
+    for lead in leads[:15]:
+        name = lead.get("company_name") or "Номсиз"
+        lines.append(f"• <b>{escape(name)}</b> — {escape(TRACK_LABELS.get(lead.get('track', ''), ''))}")
+        if lead.get("signal"):
+            lines.append(f"  {escape(str(lead['signal'])[:300])}")
+        url = lead.get("signal_source_url")
+        if url:
+            lines.append(f"  <a href=\"{escape(url)}\">манба</a>")
+    lines.append("")
+    lines.append("Ҳаммаси «POSSIBLE Leads» жадвалида ҳам бор.")
+    return "\n".join(lines)
 
 
 async def run(dry_run: bool = False) -> int:

@@ -1186,3 +1186,20 @@ CREATE TABLE IF NOT EXISTS cheques (
 );
 CREATE INDEX IF NOT EXISTS idx_cheques_fiscal ON cheques (fiscal_module, fiscal_sign) WHERE fiscal_sign IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_cheques_rrn ON cheques (rrn) WHERE rrn IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- garmin_market (2026-10-16, agents/garmin-market): what the Garmin market watch
+-- has seen — UzEx lots it judged ('tender', key = lot id, relevant or not, so a
+-- lot is judged once) and pages selling Garmin ('competitor', key = the page's
+-- address, last_seen updated weekly). Company data: never a /db technical table.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS garmin_market (
+    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind        TEXT         NOT NULL CHECK (kind IN ('tender', 'competitor')),
+    key         TEXT         NOT NULL,
+    relevant    BOOLEAN      NOT NULL DEFAULT false,
+    data        JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    first_seen  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_seen   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT uq_garmin_market UNIQUE (kind, key)
+);
