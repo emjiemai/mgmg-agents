@@ -20,6 +20,10 @@
 .fig--quiet .number { padding-top: 2px; font-size: 18px; font-weight: 400; color: var(--ink-2); }
 .foot { margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 11px; line-height: 1.45; color: var(--ink-3); }
 .foot .lowerbound { color: var(--warn); }
+.compass { margin: 14px 0 4px; padding: 11px 13px; border-radius: 8px; background: var(--paper-2, #f4f5f7); }
+.compass p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-1, #15171c); }
+.compass p + p { margin-top: 6px; }
+.compass b { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; }
 .notice { margin: 12px 0 2px; padding: 9px 11px; border: 1px solid var(--alert); border-radius: 8px; font-size: 13px; line-height: 1.4; font-weight: 700; color: var(--alert); }
 {% endblock %}
 {% block body %}
@@ -31,6 +35,28 @@
   <div class="mark">ЭМЖИЕМ</div>
 </header>
 {% if notice %}<p class="notice">⚠ {{ notice }}</p>{% endif %}
+
+{% if compass is defined and compass %}
+<section class="compass">
+  {% for c in compass %}<p><b>{% if loop.first %}{{ icon("compass", "ink", 14) }}{% endif %}{{ c.label }}:</b> {{ c.text }}</p>{% endfor %}
+</section>
+{% endif %}
+
+{% for b in (lead if lead is defined else []) %}
+<section class="block block--{{ b.tone }}">
+  {{ head(b.title, b.day, b.summary, b.tone, b.icon) }}
+  {% if b.rows %}
+  <ul class="rows">
+    {% for r in b.rows %}
+    <li><span class="who">{{ r.who }}</span><span class="what num{% if r.alert %} alert{% endif %}">{{ r.what }}</span></li>
+    {% endfor %}
+  </ul>
+  {% if b.more %}<p class="more">+яна {{ b.more }} та</p>{% endif %}
+  {% elif b.empty %}
+  <p class="empty">{{ b.empty }}</p>
+  {% endif %}
+</section>
+{% endfor %}
 
 <section class="figures">
 {% for f in figures %}
@@ -66,6 +92,6 @@
 
 <footer class="foot">
   {% if lower_bound %}<p class="lowerbound">«камида» — SAP'дан ёзувларнинг бир қисми келди, ҳақиқий рақам бундан катта.</p>{% endif %}
-  <p>{{ foot | default("Касса — 1C · сотув, захира, қарз — SAP · дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.") }}</p>
+  <p>{{ foot | default("Сотув, захира, қарз — SAP · дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.") }}</p>
 </footer>
 {% endblock %}

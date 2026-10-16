@@ -716,9 +716,10 @@ def test_brief_rendering() -> None:
     empty.note_failure("sap_orders", RuntimeError("connection refused"))
     text = brief.render(empty)
     check_true("title and time on one line", "CEO кунлик ҳисоботи" in text.splitlines()[0] and "Тошкент" in text.splitlines()[0])
-    check_true("cash says plainly it isn't connected", "💰 Касса: <i>уланмаган</i>" in text)
+    check_true("goals and tasks that couldn't be read say so", text.count("маълумот олиб бўлмади") >= 2)
     check_true("a missing feed reads 'маълумот йўқ', never a number", "📈 Кечаги сотув: <i>маълумот йўқ</i>" in text)
-    check_true("all five lines are there", all(k in text for k in ("Касса", "Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар")))
+    check_true("all four number lines are there, no «Касса»",
+               all(k in text for k in ("Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар")) and "Касса" not in text)
 
     aging = ARAging(snapshot_date=date(2026, 9, 25))
     aging.invoices = [
@@ -6095,12 +6096,12 @@ def test_reports() -> None:
     """The brief as a picture and four reports as PDFs (2026-10-05): templates, values, files."""
     print("report images and PDFs")
     import re
-    from datetime import datetime
 
     from integrations.billz import sap_check as sc
     from integrations.billz.sales import DaySales, ShopDay
     from integrations.common.agent_loader import load_agent
-    from integrations.onec.cash import CashPosition
+    from integrations.common.config import settings
+    from integrations.common.timeutil import today_local
     from integrations.org_bot import kpi_score
     from integrations.reports import render
     from integrations.sap import push_handler
@@ -6127,8 +6128,18 @@ def test_reports() -> None:
     aging.bucket_counts = {"90_plus": 3, "1_30": 3}
     people = [{"report_date": date(2026, 10, 2), "status": "asked", "display_name": f"Ходим {i}", "role": "it"}
               for i in range(7)]
+    goals = [{"name": "Ширин Умматова", "title": "20 та шартнома", "target": 20, "actual": 4},
+             {"name": "Отабек Мирпулатов", "title": "Сотув режаси", "target": 100, "actual": None},
+             {"name": "Дилноза Раҳимова", "title": "HR ҳужжатлари", "target": 10, "actual": 10}]
+    tasks = [{"display_name": "Алишер Каримов", "task_summary": "Омбор ҳисоботи", "status": "started",
+              "due_date": today_local() - timedelta(days=3)},
+             {"display_name": "Бобур Алиев", "task_summary": "Шартнома", "status": "blocked", "due_date": None},
+             {"display_name": "Нигора", "task_summary": "Тўлов", "status": "review", "due_date": None},
+             {"display_name": "Ширин", "task_summary": "Қўнғироқ", "status": "sent", "due_date": today_local()},
+             {"display_name": "Отабек", "task_summary": "Кейинги ҳафта", "status": "sent",
+              "due_date": today_local() + timedelta(days=5)}]
     data = brief.BriefData(
-        cash=CashPosition(at=datetime(2026, 10, 5, 8), accounts=[("5110", "Банк", 4_495_000_000), ("5010", "Касса", 76_720_000)]),
+        goals=goals, tasks=tasks,
         sales=Figure(status="ok", totals={}, count=0, as_of=date(2026, 10, 5)), sales_unit="ҳисоб-фактура",
         inventory=Figure(status="unknown_format", as_of=date(2026, 10, 5)), aging=aging,
         payments=brief.PaymentsDue(),
@@ -6140,17 +6151,34 @@ def test_reports() -> None:
     )
     v = brief.view(data)
     by_label = {f["label"]: f for f in v["figures"]}
-    check("the five numbers, always in this order", list(by_label),
-          ["Касса", "Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар"])
-    check("cash: the number large, its unit apart", (by_label["Касса"]["number"], by_label["Касса"]["unit"]),
-          ("4,57", "млрд сўм"))
+    check("the numbers, no «Касса» (the owner, 16.10.2026)", list(by_label),
+          ["Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар"])
+    lead = {b["title"]: b for b in v["lead"]}
+    check("the brief leads with goals, tasks and reports", list(lead),
+          ["Ойлик мақсадлар", "Топшириқлар", "Ҳисобот юбормаганлар"])
+    goal_rows = lead["Ойлик мақсадлар"]["rows"]
+    check_true("goals: no result first, then the furthest behind; a met goal last and not red",
+               "натижа ёзилмаган" in goal_rows[0]["what"] and "4 / 20 (20%)" in goal_rows[1]["what"]
+               and goal_rows[2]["alert"] is False and "10 / 10 (100%)" in goal_rows[2]["what"])
+    task_block = lead["Топшириқлар"]
+    check("tasks: overdue, blocked, in review, due today — not one due later", [r["what"].split(" · ")[0] for r in task_block["rows"]],
+          ["3 кун ўтди", "тўсиқ", "текширувда", "бугун"])
+    check_true("...counted in the head line, red when overdue or blocked",
+               task_block["summary"] == "5 та очиқ · 1 ўтган · 1 тўсиқ" and task_block["tone"] == "alert")
+    check("no goals: says how to set them", brief.goals_block(brief.BriefData(goals=[]))["empty"],
+          "бу ой мақсад қўйилмаган — /maqsad билан қўйинг")
+    check("vision and mission hidden until the owner writes them", v["compass"], [])
+    saved_compass = (settings.company_vision, settings.company_mission)
+    settings.company_vision, settings.company_mission = "Ўзбекистонда энг ишончли хизмат", ""
+    check("...then shown as written", brief.compass(), [{"label": "Визион", "text": "Ўзбекистонда энг ишончли хизмат"}])
+    settings.company_vision, settings.company_mission = saved_compass
     check_true("nothing sold / no payments: quiet, not shouted",
                by_label["Кечаги сотув"]["tone"] == "quiet" and by_label["Бугунги тўловлар"]["tone"] == "quiet")
     check_true("unreadable stock says so instead of a number",
                by_label["Захира"]["tone"] == "muted" and "ўқилмади" in by_label["Захира"]["number"])
     check_true("overdue debt is the one red figure, with how old",
                by_label["Мижоз қарзи"]["tone"] == "alert" and "90 кундан" in by_label["Мижоз қарзи"]["sub"])
-    blocks = {b["title"]: b for b in v["blocks"]}
+    blocks = {b["title"]: b for b in v["blocks"] + v["lead"]}
     check("names: five, then '+N'", (len(blocks["Ҳисобот юбормаганлар"]["rows"]), blocks["Ҳисобот юбормаганлар"]["more"]), (5, 2))
     check_true("one shop: its name beside the day, no repeated row",
                "GARMIN ABAY" in blocks["Дўконлар"]["day"] and not blocks["Дўконлар"]["rows"])
@@ -6159,7 +6187,11 @@ def test_reports() -> None:
     check_true("the brief reads in Uzbek Cyrillic",
                latin_words(text_of(brief_html), allow={"Billz", "GARMIN", "ABAY", "OPS", "Manager", "Verifix", "C"}) == [])
     check_true("no emoji in the picture (drawn icons only)", "🔴" not in brief_html and "📈" not in brief_html)
-    check_true("the caption carries the key numbers", "Касса: 4,57 млрд" in brief.caption(data))
+    check_true("no «Касса» anywhere in the brief", "Касса" not in brief_html and "Касса" not in brief.caption(data)
+               and "Касса" not in brief.render(data))
+    check_true("the text brief leads with goals and tasks",
+               brief.render(data).index("Ойлик мақсадлар") < brief.render(data).index("Топшириқлар")
+               < brief.render(data).index("Рақамлар"))
 
     # ---- the reports: values
     kpi_people = []
@@ -6998,15 +7030,7 @@ def test_onec_cash() -> None:
         check_true("unreadable balances raise, with 1C's reason", "401" in str(exc))
 
     brief = load_agent("ceo-daily-brief")
-    text = brief.render(brief.BriefData(report_rows=[], cash=pos))
-    check_true("the brief shows bank and cash", "💰 Касса: 3,6 млрд сўм (банк 3,52 млрд сўм, нақд 76,72 млн сўм)" in text
-               or ("💰 Касса:" in text and "банк" in text and "нақд" in text))
-    check_true("not set up: «уланмаган»", "💰 Касса: <i>уланмаган</i>" in brief.render(brief.BriefData(report_rows=[])))
-    check_true("1C down: «маълумот йўқ»", "💰 Касса: <i>маълумот йўқ</i>" in brief.render(brief.BriefData(report_rows=[], cash_failed=True)))
-    saved = brief.five_numbers_json(brief.BriefData(cash=pos))["cash"]
-    check("today's cash is kept for tomorrow's change", saved, {"status": "ok", "totals": {"UZS": round(pos.total * 100)}})
-    tomorrow = brief.render(brief.BriefData(report_rows=[], cash=pos, previous={"cash": {"status": "ok", "totals": {"UZS": 0}}}))
-    check_true("…and shown as a change", "кечагига" in tomorrow)
+    check_true("the brief no longer shows cash (the owner, 16.10.2026)", "Касса" not in brief.render(brief.BriefData(report_rows=[])))
     data = cash.describe(pos)
     check_true("the Director's data: totals and accounts", "bank accounts 3,520,382,539" in data and "5110.2" in data)
     check_true("pul_qoldigi is a data source the Director can ask", "pul_qoldigi" in AGENT_SLUGS)
