@@ -118,12 +118,23 @@ async def _report_close_loop() -> None:
             log.error("Report close failed: {}", type(exc).__name__)
 
 
+async def _set_menus() -> None:
+    """The bots' ☰ command menus (menus.py), once per start."""
+    from integrations.telegram import menus
+
+    try:
+        await menus.sync_all()
+    except Exception as exc:  # noqa: BLE001 — a menu is a nicety, never a reason to fail
+        log.error("Command menus not set: {}", type(exc).__name__)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     """Run the AI config check in the background so startup isn't delayed; start the complaint check."""
     app.state.ai_config_check = asyncio.create_task(_log_ai_config())
     app.state.complaint_loop = asyncio.create_task(_complaint_status_loop())
     app.state.report_close_loop = asyncio.create_task(_report_close_loop())
+    app.state.menus = asyncio.create_task(_set_menus())
 
 
 @app.get("/health")

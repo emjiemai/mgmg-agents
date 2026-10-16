@@ -81,3 +81,5 @@ opens C2 and C5.
 Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекери`, column
 ҲОЛАТ) whenever an agent changes state; each agent's details are in
 `docs/agent-specs/`.
+
+**Bot menus (2026-10-16):** both bots show their / commands behind the ☰ button — per role in OPS Manager (`integrations/telegram/menus.py`).

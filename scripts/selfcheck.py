@@ -4009,6 +4009,84 @@ def test_report_deadline_penalty() -> None:
                and kpi_score.table_view(date(2026, 10, 1), [with_minus], False)["people"][0]["penalty"] == 2)
 
 
+def test_command_menus() -> None:
+    """16.10.2026: the ☰ menu with the / commands in both bots — only commands the bots handle."""
+    print("bot command menus (16.10.2026)")
+    import asyncio
+    import inspect
+    import re
+
+    from integrations.api import app as api_app
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, kpi_flow, ops_manager, permissions, report_tools, store
+    from integrations.org_bot.roles import DIRECTOR_ROLE
+    from integrations.telegram import menus
+
+    for name, items in (("Admin", menus.ADMIN), ("employee", menus.EMPLOYEE), ("Director", menus.DIRECTOR)):
+        check_true(f"{name} menu: valid Telegram commands, Cyrillic descriptions",
+                   all(re.fullmatch(r"[a-z0-9_]{1,32}", c) and 0 < len(d) <= 256 and re.search("[а-яўқғҳ]", d.lower())
+                       for c, d in items) and len({c for c, _ in items}) == len(items))
+    admin_handles = {*admin.EMPLOYEE_LIST_COMMANDS, *admin.ASK_NAMES_COMMANDS, *admin.DATA_QUALITY_COMMANDS,
+                     admin.QR_COMMAND, admin.VERIFIX_COMMAND, admin.BILLZ_COMMAND, *admin.ONEC_COMMANDS,
+                     *admin.DAY_OFF_COMMANDS, *admin.FLEXIBLE_COMMANDS, *admin.TECH_REPORT_COMMANDS, admin.ANNOUNCE_COMMAND}
+    ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
+                   *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
+                   *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS}
+    check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
+    check_true("every OPS Manager menu command is one it handles",
+               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR))
+    check_true("the Director's menu has /maqsad /baho; the employees' doesn't",
+               {"maqsad", "baho"} <= {c for c, _ in menus.DIRECTOR} and not {"maqsad", "baho"} & {c for c, _ in menus.EMPLOYEE})
+
+    calls: list[tuple[str, str, dict]] = []
+
+    class FakeBot:
+        def __init__(self, agent, bot_token, **kwargs):
+            self.token = bot_token
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def _call(self, method, payload, mode="notify", target_ref=None):
+            calls.append((self.token, method, payload))
+            return {}
+
+    async def directors(role):
+        return [{"telegram_user_id": 77}] if role == DIRECTOR_ROLE else []
+
+    saved = [(menus, "TelegramBot", menus.TelegramBot), (store, "active_employees_by_role", store.active_employees_by_role),
+             (settings, "admin_bot_admin_user_id", settings.admin_bot_admin_user_id),
+             (settings, "admin_bot_telegram_bot_token", settings.admin_bot_telegram_bot_token),
+             (settings, "ops_manager_bot_telegram_bot_token", settings.ops_manager_bot_telegram_bot_token)]
+    try:
+        from pydantic import SecretStr
+
+        menus.TelegramBot, store.active_employees_by_role = FakeBot, directors
+        settings.admin_bot_admin_user_id = 5
+        settings.admin_bot_telegram_bot_token, settings.ops_manager_bot_telegram_bot_token = SecretStr("A"), SecretStr("O")
+        done = asyncio.run(menus.sync_all())
+        sets = [(t, p.get("scope"), [c["command"] for c in p["commands"]]) for t, m, p in calls if m == "setMyCommands"]
+        check_true("sync: Admin menu for the admin only, employees' menu for everyone, the Director's for each Director",
+                   done == 3 and ("A", {"type": "chat", "chat_id": 5}, [c for c, _ in menus.ADMIN]) in sets
+                   and ("O", None, [c for c, _ in menus.EMPLOYEE]) in sets
+                   and ("O", {"type": "chat", "chat_id": 77}, [c for c, _ in menus.DIRECTOR]) in sets)
+        check_true("the ☰ button is set to show the commands",
+                   sum(1 for _t, m, p in calls if m == "setChatMenuButton" and p["menu_button"] == {"type": "commands"}) == 3)
+        calls.clear()
+        asyncio.run(menus.sync_person(88, "buxgalteriya"))
+        check_true("someone who stops being Director goes back to the employees' menu",
+                   calls == [("O", "deleteMyCommands", {"scope": {"type": "chat", "chat_id": 88}})])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("menus set at startup and on a role change, approval and removal",
+               "_set_menus" in inspect.getsource(api_app._startup)
+               and inspect.getsource(admin).count("menus.sync_person(") == 3)
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -7301,6 +7379,7 @@ def main() -> int:
         test_employee_change_fields,
         test_accountant_test_fixes,
         test_report_deadline_penalty,
+        test_command_menus,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

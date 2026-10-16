@@ -27,6 +27,7 @@ from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import now_local, today_local
 from integrations.org_bot import data_access, store
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS, ROLE_SLUGS, ROLES
+from integrations.telegram import menus
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
 AGENT = "admin-bot"
@@ -1061,6 +1062,8 @@ async def _handle_employee_action(
             await _answer(query_id, "Роль ўзгармади")
             return "role_unchanged"
         before, after = changed
+        if DIRECTOR_ROLE in (before["role"], after["role"]):  # the ☰ menu follows the role (menus.py)
+            await menus.sync_person(after["telegram_user_id"], after["role"])
         # Data access belongs to Бухгалтерия / Молия, and a role-given one (Garmin manager) to that
         # role as the Director confirmed it: any change involving them clears it (data_access.py).
         scoped = after["role"] in data_access.ROLE_SCOPES or before["role"] in data_access.ROLE_SCOPES
@@ -1246,6 +1249,8 @@ async def _handle_role_decision(
             approved_by=decided_by,
         )
         await ops_manager.send_registration_confirmed(request, run_id, employee)
+        if employee.get("role") == DIRECTOR_ROLE:  # the Director's ☰ menu (menus.py)
+            await menus.sync_person(employee["telegram_user_id"], employee["role"])
         if employee.get("role") in data_access.ROLE_SCOPES:  # a role that opens company data: the Director is told
             await _tell_director_data_access(employee, decided_by, run_id)
         target_ref, action = str(employee["id"]), "employee_registered"
@@ -1288,6 +1293,8 @@ async def _handle_remove_user(
     # is told when data access was open (data_access.py).
     if employee.get("had_data_access"):
         await _tell_director_data_access({**employee, "data_access": []}, removed_by, run_id)
+    if employee.get("role") == DIRECTOR_ROLE:  # back to the plain ☰ menu (menus.py)
+        await menus.sync_person(employee["telegram_user_id"], None)
 
     message = callback.get("message") or {}
     async with TelegramBot(
