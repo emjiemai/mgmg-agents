@@ -885,7 +885,7 @@ async def _answer_reply(telegram_user_id: int, run_id: uuid.UUID, text: str, rep
 
 async def _route_to_ai(
     employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
-    background: BackgroundTasks | None, reply_to: int | None = None,
+    background: BackgroundTasks | None, reply_to: int | None = None, quoted: str | None = None,
 ) -> str:
     """An employee's message about their work goes to the AI (``ai_chat.py``), never to a person.
 
@@ -898,36 +898,49 @@ async def _route_to_ai(
     if scope and task is None:
         await _show_typing(telegram_user_id, run_id)
         if background is not None:
-            background.add_task(_answer_data_question, employee, text, scope, run_id, reply_to)
+            background.add_task(_answer_data_question, employee, text, scope, run_id, reply_to, quoted)
         else:
-            await _answer_data_question(employee, text, scope, run_id, reply_to)
+            await _answer_data_question(employee, text, scope, run_id, reply_to, quoted)
         return "data_question"
     if employee.get("ai_chat_off"):
         await _reply(telegram_user_id, run_id, ai_chat.off_text())
         return "ai_off"
     await _show_typing(telegram_user_id, run_id)
     if background is not None:
-        background.add_task(_answer_ai_chat, employee, text, task, run_id, reply_to)
+        background.add_task(_answer_ai_chat, employee, text, task, run_id, reply_to, quoted)
     else:
-        await _answer_ai_chat(employee, text, task, run_id, reply_to)
+        await _answer_ai_chat(employee, text, task, run_id, reply_to, quoted)
     return "ai_chat"
 
 
 async def _answer_ai_chat(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
-                          reply_to: int | None = None) -> None:
+                          reply_to: int | None = None, quoted: str | None = None) -> None:
     async with _person_lock(employee["telegram_user_id"]):
-        await _answer_ai_chat_now(employee, text, task, run_id, reply_to)
+        await _answer_ai_chat_now(employee, text, task, run_id, reply_to, quoted)
+
+
+# How many earlier messages (questions + answers, today) the AI keeps in mind: 12 → 24 (2026-10-16).
+AI_MEMORY_TURNS = 24
+# How much of a quoted bot message the AI is shown.
+QUOTE_CHARS = 1500
+
+
+def with_quote(text: str, quoted: str | None) -> str:
+    """The question as the AI sees it: with the bot message it replies to, when there is one."""
+    if not quoted:
+        return text
+    return f"{text}\n\n[This is a reply to this earlier message of yours: «{quoted[:QUOTE_CHARS]}»]"
 
 
 async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[str, Any] | None, run_id: uuid.UUID,
-                              reply_to: int | None) -> None:
+                              reply_to: int | None, quoted: str | None = None) -> None:
     """Answer one message — with the person's own tasks and duties, nothing of anyone else's."""
     telegram_user_id = employee["telegram_user_id"]
     try:
         if await store.ai_questions_today(telegram_user_id) >= ai_chat.DAILY_LIMIT:
             await _reply(telegram_user_id, run_id, ai_chat.limit_text())
             return
-        history = await store.recent_ai_turns(telegram_user_id)
+        history = await store.recent_ai_turns(telegram_user_id, AI_MEMORY_TURNS)
         tasks = await store.open_tasks_for_employee(telegram_user_id)
         await store.log_ai_turn(telegram_user_id, "employee", text)
         async with OpenRouterClient(
@@ -938,7 +951,7 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
         ) as ai:
             raw = await ai.complete(
                 ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, today_local())),
-                ai_chat.user_prompt(history, text, task),
+                ai_chat.user_prompt(history, with_quote(text, quoted), task),
             )
         answer = ai_chat.clean_answer(raw)
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
@@ -952,13 +965,13 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
 
 
 async def _answer_data_question(employee: dict[str, Any], text: str, scope: set[str], run_id: uuid.UUID,
-                                reply_to: int | None = None) -> None:
+                                reply_to: int | None = None, quoted: str | None = None) -> None:
     async with _person_lock(employee["telegram_user_id"]):
-        await _answer_data_question_now(employee, text, scope, run_id, reply_to)
+        await _answer_data_question_now(employee, text, scope, run_id, reply_to, quoted)
 
 
 async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: set[str], run_id: uuid.UUID,
-                                    reply_to: int | None) -> None:
+                                    reply_to: int | None, quoted: str | None = None) -> None:
     """An accountant's / finance person's question: the analyst with their systems only, in their language."""
     from integrations.org_bot import analyst
 
@@ -970,9 +983,9 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
                          else ai_chat.limit_text())
             return
         history = "\n".join(f"{'Employee' if t['role'] == 'employee' else 'You'}: {t['content']}"
-                             for t in await store.recent_ai_turns(telegram_user_id))
+                             for t in await store.recent_ai_turns(telegram_user_id, AI_MEMORY_TURNS))
         await store.log_ai_turn(telegram_user_id, "employee", text)
-        result = await analyst.answer(text, history, run_id, employee=employee, scope=scope)
+        result = await analyst.answer(with_quote(text, quoted), history, run_id, employee=employee, scope=scope)
         answer = sanitize_model_html(result.text.strip()) or (
             "Не удалось найти ответ, попробуйте спросить иначе." if ru else ai_chat.clean_answer(""))
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
@@ -1564,7 +1577,12 @@ async def _handle_employee_message(
     task = None
     if reply_to.get("message_id"):
         task = await store.find_task_by_message_id(reply_to["message_id"], telegram_user_id)
-    return await _route_to_ai(employee, text, task, run_id, background, message.get("message_id"))
+    # A reply to one of the bot's own messages (an earlier answer, a complaint card, the brief):
+    # the AI is shown what was quoted (2026-10-16 — "that one" was a guess before).
+    quoted = None
+    if task is None and (reply_to.get("from") or {}).get("is_bot"):
+        quoted = (reply_to.get("text") or reply_to.get("caption") or "").strip() or None
+    return await _route_to_ai(employee, text, task, run_id, background, message.get("message_id"), quoted)
 
 
 def _plain(text: str | None) -> str:

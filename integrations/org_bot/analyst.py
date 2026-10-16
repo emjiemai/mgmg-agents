@@ -158,8 +158,9 @@ TOOLS: list[dict] = [
     _fn("garmin_data", "The Garmin business's own records: Garmin AI bot leads (customers from Instagram and the "
         "web catalog), Garmin client complaints (from the /f/garmin QR page — each with its own code and state), the "
         "Billz → SAP check (which shop cheques are not in SAP, wrong amount or entered late — by cheque number), and "
-        "the Garmin product catalog with prices.",
-        {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog"]}}, ("source",)),
+        "the Garmin product catalog with prices, and reports = the Garmin сотув team's daily reports (14 days: "
+        "what each wrote, when, who didn't send one).",
+        {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog", "reports"]}}, ("source",)),
     _fn("billz_sap_check", "The Billz → SAP check of the last 7 days: every shop cheque in Billz must be in SAP "
         "as an invoice — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP documents "
         "with no cheque; by cheque number.", {}),
@@ -291,6 +292,9 @@ it briefly and helpfully, without tools.
 Focus on the Garmin business: its shops (billz_sales), its SAP figures
 (garmin_sap — the Garmin warehouses only; the other businesses' SAP data is
 not in this person's access), its bot leads and complaints (garmin_data).
+The daily reports of HIS TEAM (the Garmin сотув people) ARE in his access:
+garmin_data source "reports" — what each wrote, when, who didn't send one.
+Anyone else's reports, attendance and KPI stay the Director's only.
 """
     if lang == "ru":
         prompt += """
@@ -701,6 +705,11 @@ async def garmin_sap(args: dict[str, Any]) -> str:
     return await sap_records(args, keep)
 
 
+# The Garmin manager's team (2026-10-16): whose daily reports he sees, and how far back.
+GARMIN_TEAM_ROLE = "garmin_sotuv"
+GARMIN_REPORT_DAYS = 14
+
+
 async def garmin_data(args: dict[str, Any]) -> str:
     """Garmin's own records (2026-10-14, for the Garmin manager): bot leads, Garmin complaints, the catalog."""
     from integrations.org_bot import feedback, ops_manager, store
@@ -710,6 +719,22 @@ async def garmin_data(args: dict[str, Any]) -> str:
         return await ops_manager._fetch_agent_data("garmin_lidlar")
     if source == "catalog":
         return await ops_manager._fetch_agent_data("garmin_catalog")
+    if source == "reports":
+        # His own team only (2026-10-16): the Garmin сотув people's daily reports — never anyone else's.
+        since = _today() - timedelta(days=GARMIN_REPORT_DAYS - 1)
+        rows = await store.team_reports(GARMIN_TEAM_ROLE, since)
+        if not rows:
+            return f"No daily reports from the Garmin сотув team since {since} (nobody in that role, or none asked)."
+        lines = [f"Daily reports of the Garmin сотув team since {since}, newest first (asked 16:00, accepted until 22:00; "
+                 "a missing one costs KPI minus points):"]
+        for r in rows:
+            if r["status"] == "submitted":
+                at = to_local(r["submitted_at"]).strftime("%H:%M") if r.get("submitted_at") else "?"
+                lines.append(f"- {r['report_date']} | {r['name']} | sent {at} | «{' '.join((r['content'] or '').split())[:600]}»")
+            else:
+                minus = f", −{r['penalty_points']} KPI" if r.get("penalty_points") else ""
+                lines.append(f"- {r['report_date']} | {r['name']} | NOT sent{minus}")
+        return "\n".join(lines)
     if source == "complaints":
         rows = [r for r in await store.recent_client_feedback() if r.get("place") == "garmin"]
         if not rows:
@@ -728,7 +753,7 @@ async def garmin_data(args: dict[str, Any]) -> str:
         return "\n".join(lines)
     if source == "billz_sap":
         return await billz_sap_check({})
-    return "source must be one of: leads, complaints, billz_sap, catalog."
+    return "source must be one of: leads, complaints, billz_sap, catalog, reports."
 
 
 async def billz_sap_check(args: dict[str, Any]) -> str:

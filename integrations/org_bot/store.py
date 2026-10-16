@@ -1345,6 +1345,20 @@ async def merge_report_metrics(report_id: str, metrics: dict[str, int]) -> dict[
     )
 
 
+async def team_reports(role: str, since: date) -> list[dict[str, Any]]:
+    """One role's daily reports since ``since`` (the Garmin manager's team, 2026-10-16), newest first."""
+    return await fetch_all(
+        """
+        SELECT r.report_date, r.status, r.content, r.submitted_at, r.penalty_points,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS name
+        FROM daily_reports r JOIN employees e ON e.id = r.employee_id
+        WHERE e.role = %s AND e.status = 'active' AND r.report_date >= %s
+        ORDER BY r.report_date DESC, name
+        """,
+        (role, since),
+    )
+
+
 async def close_missed_reports(report_date: date, points: int) -> list[dict[str, Any]]:
     """22:00: every ask of that day still unanswered gets its minus points — once (2026-10-15).
 

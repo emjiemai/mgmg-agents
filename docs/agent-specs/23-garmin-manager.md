@@ -13,7 +13,7 @@ database's role checks list it (`schema.sql`, both `employees_role_check`s).
 | What | How |
 | ---- | ---- |
 | Every Garmin complaint | `routes.py`: `complaint:garmin` → `garmin_manager` (tickets, ✅ + reason, hourly "ҳал бўлдими?" — `10-client-feedback.md`). Nobody in the role → the Director. |
-| Garmin's SAP, Billz and Garmin's own records through the bot | `data_access.ROLE_SCOPES` — comes with the role — **no confirmation by the Director** (the owner, 14.10: "we don't need access from the Boss when he is Garmin Manager"); changing the role closes it. The analyst offers `garmin_sap` (**the Garmin warehouses only** — invoices / credit notes with a line in them, their lines, stock, stock value; never other businesses' customers, debts or payments), `billz_sales`, `garmin_data` (Garmin bot leads, Garmin complaints with their ticket state, the catalog) and `data_sources`. Never 1C, attendance or the Director's records. |
+| Garmin's SAP, Billz and Garmin's own records through the bot | `data_access.ROLE_SCOPES` — comes with the role — **no confirmation by the Director** (the owner, 14.10: "we don't need access from the Boss when he is Garmin Manager"); changing the role closes it. The analyst offers `garmin_sap` (**the Garmin warehouses only** — invoices / credit notes with a line in them, their lines, stock, stock value; never other businesses' customers, debts or payments), `billz_sales`, `garmin_data` (Garmin bot leads, Garmin complaints with their ticket state, the catalog, and — 2026-10-16 — **his team's daily reports**: the Garmin сотув people's last 14 days, what each wrote, when, who didn't send one and the minus) and `data_sources`. Never 1C, attendance, anyone else's reports or the Director's records. |
 | The Director is told | when someone gets the role (registration or a role change) and when it's taken away. |
 | A morning brief | `agents/garmin-brief/agent.py`, 08:00 after the Billz → SAP check. |
 | The Billz → SAP check | `BILLZ_SAP_CHECK_ROLES` defaults to `garmin_manager` (once the check leaves its trial); its morning brief shows the result meanwhile. |
@@ -41,6 +41,15 @@ a day (`agent_actions` `garmin_brief_sent`; `--force` sends again);
 
 Live Garmin bot leads are not re-sent: the Garmin bot hands each lead to a
 manager itself; they're in the brief and in his questions.
+
+## Chat memory (2026-10-16)
+
+He found the bot forgetful. Two causes, both fixed for everyone with the
+analyst or the work AI: a reply to one of the bot's own messages (an earlier
+answer, a complaint card, the brief) now shows the AI what was quoted
+(`ops_manager.with_quote`, up to 1 500 characters) — "that one" was a guess
+before; and the AI keeps the last 24 messages of the day in mind, not 12
+(`AI_MEMORY_TURNS`). Task cards keep their own flow.
 
 ## Tests
 

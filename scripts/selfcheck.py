@@ -4087,6 +4087,52 @@ def test_command_menus() -> None:
                and inspect.getsource(admin).count("menus.sync_person(") == 3)
 
 
+def test_garmin_memory_and_team_reports() -> None:
+    """16.10.2026: the Garmin manager's chat memory, and his team's daily reports."""
+    print("Garmin manager: memory and team reports (16.10.2026)")
+    import asyncio
+    import inspect
+    from datetime import datetime
+
+    from integrations.org_bot import analyst, data_access, ops_manager, store
+
+    q = ops_manager.with_quote("ундан кейинги чек-чи?", "Кеча 3 та чек SAP'га киритилмаган: 1041246 …")
+    check_true("a reply to the bot's message carries what was quoted", "1041246" in q and q.startswith("ундан кейинги"))
+    check("no quote, the question as typed", ops_manager.with_quote("салом", None), "салом")
+    handler = inspect.getsource(ops_manager)
+    check_true("only the bot's own messages are quoted, task cards keep their own flow",
+               '(reply_to.get("from") or {}).get("is_bot")' in handler and "task is None and" in handler)
+    check_true("both AIs get the quote", inspect.getsource(ops_manager._answer_data_question_now).count("with_quote(") == 1
+               and inspect.getsource(ops_manager._answer_ai_chat_now).count("with_quote(") == 1)
+    check_true("memory: 24 earlier messages (was 12)", ops_manager.AI_MEMORY_TURNS == 24
+               and "AI_MEMORY_TURNS" in inspect.getsource(ops_manager._answer_data_question_now)
+               and "AI_MEMORY_TURNS" in inspect.getsource(ops_manager._answer_ai_chat_now))
+
+    asked: list = []
+
+    async def fake_team(role, since):
+        asked.append((role, since))
+        return [{"report_date": date(2026, 10, 15), "status": "submitted", "content": "Абай: 3 та соат сотилди",
+                 "submitted_at": datetime(2026, 10, 15, 13, 5), "penalty_points": 0, "name": "Ширина"},
+                {"report_date": date(2026, 10, 16), "status": "asked", "content": None, "submitted_at": None,
+                 "penalty_points": 1, "name": "Жасур"}]
+
+    saved = store.team_reports
+    try:
+        store.team_reports = fake_team
+        out = asyncio.run(analyst.garmin_data({"source": "reports"}))
+    finally:
+        store.team_reports = saved
+    check_true("his team only (Garmin сотув), 14 days", asked and asked[0][0] == "garmin_sotuv")
+    check_true("what each wrote, when, and who didn't send one with the minus",
+               "Ширина" in out and "3 та соат" in out and "Жасур | NOT sent, −1 KPI" in out)
+    prompt = analyst.employee_prompt("Улуғбек", "Garmin менежер",
+                                     data_access.granted({"role": "garmin_manager", "status": "active"}))
+    check_true("the prompt opens his team's reports and keeps everyone else's closed",
+               "HIS TEAM" in prompt and "Anyone else's reports" in prompt)
+    check_true("the card names it", "ҳисоботлари" in data_access.NAMES["garmin"])
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -4141,7 +4187,7 @@ def test_reregistration_and_order() -> None:
     # one person's questions one at a time, in order
     log: list = []
 
-    async def slow(employee, text, task, run_id, reply_to):
+    async def slow(employee, text, task, run_id, reply_to, quoted=None):
         log.append(("start", text))
         await asyncio.sleep(0.05)
         log.append(("end", text))
@@ -4179,7 +4225,7 @@ def test_reregistration_and_order() -> None:
     finally:
         tg.TelegramBot._call = real_call
     check_true("the employee's message id reaches the answer",
-               "_route_to_ai(employee, text, task, run_id, background, message.get(\"message_id\"))"
+               "_route_to_ai(employee, text, task, run_id, background, message.get(\"message_id\"), quoted)"
                in load_source("integrations/org_bot/ops_manager.py"))
 
 
@@ -4877,7 +4923,7 @@ def test_data_access() -> None:
     async def fake_send_files(chat_id, run_id, files):
         sent.append((chat_id, [f[1] for f in files]))
 
-    async def fake_work_ai(employee, text, task, run_id, reply_to=None):
+    async def fake_work_ai(employee, text, task, run_id, reply_to=None, quoted=None):
         work_ai.append(text)
 
     async def zero(*args, **kwargs):
@@ -7380,6 +7426,7 @@ def main() -> int:
         test_accountant_test_fixes,
         test_report_deadline_penalty,
         test_command_menus,
+        test_garmin_memory_and_team_reports,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,
