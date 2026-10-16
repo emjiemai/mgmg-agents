@@ -6,7 +6,6 @@ Uzbek Cyrillic like every bot message:
     ☀️ CEO кунлик ҳисоботи — 26.09.2026. 08:00 Тошкент
 
     📊 5 рақам
-    💰 Касса: 3,6 млрд сўм (банк 3,52 млрд сўм, нақд 76,7 млн сўм)
     📈 Кечаги сотув: $12,340.00 (8 та буюртма)
     📦 Захира: камида $120,000.00*
     🧾 Мижоз қарзи: $15,200.00, муддати ўтгани $7,384.36 (16 та)
@@ -18,13 +17,18 @@ Uzbek Cyrillic like every bot message:
     🟡 Давомат (25.09.2026): 1 киши кечикди — 14 кишидан
        • Ширин Умматова — 35 дақиқа кечикди (09:35)
 
-The five numbers are A2 from the owner's plan (ЭМЖИЕМ AI Агентлар Тизими):
-cash, yesterday's sales, stock value, customer debt, today's payments — with
-the change since the previous brief where the two days are comparable.
+The numbers are A2 from the owner's plan (ЭМЖИЕМ AI Агентлар Тизими):
+yesterday's sales, stock value, customer debt, today's payments — with the
+change since the previous brief where the two days are comparable.
+
+2026-10-16, the owner: «Касса» (money in the bank) is out — the brief leads
+with what the company is working towards instead: the vision and mission
+(``COMPANY_VISION`` / ``COMPANY_MISSION``, hidden until set), this month's
+goals (/maqsad, how far each is against the month's pace), the tasks
+(overdue, blocked, waiting for the Director's check, due today) and the
+daily reports. Cash stays in 1C and the analyst («пул қолдиғи»).
 
 Honesty rules, because a wrong number here is worse than none:
-  * Cash is 1C's balance on the class-5000 money accounts (integrations/onec/
-    cash.py), bank and cash desk shown apart; "уланмаган" until ONEC_* is set.
   * A SAP feed that hit its push row limit gives a lower bound: "камида",
     with a footnote. See integrations/sap/figures.py.
   * Today's payments come from approved written permissions (B1 makes that
@@ -59,7 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
-from integrations.common.money import format_money, format_money_by_currency, to_tiyin
+from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import fmt_date, now_local, now_utc, to_local, today_local
 from integrations.org_bot import permissions
 from integrations.org_bot import store as org_store
@@ -124,9 +128,9 @@ class BriefData:
     # Yesterday from Verifix; None when Verifix isn't set up (section hidden).
     attendance: attendance.DaySummary | None = None
     attendance_failed: bool = False
-    # Money in the bank and cash desks from 1C; None when 1C isn't set up.
-    cash: onec_cash.CashPosition | None = None
-    cash_failed: bool = False
+    # This month's active goals (/maqsad) and the open tasks; None = the fetch failed.
+    goals: list[dict[str, Any]] | None = None
+    tasks: list[dict[str, Any]] | None = None
     # Yesterday's shop sales from BILLZ; None when BILLZ isn't set up (hidden).
     shop_sales: billz_sales.DaySales | None = None
     shop_sales_failed: bool = False
@@ -147,7 +151,8 @@ async def collect() -> BriefData:
     today = today_local()
     names = [
         "sap_aging", "sap_invoice_push", "sap_orders", "sap_inventory", "sap_inventory_push", "sap_sales",
-        "sap_stock_value", "payments", "daily_reports", "previous", "attendance", "billz", "cash", "sap_pushed_at",
+        "sap_stock_value", "payments", "daily_reports", "previous", "attendance", "billz", "goals", "tasks",
+        "sap_pushed_at",
     ]
     results = await asyncio.gather(
         _fetch_aging(),
@@ -162,7 +167,8 @@ async def collect() -> BriefData:
         _fetch_previous(today),
         _fetch_attendance(today),
         _fetch_shop_sales(today),
-        _fetch_cash(),
+        org_store.goals_for_months([today.replace(day=1)]),
+        org_store.open_tasks_with_names(200),
         _fetch_sap_pushed_at(),
         return_exceptions=True,
     )
@@ -216,22 +222,15 @@ async def collect() -> BriefData:
         data.attendance_failed = True
     else:
         data.attendance = by_name["attendance"]
-    if isinstance(by_name["cash"], BaseException):
-        data.cash_failed = True
-    else:
-        data.cash = by_name["cash"]
+    if not isinstance(by_name["goals"], BaseException):
+        data.goals = by_name["goals"]
+    if not isinstance(by_name["tasks"], BaseException):
+        data.tasks = by_name["tasks"]
     if isinstance(by_name["billz"], BaseException):
         data.shop_sales_failed = True
     else:
         data.shop_sales = by_name["billz"]
     return data
-
-
-async def _fetch_cash() -> onec_cash.CashPosition | None:
-    """Bank + cash balances from 1C right now (08:00 = end of yesterday), or None if not set up."""
-    if not settings.onec_configured:
-        return None
-    return await onec_cash.load(now_local().replace(tzinfo=None), run_id=None, agent=AGENT)
 
 
 async def _fetch_shop_sales(today: date) -> billz_sales.DaySales | None:
@@ -415,9 +414,12 @@ def render(data: BriefData) -> str:
         f"<b>☀️ CEO кунлик ҳисоботи — {fmt_date(day)}.</b> <i>{now_local().strftime('%H:%M')} Тошкент</i>",
         "",
         f"⚠️ <b>{escape(sap_notice(data))}</b>\n" if sap_notice(data) else None,
+        _render_compass(),
+        _render_goals(data),
+        _render_tasks(data),
+        _render_missed_reports(data),
         render_five(data),
         _render_shop_sales(data),
-        _render_missed_reports(data),
         _render_attendance(data),
     ]
     return "\n".join(p for p in parts if p is not None).rstrip()
@@ -463,7 +465,7 @@ def _figure_value(figure: Figure | None, key: str, data: BriefData, *, what: str
 
 def render_five(data: BriefData) -> str:
     """The five-number block (A2)."""
-    lines = ["📊 <b>5 рақам</b>", f"💰 Касса: {_cash_value(data)}"]
+    lines = ["📊 <b>Рақамлар</b>"]
     lower_bound = False
 
     sales, capped = _figure_value(data.sales, "sales", data, what=data.sales_unit)
@@ -508,16 +510,6 @@ def render_five(data: BriefData) -> str:
     if lower_bound:
         lines.append("<i>* SAP'дан фақат чекланган миқдордаги ёзув келди — рақам тўлиқ эмас.</i>")
     return "\n".join(lines) + "\n"
-
-
-def _cash_value(data: BriefData) -> str:
-    """Bank + cash from 1C, with the change since yesterday's brief."""
-    if data.cash_failed:
-        return "<i>маълумот йўқ</i>"
-    if data.cash is None:
-        return "<i>уланмаган</i>"
-    totals = {"UZS": to_tiyin(data.cash.total)}
-    return onec_cash.brief_value(data.cash) + _change("cash", totals, data, comparable=True)
 
 
 def _totals_by_currency(invoices: list[ARInvoice], *, overdue_only: bool) -> dict[str, int]:
@@ -638,6 +630,118 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
 _people_block = brief_parts.people_block
 
 
+FOOT = ("Мақсадлар — /maqsad · топшириқлар ва ҳисоботлар — бот · сотув, захира, қарз — SAP · "
+        "дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.")
+TASK_TEXT = 42  # a task's words shown in a row
+
+
+def compass() -> list[dict[str, str]]:
+    """The vision and the mission, as the owner wrote them (settings); empty until set — never made up."""
+    return [{"label": label, "text": text.strip()} for label, text in
+            (("Визион", settings.company_vision), ("Миссия", settings.company_mission)) if text.strip()]
+
+
+def _short(text: str, limit: int = TASK_TEXT) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _number(value: Any) -> str:
+    number = float(value)
+    return f"{number:,.0f}".replace(",", " ") if number == int(number) else f"{number:,.1f}".replace(",", " ")
+
+
+def goal_rows(goals: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], int, int]:
+    """Each goal against the month's pace: (rows, behind, average %). Behind first."""
+    import calendar
+
+    pace = day.day / calendar.monthrange(day.year, day.month)[1] * 100
+    rows: list[tuple[float, dict[str, Any]]] = []
+    for g in goals:
+        target = float(g.get("target") or 0)
+        actual = g.get("actual")
+        pct = (float(actual) / target * 100) if (target and actual is not None) else None
+        behind = pct is None or pct + 10 < pace
+        what = (f"{_short(g.get('title') or '', 30)} — {_number(actual)} / {_number(target)} ({pct:.0f}%)"
+                if pct is not None else f"{_short(g.get('title') or '', 30)} — натижа ёзилмаган")
+        rows.append((pct if pct is not None else -1.0, {"who": g.get("name") or "", "what": what, "alert": behind}))
+    rows.sort(key=lambda item: item[0])
+    done = [p for p, _ in rows if p >= 0]
+    return [r for _, r in rows], sum(1 for _, r in rows if r["alert"]), round(sum(min(p, 100) for p in done) / len(done)) if done else 0
+
+
+def goals_block(data: BriefData) -> dict[str, Any]:
+    """This month's goals (/maqsad): the furthest behind first."""
+    from integrations.org_bot.task_tracker import MONTHS_UZ
+
+    day = today_local()
+    month = MONTHS_UZ[day.month - 1].capitalize()
+    if data.goals is None:
+        return _people_block("Ойлик мақсадлар", "goal", month, "", "warn", [], "маълумот олиб бўлмади")
+    if not data.goals:
+        return _people_block("Ойлик мақсадлар", "goal", month, "", "plain", [],
+                             "бу ой мақсад қўйилмаган — /maqsad билан қўйинг")
+    rows, behind, average = goal_rows(data.goals, day)
+    summary = f"{len(rows)} та · ўртача {average}%" + (f" · {behind} таси ортда" if behind else "")
+    return _people_block("Ойлик мақсадлар", "goal", month, summary, "alert" if behind else "ok", rows)
+
+
+def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Open tasks that need the Director's eye, most urgent first, and the counts."""
+    groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "review": [], "today": []}
+    for t in tasks:
+        due = t.get("due_date")
+        who, text = t.get("display_name") or "", _short(t.get("task_summary") or "")
+        if t.get("status") == "blocked":
+            groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
+        elif t.get("status") == "review":
+            groups["review"].append({"who": who, "what": f"текширувда · {text}", "alert": False})
+        elif due is not None and due < day:
+            groups["overdue"].append({"who": who, "what": f"{(day - due).days} кун ўтди · {text}", "alert": True})
+        elif due == day:
+            groups["today"].append({"who": who, "what": f"бугун · {text}", "alert": False})
+    rows = groups["overdue"] + groups["blocked"] + groups["review"] + groups["today"]
+    return rows, {k: len(v) for k, v in groups.items()}
+
+
+def tasks_block(data: BriefData) -> dict[str, Any]:
+    """The tasks: overdue, blocked, waiting for a check, due today."""
+    if data.tasks is None:
+        return _people_block("Топшириқлар", "task", None, "", "warn", [], "маълумот олиб бўлмади")
+    rows, n = task_rows(data.tasks, today_local())
+    parts = [f"{len(data.tasks)} та очиқ"]
+    for key, word in (("overdue", "ўтган"), ("blocked", "тўсиқ")):
+        if n[key]:
+            parts.append(f"{n[key]} {word}")
+    tone = "alert" if (n["overdue"] or n["blocked"]) else "ok"
+    empty = None if rows else ("очиқ топшириқ йўқ" if not data.tasks else "ҳаммаси ўз муддатида")
+    return _people_block("Топшириқлар", "task", None, " · ".join(parts) if data.tasks else "", tone, rows, empty)
+
+
+def _render_compass() -> str | None:
+    items = compass()
+    return "\n".join(f"🧭 <b>{i['label']}:</b> {escape(i['text'])}" for i in items) + "\n" if items else None
+
+
+def _render_people(block: dict[str, Any]) -> str:
+    head = f"<b>{escape(block['title'])}</b>" + (f" ({escape(block['day'])})" if block.get("day") else "")
+    head += f": {escape(block['summary'])}" if block.get("summary") else ""
+    lines = [head] + [f"   • {escape(r['who'])} — {escape(r['what'])}" for r in block["rows"]]
+    if block.get("more"):
+        lines.append(f"   +яна {block['more']} та")
+    if not block["rows"] and block.get("empty"):
+        lines.append(f"   <i>{escape(block['empty'])}</i>")
+    return "\n".join(lines) + "\n"
+
+
+def _render_goals(data: BriefData) -> str:
+    return "🎯 " + _render_people(goals_block(data))
+
+
+def _render_tasks(data: BriefData) -> str:
+    return "📌 " + _render_people(tasks_block(data))
+
+
 def view(data: BriefData) -> dict[str, Any]:
     """The brief template's values: the five numbers, then shops, reports, attendance."""
     from integrations.org_bot.task_tracker import MONTHS_UZ, WEEKDAYS_UZ
@@ -645,22 +749,6 @@ def view(data: BriefData) -> dict[str, Any]:
     day, now = today_local(), now_local()
     when = f"{WEEKDAYS_UZ[day.weekday()].capitalize()}, {day.day} {MONTHS_UZ[day.month - 1]} {day.year} · {now:%H:%M}"
     lower_bound = False
-
-    # 1. cash (1C)
-    cash: dict[str, Any] = {"label": "Касса", "icon": "cash", "tone": "plain", "detail": None, "number": "",
-                            "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
-    if data.cash_failed:
-        cash.update(tone="muted", number="1C'дан олинмади")
-    elif data.cash is None:
-        cash.update(tone="muted", number="уланмаган")
-    else:
-        number, unit = _split(onec_cash.som(data.cash.total))
-        cash.update(number=number, unit=unit,
-                    detail=f"банк {onec_cash.som(data.cash.bank).replace(NBSP, ' ')} · "
-                           f"нақд {onec_cash.som(data.cash.cash).replace(NBSP, ' ')}")
-        change = _delta("cash", {"UZS": to_tiyin(data.cash.total)}, data, comparable=True)
-        if change:
-            cash["sub"], cash["sub_dir"] = change
 
     # 2-3. sales and stock (SAP)
     sales = _figure_row(data.sales, "sales", "Кечаги сотув", "sales", data.sales_unit, data)
@@ -709,6 +797,24 @@ def view(data: BriefData) -> dict[str, Any]:
         pay["sub"] = f"{data.payments.unclear} тасида сана аниқ эмас"
 
     blocks: list[dict[str, Any]] = []
+    lead = [goals_block(data), tasks_block(data)]
+
+    # daily reports
+    if data.report_rows is None:
+        lead.append(_people_block("Кунлик ҳисоботлар", "report", None, "", "warn", [], "маълумот олиб бўлмади"))
+    elif not data.report_rows:
+        lead.append(_people_block("Кунлик ҳисоботлар", "report", None, "", "plain", [], "кеча ҳеч кимдан сўралмаган"))
+    else:
+        rows_all = data.report_rows
+        missed = [r for r in rows_all if r["status"] != "submitted"]
+        day_label = fmt_date(rows_all[0]["report_date"])
+        if missed:
+            rows = [{"who": r["display_name"], "what": ROLE_LABELS.get(r["role"], r["role"]), "alert": False} for r in missed]
+            lead.append(_people_block("Ҳисобот юбормаганлар", "report", day_label,
+                                        f"{len(missed)} / {len(rows_all)}", "alert", rows))
+        else:
+            lead.append(_people_block("Кунлик ҳисоботлар", "report", day_label,
+                                        f"ҳаммаси юборди · {len(rows_all)}", "ok", []))
 
     # shops (BILLZ)
     if data.shop_sales_failed:
@@ -723,23 +829,6 @@ def view(data: BriefData) -> dict[str, Any]:
         if len(selling) == 1:  # one shop: its name beside the day, not a row repeating the total
             day_label, rows = f"{day_label} · {selling[0].name}", []
         blocks.append(_people_block("Дўконлар", "shop", day_label, summary, "plain", rows))
-
-    # daily reports
-    if data.report_rows is None:
-        blocks.append(_people_block("Кунлик ҳисоботлар", "report", None, "", "warn", [], "маълумот олиб бўлмади"))
-    elif not data.report_rows:
-        blocks.append(_people_block("Кунлик ҳисоботлар", "report", None, "", "plain", [], "кеча ҳеч кимдан сўралмаган"))
-    else:
-        rows_all = data.report_rows
-        missed = [r for r in rows_all if r["status"] != "submitted"]
-        day_label = fmt_date(rows_all[0]["report_date"])
-        if missed:
-            rows = [{"who": r["display_name"], "what": ROLE_LABELS.get(r["role"], r["role"]), "alert": False} for r in missed]
-            blocks.append(_people_block("Ҳисобот юбормаганлар", "report", day_label,
-                                        f"{len(missed)} / {len(rows_all)}", "alert", rows))
-        else:
-            blocks.append(_people_block("Кунлик ҳисоботлар", "report", day_label,
-                                        f"ҳаммаси юборди · {len(rows_all)}", "ok", []))
 
     # attendance (Verifix)
     if data.attendance_failed:
@@ -763,8 +852,9 @@ def view(data: BriefData) -> dict[str, Any]:
         tone = "alert" if (a.absent or a.not_yet) else "warn" if a.late else "ok"
         blocks.append(_people_block("Давомат", "people", fmt_date(a.day), summary, tone, rows))
 
-    return {"date": fmt_date(day), "when": when, "figures": [cash, sales, stock, debt, pay],
-            "blocks": blocks, "lower_bound": lower_bound, "notice": sap_notice(data)}
+    return {"date": fmt_date(day), "when": when, "compass": compass(), "lead": lead,
+            "figures": [sales, stock, debt, pay], "blocks": blocks, "lower_bound": lower_bound,
+            "notice": sap_notice(data), "foot": FOOT}
 
 
 async def send_picture_to_directors(picture: bytes, text: str, run_id: uuid.UUID) -> list[int]:
@@ -793,7 +883,7 @@ def caption(data: BriefData) -> str:
     """The photo's caption: the day, and the numbers a notification can show."""
     v = view(data)
     parts = [f"{f['label']}: {'камида ' if f['lower'] else ''}{f['number']}{(' ' + f['unit']) if f['unit'] else ''}"
-             for f in v["figures"] if f["tone"] != "muted" and f["label"] in ("Касса", "Кечаги сотув", "Мижоз қарзи")]
+             for f in v["figures"] if f["tone"] != "muted" and f["label"] in ("Кечаги сотув", "Мижоз қарзи")]
     notice = f"\n⚠️ {escape(v['notice'])}" if v.get("notice") else ""
     return f"☀️ <b>CEO кунлик ҳисоботи — {v['date']}</b>\n" + escape(" · ".join(parts)) + notice
 
@@ -826,11 +916,7 @@ def five_numbers_json(data: BriefData) -> dict[str, Any]:
     payments = None
     if data.payments is not None:
         payments = {"status": "ok", "totals": data.payments.totals, "count": data.payments.count}
-    cash = None
-    if data.cash is not None:
-        cash = {"status": "ok", "totals": {"UZS": to_tiyin(data.cash.total)}}
     return {
-        "cash": cash,
         "sales": _figure_json(data.sales),
         "inventory": _figure_json(data.inventory),
         "debt": debt,

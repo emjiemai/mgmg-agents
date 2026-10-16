@@ -197,6 +197,10 @@ class Settings(BaseSettings):
     # is read by the AI; a cheque with every detail goes to these roles
     # (comma-separated role slugs) with the photo, otherwise the bot asks him.
     # Off = every photo goes to the people list as before.
+    # The CEO brief's top (2026-10-16, the owner): the company's vision and
+    # mission exactly as he wrote them — hidden while empty, never made up.
+    company_vision: str = ""
+    company_mission: str = ""
     cheque_reader_enabled: bool = True
     cheque_recipient_roles: str = "buxgalteriya"
 

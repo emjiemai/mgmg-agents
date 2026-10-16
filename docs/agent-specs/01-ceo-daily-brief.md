@@ -8,7 +8,30 @@
 Director's questions, and sent if the picture can't be drawn.
 **Source:** A2 "5 рақам дашборди" in the owner's plan (ЭМЖИЕМ AI Агентлар Тизими)
 
-## What the Director gets
+## 2026-10-16: goals, tasks and reports first; no «Касса»
+
+The owner: the brief is about where the company is going, not money in the
+bank. The picture now reads, top to bottom:
+
+1. **Визион / Миссия** — `COMPANY_VISION`, `COMPANY_MISSION`, exactly as the
+   owner writes them; hidden while empty (never made up).
+2. **Ойлик мақсадлар** — this month's /maqsad goals: each person, the goal,
+   result / target (%); red when no result is written or it is more than 10
+   points behind the month's pace (day of month ÷ days in month); the head
+   line has the count, the average and how many are behind. None → "/maqsad
+   билан қўйинг".
+3. **Топшириқлар** — open tasks: overdue (N кун ўтди), blocked (тўсиқ),
+   waiting for the Director's check (текширувда), due today; head line: open
+   count, overdue, blocked.
+4. **Ҳисобот юбормаганлар / Кунлик ҳисоботлар** — as before.
+5. The numbers: yesterday's sales, stock, customer debt, today's payments.
+6. Shops (Billz), attendance (Verifix).
+
+«Касса» is gone from the picture, the caption and the text; it is no longer
+read from 1C at 08:00. The cash balance is still there when the Director asks
+(«пул қолдиғи», the analyst) and in the Monday cash calendar.
+
+## What the Director got before 16.10.2026
 
     ☀️ CEO кунлик ҳисоботи — 26.09.2026. 08:00 Тошкент
 
