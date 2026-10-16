@@ -79,7 +79,10 @@ SAP_KINDS: dict[str, str] = {
                          "15.10.2026; a negative total means we owe. For supplier debt prefer supplier_debt_compare",
     "po_open": "open purchase order lines (OPOR + POR1)",
     "orders": "open sales orders (ORDR)",
-    "inventory": "stock by item and warehouse (OITW + OITM), non-zero",
+    "inventory": "OLD capped list — only 5 items per warehouse; for an item's stock use stock_items",
+    "stock_items": "EVERY item in stock, per warehouse (OITW + OITM, gateway get_stock_value): ItemCode, ItemName, "
+                   "WhsCode, WhsName, OnHand (quantity), AvgPrice, StockValue (USD). Use it for «X нечта қолди?» — "
+                   "search by part of the item name or code",
     "stock_value": "stock value summed per warehouse",
     "products": "item master data (OITM)",
     "customers": "business partners (OCRD)",
@@ -150,8 +153,8 @@ TOOLS: list[dict] = [
                    "full comparison — the bot then sends him the .xlsx workbook with every supplier"}}),
     _fn("garmin_sap", "Garmin's part of SAP only — the Garmin warehouses (codes starting G.A. and the shop's): "
         "sales = invoices and credit notes with a line in them; sales_lines = those lines; inventory = stock by item; "
-        "stock_value = stock value per warehouse. Sums worked out like sap_records.",
-        {"kind": {"type": "string", "enum": list(("sales", "sales_lines", "inventory", "stock_value"))},
+        "stock_value = stock value per warehouse; stock_items = every item in stock per warehouse. Sums worked out like sap_records.",
+        {"kind": {"type": "string", "enum": list(("sales", "sales_lines", "inventory", "stock_value", "stock_items"))},
          "search": {"type": "string", "description": "text that must appear in the row (customer, item), optional"},
          "date_from": _DATE, "date_to": _DATE,
          "limit": {"type": "integer", "description": "rows to list (default 80, max 400)"}}, ("kind",)),
@@ -217,8 +220,8 @@ if asked to change data, say plainly that you can only look things up.
   is from where. Customer debt: sap_receivables (SAP invoices) AND
   onec_balances '40' (1C's books); supplier debt: supplier_debt_compare
   (both systems at once, already compared); money right now: onec_balances '5'; shop sales:
-  billz_sales; B2B sales: sap_records sales; stock: sap_records inventory /
-  stock_value and onec_balances '29'; revenue in the books: onec_turnovers
+  billz_sales; B2B sales: sap_records sales; stock of an item: sap_records
+  stock_items (search the name or code); stock value: stock_value; and onec_balances '29'; revenue in the books: onec_turnovers
   '90'; shop cheques missing in SAP: billz_sap_check. If they differ, say
   so — don't pick one.
 - Didox (e-invoices) is not connected: only if asked about Didox, say so and
@@ -499,9 +502,9 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
         lines.append("SUMS over every non-cancelled match (field as SAP named it; no suffix = SAP local currency USD "
                      "for money fields, *Sy / *Sys = so'm, *FC = the document's currency):")
         lines += [f"  {name}{' ' + label if label else ''}: {_amount(total)}" for (name, label), total in sorted(sums.items())]
-    if kind in ("sales", "sales_lines", "inventory") and live:
-        key = {"sales": "CardName", "sales_lines": "ItemCode", "inventory": "WhsCode"}[kind]
-        money = {"sales": "DocTotal", "sales_lines": "LineTotal", "inventory": "OnHand"}[kind]
+    if kind in ("sales", "sales_lines", "inventory", "stock_items") and live:
+        key = {"sales": "CardName", "sales_lines": "ItemCode", "inventory": "WhsCode", "stock_items": "ItemName"}[kind]
+        money = {"sales": "DocTotal", "sales_lines": "LineTotal", "inventory": "OnHand", "stock_items": "OnHand"}[kind]
         grouped: dict[str, float] = defaultdict(float)
         for x in live:
             grouped[str(x.get(key) or "—")] += _num(x.get(money)) or 0
@@ -677,7 +680,7 @@ async def supplier_debt_compare(args: dict[str, Any]) -> str:
     return text
 
 
-GARMIN_SAP_KINDS = ("sales", "sales_lines", "inventory", "stock_value")
+GARMIN_SAP_KINDS = ("sales", "sales_lines", "inventory", "stock_value", "stock_items")
 
 
 async def garmin_sap(args: dict[str, Any]) -> str:

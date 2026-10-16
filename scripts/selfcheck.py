@@ -4133,6 +4133,43 @@ def test_garmin_memory_and_team_reports() -> None:
     check_true("the card names it", "ҳисоботлари" in data_access.NAMES["garmin"])
 
 
+def test_stock_items() -> None:
+    """16.10.2026: «TIMER, DRYER … нечта қолди?» wasn't found — only 5 items per warehouse reached us."""
+    print("stock by item (16.10.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import analyst
+    from integrations.sap import push_handler
+
+    stored: list[tuple[str, int]] = []
+
+    async def fake_store(dataset, rows, today, run_id, complete, missing):
+        stored.append((dataset, len(rows)))
+        return {"ok": True, "written": len(rows), "skipped": 0, "missing_columns": missing}
+
+    saved = push_handler._store_full
+    try:
+        push_handler._store_full = fake_store
+        rows = [{"ItemCode": "T1", "ItemName": "TIMER, DRYER 3CYCLE RETAIL 240V 50 Hz", "WhsCode": "01", "WhsName": "Асосий",
+                 "OnHand": 4, "AvgPrice": 10, "StockValue": 40},
+                {"ItemCode": "T2", "ItemName": "Fenix 8", "WhsCode": "G.A._01", "WhsName": "Абай", "OnHand": 2,
+                 "AvgPrice": 500, "StockValue": 1000},
+                {"ItemCode": "T1", "ItemName": "TIMER, DRYER 3CYCLE RETAIL 240V 50 Hz", "WhsCode": "02", "WhsName": "Б",
+                 "OnHand": 1, "AvgPrice": 10, "StockValue": 10}]
+        out = asyncio.run(push_handler.handle_full_push("stock_value", {"rows": rows}, uuid.uuid4()))
+    finally:
+        push_handler._store_full = saved
+    check_true("get_stock_value: totals per warehouse AND every item row kept as stock_items",
+               out["ok"] and stored == [("stock_value", 3), ("stock_items", 3)])
+    check_true("stock_items keyed by item and warehouse", push_handler.FULL_DATASETS["stock_items"] == ("ItemCode", "WhsCode"))
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("the table accepts the new kind", "'stock_items'" in schema)
+    check_true("the analyst sends item questions to stock_items, not the capped inventory",
+               "stock_items" in analyst.SAP_KINDS and "only 5 items per warehouse" in analyst.SAP_KINDS["inventory"]
+               and "stock_items" in analyst.GARMIN_SAP_KINDS)
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -7427,6 +7464,7 @@ def main() -> int:
         test_report_deadline_penalty,
         test_command_menus,
         test_garmin_memory_and_team_reports,
+        test_stock_items,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

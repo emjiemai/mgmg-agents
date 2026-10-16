@@ -334,6 +334,7 @@ FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "service_calls": ("callID",),                  # OSCL
     "service_contracts": ("ContractID",),          # OCTR
     "stock_value": ("WhsCode",),                   # OITW summed per warehouse (gateway get_stock_value)
+    "stock_items": ("ItemCode", "WhsCode"),        # the same push's item rows, kept (2026-10-16): «X нечта қолди?»
     "supplier_balances": ("CardCode",),            # OCRD suppliers with a balance (gateway get_supplier_balances)
 }
 
@@ -507,6 +508,10 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
     if len(rows) > MAX_FULL_ROWS:
         return {"ok": False, "error": f"too many rows ({len(rows)} > {MAX_FULL_ROWS})"}
     rows = [r for r in rows if isinstance(r, dict)]
+    # get_stock_value sends one row per item and warehouse: summed per warehouse for the brief,
+    # and (2026-10-16) the item rows kept too as "stock_items" — before, "how many X are left?"
+    # could only be answered from the old capped list (5 items per warehouse).
+    item_rows = [r for r in rows if r.get("ItemCode") not in (None, "")] if dataset == "stock_value" else []
     if dataset == "stock_value":
         rows = stock_by_warehouse(rows)
     today = today_local()
@@ -546,6 +551,15 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
             ctx["payload"].update(written=len(params), skipped=len(rows) - len(params))
         return {"ok": True, "written": len(params), "skipped": len(rows) - len(params), "missing_columns": missing}
 
+    result = await _store_full(dataset, rows, today, run_id, complete, missing)
+    if item_rows:
+        await _store_full("stock_items", item_rows, today, run_id, complete, [])
+    return result
+
+
+async def _store_full(dataset: str, rows: list[dict[str, Any]], today: date, run_id: uuid.UUID, complete: bool,
+                      missing: list[str]) -> dict[str, Any]:
+    """Replace today's rows of one kind in ``sap_gateway_snapshots`` (old days beyond KEEP_DAYS go too)."""
     keyed = {full_key(dataset, r): r for r in rows}  # a repeated key keeps its last row
     async with audited(
         agent="sap-gateway-push", action=f"gateway_push_{dataset}", target_system="postgres", run_id=run_id,

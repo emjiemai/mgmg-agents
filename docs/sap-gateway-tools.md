@@ -210,3 +210,5 @@ For agents still waiting in the owner's plan: customer equipment cards
 (OINS) and open service calls (OSCL) for service reminders; open purchase
 invoices (OPCH) by due date for the cash calendar; slow-moving stock (OITW +
 OITM.LastPurDat). Each would be its own small tool, specified the same way.
+
+**2026-10-16:** `get_stock_value`'s item rows are kept as the kind `stock_items` (key ItemCode + WhsCode) beside the per-warehouse `stock_value` — item questions («X нечта қолди?») read them; the old capped `get_inventory` (5 items per warehouse) is no longer used for that.
