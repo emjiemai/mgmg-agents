@@ -83,3 +83,5 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 `docs/agent-specs/`.
 
 **Bot menus (2026-10-16):** both bots show their / commands behind the ☰ button — per role in OPS Manager (`integrations/telegram/menus.py`).
+
+**SAP data (2026-10-16):** every kind the plan needs is a complete gateway tool (`sap-gateway/src/complete.js`, `docs/sap-gateway-tools.md` "Everything the plan needs") — waiting for the gateway computer to be updated.
