@@ -608,7 +608,8 @@ ALTER TABLE sap_gateway_snapshots ADD CONSTRAINT sap_gateway_snapshots_tool_chec
     'orders', 'products', 'customers', 'warehouses', 'inventory', 'payments',
     'sales', 'sales_lines', 'payments_out', 'ap_open', 'po_open', 'sales_people',
     'equipment', 'service_calls', 'service_contracts', 'stock_value', 'supplier_balances',
-    'stock_items'  -- get_stock_value's item rows, kept (2026-10-16)
+    'stock_items',  -- get_stock_value's item rows, kept (2026-10-16)
+    'item_sales_90d'  -- quantity sold per item and warehouse, 90 days (gateway get_item_sales, 2026-10-16)
 ));
 
 -- Billz → SAP check (2026-10-03, docs/agent-specs/17-billz-sap-check.md):

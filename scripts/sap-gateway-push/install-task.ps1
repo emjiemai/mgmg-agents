@@ -55,6 +55,5 @@
     Write-Host "Task '$TaskName' created: every 30 minutes, first run started now."
     Write-Host "In a minute, check it:"
     Write-Host "  Get-ScheduledTaskInfo -TaskName '$TaskName' | Format-List LastRunTime, LastTaskResult, NextRunTime"
-    Write-Host "  Get-Content '$(Join-Path $Folder 'push-ar-aging.log')' -Tail 20"
-    Write-Host "LastTaskResult: 0 = all good, 1 = a problem (see the log), 2 = settings at the top of the script not filled in, 267009 = still running."
+    Write-Host "LastTaskResult: 0 = all good, 1 = a problem (run the script by hand to see it, or Admin Bot /texnik), 2 = settings at the top of the script not filled in, 267009 = still running."
 }

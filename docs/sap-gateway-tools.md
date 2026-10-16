@@ -212,3 +212,40 @@ invoices (OPCH) by due date for the cash calendar; slow-moving stock (OITW +
 OITM.LastPurDat). Each would be its own small tool, specified the same way.
 
 **2026-10-16:** `get_stock_value`'s item rows are kept as the kind `stock_items` (key ItemCode + WhsCode) beside the per-warehouse `stock_value` — item questions («X нечта қолди?») read them; the old capped `get_inventory` (5 items per warehouse) is no longer used for that.
+
+## Everything the plan needs (2026-10-16)
+
+So the push never has to change again for the owner's plan, every remaining
+kind is a complete tool in `sap-gateway/src/complete.js` (read-only SELECTs,
+values bound, columns checked against `sap_columns.json` by selfcheck, no
+phones / e-mails / addresses). The push script calls each; a tool the gateway
+doesn't have yet is skipped and the capped one is used meanwhile.
+
+| Tool | Kind | SAP | For |
+| ---- | ---- | --- | --- |
+| `get_customers_all` | `customers` | OCRD (C) + OCRG | every customer: group, balance, credit line, sales person |
+| `get_items_all` | `products` | OITM + OITB | every item: group, stock, MinLevel / MaxLevel, last purchase — reordering (А3) |
+| `get_open_orders` | `orders` | ORDR | every open sales order |
+| `get_incoming_payments` | `payments` | ORCT, 45 days | customer payments by type (cash / transfer / cheque / card) |
+| `get_outgoing_payments` | `payments_out` | OVPM, 45 days | supplier payments |
+| `get_open_purchase_invoices` | `ap_open` | OPCH open | what we must pay and when (cash calendar) |
+| `get_open_purchase_orders` | `po_open` | OPOR + POR1 open lines | what is ordered and still to arrive (import) |
+| `get_sales_people` | `sales_people` | OSLP | names for SlpCode |
+| `get_equipment` | `equipment` | OINS | customer equipment (service reminders) |
+| `get_service_calls` | `service_calls` | OSCL open + 180 days | service follow-up |
+| `get_service_contracts` | `service_contracts` | OCTR | contract renewals |
+| `get_item_sales` | `item_sales_90d` | INV1 − RIN1, 90 days | what sells, what doesn't (reordering, slow stock) |
+
+With `get_open_invoices`, `get_sales_by_date`, `get_stock_value` (+ `stock_items`)
+and `get_supplier_balances` that is every SAP table in `sap_columns.json`.
+Not from SAP: bank statements, Didox (not connected).
+
+**No log file on the gateway computer** (the owner, 16.10): the script
+prints to the screen only and deletes the old `push-ar-aging.log`; each push
+is recorded by the Command Center (`agent_actions`, Admin Bot `/texnik`).
+`-Check` prints column names and types, never a figure.
+
+**To deploy:** copy `sap-gateway/src/` to the gateway computer and restart
+`npm start`; copy the new `push-ar-aging.ps1` over the old one **keeping the
+four settings at its top** (token, host, secret, gateway URL). Then
+`push-ar-aging.ps1 -Check` lists every tool as "works".

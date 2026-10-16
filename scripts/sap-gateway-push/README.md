@@ -42,13 +42,14 @@ the first run after it appears — nothing to change in the script:
    powershell -ExecutionPolicy Bypass -File push-ar-aging.ps1 -Check
    ```
    It says whether the Command Center and the gateway answer, and which of
-   the three complete tools exist yet.
+   the complete tools exist yet (column names and types only, never a figure).
 3. Run it once by hand:
    ```powershell
    powershell -ExecutionPolicy Bypass -File push-ar-aging.ps1
    ```
-   It prints one line per tool and ends with `All done.` The same lines go
-   to `push-ar-aging.log` next to the script.
+   It prints one line per tool and ends with `All done.` Nothing is written
+   to disk on this computer (2026-10-16): each push is recorded by the
+   Command Center itself — Admin Bot `/texnik` shows it.
 4. Schedule it every 30 minutes: put `install-task.ps1` in the same folder
    (e.g. `C:\mgmg-push\`), open PowerShell with **Run as administrator**, and:
    ```powershell
@@ -59,7 +60,7 @@ the first run after it appears — nothing to change in the script:
    starts the first run right away. Running it again replaces the task; it
    warns if an older task also runs the push script. Check a run with
    `Get-ScheduledTaskInfo -TaskName "MGMG SAP push"` (`LastTaskResult` 0 =
-   good, 1 = see `push-ar-aging.log`, 2 = settings not filled in).
+   good, 1 = a problem — run the script by hand to see it, 2 = settings not filled in).
 
 Keep the machine (and `npm start`) running in the evening: the shop enters
 the day's sales into SAP around 18:00–20:00, and the 08:00 Billz → SAP

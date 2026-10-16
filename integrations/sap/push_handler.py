@@ -333,6 +333,7 @@ FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "equipment": ("insID",),                       # OINS
     "service_calls": ("callID",),                  # OSCL
     "service_contracts": ("ContractID",),          # OCTR
+    "item_sales_90d": ("ItemCode", "WhsCode"),     # quantity sold per item and warehouse, 90 days (2026-10-16)
     "stock_value": ("WhsCode",),                   # OITW summed per warehouse (gateway get_stock_value)
     "stock_items": ("ItemCode", "WhsCode"),        # the same push's item rows, kept (2026-10-16): «X нечта қолди?»
     "supplier_balances": ("CardCode",),            # OCRD suppliers with a balance (gateway get_supplier_balances)
@@ -396,7 +397,7 @@ def missing_columns(dataset: str, rows: list[dict[str, Any]]) -> list[str]:
 
 
 # A full push is one POST per kind; the biggest today is ~2,100 rows.
-MAX_FULL_ROWS = 20_000
+MAX_FULL_ROWS = 200_000  # every item / every equipment card (2026-10-16)
 # Older days of a fully pushed kind are deleted (the brief keeps its own
 # history of the five numbers); a few days are kept for "what changed".
 KEEP_DAYS = 3

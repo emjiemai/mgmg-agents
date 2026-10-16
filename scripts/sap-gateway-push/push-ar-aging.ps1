@@ -11,10 +11,12 @@
 # Two kinds of tools:
 #   * today's tools (get_invoices, get_orders, ...) -- at most 100 rows each,
 #     so the brief shows those numbers as "at least";
-#   * three complete tools the gateway's maintainer adds
-#     (docs/sap-gateway-tools.md): get_open_invoices, get_sales_by_date,
-#     get_stock_value. Until one exists it is skipped; once it does, the
-#     script uses it on its own -- nothing to change here.
+#   * complete tools (docs/sap-gateway-tools.md): every row, no cap. Since
+#     2026-10-16 that is everything the owner's plan needs (sap-gateway/src/
+#     complete.js): customers, items, open orders, payments in and out, open
+#     supplier invoices, open purchase orders, sales people, equipment,
+#     service calls and contracts, item sales of 90 days. A tool the gateway
+#     doesn't have yet is skipped and today's capped tool is used instead.
 #
 # Run by hand:
 #   powershell -ExecutionPolicy Bypass -File push-ar-aging.ps1
@@ -22,7 +24,8 @@
 #   powershell -ExecutionPolicy Bypass -File push-ar-aging.ps1 -Check
 # Schedule: Task Scheduler, every 30 minutes (README.md). Same file name as
 # before, so an existing scheduled task keeps working.
-# What happened is also written to push-ar-aging.log next to this file.
+# Nothing is written to disk here (2026-10-16, the owner): every push is
+# recorded by the Command Center itself (agent_actions, IT's /texnik report).
 
 param([switch]$Check)
 
@@ -35,7 +38,10 @@ $ErrorActionPreference = "Stop"
 # Render accepts TLS 1.2+ only; older Windows PowerShell may start with TLS 1.0.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $gatewayHeaders = @{ Authorization = "Bearer $GatewayToken" }
-$LogFile = Join-Path $PSScriptRoot "push-ar-aging.log"
+# Older versions kept a log file next to this script: removed, no logs on this computer.
+foreach ($old in @("push-ar-aging.log", "push-ar-aging.log.old")) {
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $PSScriptRoot $old)
+}
 $script:Failures = 0
 
 # How many days of invoices get_sales_by_date is asked for: the Billz check
@@ -52,18 +58,42 @@ $ExpectedColumns = @{
     "get_stock_value" = @("WhsCode", "WhsName", "Items", "OnHand", "StockValue")
     "get_supplier_balances" = @("CardCode", "CardName", "LicTradNum", "CardType", "Currency", "Balance",
         "BalanceSys", "BalanceFC")
+    "get_customers_all" = @("CardCode", "CardName", "LicTradNum", "GroupName", "Balance", "BalanceSys", "SlpCode")
+    "get_items_all" = @("ItemCode", "ItemName", "ItmsGrpNam", "OnHand", "MinLevel", "LastPurDat")
+    "get_open_orders" = @("DocEntry", "DocNum", "CardCode", "DocDate", "DocDueDate", "DocTotal", "DocTotalSy")
+    "get_incoming_payments" = @("DocEntry", "DocNum", "DocDate", "CardCode", "DocTotal", "DocTotalSy")
+    "get_outgoing_payments" = @("DocEntry", "DocNum", "DocDate", "CardCode", "DocTotal", "DocTotalSy")
+    "get_open_purchase_invoices" = @("DocEntry", "DocNum", "CardCode", "DocDueDate", "DocTotal", "PaidToDate", "DocTotalSy", "PaidSys")
+    "get_open_purchase_orders" = @("DocEntry", "LineNum", "ItemCode", "OpenQty", "ShipDate")
+    "get_sales_people" = @("SlpCode", "SlpName")
+    "get_equipment" = @("insID", "customer", "itemCode", "manufSN")
+    "get_service_calls" = @("callID", "customer", "status", "createDate")
+    "get_service_contracts" = @("ContractID", "CstmrCode", "EndDate")
+    "get_item_sales" = @("ItemCode", "WhsCode", "Quantity", "LastSold")
 }
+
+# Everything else the plan needs (2026-10-16): gateway tool -> Command Center kind, request body, and
+# the capped tool used while the gateway doesn't have the complete one yet ("" = none).
+$MoreTools = @(
+    @{ Tool = "get_customers_all"; Kind = "customers"; Body = '{}'; Fallback = "customers" },
+    @{ Tool = "get_items_all"; Kind = "products"; Body = '{}'; Fallback = "products" },
+    @{ Tool = "get_open_orders"; Kind = "orders"; Body = '{}'; Fallback = "orders" },
+    @{ Tool = "get_incoming_payments"; Kind = "payments"; Body = '{"days":45}'; Fallback = "payments" },
+    @{ Tool = "get_outgoing_payments"; Kind = "payments_out"; Body = '{"days":45}'; Fallback = "" },
+    @{ Tool = "get_open_purchase_invoices"; Kind = "ap_open"; Body = '{}'; Fallback = "" },
+    @{ Tool = "get_open_purchase_orders"; Kind = "po_open"; Body = '{}'; Fallback = "" },
+    @{ Tool = "get_sales_people"; Kind = "sales_people"; Body = '{}'; Fallback = "" },
+    @{ Tool = "get_equipment"; Kind = "equipment"; Body = '{}'; Fallback = "" },
+    @{ Tool = "get_service_calls"; Kind = "service_calls"; Body = '{"days":180}'; Fallback = "" },
+    @{ Tool = "get_service_contracts"; Kind = "service_contracts"; Body = '{}'; Fallback = "" },
+    @{ Tool = "get_item_sales"; Kind = "item_sales_90d"; Body = '{"days":90}'; Fallback = "" }
+)
 
 function Write-Log {
     param([string]$Text, [switch]$Warn)
     $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Text
-    if ($Warn) { Write-Warning $Text } else { Write-Host $Text }
-    try {
-        if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 2MB) {
-            Move-Item -Force $LogFile "$LogFile.old"
-        }
-        Add-Content -Path $LogFile -Value $line -Encoding UTF8
-    } catch { }
+    # The screen only -- never a file on this computer.
+    if ($Warn) { Write-Warning $line } else { Write-Host $line }
 }
 
 function Test-Filled {
@@ -218,7 +248,7 @@ function Test-Setup {
         Write-Warning "  Gateway ($GatewayUrl): $($_.Exception.Message) -- is 'npm start' running, is the token right?"
         return
     }
-    foreach ($tool in @("get_open_invoices", "get_sales_by_date", "get_stock_value", "get_supplier_balances")) {
+    foreach ($tool in @("get_open_invoices", "get_sales_by_date", "get_stock_value", "get_supplier_balances") + @($MoreTools | ForEach-Object { $_.Tool })) {
         $body = '{}'
         if ($tool -eq "get_sales_by_date") {
             $first = (Get-Date).AddDays(-3).ToString("yyyy-MM-dd")
@@ -242,12 +272,13 @@ function Test-Setup {
                     } else {
                         Write-Host "    all expected columns are there."
                     }
+                    # Types only, never a figure (IT sees no company figures, 07.10.2026).
                     foreach ($col in @("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "OnHand", "StockValue")) {
                         if ($names -contains $col) {
                             $value = $rows[0].$col
                             $kind = "empty"
                             if ($null -ne $value) { $kind = $value.GetType().Name }
-                            Write-Host "    $col = $value ($kind)"
+                            Write-Host "    $col is $kind"
                         }
                     }
                 }
@@ -282,14 +313,20 @@ try {
     [void](Push-CompleteTool -Tool "get_stock_value" -Body '{}' -Kinds @("stock_value"))
     [void](Push-CompleteTool -Tool "get_supplier_balances" -Body '{"limit":5000}' -Kinds @("supplier_balances") -Limit 5000)
 
-    # Today's tools: at most 100 rows each (get_products answers HTTP 400 above 20).
+    # Everything else the plan needs; a capped tool only where the complete one isn't in the gateway yet.
+    $done = @{}
+    foreach ($t in $MoreTools) {
+        $done[$t.Kind] = Push-CompleteTool -Tool $t.Tool -Body $t.Body -Kinds @($t.Kind)
+    }
+
+    # Today's capped tools: at most 100 rows each (get_products answers HTTP 400 above 20).
     if (-not $openInvoices) { Push-Invoices }
-    Push-GatewayTool -Tool "orders" -Limit 100
-    Push-GatewayTool -Tool "products" -Limit 20
-    Push-GatewayTool -Tool "customers" -Limit 100
-    Push-GatewayTool -Tool "warehouses" -Limit 100
-    Push-GatewayTool -Tool "inventory" -Limit 100
-    Push-GatewayTool -Tool "payments" -Limit 100
+    if (-not $done["orders"]) { Push-GatewayTool -Tool "orders" -Limit 100 }
+    if (-not $done["products"]) { Push-GatewayTool -Tool "products" -Limit 20 }
+    if (-not $done["customers"]) { Push-GatewayTool -Tool "customers" -Limit 100 }
+    if (-not $done["payments"]) { Push-GatewayTool -Tool "payments" -Limit 100 }
+    Push-GatewayTool -Tool "warehouses" -Limit 100  # 20 warehouses: the cap never bites
+    Push-GatewayTool -Tool "inventory" -Limit 100   # kept for old readers; item stock is stock_items
 } catch {
     Write-Log "FAILED: $($_.Exception.Message)" -Warn
     exit 1

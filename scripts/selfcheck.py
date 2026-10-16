@@ -4170,6 +4170,39 @@ def test_stock_items() -> None:
                and "stock_items" in analyst.GARMIN_SAP_KINDS)
 
 
+def test_sap_everything() -> None:
+    """16.10.2026: everything the owner's plan needs from SAP, complete, in one push; no log file on the gateway PC."""
+    print("SAP: everything the plan needs (16.10.2026)")
+    import json
+    import re
+
+    from integrations.org_bot import analyst
+    from integrations.sap import push_handler
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "sap-gateway" / "src" / "complete.js").read_text(encoding="utf-8")
+    server = (root / "sap-gateway" / "src" / "server.js").read_text(encoding="utf-8")
+    script = (root / "scripts" / "sap-gateway-push" / "push-ar-aging.ps1").read_text(encoding="utf-8")
+    more = re.findall(r'@\{ Tool = "(\w+)"; Kind = "(\w+)"; Body = \'([^\']*)\'; Fallback = "(\w*)" \}', script)
+    check("the push calls 12 more complete tools", len(more), 12)
+    served = set(re.findall(r"app\.post\('/tools/(\w+)'", server))
+    check_true("the gateway serves every one", {t for t, _k, _b, _f in more} <= served)
+    check_true("each lands in a kind the Command Center stores and the analyst knows",
+               all(k in push_handler.FULL_DATASETS and k in analyst.SAP_KINDS for _t, k, _b, _f in more))
+    check_true("request bodies are JSON", all(isinstance(json.loads(b), dict) for _t, _k, b, _f in more))
+    check_true("a capped tool only while the complete one is missing",
+               all(f'if (-not $done["{f}"]) {{ Push-GatewayTool -Tool "{f}"' in script for _t, _k, _b, f in more if f))
+    check_true("the gateway SQL: read-only, values bound, no contact details",
+               "INSERT" not in js.upper().replace("INSERTS", "") and "UPDATE " not in js.upper() and "DELETE" not in js.upper()
+               and "ADD_DAYS(CURRENT_DATE, ?)" in js and not re.search(r'"(Phone1|Cellular|E_Mail|Address|Telephone|Mobil|Email)"', js))
+    check_true("no log file on the gateway computer; old ones removed; -Check prints types, never figures",
+               "Add-Content" not in script and "Out-File" not in script and "Remove-Item -Force -ErrorAction SilentlyContinue" in script
+               and '$col = $value' not in script)
+    schema = (root / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("the table accepts item_sales_90d; big pushes fit", "'item_sales_90d'" in schema
+               and push_handler.MAX_FULL_ROWS >= 100_000)
+
+
 def test_reregistration_and_order() -> None:
     """The 14.10 test: a removed account came back with its old name and memory; quick questions got mixed answers."""
     print("re-registration and answer order (review 2026-10-14)")
@@ -7465,6 +7498,7 @@ def main() -> int:
         test_command_menus,
         test_garmin_memory_and_team_reports,
         test_stock_items,
+        test_sap_everything,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

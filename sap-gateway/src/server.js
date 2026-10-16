@@ -16,6 +16,20 @@ import { getOpenInvoices } from './open-invoices.js';
 import { getSalesByDate } from './sales-by-date.js';
 import { getStockValue } from './stock-value.js';
 import { getSupplierBalances } from './supplier-balances.js';
+import {
+  getCustomersAll,
+  getItemsAll,
+  getOpenOrders,
+  getIncomingPayments,
+  getOutgoingPayments,
+  getOpenPurchaseInvoices,
+  getOpenPurchaseOrders,
+  getSalesPeople,
+  getEquipment,
+  getServiceCalls,
+  getServiceContracts,
+  getItemSales
+} from './complete.js';
 import { toolDefinitions } from './tools.js';
 
 dotenv.config();
@@ -76,6 +90,19 @@ app.post('/tools/get_open_invoices', toolHandler(getOpenInvoices));
 app.post('/tools/get_sales_by_date', toolHandler(getSalesByDate));
 app.post('/tools/get_stock_value', toolHandler(getStockValue));
 app.post('/tools/get_supplier_balances', toolHandler(getSupplierBalances));
+// Everything else the plan needs, complete (2026-10-16, complete.js)
+app.post('/tools/get_customers_all', toolHandler(getCustomersAll));
+app.post('/tools/get_items_all', toolHandler(getItemsAll));
+app.post('/tools/get_open_orders', toolHandler(getOpenOrders));
+app.post('/tools/get_incoming_payments', toolHandler(getIncomingPayments));
+app.post('/tools/get_outgoing_payments', toolHandler(getOutgoingPayments));
+app.post('/tools/get_open_purchase_invoices', toolHandler(getOpenPurchaseInvoices));
+app.post('/tools/get_open_purchase_orders', toolHandler(getOpenPurchaseOrders));
+app.post('/tools/get_sales_people', toolHandler(getSalesPeople));
+app.post('/tools/get_equipment', toolHandler(getEquipment));
+app.post('/tools/get_service_calls', toolHandler(getServiceCalls));
+app.post('/tools/get_service_contracts', toolHandler(getServiceContracts));
+app.post('/tools/get_item_sales', toolHandler(getItemSales));
 
 app.use((_req, res) => {
   res.status(404).json({ ok: false, error: 'Not found' });

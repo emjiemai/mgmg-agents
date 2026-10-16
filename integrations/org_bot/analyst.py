@@ -71,25 +71,29 @@ COMPANY_SOURCES: dict[str, str] = {
 SAP_KINDS: dict[str, str] = {
     "sales": "A/R invoices and credit notes (OINV + ORIN headers), last ~45 days",
     "sales_lines": "lines of those invoices: item, quantity, warehouse, line total",
-    "payments": "incoming payments from customers (ORCT), last ~45 days",
+    "payments": "incoming payments from customers (ORCT), last 45 days — cash, transfer, cheque, card parts",
     "payments_out": "outgoing payments to suppliers (OVPM), last ~45 days",
-    "ap_open": "open supplier invoices (OPCH) — not pushed yet; supplier debt is supplier_balances",
+    "ap_open": "every open supplier invoice (OPCH): DocDueDate, DocTotal / PaidToDate (USD), DocTotalSy / PaidSys "
+               "(so'm) — what we must pay and when; supplier debt totals are supplier_balances",
     "supplier_balances": "every supplier with a balance (OCRD): Balance USD, BalanceSys so'm. SIGN: NEGATIVE = "
                          "WE OWE the supplier, POSITIVE = we paid ahead (advance) — checked against 1C on "
                          "15.10.2026; a negative total means we owe. For supplier debt prefer supplier_debt_compare",
-    "po_open": "open purchase order lines (OPOR + POR1)",
-    "orders": "open sales orders (ORDR)",
+    "po_open": "every open purchase order line (OPOR + POR1): item, OpenQty still to arrive, ShipDate",
+    "orders": "every open sales order (ORDR)",
     "inventory": "OLD capped list — only 5 items per warehouse; for an item's stock use stock_items",
     "stock_items": "EVERY item in stock, per warehouse (OITW + OITM, gateway get_stock_value): ItemCode, ItemName, "
                    "WhsCode, WhsName, OnHand (quantity), AvgPrice, StockValue (USD). Use it for «X нечта қолди?» — "
                    "search by part of the item name or code",
     "stock_value": "stock value summed per warehouse",
-    "products": "item master data (OITM)",
-    "customers": "business partners (OCRD)",
+    "products": "every item (OITM): group, OnHand, IsCommited, OnOrder, MinLevel / MaxLevel (reorder levels), "
+                "AvgPrice, LastPurPrc / LastPurDat",
+    "item_sales_90d": "quantity sold per item and warehouse in the last 90 days (invoices minus credit notes), "
+                      "LastSold — with stock_items and products' MinLevel: what to reorder, what doesn't sell",
+    "customers": "every customer (OCRD): group, Balance (USD) / BalanceSys (so'm), CreditLine, sales person",
     "warehouses": "warehouse list (OWHS)",
     "sales_people": "sales employees (OSLP)",
     "equipment": "customer equipment cards (OINS)",
-    "service_calls": "service calls (OSCL)",
+    "service_calls": "service calls (OSCL): every open one and every one of the last 180 days, with status and dates",
     "service_contracts": "service contracts (OCTR)",
 }
 # Fields whose sums are worked out here, not left to the model to add up.

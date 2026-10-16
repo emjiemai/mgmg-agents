@@ -181,7 +181,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 
 ## Open items
 - **Brief vs SAP check (15.10, `docs/sap-data-check-2026-10-15.md`):** delete the old duplicate push task
-  (:17/:47 — it re-wrote 17 debt rows and made the brief say «камида»; now ignored in code); deploy `sap-gateway/src/` (stock value fix);
+  (:17/:47 — it re-wrote 17 debt rows and made the brief say «камида»; now ignored in code); deploy `sap-gateway/src/` (stock value fix + 12 complete tools, 16.10) and the new `push-ar-aging.ps1` (keep its settings; no log file);
   accounting to decide what «касса / банк» counts (today: every class-5000 account incl. 5530/5710/5720) and
   whether «Кечаги сотув» shows so'm by entry date; Garmin bot leads never arrive (check its webhook secret).
 - **The owner's IT instruction** (08.10–31.12.2026, received 10.10): phases Ф0–Ф3, 10 rules, 8 agents,
