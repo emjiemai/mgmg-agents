@@ -37,7 +37,6 @@ from integrations.common.db import close_pool
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
 from integrations.org_bot import kpi, names, store
-from integrations.org_bot.roles import DIRECTOR_ROLE
 from integrations.telegram.bot import TelegramBot, TelegramError
 
 AGENT = "daily-reports"
@@ -66,7 +65,7 @@ async def ask_everyone(run_id: uuid.UUID) -> int:
     # whose reports the admin switched off (📝 on the same card).
     employees = [
         e for e in await store.list_active_employees()
-        if e["role"] != DIRECTOR_ROLE and kpi.works_on(e, day) and not e.get("reports_off")
+        if kpi.asked_for_reports(e) and kpi.works_on(e, day) and not e.get("reports_off")
     ]
     if not employees:
         log.warning("No active employees to ask (besides the Director)")

@@ -1186,6 +1186,8 @@ async def _try_daily_report(
         question about it), or None to fall through to the AI — including
         when late numbers were merged into an already-submitted report.
     """
+    if not kpi.asked_for_reports(employee):  # the Garmin manager sends none (2026-10-17): straight to the AI
+        return None
     day = today_local()
     metrics_def = kpi.metrics_for_role(employee["role"])
     pending = await store.pending_report(employee["telegram_user_id"], day)

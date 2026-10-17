@@ -101,6 +101,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (`garmin_sap`, its warehouses only) + Billz + Garmin data by role (`data_access.ROLE_SCOPES`, never 1C) — **opens
   with the role, no Boss confirmation** (the owner, 2026-10-14; the Boss is told); Garmin morning brief (`agents/garmin-brief/`,
   same picture as the Director's, shared `integrations/reports/brief_parts.py`); Billz → SAP check recipient.
+  **Sends no daily report** (2026-10-17, `kpi.NO_REPORT_ROLES`); /hisobotlar = his team's report calendar.
   Mobile app: not now.
 - **Google reviews: separate pages and QR codes** (2026-10-08, `docs/agent-specs/20-google-reviews.md`):
   `/r` Londry, `/r/garmin` Garmin — the branch button opens that branch's Google review page

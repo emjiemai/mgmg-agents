@@ -1442,6 +1442,7 @@ async def close_missed_reports(report_date: date, points: int) -> list[dict[str,
             UPDATE daily_reports r SET penalty_points = %(p)s, penalized_at = now()
             FROM employees e
             WHERE e.id = r.employee_id AND e.status = 'active' AND NOT e.reports_off
+              AND e.role NOT IN ('operatsion_direktor', 'garmin_manager')  -- kpi.NO_REPORT_ROLES
               AND r.report_date = %(d)s AND r.status = 'asked' AND r.penalized_at IS NULL
             RETURNING r.id, r.employee_id, r.telegram_user_id, r.report_date, r.penalty_points,
                       e.full_name, e.display_name, e.address_form

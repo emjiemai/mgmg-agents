@@ -135,6 +135,16 @@ def parse_metrics(text: str, metrics: Sequence[Metric]) -> dict[str, int]:
     return {}
 
 
+# Roles never asked for a daily report: the Director, and the Garmin manager (2026-10-17, the owner:
+# "Garmin Manager will not send hisobot, remove it completely") — he reads his team's instead.
+NO_REPORT_ROLES = ("operatsion_direktor", "garmin_manager")
+
+
+def asked_for_reports(employee: dict[str, Any]) -> bool:
+    """Whether this role sends daily reports at all (the 📝 switch and the week are per person, on top)."""
+    return employee.get("role") not in NO_REPORT_ROLES
+
+
 # Roles that work shifts and set their own week on /xodimlar (2026-10-17): seven day buttons.
 OWN_SCHEDULE_ROLES = ("garmin_sotuv",)
 WEEK_SHORT = ("Ду", "Се", "Чо", "Па", "Жу", "Ша", "Як")

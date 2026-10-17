@@ -4049,6 +4049,9 @@ def test_own_week_and_team_calendar() -> None:
     import inspect
     import uuid
 
+    from datetime import datetime
+
+    from integrations.common.timeutil import TASHKENT
     from integrations.org_bot import admin, kpi, ops_manager, report_calendar, store
     from integrations.telegram import menus
 
@@ -4102,6 +4105,18 @@ def test_own_week_and_team_calendar() -> None:
 
     # the Garmin manager's /hisobotlar: his team only, in his menu
     check("the Garmin manager's team", report_calendar.TEAM_OF.get("garmin_manager"), ("garmin_sotuv",))
+    gm = {"id": "g1", "role": "garmin_manager", "status": "active", "display_name": "g", "full_name": "Улуғбек"}
+    check_true("the Garmin manager is never asked for a report (like the Director)",
+               not kpi.asked_for_reports(gm) and not kpi.asked_for_reports({"role": "operatsion_direktor"})
+               and kpi.asked_for_reports(seller)
+               and "kpi.asked_for_reports(e)" in load_source("agents/daily-reports/agent.py")
+               and "'garmin_manager'" in inspect.getsource(store.close_missed_reports))
+    gm_text, gm_keyboard = admin.employee_card(gm)
+    check_true("...his card says so and has no 📝 switch; he isn't a calendar row; no /hisobot in his menu",
+               "сўралмайди" in gm_text and "rpof:" not in str(gm_keyboard)
+               and report_calendar.build(date(2026, 10, 1), datetime(2026, 10, 17, 12, tzinfo=TASHKENT), [gm], [])["people"] == []
+               and "hisobot" not in [c for c, _ in menus.GARMIN_MANAGER])
+    check_true("...and his messages never go into a report", "kpi.asked_for_reports(employee)" in inspect.getsource(ops_manager._try_daily_report))
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
                and "hisobotlar" not in [c for c, _ in menus.EMPLOYEE] and menus.role_menu("londry") is None)

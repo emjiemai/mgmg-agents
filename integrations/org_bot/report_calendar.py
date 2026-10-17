@@ -22,7 +22,8 @@ from typing import Any
 
 from integrations.common.timeutil import now_local
 from integrations.org_bot import names
-from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
+from integrations.org_bot.kpi import NO_REPORT_ROLES
+from integrations.org_bot.roles import ROLE_LABELS
 from integrations.org_bot.task_tracker import MONTHS_UZ
 
 COMMANDS = ("/hisobotlar", "/ҳисоботлар")
@@ -70,7 +71,7 @@ def build(start: date, now: datetime, employees: list[dict[str, Any]], rows: lis
     days = month_days(start)
     by_key = {(str(r["employee_id"]), r["report_date"]): r for r in rows}
     people = []
-    for emp in sorted((e for e in employees if e.get("role") != DIRECTOR_ROLE),
+    for emp in sorted((e for e in employees if e.get("role") not in NO_REPORT_ROLES),
                       key=lambda e: (ROLE_LABELS.get(e.get("role") or "", ""), names.person_name(e))):
         cells = [cell(by_key.get((str(emp["id"]), d)), d, now) for d in days]
         mine = [by_key[(str(emp["id"]), d)] for d in days if (str(emp["id"]), d) in by_key]

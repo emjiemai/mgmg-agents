@@ -57,6 +57,13 @@ before; and the AI keeps the last 24 messages of the day in mind, not 12
 сотув team only — green sent, red missed, amber today, grey not asked (their own
 week's days off included).
 
+## No daily report of his own (2026-10-17)
+
+The owner: «Garmin Manager will not send hisobot, remove it completely». Like the
+Director (`kpi.NO_REPORT_ROLES`): never asked at 16:00, never reminded, never a minus,
+not a row on the report calendar, his messages never become a report; his card says
+«сўралмайди» without the 📝 switch; his ☰ menu has /hisobotlar (his team), not /hisobot.
+
 ## Tests
 
 `scripts/selfcheck.py`, `test_garmin_manager`: the role and its picker

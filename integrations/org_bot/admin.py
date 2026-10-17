@@ -547,7 +547,10 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         lines.append(f"Иш кунлари: {workdays_text(emp)}")
         lines.append(f"Мурожаат: {escape(address_text(emp))}")
         lines.append(f"AI ёрдамчи: {'ўчирилган' if emp.get('ai_chat_off') else 'ёқилган'}")
-        lines.append(f"Кунлик ҳисобот (16:00): {'ўчирилган' if emp.get('reports_off') else 'ёқилган'}")
+        if kpi.asked_for_reports(emp):
+            lines.append(f"Кунлик ҳисобот (16:00): {'ўчирилган' if emp.get('reports_off') else 'ёқилган'}")
+        else:
+            lines.append("Кунлик ҳисобот: сўралмайди (жамоасининг ҳисоботларини /hisobotlar да кўради)")
         lines.append(f"Вазифалари: {'юкланган' if (emp.get('responsibilities') or '').strip() else 'ҳали юкланмаган'}")
         lines.append(f"AI жавоб тили: {data_access.lang_label(emp)}")
         lines.append(data_access.card_line(emp))
@@ -578,8 +581,9 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         rows.append([{"text": f"🤖 AI ёрдамчи: {'⛔ ўчирилган' if emp.get('ai_chat_off') else '✅ ёқилган'}",
                       "callback_data": f"aich:{employee_id}"}])
         # Daily reports off for this person: no 16:00 ask, no 17:00 reminder, never counted as missed.
-        rows.append([{"text": f"📝 Кунлик ҳисобот: {'⛔ ўчирилган' if emp.get('reports_off') else '✅ ёқилган'}",
-                      "callback_data": f"rpof:{employee_id}"}])
+        if kpi.asked_for_reports(emp):
+            rows.append([{"text": f"📝 Кунлик ҳисобот: {'⛔ ўчирилган' if emp.get('reports_off') else '✅ ёқилган'}",
+                          "callback_data": f"rpof:{employee_id}"}])
         # The AI answers in Uzbek, or Russian for someone who reads it better (2026-10-10).
         rows.append([{"text": f"🌐 AI тили: {data_access.lang_label(emp)}", "callback_data": f"lng:{employee_id}"}])
         # Company data through the bot — Бухгалтерия and Молия only; the Director is told (data_access.py).
