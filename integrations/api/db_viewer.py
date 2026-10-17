@@ -6,8 +6,9 @@ the API service that is already running (no extra cost):
 
   * ``/db``            every table and view, with row counts
   * ``/db/{table}``    rows, newest first, 50 per page, with a text search —
-                       only for ``TECHNICAL_TABLES`` (2026-10-07); every other
-                       table is closed (financial or confidential data) and
+                       only for ``TECHNICAL_TABLES`` — since 2026-10-17 every
+                       table of the bot's own records; the platforms' data
+                       (SAP, 1C, Billz, Verifix) stays closed and
                        shows its structure only (2026-10-15): columns, row
                        count, when rows were written — never a value
 
@@ -49,10 +50,12 @@ PAGE_SIZE = 50
 CELL_CHARS = 120
 STATEMENT_TIMEOUT = "5s"
 
-# Tables whose rows the viewer shows (2026-10-07, the Director's order: IT
-# keeps technical access only). Everything else — SAP figures, debts, briefs,
-# the Director's conversation, KPI ratings, reports, attendance, complaints,
-# permissions — is listed with its row count only and its rows stay closed.
+# Tables whose rows the viewer shows. 2026-10-07 (the Director's order): technical
+# tables only. 2026-10-17 (the Director approved, recorded in
+# docs/access-review-2026-10-07.md §4): every table of the bot's own records is
+# open; the platforms' data stays closed — SAP, 1C, Billz, Verifix, the old CRM,
+# and what is built straight from their figures (briefs, receivables alerts,
+# the Billz → SAP check). A new table is closed until it is listed here.
 TECHNICAL_TABLES = frozenset({
     "agent_actions",        # the audit log: what ran, when, did it fail
     "access_requests",      # who asked to join the bot
@@ -61,9 +64,25 @@ TECHNICAL_TABLES = frozenset({
     "attendance_flexible",  # Verifix ids marked "эркин график" (ids only)
     "cheer_messages",
     "announcements",
+    # the bot's own records (2026-10-17)
+    "employees", "tasks", "task_events", "task_updates", "task_drafts", "pending_dispatches",
+    "daily_reports", "pending_relays", "employee_files", "cheer_deliveries",
+    "conversation_turns", "ai_chat_turns", "director_clarifications",
+    "kpi_goals", "kpi_ratings", "kpi_periods",
+    "permission_requests", "permission_request_events", "approvals",
+    "client_feedback", "cheques", "garmin_leads",
+    "leads", "lead_assignments", "lead_checkins",
 })
-CLOSED_TEXT = ("Бу жадвал ёпиқ: молиявий ёки махфий маълумот. IT фақат техник жадвалларни кўради "
-               "(Директор кўрсатмаси, 07.10.2026).")
+# Never opened: the platforms' data (and what is built from their figures).
+PLATFORM_TABLES = frozenset({
+    "ar_aging_snapshots", "v_ar_aging_latest", "sap_gateway_snapshots", "v_sap_gateway_latest",
+    "cash_balance_snapshots", "v_cash_latest", "sales_summary_snapshots", "attendance_snapshots",
+    "billz_sap_checks", "daily_briefs", "alerts",
+    "amocrm_deal_events", "amocrm_pipeline_snapshots", "v_pipeline_latest", "crm_stats_snapshots",
+    "v_crm_stats_latest", "crm_employee_reports", "planner_task_snapshots",
+})
+CLOSED_TEXT = ("Бу жадвал ёпиқ: SAP, 1C, Billz ёки Verifix маълумоти (ёки уларнинг рақамларидан тузилган). "
+               "Бот ёзувлари очиқ (Директор рухсати, 17.10.2026).")
 STRUCTURE_TEXT = "Қийматлар кўрсатилмайди — фақат тузилиши: устунлар, қаторлар сони ва қачон ёзилгани."
 
 # Newest-first ordering: the first of these a table has.
@@ -293,8 +312,8 @@ async def tables(request: Request) -> Response:
         else:
             # closed: the link opens its structure only (no values)
             items.append(f"<li><a href='/db/{quote(name)}'>🔒 {_e(name)}</a>{size}</li>")
-    return _page("MGMG — база", f"<h1>Жадваллар</h1><p class='muted'>🔒 — ёпиқ: фақат тузилиши кўринади "
-                                "(Директор кўрсатмаси, 07.10.2026).</p>"
+    return _page("MGMG — база", f"<h1>Жадваллар</h1><p class='muted'>🔒 — SAP, 1C, Billz, Verifix маълумоти: фақат "
+                                "тузилиши кўринади. Бот ёзувлари очиқ (Директор рухсати, 17.10.2026).</p>"
                                 f"<ul class='list'>{''.join(items)}</ul>")
 
 

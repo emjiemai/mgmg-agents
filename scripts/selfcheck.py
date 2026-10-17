@@ -1297,9 +1297,14 @@ def test_db_viewer() -> None:
         index = client.get("/db", headers=good)
         check("right password lets you in", index.status_code, 200)
         check_true("lists the tables", "agent_actions" in index.text and "1 қатор" in index.text)
-        check_true("closed tables listed with a lock; their link opens the structure only (15.10.2026)",
-                   "🔒 employees" in index.text and "href='/db/employees'" in index.text
+        check_true("platform data listed with a lock (structure only); the bot's tables open (17.10.2026)",
+                   "🔒 v_ar_aging_latest" in index.text and "href='/db/v_ar_aging_latest'" in index.text
+                   and "href='/db/employees'>employees" in index.text and "🔒 employees" not in index.text
                    and "href='/db/agent_actions'" in index.text)
+        check_true("every SAP / 1C / Billz / Verifix table stays closed, the bot's records are open",
+                   not db_viewer.PLATFORM_TABLES & db_viewer.TECHNICAL_TABLES
+                   and {"employees", "tasks", "daily_reports", "client_feedback", "kpi_ratings"} <= db_viewer.TECHNICAL_TABLES
+                   and {"sap_gateway_snapshots", "ar_aging_snapshots", "billz_sap_checks", "daily_briefs"} <= db_viewer.PLATFORM_TABLES)
         check_true("never indexed or cached", index.headers.get("x-robots-tag", "").startswith("noindex")
                    and index.headers.get("cache-control") == "no-store")
 
