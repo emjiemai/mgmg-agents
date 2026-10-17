@@ -1525,6 +1525,9 @@ async def _handle_employee_message(
         return "ignored"
     if text.lower() in report_tools.REPORT_COMMANDS:
         return await _show_today_report(employee, run_id)
+    team = report_calendar.TEAM_OF.get(employee.get("role") or "")
+    if team and text.lower() in report_calendar.COMMANDS:  # the Garmin manager: his team's calendar (17.10)
+        return await _send_report_calendar(telegram_user_id, run_id, team)
     editing = await store.report_being_edited(telegram_user_id, today_local(), report_tools.EDIT_MINUTES)
     if editing is not None and not text.startswith("/"):
         await store.replace_report(str(editing["id"]), text)
@@ -1908,9 +1911,10 @@ async def _handle_draft_cancel(rest: str, callback: dict[str, Any], run_id: uuid
     return "draft_cancelled"
 
 
-async def _send_report_calendar(chat_id: int, run_id: uuid.UUID) -> str:
-    """The Director's /hisobotlar: green sent, red missed, this month (a text if the picture fails)."""
-    png, view = await report_calendar.picture()
+async def _send_report_calendar(chat_id: int, run_id: uuid.UUID, roles: tuple[str, ...] | None = None) -> str:
+    """/hisobotlar: green sent, red missed, this month (a text if the picture fails) — the Director
+    everyone's, the Garmin manager his team's (``roles``)."""
+    png, view = await report_calendar.picture(roles=roles)
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:

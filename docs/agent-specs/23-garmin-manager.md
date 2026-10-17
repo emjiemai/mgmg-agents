@@ -51,6 +51,12 @@ answer, a complaint card, the brief) now shows the AI what was quoted
 before; and the AI keeps the last 24 messages of the day in mind, not 12
 (`AI_MEMORY_TURNS`). Task cards keep their own flow.
 
+## His team's report calendar (2026-10-17)
+
+**/hisobotlar** (his ☰ menu): the month's report calendar picture for the Garmin
+сотув team only — green sent, red missed, amber today, grey not asked (their own
+week's days off included).
+
 ## Tests
 
 `scripts/selfcheck.py`, `test_garmin_manager`: the role and its picker

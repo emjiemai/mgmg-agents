@@ -1092,6 +1092,12 @@ ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS editing_at TIMESTAMPTZ;
 -- Some people find the cheer messages irritating: the admin can switch them
 -- off per person on the /xodimlar card (2026-10-02).
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS cheer_off BOOLEAN NOT NULL DEFAULT false;
+-- Their own week (2026-10-17, the owner: Garmin shop staff work shifts, weekdays off too): seven
+-- '1'/'0' for Monday..Sunday — the days they are asked for a report. NULL = Monday–Friday plus the
+-- Saturday / Sunday switches. Set with seven buttons on /xodimlar (kpi.OWN_SCHEDULE_ROLES).
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_days TEXT;
+ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_work_days_check;
+ALTER TABLE employees ADD CONSTRAINT employees_work_days_check CHECK (work_days IS NULL OR work_days ~ '^[01]{7}$');
 -- Daily reports off for one person (2026-10-06, /xodimlar → 📝): never asked
 -- at 16:00 or reminded at 17:00, so no row is opened — nothing counts as
 -- missed in the brief, the Friday scorecard or the KPI.

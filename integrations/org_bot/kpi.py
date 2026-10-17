@@ -135,8 +135,24 @@ def parse_metrics(text: str, metrics: Sequence[Metric]) -> dict[str, int]:
     return {}
 
 
+# Roles that work shifts and set their own week on /xodimlar (2026-10-17): seven day buttons.
+OWN_SCHEDULE_ROLES = ("garmin_sotuv",)
+WEEK_SHORT = ("Ду", "Се", "Чо", "Па", "Жу", "Ша", "Як")
+
+
+def week_of(employee: dict[str, Any]) -> str:
+    """Their week as seven '1'/'0' (Monday first): their own schedule, else Mon–Fri + the weekend switches."""
+    own = employee.get("work_days")
+    if own and len(own) == 7:
+        return own
+    return "11111" + ("1" if employee.get("works_saturday") else "0") + ("1" if employee.get("works_sunday") else "0")
+
+
 def works_on(employee: dict[str, Any], day: date) -> bool:
-    """Whether an employee works on ``day``: Mon–Fri everyone, weekends if switched on."""
+    """Whether an employee works on ``day`` (is asked for a report): their own week if set, else
+    Mon–Fri everyone and weekends if switched on."""
+    if employee.get("work_days"):
+        return week_of(employee)[day.weekday()] == "1"
     weekday = day.weekday()
     if weekday == 5:
         return bool(employee.get("works_saturday"))

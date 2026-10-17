@@ -108,16 +108,22 @@ def text_fallback(view: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def picture(day: date | None = None) -> tuple[bytes | None, dict[str, Any]]:
-    """The month's calendar as a PNG (None if it couldn't be drawn), and its values."""
+# Who sees whose calendar (2026-10-17): the Director everyone; the Garmin manager his team only.
+TEAM_OF = {"garmin_manager": ("garmin_sotuv",)}
+
+
+async def picture(day: date | None = None, roles: tuple[str, ...] | None = None) -> tuple[bytes | None, dict[str, Any]]:
+    """The month's calendar as a PNG (None if it couldn't be drawn), and its values; ``roles`` narrows it to a team."""
     from integrations.org_bot import store
     from integrations.reports import render
 
     now = now_local()
     start = month_start(day or now.date())
-    employees = await store.list_active_employees()
+    employees = [e for e in await store.list_active_employees() if roles is None or e.get("role") in roles]
     rows = await store.reports_between_rows(start, month_days(start)[-1])
     view = build(start, now, employees, rows)
+    if roles is not None:
+        view["title"] = "Garmin сотув — ҳисоботлар"
     try:
         return render.image("reports_calendar.html", width_css=CALENDAR_WIDTH_CSS, **view), view
     except Exception:  # noqa: BLE001 — the text goes instead

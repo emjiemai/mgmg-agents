@@ -3740,7 +3740,8 @@ def test_command_menus() -> None:
     from integrations.org_bot.roles import DIRECTOR_ROLE
     from integrations.telegram import menus
 
-    for name, items in (("Admin", menus.ADMIN), ("employee", menus.EMPLOYEE), ("Director", menus.DIRECTOR)):
+    for name, items in (("Admin", menus.ADMIN), ("employee", menus.EMPLOYEE), ("Director", menus.DIRECTOR),
+                        ("Garmin manager", menus.GARMIN_MANAGER)):
         check_true(f"{name} menu: valid Telegram commands, Cyrillic descriptions",
                    all(re.fullmatch(r"[a-z0-9_]{1,32}", c) and 0 < len(d) <= 256 and re.search("[а-яўқғҳ]", d.lower())
                        for c, d in items) and len({c for c, _ in items}) == len(items))
@@ -3753,7 +3754,7 @@ def test_command_menus() -> None:
                    *ops_manager.report_calendar.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
-               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR))
+               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
     check_true("the Director's menu has /maqsad /baho; the employees' doesn't",
                {"maqsad", "baho"} <= {c for c, _ in menus.DIRECTOR} and not {"maqsad", "baho"} & {c for c, _ in menus.EMPLOYEE})
 
@@ -4038,6 +4039,73 @@ def test_cleanup_round_17_10() -> None:
                "Ўзи тузатди" in msg and ": 3" in msg and "<code>tasks</code>" in msg and "саволлар" not in msg)
     check("nothing found: one line", db_review.text([db_review.Finding(db_review.CHECKS[0], 0)]),
           "🧹 <b>Бот базаси текшируви</b>\n✅ Ҳаммаси тартибда.")
+
+
+def test_own_week_and_team_calendar() -> None:
+    """17.10.2026: Garmin shop staff set their own week (7 buttons) — no report asked on a day off;
+    the Garmin manager sees his team's report calendar."""
+    print("own week for shift workers, the Garmin manager's calendar (17.10.2026)")
+    import asyncio
+    import inspect
+    import uuid
+
+    from integrations.org_bot import admin, kpi, ops_manager, report_calendar, store
+    from integrations.telegram import menus
+
+    seller = {"id": "e1", "role": "garmin_sotuv", "status": "active", "display_name": "a", "full_name": "Ширина",
+              "work_days": "1101011"}  # off Wednesday and Friday
+    check_true("their own week decides: asked Mon, Tue, Thu, Sat, Sun — not Wed, Fri",
+               [kpi.works_on(seller, date(2026, 10, 12) + timedelta(days=i)) for i in range(7)]
+               == [True, True, False, True, False, True, True])
+    plain = {"role": "londry", "works_saturday": True}
+    check_true("everyone else as before: Mon–Fri plus the weekend switches",
+               kpi.week_of(plain) == "1111110" and kpi.works_on(plain, date(2026, 10, 17)) and not kpi.works_on(plain, date(2026, 10, 18)))
+    text, keyboard = admin.employee_card(seller)
+    days = [b["callback_data"].split(":")[0] for row in keyboard["inline_keyboard"] for b in row if b["callback_data"].startswith("wd")]
+    labels = [b["text"] for row in keyboard["inline_keyboard"] for b in row if b["callback_data"].startswith("wd")]
+    check_true("Garmin сотув card: seven day buttons, ✅ on working days, no Saturday/Sunday pair",
+               days == [f"wd{i}" for i in range(7)] and labels[2] == "☐ Чо" and labels[0] == "✅ Ду"
+               and "wsat:" not in str(keyboard) and "Ду, Се, Па, Ша, Як" in text)
+    _t, other = admin.employee_card({**plain, "id": "e2", "status": "active", "display_name": "b"})
+    check_true("other roles keep the Saturday / Sunday buttons", "wsat:" in str(other) and "wd0:" not in str(other))
+
+    flips: list = []
+
+    async def toggle(employee_id, weekday, by):
+        flips.append(weekday)
+        return {**seller, "work_days": "1111011"}
+
+    async def get_employee(employee_id):
+        return seller
+
+    edits: list = []
+
+    async def edit(callback, text, keyboard, run_id):
+        edits.append(text)
+
+    async def none(*a, **k):
+        return None
+
+    saved = [(store, "toggle_work_day", store.toggle_work_day), (store, "get_employee", store.get_employee),
+             (admin, "_edit", admin._edit), (admin, "_answer", admin._answer)]
+    try:
+        store.toggle_work_day, store.get_employee, admin._edit, admin._answer = toggle, get_employee, edit, none
+        asyncio.run(admin.handle_admin_callback({"id": "q", "data": "wd2:e1", "from": {"id": 5}}, uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("a tap flips that day and the card shows the new week",
+               flips == [2] and edits and "Ҳисобот сўраладиган кунлар: Ду, Се, Чо, Па, Ша, Як" in edits[-1])
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("stored as seven 1/0; a role change or re-registration resets it",
+               "work_days ~ '^[01]{7}$'" in schema and "work_days = NULL" in inspect.getsource(store.change_employee_role))
+
+    # the Garmin manager's /hisobotlar: his team only, in his menu
+    check("the Garmin manager's team", report_calendar.TEAM_OF.get("garmin_manager"), ("garmin_sotuv",))
+    check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
+               ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
+               and "hisobotlar" not in [c for c, _ in menus.EMPLOYEE] and menus.role_menu("londry") is None)
+    check_true("employees' /hisobotlar only for a role with a team", "report_calendar.TEAM_OF.get(" in inspect.getsource(ops_manager))
 
 
 def test_reregistration_and_order() -> None:
@@ -7337,6 +7405,7 @@ def main() -> int:
         test_stock_items,
         test_sap_everything,
         test_cleanup_round_17_10,
+        test_own_week_and_team_calendar,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

@@ -96,7 +96,7 @@ async def change_employee_role(employee_id: str, role: str, changed_by: str) -> 
     before = await fetch_one("SELECT * FROM employees WHERE id = %s AND status = 'active'", (employee_id,))
     if before is None or before["role"] == role:
         return None
-    after = await fetch_one("UPDATE employees SET role = %s WHERE id = %s RETURNING *", (role, employee_id))
+    after = await fetch_one("UPDATE employees SET role = %s, work_days = NULL WHERE id = %s RETURNING *", (role, employee_id))
     await log_employee_change(employee_id, "role", before["role"], role, changed_by)
     cancelled = await fetch_all(
         """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL
@@ -132,6 +132,21 @@ async def toggle_weekend_day(employee_id: str, day: str, changed_by: str) -> dic
     )
     if after is not None:
         await log_employee_change(employee_id, "workdays", None, f"{day}={'on' if after[column] else 'off'}", changed_by)
+    return after
+
+
+async def toggle_work_day(employee_id: str, weekday: int, changed_by: str) -> dict[str, Any] | None:
+    """Flip one day (0 = Monday) of someone's own week; the first tap starts from their current week. Logged."""
+    from integrations.org_bot.kpi import WEEK_SHORT, week_of
+
+    before = await fetch_one("SELECT * FROM employees WHERE id = %s AND status = 'active'", (employee_id,))
+    if before is None or not 0 <= weekday <= 6:
+        return None
+    week = list(week_of(before))
+    week[weekday] = "0" if week[weekday] == "1" else "1"
+    after = await fetch_one("UPDATE employees SET work_days = %s WHERE id = %s RETURNING *", ("".join(week), employee_id))
+    await log_employee_change(employee_id, "workdays", None, f"{WEEK_SHORT[weekday]}={'on' if week[weekday] == '1' else 'off'}",
+                              changed_by)
     return after
 
 
@@ -279,6 +294,7 @@ async def create_employee(
                 reports_off = employees.reports_off AND employees.status <> 'revoked',
                 works_saturday = employees.works_saturday AND employees.status <> 'revoked',
                 works_sunday = employees.works_sunday AND employees.status <> 'revoked',
+                work_days = CASE WHEN employees.status = 'revoked' THEN NULL ELSE employees.work_days END,
                 data_access = CASE WHEN employees.status = 'revoked' THEN '{}' ELSE employees.data_access END,
                 revoked_at = NULL, revoked_by = NULL
         RETURNING *

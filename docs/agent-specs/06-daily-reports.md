@@ -224,3 +224,17 @@ The Director's **/hisobotlar** (OPS Manager Bot, ☰ menu): one picture of the
 month — people down the side, days across; green sent, red missed (the
 minus), amber today before 22:00, grey not asked. `integrations/org_bot/report_calendar.py`,
 template `reports_calendar.html` (a wider page, 1920 px). Text if the picture fails.
+
+## Their own week — shift workers (2026-10-17)
+
+Garmin shop staff (`kpi.OWN_SCHEDULE_ROLES` = Garmin сотув) work shifts,
+weekdays off too. Their /xodimlar card has **seven day buttons** (Ду … Як,
+✅ working / ☐ off) instead of the Saturday / Sunday pair; the week is stored as
+`employees.work_days` (seven '1'/'0', Monday first). The 16:00 ask goes only on
+✅ days — so a day off is never asked, never red, never a minus, grey on the
+calendar and not in KPI. The first tap starts from their current week; a role
+change or re-registration resets it. Everyone else: Monday–Friday plus the
+weekend switches, as before.
+
+The Garmin manager's **/hisobotlar** (his ☰ menu) is the same calendar for his
+team only (`report_calendar.TEAM_OF`).

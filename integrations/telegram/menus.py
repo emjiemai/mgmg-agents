@@ -58,6 +58,17 @@ DIRECTOR: list[tuple[str, str]] = [
 ]
 
 
+# The Garmin manager (2026-10-17): the employees' menu plus his team's report calendar.
+GARMIN_MANAGER: list[tuple[str, str]] = EMPLOYEE + [("hisobotlar", "Garmin сотув жамоаси ҳисоботлари календари")]
+
+
+def role_menu(role: str | None) -> list[tuple[str, str]] | None:
+    """A role's own menu in OPS Manager Bot, or None for the employees' default."""
+    from integrations.org_bot.roles import DIRECTOR_ROLE
+
+    return {DIRECTOR_ROLE: DIRECTOR, "garmin_manager": GARMIN_MANAGER}.get(role or "")
+
+
 def _payload(commands: list[tuple[str, str]], chat_id: int | None = None) -> dict[str, Any]:
     body: dict[str, Any] = {"commands": [{"command": c, "description": d} for c, d in commands]}
     if chat_id:
@@ -80,12 +91,11 @@ async def _set(token: str, commands: list[tuple[str, str]], chat_id: int | None 
 
 
 async def sync_person(telegram_user_id: int, role: str | None) -> bool:
-    """One OPS Manager chat's menu after a role change: the Director's, else back to the employees'."""
-    from integrations.org_bot.roles import DIRECTOR_ROLE
-
+    """One OPS Manager chat's menu after a role change: the role's own (Director, Garmin manager), else the employees'."""
     token = settings.ops_manager_bot_telegram_bot_token.get_secret_value()
-    if role == DIRECTOR_ROLE:
-        return await _set(token, DIRECTOR, telegram_user_id)
+    own = role_menu(role)
+    if own is not None:
+        return await _set(token, own, telegram_user_id)
     if not token:
         return False
     try:
@@ -108,7 +118,8 @@ async def sync_all() -> int:
     done += await _set(settings.admin_bot_telegram_bot_token.get_secret_value(), ADMIN, admin_id or None)
     ops = settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     done += await _set(ops, EMPLOYEE)
-    for director in await store.active_employees_by_role(DIRECTOR_ROLE):
-        done += await _set(ops, DIRECTOR, director["telegram_user_id"])
+    for role in (DIRECTOR_ROLE, "garmin_manager"):
+        for person in await store.active_employees_by_role(role):
+            done += await _set(ops, role_menu(role), person["telegram_user_id"])
     log.info("Command menus set: {}", done)
     return done

@@ -25,7 +25,7 @@ from integrations.common.config import settings
 from integrations.common.db import log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import now_local, today_local
-from integrations.org_bot import data_access, store
+from integrations.org_bot import data_access, kpi, store
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS, ROLE_SLUGS, ROLES
 from integrations.telegram import menus
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
@@ -517,7 +517,11 @@ def employee_list_view(employees: list[dict[str, Any]]) -> tuple[str, dict[str, 
         full_name = (emp.get("full_name") or "").strip()
         name = escape(full_name) if full_name else f"{escape(emp['display_name'])} <i>(исм ёзилмаган)</i>"
         weekend = [d for d, on in (("шанба", emp.get("works_saturday")), ("якшанба", emp.get("works_sunday"))) if on]
-        lines.append(f"• {name}{username} — {label}" + (f" <i>(+ {', '.join(weekend)})</i>" if weekend else ""))
+        if emp.get("work_days"):
+            schedule = f" <i>({escape(workdays_text(emp))})</i>"
+        else:
+            schedule = f" <i>(+ {', '.join(weekend)})</i>" if weekend else ""
+        lines.append(f"• {name}{username} — {label}{schedule}")
         buttons.append([{"text": f"👤 {full_name or emp['display_name']} ({label})", "callback_data": f"emp:{emp['id']}"}])
     lines.append(
         "\n<i>Ходимни танланг: исм, роль ёки ўчириш. "
@@ -554,7 +558,13 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         [{"text": "✏️ Исмни қайта сўраш", "callback_data": f"rename:{employee_id}"}],
         [{"text": "🔁 Ролни ўзгартириш", "callback_data": f"rerole:{employee_id}"}],
     ]
-    if emp["role"] != DIRECTOR_ROLE:  # the Director isn't asked for daily reports
+    if emp["role"] in kpi.OWN_SCHEDULE_ROLES:
+        # Shift workers (Garmin shops, 2026-10-17): their own week, seven days — asked for a report only on ✅ days.
+        week = kpi.week_of(emp)
+        day_buttons = [{"text": f"{'✅' if week[i] == '1' else '☐'} {kpi.WEEK_SHORT[i]}", "callback_data": f"wd{i}:{employee_id}"}
+                       for i in range(7)]
+        rows += [day_buttons[:4], day_buttons[4:]]
+    elif emp["role"] != DIRECTOR_ROLE:  # the Director isn't asked for daily reports
         rows.append(
             [
                 {"text": f"{'✅' if emp.get('works_saturday') else '☐'} Шанба", "callback_data": f"wsat:{employee_id}"},
@@ -591,7 +601,10 @@ def address_text(emp: dict[str, Any]) -> str:
 
 
 def workdays_text(emp: dict[str, Any]) -> str:
-    """"Душанба–Жума + шанба" — the days this employee is asked for a report."""
+    """"Душанба–Жума + шанба", or their own week "Ду, Се, Жу, Ша, Як" — the days they are asked for a report."""
+    if emp.get("work_days") or emp.get("role") in kpi.OWN_SCHEDULE_ROLES:
+        days = [d for d, on in zip(kpi.WEEK_SHORT, kpi.week_of(emp)) if on == "1"]
+        return ", ".join(days) if days else "йўқ (ҳисобот сўралмайди)"
     extra = [day for day, on in (("шанба", emp.get("works_saturday")), ("якшанба", emp.get("works_sunday"))) if on]
     return "Душанба–Жума" + (" + " + ", ".join(extra) if extra else "")
 
@@ -919,7 +932,7 @@ async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) ->
 
 EMPLOYEE_ACTIONS = (
     "emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun", "addr", "aich", "chof",
-    "rpof", "lng", "dacc",
+    "rpof", "lng", "dacc", "wd0", "wd1", "wd2", "wd3", "wd4", "wd5", "wd6",
 )
 
 
@@ -991,6 +1004,13 @@ async def _handle_employee_action(
             agent=AGENT, action="employee_name_reset", target_system="postgres", status="success", run_id=run_id,
             target_ref=employee_id, mode="write", payload={"by": decided_by, "on_request": action == "nameok"},
         )
+    elif action in ("wd0", "wd1", "wd2", "wd3", "wd4", "wd5", "wd6"):
+        updated = await store.toggle_work_day(employee_id, int(action[2]), decided_by)
+        if updated is None:
+            await _answer(query_id, "Ходим топилмади")
+            return "not_found"
+        text, keyboard = employee_card(updated, f"📅 Ҳисобот сўраладиган кунлар: {workdays_text(updated)}")
+        await _edit(callback, text, keyboard, run_id)
     elif action in ("wsat", "wsun"):
         updated = await store.toggle_weekend_day(employee_id, "saturday" if action == "wsat" else "sunday", decided_by)
         if updated is None:
@@ -1057,7 +1077,7 @@ async def _handle_employee_action(
             return "role_unchanged"
         before, after = changed
         cancelled = after.pop("tasks_cancelled", 0)  # a clean start in the new role (store.change_employee_role)
-        if DIRECTOR_ROLE in (before["role"], after["role"]):  # the ☰ menu follows the role (menus.py)
+        if menus.role_menu(before["role"]) or menus.role_menu(after["role"]):  # the ☰ menu follows the role (menus.py)
             await menus.sync_person(after["telegram_user_id"], after["role"])
         # Data access belongs to Бухгалтерия / Молия, and a role-given one (Garmin manager) to that
         # role as the Director confirmed it: any change involving them clears it (data_access.py).
@@ -1246,7 +1266,7 @@ async def _handle_role_decision(
             approved_by=decided_by,
         )
         await ops_manager.send_registration_confirmed(request, run_id, employee)
-        if employee.get("role") == DIRECTOR_ROLE:  # the Director's ☰ menu (menus.py)
+        if menus.role_menu(employee.get("role")):  # a role's own ☰ menu (menus.py)
             await menus.sync_person(employee["telegram_user_id"], employee["role"])
         if employee.get("role") in data_access.ROLE_SCOPES:  # a role that opens company data: the Director is told
             await _tell_director_data_access(employee, decided_by, run_id)
@@ -1290,7 +1310,7 @@ async def _handle_remove_user(
     # is told when data access was open (data_access.py).
     if employee.get("had_data_access"):
         await _tell_director_data_access({**employee, "data_access": []}, removed_by, run_id)
-    if employee.get("role") == DIRECTOR_ROLE:  # back to the plain ☰ menu (menus.py)
+    if menus.role_menu(employee.get("role")):  # back to the plain ☰ menu (menus.py)
         await menus.sync_person(employee["telegram_user_id"], None)
 
     message = callback.get("message") or {}
