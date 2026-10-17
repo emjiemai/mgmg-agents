@@ -1,3 +1,5 @@
+> **Removed 2026-10-17** (the owner: "this novelty is not effective, everyone hated it"): the agent, `cheer.py`, the 💬 toggle, the button handling and the `mgmg-team-cheer` cron are gone. The tables `cheer_messages` / `cheer_deliveries` and the column `employees.cheer_off` are left for the owner to drop (README §10). This page is history.
+
 # Team cheer — encouragement and thanks
 
 **Code:** `agents/team-cheer/agent.py` (sends), `integrations/org_bot/cheer.py`

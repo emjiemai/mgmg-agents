@@ -32,10 +32,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, Lead Agent,
   receivables, task tracker, data quality Mon, cash calendar Mon,
   monthly KPI 1st); 16:00 daily-reports ask; 17:00 reminder + Friday
-  scorecard; daytime job `mgmg-team-cheer` (`run_morning_agents.py --daytime`)
-  = team cheer 10:00 / 17:35 (answers by button only, never shown to the
-  Director; the 14:00 joke was deleted 2026-10-02). Daily; weekends only for employees
-  marked as weekend workers.
+  scorecard; 22:00 reports close (inside the API). **Team cheer removed 2026-10-17** (the owner: not
+  effective; code, tests, cron gone — delete the `mgmg-team-cheer` service in Render). Daily; weekends only
+  for employees marked as weekend workers.
 - **Leads to B2B sales: STOPPED 2026-10-07** by the Director (he will do it another way) — the AI
   sends nothing to B2B Sotuv; `agents/lead-handout/` is deleted; history kept (`14-lead-handout.md`).
   The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1).
@@ -106,7 +105,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (`GOOGLE_REVIEW_URLS`, Google https hosts only). `/f` stays complaints only (red). Reviews are
   **green** (positive, never the complaint red), gold stars. Honest: no rating asked first, everyone
   gets the same link (no review gating). Cards: `/qr sharh` — green card, logo, five white stars.
-- **Friendly voice** (2026-09-30) for cheer, motivation and daily-report
+- **Friendly voice** (2026-09-30) for motivation and daily-report
   messages: one short lowercase sentence, no line breaks, no bold, one emoji
   only at the very end, addressed "Алишер ака" (ака/опа set by the admin, never
   guessed). **Names always keep their capital** — person, company
@@ -120,7 +119,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   it for?" (бугунги ҳисобот / директорга / бекор) and forwarded to the Director
   as it is — the AI never reads files. **Reports are never guessed** (any typed
   message while it's owed is confirmed); **/hisobot** changes/deletes today's
-  report only. Cheer can be switched off per person (/xodimlar → 💬), daily reports too (📝, 2026-10-06:
+  report only. A message with «?» in the report window goes to the AI, never into the report (2026-10-17). Daily reports can be switched off per person (📝, 2026-10-06:
   never asked, never counted as missed). Employees' messages about their work go to the **work AI**
   (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks and
   (once uploaded) `employees.responsibilities`; **honesty first —

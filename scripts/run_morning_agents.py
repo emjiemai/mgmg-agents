@@ -20,7 +20,7 @@ report reminder and the Friday task scorecard share one cron service.
 Run:
     python scripts/run_morning_agents.py            # 08:00
     python scripts/run_morning_agents.py --evening  # 17:00
-    python scripts/run_morning_agents.py --daytime  # :00/:35 of 10 and 17 (team cheer)
+    python scripts/run_morning_agents.py --daytime  # nothing since 2026-10-17 (team cheer removed)
 """
 
 from __future__ import annotations
@@ -54,13 +54,10 @@ EVENING_AGENTS = [
 ]
 
 
-# The daytime job (render.yaml's mgmg-team-cheer, :00 and :35 of 10 and 17
-# o'clock): the agent checks the time itself and exits at once when nothing
-# is due — cheer at 10:00 and 17:35. (The 15:00 lead check-in was removed
-# with the lead hand-out, 2026-10-07.)
-DAYTIME_AGENTS = [
-    "agents/team-cheer/agent.py",
-]
+# The daytime job is empty: team cheer was removed (2026-10-17, the owner: "not effective")
+# and the 15:00 lead check-in with the lead hand-out (2026-10-07). A leftover
+# mgmg-team-cheer cron on Render runs nothing — delete that service.
+DAYTIME_AGENTS: list[str] = []
 
 
 def run_agent(relative_command: str) -> int:

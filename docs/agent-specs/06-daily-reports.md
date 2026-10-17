@@ -208,3 +208,12 @@ The Director: «ҳисобот топширишни соат 22:00 гача қи
 - The points come off that month's KPI total (`13-kpi.md`).
 - Starts with the asks of **16.10.2026** (15.10's ask didn't say 22:00 yet;
   that day closes at 22:00 with 0 points and no message).
+
+## Questions in the report window, held messages (2026-10-17)
+
+The owner found reports and AI chat mixed: a question typed while the report
+was owed got «бу бугунги ҳисоботингизми?», and a tap on «ҳа, ҳисобот» saved
+the question as the report. Now a message with «?» goes straight to the AI
+(`report_message_kind` → "question"); any other message is still confirmed
+with one tap. Held messages nobody taps close at 22:00 (`pending_relays.outcome
+= 'expired'`, `store.expire_held_messages`) instead of staying open for weeks.

@@ -800,7 +800,7 @@ CREATE TABLE IF NOT EXISTS pending_relays (
 -- could have been either (see ops_manager._ask_report_or_relay).
 ALTER TABLE pending_relays DROP CONSTRAINT IF EXISTS pending_relays_outcome_check;
 ALTER TABLE pending_relays ADD CONSTRAINT pending_relays_outcome_check
-    CHECK (outcome IN ('sent', 'cancelled', 'report', 'ai'));
+    CHECK (outcome IN ('sent', 'cancelled', 'report', 'ai', 'expired'));  -- expired: untapped by 22:00 (2026-10-17)
 ALTER TABLE permission_requests ADD COLUMN IF NOT EXISTS department TEXT;
 
 -- ---------------------------------------------------------------------------

@@ -537,7 +537,6 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         lines.append(f"Иш кунлари: {workdays_text(emp)}")
         lines.append(f"Мурожаат: {escape(address_text(emp))}")
         lines.append(f"AI ёрдамчи: {'ўчирилган' if emp.get('ai_chat_off') else 'ёқилган'}")
-        lines.append(f"Кайфият хабарлари (10:00, 17:35): {'ўчирилган' if emp.get('cheer_off') else 'ёқилган'}")
         lines.append(f"Кунлик ҳисобот (16:00): {'ўчирилган' if emp.get('reports_off') else 'ёқилган'}")
         lines.append(f"Вазифалари: {'юкланган' if (emp.get('responsibilities') or '').strip() else 'ҳали юкланмаган'}")
         lines.append(f"AI жавоб тили: {data_access.lang_label(emp)}")
@@ -556,15 +555,12 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
                 {"text": f"{'✅' if emp.get('works_sunday') else '☐'} Якшанба", "callback_data": f"wsun:{employee_id}"},
             ]
         )
-        # How friendly messages (cheer, report asks) address them; only the
+        # How friendly messages (report asks) address them; only the
         # admin sets ака/опа — it's never guessed from the name.
         rows.append([{"text": "🗣 Мурожаат: исм → ака → опа", "callback_data": f"addr:{employee_id}"}])
         # The work AI answers their messages (ai_chat.py); off = the bot only takes reports, tasks, leads.
         rows.append([{"text": f"🤖 AI ёрдамчи: {'⛔ ўчирилган' if emp.get('ai_chat_off') else '✅ ёқилган'}",
                       "callback_data": f"aich:{employee_id}"}])
-        # Some find the cheer irritating: off for this person only (team-cheer skips them).
-        rows.append([{"text": f"💬 Кайфият хабарлари: {'⛔ ўчирилган' if emp.get('cheer_off') else '✅ ёқилган'}",
-                      "callback_data": f"chof:{employee_id}"}])
         # Daily reports off for this person: no 16:00 ask, no 17:00 reminder, never counted as missed.
         rows.append([{"text": f"📝 Кунлик ҳисобот: {'⛔ ўчирилган' if emp.get('reports_off') else '✅ ёқилган'}",
                       "callback_data": f"rpof:{employee_id}"}])
@@ -995,14 +991,6 @@ async def _handle_employee_action(
             await _answer(query_id, "Ходим топилмади")
             return "not_found"
         text, keyboard = employee_card(updated, f"📅 Иш кунлари: {workdays_text(updated)}")
-        await _edit(callback, text, keyboard, run_id)
-    elif action == "chof":
-        updated = await store.toggle_cheer(employee_id, decided_by)
-        if updated is None:
-            await _answer(query_id, "Ходим топилмади")
-            return "not_found"
-        note = "💬 Кайфият хабарлари бу ходимга юборилмайди." if updated["cheer_off"] else "💬 Кайфият хабарлари яна юборилади."
-        text, keyboard = employee_card(updated, note)
         await _edit(callback, text, keyboard, run_id)
     elif action == "rpof":
         updated = await store.toggle_reports(employee_id, decided_by)

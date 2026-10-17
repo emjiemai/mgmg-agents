@@ -78,8 +78,8 @@ _ACK_TASKS: set[asyncio.Task] = set()
 # Seconds: a handler slower than this gets its spinner stopped for it. Long enough that a
 # normal handler answers first with its own text ("Рухсат йўқ", "Аллақачон ҳал қилинган").
 ACK_AFTER = 1.0
-# Buttons whose answer IS the content (the team-cheer reply is only the pop-up): never answered early.
-NO_EARLY_ACK = ("cheer:",)
+# Buttons whose answer IS the content: never answered early (none since team cheer was removed, 2026-10-17).
+NO_EARLY_ACK: tuple[str, ...] = ()
 
 
 def ack_soon(bot_token: str, callback_query_id: str, delay: float = ACK_AFTER, data: str = "") -> None:

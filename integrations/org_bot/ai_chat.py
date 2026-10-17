@@ -4,7 +4,7 @@
 longer message the Director (or each other) through it; what they write
 about their work and their tasks is answered by the AI. So:
 
-- every employee's free message (not a report or a cheer reply) goes to the AI — no command needed; the admin can switch it off
+- every employee's free message (not a report) goes to the AI — no command needed; the admin can switch it off
   for one person (Admin Bot /xodimlar → 🤖), who is then told the bot is
   for reports and tasks only;
 - the AI knows the person's role, their open tasks (and the one they reply

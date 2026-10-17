@@ -33,7 +33,7 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheer, cheques, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheques, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -115,18 +115,21 @@ def report_message_kind(replied_to_ask: bool, replied_to_task: bool, is_question
     """What a message sent while today's report is still owed should be.
 
     A Reply to the 16:00 ask or the 17:00 reminder is plainly the report. A
-    Reply to a task card is a question about that task (for the AI). Any
-    other message is confirmed with one tap — the bot never guesses a report
-    (the owner, 2026-10-02). ``is_question`` no longer changes the answer;
-    it's kept so callers don't change.
+    Reply to a task card is a question about that task (for the AI). A
+    message with a "?" is a question and goes to the AI — never offered as
+    the report (2026-10-17: a tap on «ҳа, ҳисобот» had turned questions into
+    reports, mixing the reports and the AI chat). Any other message is
+    confirmed with one tap — the bot never guesses a report (2026-10-02).
 
     Returns:
-        "report", "task_question" or "ask".
+        "report", "task_question", "question" or "ask".
     """
     if replied_to_ask:
         return "report"
     if replied_to_task:
         return "task_question"
+    if is_question:
+        return "question"
     return "ask"
 
 
@@ -278,8 +281,6 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_report_button(prefix, rest, callback, run_id)
     if prefix == "asrep":
         return await _handle_save_as_report(rest, callback, run_id)
-    if prefix == "cheer":
-        return await _handle_cheer_answer(rest, callback, run_id)
     if prefix in ("ld", "lc"):
         # A button on an old 15:00 lead question: the hand-out was stopped by
         # the Director on 2026-10-07 — nothing is recorded, the buttons go.
@@ -730,38 +731,6 @@ async def _handle_complaint_button(prefix: str, rest: str, callback: dict[str, A
     await log_action(agent=AGENT, action="complaint_resolved", target_system="postgres", status="success",
                      run_id=run_id, target_ref=str(resolved.get("code")), mode="write", payload={"reason": reason})
     return "complaint_resolved"
-
-
-async def _handle_cheer_answer(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """A tap on a team-cheer answer: its warm reply as a brief pop-up, and the buttons go.
-
-    No new message — the reply is the tap's own pop-up, so answering never
-    adds to the chat. One answer per person per message; the tap is not
-    reported to anyone (see ``cheer.py``).
-    """
-    query_id = callback.get("id", "")
-    parsed = cheer.parse_callback(rest)
-    clicker_id = (callback.get("from") or {}).get("id")
-    if parsed is None or clicker_id is None:
-        await _answer(query_id, "Номаълум амал")
-        return "unrecognized"
-    cheer_id, index = parsed
-    row = await store.answer_cheer(cheer_id, clicker_id, index)
-    options = (row or {}).get("options") or []
-    if row is None or not 0 <= index < len(options):
-        await _answer(query_id, "раҳмат, жавобингизни олдим")
-        return "cheer_already_answered"
-    await _answer(query_id, options[index]["reply"])
-    async with TelegramBot(
-        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
-    ) as bot:
-        await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
-            chat_id=str(clicker_id),
-            message_id=row["message_id"],
-            text=row["text"],
-            reply_markup={"inline_keyboard": []},
-        )
-    return "cheer_answered"
 
 
 async def _edit_lead_message(chat_id: int, message_id: int | None, text: str, keyboard: dict[str, Any], run_id: uuid.UUID) -> None:
@@ -1274,7 +1243,7 @@ async def _try_daily_report(
         and await store.find_task_by_message_id(reply_to_message_id, telegram_user_id) is not None
     )
     kind = report_message_kind(replied_to_ask, replied_to_task, asks_something(text))
-    if kind == "task_question":
+    if kind in ("task_question", "question"):
         return None
     if kind == "ask":
         return await _ask_report_or_ai(employee, text, run_id)
@@ -1527,7 +1496,7 @@ async def _handle_employee_message(
 
     2026-10-02, from the owner: OPS Manager Bot is for work only. Employees
     don't message the Director or each other through it; what they write
-    goes, in order, to: a cheer reply, a lead's follow-up, today's report —
+    goes, in order, to: a lead's follow-up, today's report —
     and otherwise to the AI, which answers about their own work and tasks
     (``ai_chat.py``). Permission requests, KPI commands and task buttons have
     their own flows and never reach this point.
@@ -1539,7 +1508,7 @@ async def _handle_employee_message(
     if not first_text.startswith("/"):
         awaiting = await store.task_awaiting_input(telegram_user_id, task_register.AWAIT_MINUTES)
         replied = (message.get("reply_to_message") or {}).get("message_id")
-        # A Reply to another message (the 16:00 report ask, a cheer) is that, not this task's proof.
+        # A Reply to another message (the 16:00 report ask) is that, not this task's proof.
         if awaiting is not None and (not replied or replied == awaiting.get("telegram_message_id")):
             return await _consume_task_input(employee, awaiting, message, run_id)
     # A photo, video or file: ask what it's for — it goes to the Director as
@@ -1564,12 +1533,6 @@ async def _handle_employee_message(
         return "ignored"  # an unknown command: not a question
 
     reply_to = message.get("reply_to_message") or {}
-    # A typed answer to a team-cheer message ("how was your day?") is chat,
-    # not a report and not a question (cheer.py).
-    if reply_to.get("message_id") and await store.cheer_delivery_for_message(telegram_user_id, reply_to["message_id"]):
-        await _reply(telegram_user_id, run_id, cheer.text_reply(reply_to["message_id"]))
-        return "cheer_reply"
-
     outcome = await _try_daily_report(employee, text, reply_to.get("message_id"), run_id)
     if outcome is not None:
         return outcome

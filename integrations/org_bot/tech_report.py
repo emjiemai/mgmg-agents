@@ -35,7 +35,6 @@ LOW_AI_CREDIT = 3.0   # dollars left on the OpenRouter key before it's flagged
 AGENT_LABELS = {
     "ceo-daily-brief": "Эрталабки брифинг",
     "daily-reports": "Кунлик ҳисобот сўрови",
-    "team-cheer": "Кайфият хабарлари",
     "lead-agent": "Лид агенти",
     "receivables": "Дебиторлик огоҳлантириши",
     "task-tracker": "Топшириқлар назорати",

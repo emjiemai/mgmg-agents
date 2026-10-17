@@ -36,6 +36,7 @@ async def close_day(now: datetime | None = None) -> int:
     if now.hour < store.REPORT_CLOSE_HOUR:
         return 0
     points = max(0, settings.report_miss_penalty) if now.date() >= PENALTY_FROM else 0
+    await store.expire_held_messages()  # untapped «ҳисобот / савол» questions close with the day
     rows = await store.close_missed_reports(now.date(), points)
     if not rows:
         return 0

@@ -62,11 +62,10 @@ TECHNICAL_TABLES = frozenset({
     "employee_changes",     # name / role / settings changes, by whom
     "days_off",
     "attendance_flexible",  # Verifix ids marked "эркин график" (ids only)
-    "cheer_messages",
     "announcements",
     # the bot's own records (2026-10-17)
     "employees", "tasks", "task_events", "task_updates", "task_drafts", "pending_dispatches",
-    "daily_reports", "pending_relays", "employee_files", "cheer_deliveries",
+    "daily_reports", "pending_relays", "employee_files",
     "conversation_turns", "ai_chat_turns", "director_clarifications",
     "kpi_goals", "kpi_ratings", "kpi_periods",
     "permission_requests", "permission_request_events", "approvals",

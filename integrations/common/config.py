@@ -238,12 +238,6 @@ class Settings(BaseSettings):
     cash_calendar_enabled: bool = True
 
 
-    # --- Team cheer (agents/team-cheer) ---
-    # 10:00 encouragement, 17:35 thanks + "how was
-    # your day", to every employee but the Director. On by default: the owner
-    # asked for it (2026-09-29). TEAM_CHEER_ENABLED=false pauses it.
-    team_cheer_enabled: bool = True
-
     # --- Monthly KPI (E1) ---
     # 08:00 on the 1st to the Director and HR: last month per person.
     monthly_kpi_enabled: bool = True

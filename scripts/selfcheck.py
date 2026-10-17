@@ -17,6 +17,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Tests never reach the real database (2026-10-17: an un-stubbed 22:00 step marked production rows,
+# and a few audit writes and reads went there too). An environment variable wins over .env, so
+# anything a test forgets to fake fails here instead of touching production.
+import os  # noqa: E402
+
+os.environ["DATABASE_URL"] = "postgresql://selfcheck@127.0.0.1:9/no-database-in-tests"
+
 from integrations.common.money import (
     format_money,
     format_money_by_currency,
@@ -1236,7 +1243,7 @@ def test_report_or_message() -> None:
     check("plain message -> confirmed first, never guessed", report_message_kind(False, False, False), "ask")
     check("reply to the ask/reminder -> report, even if it asks something", report_message_kind(True, False, True), "report")
     check("reply to a task card -> a question about the task", report_message_kind(False, True, False), "task_question")
-    check("a plain question -> ask", report_message_kind(False, False, True), "ask")
+    check("a question (\"?\") -> the AI, never the report (17.10)", report_message_kind(False, False, True), "question")
     real_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
     buttons = [b for row in report_or_ai_keyboard(real_id)["inline_keyboard"] for b in row]
     check("two choices: report, or a question", [b["callback_data"].split(":")[0] for b in buttons], ["asrep", "asai"])
@@ -1784,244 +1791,6 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
-def test_team_cheer() -> None:
-    """Team cheer: when each slot goes out, the friendly voice, the AI's limits, the send, taps and replies."""
-    print("team cheer (10:00 / 17:35)")
-    import asyncio
-    import json
-    import re
-    import uuid
-
-    from integrations.common.agent_loader import load_agent
-    from integrations.org_bot import cheer, ops_manager, store, tone
-
-    # ---- when
-    for hm, expected in (("09:00", None), ("10:00", "morning"), ("10:24", "morning"), ("10:35", None),
-                         ("14:00", None), ("15:00", None), ("17:00", None), ("17:35", "evening"),
-                         ("17:59", "evening"), ("18:00", None)):
-        h, m = map(int, hm.split(":"))
-        check(f"at {hm}", cheer.due_slot(datetime(2026, 9, 28, h, m)), expected)
-    # The one cron service's runs (UTC) must hit each slot exactly once.
-    blueprint = (Path(__file__).resolve().parents[1] / "render.yaml").read_text(encoding="utf-8")
-    minutes, hours = re.search(r"name: mgmg-team-cheer\n(?:.*\n)*?\s*schedule: \"([^\"]+)\"", blueprint).group(1).split()[:2]
-    runs = [(int(h) + 5, int(m)) for h in hours.split(",") for m in minutes.split(",")]  # Tashkent = UTC+5
-    fired = [cheer.due_slot(datetime(2026, 9, 28, h, m)) for h, m in runs]
-    check("render.yaml's runs send each slot once, the rest nothing",
-          sorted(f for f in fired if f), ["evening", "morning"])
-    check("the 14:00 joke is deleted (2026-10-02)", sorted(cheer.SLOTS), ["evening", "morning"])
-
-    # ---- the voice
-    check("casual: one line, lowercase, no emoji inside, no full stop",
-          tone.casual("Бугун 😀 ҳам\n<b>ЗЎР</b> кун бўлсин.", "☀️"), "бугун ҳам зўр кун бўлсин ☀️")
-    check("casual: a second emoji is not added", tone.casual("салом", "☀️☀️"), "салом")
-    check_true("two sentences are not one", not tone.is_one_short_sentence("бугун зўр. эртага ҳам зўр"))
-
-    # ---- the built-in messages: every day of two months, in the friendly voice
-    ok = True
-    for offset in range(60):
-        day = date(2026, 10, 1) + timedelta(days=offset)
-        for slot in cheer.SLOTS:
-            fb = cheer.fallback(slot, day)
-            again = cheer.parse_ai(json.dumps({"text": fb.text, "emoji": fb.emoji, "options": fb.options}), slot)
-            line = cheer.message_text(fb, "Дилноза опа")
-            problems = friendly_problems(line, ("Дилноза опа",)) + latin_words(line)
-            if again is None or bool(fb.options) != (slot == "evening") or problems or not fb.emoji:
-                ok = False
-                print(f"    bad fallback: {slot} {day} {problems}")
-    check_true("every built-in message: one friendly line, one emoji at the end, passes the AI's own rules", ok)
-    check_true("consecutive days differ",
-               cheer.fallback("morning", date(2026, 10, 1)).text != cheer.fallback("morning", date(2026, 10, 2)).text)
-
-    # ---- what the AI may say
-    good = {"text": "Бугун кунингиз қандай ўтди? 😊", "emoji": "🌙",
-            "options": [{"label": "Зўр", "reply": "Ажойиб, раҳмат!"}, {"label": "чарчадим", "reply": "яхшилаб дам олинг"}]}
-    parsed = cheer.parse_ai(json.dumps(good), "evening")
-    check_true("a good answer is used, made casual",
-               parsed is not None and parsed.source == "ai" and parsed.text == "бугун кунингиз қандай ўтди?"
-               and parsed.options[0]["label"] == "зўр" and parsed.emoji == "🌙")
-    morning = cheer.parse_ai(json.dumps({**good, "text": "бугун ҳам зўр кун бўлсин"}), "morning")
-    check_true("morning drops any answers", morning is not None and not morning.options)
-    check("a missing emoji gets the slot's own",
-          cheer.parse_ai(json.dumps({**good, "emoji": "зўр"}), "evening").emoji, "🌙")
-
-    def bad(slot="evening", **change):
-        return cheer.parse_ai(json.dumps({**good, **change}), slot) is None
-
-    check_true("Latin letters are refused", bad(text="good kun"))
-    check_true("two sentences are refused", bad(text="бугун зўр ўтди. эртага ҳам шундай бўлсин"))
-    check_true("too long is refused", bad(text="зўр " * 40))
-    check_true("markup is refused", bad(text="<b>зўр</b>"))
-    check_true("evening needs answers to tap", bad(options=[]))
-    check_true("five answers are too many", bad(options=[{"label": f"жавоб {i}", "reply": "раҳмат"} for i in "абвгд"]))
-    check_true("a button label too long for a phone is refused",
-               bad(options=[{"label": "жуда жуда жуда узун жавоб", "reply": "р"}, good["options"][1]]))
-    check_true("two identical buttons are refused", bad(options=[good["options"][0], good["options"][0]]))
-    check_true("an answer without its reply is refused", bad(options=[{"label": "чой"}, good["options"][1]]))
-    check_true("not JSON is refused", cheer.parse_ai("Мана хабар", "evening") is None)
-    prompt = cheer.user_prompt("evening", date(2026, 9, 28), ["эски хабар"])
-    check_true("the AI is shown recent messages so it won't repeat them", "- эски хабар" in prompt)
-
-    # ---- what people see
-    text = cheer.message_text(parsed, "<Дилноза> опа")
-    check("one line: the name (capitals kept), the sentence, one emoji", text,
-          "&lt;Дилноза&gt; опа, бугун кунингиз қандай ўтди? 🌙")
-    kb = cheer.keyboard(str(uuid.uuid4()), parsed)
-    datas = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
-    check_true("buttons fit Telegram's 64-byte limit", all(len(d.encode()) <= 64 for d in datas))
-    check("...two to a row", [len(r) for r in kb["inline_keyboard"]], [2])
-    check("no buttons without a question", cheer.keyboard("c1", morning), None)
-    check("a button's data reads back", cheer.parse_callback(datas[1].split(":", 1)[1])[1], 1)
-    check("a broken one doesn't", cheer.parse_callback("abc"), None)
-    check("a typed reply gets a friendly line back", friendly_problems(cheer.text_reply(7)), [])
-
-    # ---- the send, with a fake database, AI and Telegram
-    agent = load_agent("team-cheer")
-    director = {"role": "operatsion_direktor", "telegram_user_id": 1, "display_name": "Д", "full_name": "Директор"}
-    worker = {"role": "it", "telegram_user_id": 2, "display_name": "a", "full_name": "Алишер Каримов",
-              "address_form": "aka"}
-    weekend_off = {"role": "ombor", "telegram_user_id": 3, "display_name": "b", "full_name": "Бобур"}
-    sent, deliveries, stored, claims = [], [], [], []
-
-    class FakeBot:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-        async def send_message(self, text, chat_id=None, reply_markup=None, disable_notification=False, **kwargs):
-            sent.append((chat_id, text, reply_markup, disable_notification))
-            return [500 + len(sent)]
-
-    class FakeAI:
-        answer = json.dumps(good)
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-        async def complete(self, system, user, **kwargs):
-            return FakeAI.answer
-
-    async def employees():
-        return [director, worker, weekend_off]
-
-    async def claim(day, slot):
-        claims.append((day, slot))
-        return {"id": "c1"} if len(claims) == 1 else None
-
-    async def set_content(cheer_id, **kwargs):
-        stored.append(kwargs)
-
-    async def recent():
-        return []
-
-    async def save_delivery(*args):
-        deliveries.append(args)
-
-    saved = []
-
-    def patch(obj, name, value):
-        saved.append((obj, name, getattr(obj, name)))
-        setattr(obj, name, value)
-
-    patch(store, "list_active_employees", employees)
-    patch(store, "claim_cheer", claim)
-    patch(store, "set_cheer_content", set_content)
-    patch(store, "recent_cheer_texts", recent)
-    patch(store, "save_cheer_delivery", save_delivery)
-    patch(agent, "TelegramBot", FakeBot)
-    patch(agent, "OpenRouterClient", FakeAI)
-    patch(agent, "now_local", lambda: datetime(2026, 9, 26, 17, 35, tzinfo=TASHKENT))  # a Saturday
-    weekend_off["works_saturday"], worker["works_saturday"] = False, True
-    try:
-        asyncio.run(agent.send_slot("evening", uuid.uuid4()))
-        check("not the Director, not someone off today", [c for c, _, _, _ in sent], ["2"])
-        check("one friendly line, first name and ака, with buttons", (sent[0][1], sent[0][2] is not None),
-              ("Алишер ака, бугун кунингиз қандай ўтди? 🌙", True))
-        check_true("...sent silently", sent[0][3] is True)
-        check("the message is remembered for taps and replies", deliveries[0][:3], ("c1", 2, 501))
-        check("the AI wrote it", stored[0]["source"], "ai")
-        sent.clear()
-        asyncio.run(agent.send_slot("evening", uuid.uuid4()))
-        check("a second run the same day sends nothing", sent, [])
-
-        claims.clear()
-        stored.clear()
-        FakeAI.answer = json.dumps({**good, "text": "Hello team"})
-        asyncio.run(agent.send_slot("evening", uuid.uuid4()))
-        check("an AI answer that breaks a rule is replaced by the built-in one", stored[0]["source"], "fallback")
-        check("...and it still goes out, friendly and Cyrillic",
-              friendly_problems(sent[-1][1], ("Алишер ака",)) + latin_words(sent[-1][1]), [])
-    finally:
-        for obj, name, value in reversed(saved):
-            setattr(obj, name, value)
-
-    # ---- taps and typed replies in OPS Manager Bot
-    edits, replies, toasts = [], [], []
-
-    class EditBot(FakeBot):
-        async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
-            edits.append((chat_id, message_id, text, reply_markup))
-
-    answers = {"row": {"id": "d1", "message_id": 501, "text": "Алишер ака, бугун кунингиз қандай ўтди? 🌙",
-                       "question": None, "options": parsed.options}}
-
-    async def answer_cheer(cheer_id, user_id, index):
-        row, answers["row"] = answers["row"], None
-        return row
-
-    async def fake_answer(query_id, text):
-        toasts.append(text)
-
-    async def delivery_for(user_id, message_id):
-        return {"id": "d1"} if message_id == 501 else None
-
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
-        replies.append(text)
-
-    async def no_report(*args, **kwargs):
-        raise AssertionError("a reply to a cheer message was treated as a report")
-
-    saved.clear()
-    patch(store, "answer_cheer", answer_cheer)
-    patch(store, "cheer_delivery_for_message", delivery_for)
-
-    async def not_editing(*args):
-        return None
-
-    patch(store, "report_being_edited", not_editing)
-    patch(ops_manager, "TelegramBot", EditBot)
-    patch(ops_manager, "_answer", fake_answer)
-    patch(ops_manager, "_reply", fake_reply)
-    patch(ops_manager, "_try_daily_report", no_report)
-    try:
-        tap = {"id": "q1", "data": "cheer:c1:1", "from": {"id": 2}}
-        check("a tap is taken", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "cheer_answered")
-        check("its reply is a pop-up, not a new message", (toasts[-1], replies), ("яхшилаб дам олинг", []))
-        check_true("the buttons go, the line stays as it was",
-                   edits and edits[0][3] == {"inline_keyboard": []} and edits[0][2] == "Алишер ака, бугун кунингиз қандай ўтди? 🌙")
-        check("a second tap is thanked, not recorded", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())),
-              "cheer_already_answered")
-
-        message = {"text": "Бугун зўр ўтди!", "reply_to_message": {"message_id": 501}}
-        outcome = asyncio.run(ops_manager._handle_employee_message(worker, message, uuid.uuid4()))
-        check("a typed reply to it is chat — not a report, not for the Director", outcome, "cheer_reply")
-        check_true("...and gets a friendly line back", replies and "раҳмат" in replies[0] and friendly_problems(replies[0]) == [])
-    finally:
-        for obj, name, value in reversed(saved):
-            setattr(obj, name, value)
-    check_true("no Latin in the pop-ups", not re.search(r"[A-Za-z]{3,}", "".join(toasts)))
-
-
 def test_lead_handout() -> None:
     """The lead hand-out to B2B sales was stopped by the Director (2026-10-07): nothing goes to them.
 
@@ -2043,9 +1812,9 @@ def test_lead_handout() -> None:
     check_true("its switch is gone", not hasattr(settings, "lead_handout_enabled"))
     check_true("no hand-out logic left", not any(hasattr(leads, n) for n in (
         "plan_handout", "checkin_due", "card_text", "checkin_keyboard", "parse_brief", "SALES_ROLE")))
-    blueprint = load_source("render.yaml")
-    schedule = re.search(r"name: mgmg-team-cheer\n(?:.*\n)*?\s*schedule: \"([^\"]+)\"", blueprint).group(1)
-    check("the daytime job no longer runs at 15:00", schedule.split()[1], "5,12")
+    check_true("no daytime job left (team cheer removed 17.10; the 15:00 check-in before it)",
+               "mgmg-team-cheer" not in load_source("render.yaml").split("Team cheer (mgmg-team-cheer")[0]
+               and "DAYTIME_AGENTS: list[str] = []" in load_source("scripts/run_morning_agents.py"))
     check_true("the work AI no longer gets 'own leads'",
                "own_leads" not in inspect_source(ai_chat.work_context) and "own_leads" not in inspect_source(ops_manager))
 
@@ -2102,12 +1871,11 @@ def test_politeness_days_off_announcements() -> None:
     """2026-10-01: names keep capitals, "сиз" always, days off, announcements."""
     print("politeness, days off, announcements")
     import asyncio
-    import json
     import uuid
 
     from integrations.common.agent_loader import load_agent
     from integrations.common.config import settings
-    from integrations.org_bot import admin, cheer, kpi, ops_manager, store, tone
+    from integrations.org_bot import admin, kpi, ops_manager, store, tone
 
     # ---- names keep their capitals; the sentence stays lowercase
     check("a name keeps its capitals", tone.casual("Алишер ака, БУГУН зўр кун", "☀️", keep=["Алишер ака"]),
@@ -2119,15 +1887,10 @@ def test_politeness_days_off_announcements() -> None:
                          ("қилсанг бўлади", False), ("бир минг сўм", True), ("Ҳасан ака", True)):
         check(f"polite: {text!r}", tone.is_polite(text), polite)
     every_fixed_line = [
-        *[t for t, _e in cheer._MORNING],
-        *[c.text for c in cheer._EVENING], *[o[k] for c in cheer._EVENING for o in c.options for k in ("label", "reply")],
-        *[t for t, _e in cheer._TEXT_REPLIES], kpi.build_request_text("Алишер", ()), kpi.build_reminder_text("Алишер", ()),
+        kpi.build_request_text("Алишер", ()), kpi.build_reminder_text("Алишер", ()),
         admin.TECH_ERROR_TEXT,
     ]
     check("every fixed line the bot sends is polite", [t for t in every_fixed_line if not tone.is_polite(t)], [])
-    rude = json.dumps({"text": "бугун нима қилдинг?", "emoji": "🌙",
-                       "options": [{"label": "зўр", "reply": "раҳмат"}, {"label": "ёмон", "reply": "раҳмат"}]})
-    check("an AI line with 'сен' forms is thrown away", cheer.parse_ai(rude, "evening"), None)
 
     class RudeAI:
         def __init__(self, *args, **kwargs):
@@ -2177,13 +1940,11 @@ def test_politeness_days_off_announcements() -> None:
 
     was_dry = settings.dry_run
     patch(store, "is_day_off", off)
-    cheer_agent, reports_agent = load_agent("team-cheer"), load_agent("daily-reports")
-    patch(cheer_agent, "send_slot", must_not_send)
+    reports_agent = load_agent("daily-reports")
     patch(reports_agent, "ask_everyone", must_not_send)
     patch(reports_agent, "remind_silent", must_not_send)
     try:
-        for name, coro in (("cheer", cheer_agent.run("evening", dry_run=True)),
-                           ("report ask", reports_agent.run("ask", dry_run=True)),
+        for name, coro in (("report ask", reports_agent.run("ask", dry_run=True)),
                            ("report reminder", reports_agent.run("remind", dry_run=True))):
             check(f"day off: no {name}", (asyncio.run(coro), len(calls)), (0, 0))
     finally:
@@ -2358,7 +2119,6 @@ def test_ai_chat_and_sheet() -> None:
 
     for name, fake in (("log_ai_turn", log_turn), ("recent_ai_turns", empty), ("ai_questions_today", questions_today),
                        ("open_tasks_for_employee", open_tasks),
-                       ("cheer_delivery_for_message", none),
                        ("report_being_edited", none),
                        ("pending_report", pending_report),
                        ("open_report_followup", none), ("submitted_report_today", none), ("find_task_by_message_id", none),
@@ -2389,11 +2149,14 @@ def test_ai_chat_and_sheet() -> None:
               (asyncio.run(ops_manager._handle_employee_message(off, {"text": "салом"}, uuid.uuid4(), bg)), replies[-1][0]),
               ("ai_off", ai_chat.off_text()))
 
-        # during the report window: a plain message is the report, a question gets one tap
+        # during the report window: a "?" question goes to the AI, never offered as the report (17.10);
+        # any other message gets one tap
         pending["row"] = {"id": "r1", "prompt_message_id": 50, "reminder_message_id": None}
         outcome = asyncio.run(ops_manager._handle_employee_message(seller, {"text": "КП қандай ёзилади?"}, uuid.uuid4(), bg))
+        check("a question while the report is due goes to the AI, not into the report", outcome, "ai_chat")
+        outcome = asyncio.run(ops_manager._handle_employee_message(seller, {"text": "мижоз билан учрашдим"}, uuid.uuid4(), bg))
         buttons = [b["callback_data"].split(":")[0] for row in replies[-1][1]["inline_keyboard"] for b in row]
-        check("a question while the report is due: report or question?", (outcome, buttons), ("report_or_ai_asked", ["asrep", "asai"]))
+        check("a plain message while the report is due: report or question?", (outcome, buttons), ("report_or_ai_asked", ["asrep", "asai"]))
         tasks_bg.clear()
         tap = {"id": "q", "data": "asai:h1", "from": {"id": 7}}
         check("'йўқ, бу савол' sends it to the AI", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4(), bg)), "ai_chat")
@@ -2451,13 +2214,12 @@ def test_ai_chat_and_sheet() -> None:
 
 
 def test_files_reports_cheer_off() -> None:
-    """2026-10-02: files go to the Director when asked; today's report confirmed, changed, deleted; cheer off per person."""
-    print("files, today's report, cheer off")
+    """2026-10-02: files go to the Director when asked; today's report confirmed, changed, deleted."""
+    print("files, today's report")
     import asyncio
     import uuid
 
-    from integrations.common.agent_loader import load_agent
-    from integrations.org_bot import admin, ops_manager, report_tools, store
+    from integrations.org_bot import ops_manager, report_tools, store
 
     # ---- the pure parts
     check("a photo is a file", report_tools.file_kind({"photo": [{}]}), "photo")
@@ -2600,66 +2362,6 @@ def test_files_reports_cheer_off() -> None:
         check("🗑 asks first", tap("rpd:r1"), "report_delete_asked")
         check("'ҳа, ўчириш' deletes it — it's owed again", (tap("rpdy:r1"), state["report"]["status"]), ("report_deleted", "asked"))
         check("a report that isn't today's own can't be touched", tap("rpe:someone-elses"), "report_not_today")
-    finally:
-        for obj, name, value in reversed(saved):
-            setattr(obj, name, value)
-
-    # ---- cheer off for one person
-    agent = load_agent("team-cheer")
-    sent = []
-
-    class CheerBot(FakeBot):
-        async def send_message(self, text, chat_id=None, **kwargs):
-            sent.append(chat_id)
-            return [1]
-
-    async def everyone():
-        return [{**worker, "cheer_off": True}, {**worker, "telegram_user_id": 8, "cheer_off": False}]
-
-    async def claim(day, slot):
-        return {"id": "c1"}
-
-    saved.clear()
-    patch(store, "list_active_employees", everyone)
-    patch(store, "claim_cheer", claim)
-    patch(store, "set_cheer_content", none)
-    patch(store, "save_cheer_delivery", none)
-    patch(agent, "TelegramBot", CheerBot)
-    patch(agent, "now_local", lambda: datetime(2026, 10, 2, 10, 0, tzinfo=TASHKENT))
-
-    async def fixed(slot, day, run_id):
-        from integrations.org_bot import cheer
-
-        return cheer.fallback(slot, day)
-
-    patch(agent, "write", fixed)
-    try:
-        asyncio.run(agent.send_slot("morning", uuid.uuid4()))
-        check("someone with the cheer switched off gets nothing", sent, ["8"])
-    finally:
-        for obj, name, value in reversed(saved):
-            setattr(obj, name, value)
-
-    edits.clear()
-
-    async def toggle(employee_id, by):
-        return {**worker, "id": employee_id, "cheer_off": True}
-
-    async def get_employee(employee_id):
-        return {"id": employee_id, "status": "active", "role": "b2b_sotuv", "display_name": "a"}
-
-    async def admin_edit(callback, text, keyboard, run_id):
-        edits.append((text, keyboard))
-
-    saved.clear()
-    patch(store, "toggle_cheer", toggle)
-    patch(store, "get_employee", get_employee)
-    patch(admin, "_edit", admin_edit)
-    patch(admin, "_answer", none)
-    try:
-        asyncio.run(admin.handle_admin_callback({"id": "q", "data": "chof:e7", "from": {"id": 5}}, uuid.uuid4()))
-        check_true("the 💬 button switches the cheer off, and the card shows it",
-                   edits and "Кайфият хабарлари (10:00, 17:35): ўчирилган" in edits[-1][0] and "💬 Кайфият хабарлари: ⛔" in str(edits[-1][1]))
     finally:
         for obj, name, value in reversed(saved):
             setattr(obj, name, value)
@@ -3630,8 +3332,8 @@ def test_review_fixes() -> None:
             setattr(obj, name, value)
 
     # 3: the early answer waits long enough, and never takes a cheer reply's pop-up
-    check_true("early answer after 1 s; cheer buttons never answered early",
-               tg.ACK_AFTER >= 1.0 and "cheer:" in tg.NO_EARLY_ACK and "data=str(" in load_source("integrations/api/app.py"))
+    check_true("early answer after 1 s (no button is exempt since team cheer went, 17.10)",
+               tg.ACK_AFTER >= 1.0 and tg.NO_EARLY_ACK == () and "data=str(" in load_source("integrations/api/app.py"))
 
     # 4 / 10: the Garmin role's data waits for the Director; one notice on a role change
     admin_src = load_source("integrations/org_bot/admin.py")
@@ -3975,13 +3677,21 @@ def test_report_deadline_penalty() -> None:
     async def no_log(**kwargs):
         return None
 
+    expired: list[int] = []
+
+    async def fake_expire():
+        expired.append(1)
+        return 0
+
     saved = [(store, "close_missed_reports", store.close_missed_reports), (report_close, "TelegramBot", report_close.TelegramBot),
+             (store, "expire_held_messages", store.expire_held_messages),
              (report_close, "log_action", report_close.log_action), (settings, "report_miss_penalty", settings.report_miss_penalty)]
     try:
         store.close_missed_reports, report_close.TelegramBot, report_close.log_action = fake_close, FakeBot, no_log
+        store.expire_held_messages = fake_expire  # never the real database from a test
         settings.report_miss_penalty = 1
         before = asyncio.run(report_close.close_day(datetime(2026, 10, 15, 21, 55, tzinfo=TASHKENT)))
-        check_true("before 22:00 nothing closes", before == 0 and not asked_close)
+        check_true("before 22:00 nothing closes", before == 0 and not asked_close and not expired)
         asyncio.run(report_close.close_day(datetime(2026, 10, 15, 22, 5, tzinfo=TASHKENT)))
         check_true("15.10 (asked before the rule was told): closed at 22:00 with 0 points, nobody messaged",
                    asked_close == [(day, 0)] and not sent)
@@ -3993,6 +3703,9 @@ def test_report_deadline_penalty() -> None:
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
+    check_true("22:00 also closes held messages nobody tapped (marked expired, nothing deleted)",
+               len(expired) == 2 and "outcome = 'expired'" in inspect.getsource(store.expire_held_messages)
+               and "DELETE" not in inspect.getsource(store.expire_held_messages))
     check_true("closing marks once and only active people who get asks",
                "penalized_at IS NULL" in inspect.getsource(store.close_missed_reports)
                and "NOT e.reports_off" in inspect.getsource(store.close_missed_reports))
@@ -7485,7 +7198,6 @@ def main() -> int:
         test_payment_gate,
         test_report_accuracy,
         test_client_feedback,
-        test_team_cheer,
         test_lead_handout,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
