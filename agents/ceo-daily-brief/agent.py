@@ -7,8 +7,6 @@ Uzbek Cyrillic like every bot message:
 
     📊 5 рақам
     📈 Кечаги сотув: $12,340.00 (8 та буюртма)
-    📦 Захира: камида $120,000.00*
-    🧾 Мижоз қарзи: $15,200.00, муддати ўтгани $7,384.36 (16 та)
     💳 Бугунги тўловлар: 2 та — 15 000 000 сўм
 
     🔴 Ҳисобот юбормаганлар (25.09.2026): 1 / 5
@@ -474,29 +472,8 @@ def render_five(data: BriefData) -> str:
     lines.append(f"📈 Кечаги сотув: {sales}")
     lower_bound |= capped
 
-    stock, capped = _figure_value(data.inventory, "inventory", data, what="қолдиқ")
-    if sap_silent(data) and data.inventory is not None and data.inventory.ok:
-        stock += f" <i>({_since(data.sap_pushed_at)} ҳолатида)</i>"
-    lines.append(f"📦 Захира: {stock}")
-    lower_bound |= capped
-
-    if data.aging is None:
-        lines.append("🧾 Мижоз қарзи: <i>маълумот йўқ</i>")
-    else:
-        aging = data.aging
-        open_totals = _totals_by_currency(aging.invoices, overdue_only=False)
-        overdue_totals = _totals_by_currency(aging.invoices, overdue_only=True)
-        debt = escape(_money(open_totals))
-        if data.aging_capped:
-            debt = f"камида {debt}*"
-            lower_bound = True
-        debt += _change("debt", open_totals, data, comparable=not data.aging_capped and _same_debt_basis(data))
-        if overdue_totals:
-            marker = " 🔴" if aging.bucket_totals_tiyin.get("90_plus", 0) > 0 else ""
-            debt += f", муддати ўтгани {escape(_money(overdue_totals))} ({aging.overdue_count} та){marker}"
-        if sap_silent(data):
-            debt += f" <i>({_since(data.sap_pushed_at)} ҳолатида)</i>"
-        lines.append(f"🧾 Мижоз қарзи: {debt}")
+    # «Захира» and «Мижоз қарзи» are out of the brief (the owner, 2026-10-17); the
+    # overdue debt still comes as its own message (receivables, A3).
 
     if data.payments is None:
         lines.append("💳 Бугунги тўловлар: <i>маълумот йўқ</i>")
@@ -630,7 +607,7 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
 _people_block = brief_parts.people_block
 
 
-FOOT = ("Мақсадлар — /maqsad · топшириқлар ва ҳисоботлар — бот · сотув, захира, қарз — SAP · "
+FOOT = ("Мақсадлар — /maqsad · топшириқлар ва ҳисоботлар — бот · сотув — SAP · "
         "дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.")
 TASK_TEXT = 42  # a task's words shown in a row
 
@@ -686,10 +663,37 @@ def goals_block(data: BriefData) -> dict[str, Any]:
     return _people_block("Ойлик мақсадлар", "goal", month, summary, "alert" if behind else "ok", rows)
 
 
-def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Open tasks that need the Director's eye, most urgent first, and the counts."""
-    groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "review": [], "today": []}
+def _surname(name: str) -> str:
+    return (name or "").split()[0] if (name or "").split() else ""
+
+
+def group_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One task the Director gave to several people is one row per person in ``tasks``;
+    in the brief it is one line with all their names (2026-10-17: «Дебитор қарзлар…»
+    showed three times). Grouped by the Director's message; the worst state wins."""
+    rank = {"blocked": 0, "review": 2, "started": 3, "sent": 3}
+    merged: dict[tuple, dict[str, Any]] = {}
     for t in tasks:
+        key = (t.get("director_telegram_user_id"), t.get("source_message_id"), t.get("task_summary")) \
+            if t.get("source_message_id") is not None else (id(t),)
+        group = merged.get(key)
+        if group is None:
+            merged[key] = {**t, "people": [t.get("display_name") or ""], "count": 1}
+            continue
+        group["people"].append(t.get("display_name") or "")
+        group["count"] += 1
+        if rank.get(t.get("status"), 3) < rank.get(group.get("status"), 3):
+            group["status"] = t.get("status")
+    for group in merged.values():
+        if group["count"] > 1:
+            group["display_name"] = ", ".join(_surname(p) for p in group["people"])
+    return list(merged.values())
+
+
+def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Open tasks that need the Director's eye, most urgent first, and the counts (per task, not per person)."""
+    groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "review": [], "today": []}
+    for t in group_tasks(tasks):
         due = t.get("due_date")
         who, text = t.get("display_name") or "", _short(t.get("task_summary") or "")
         if t.get("status") == "blocked":
@@ -709,7 +713,7 @@ def tasks_block(data: BriefData) -> dict[str, Any]:
     if data.tasks is None:
         return _people_block("Топшириқлар", "task", None, "", "warn", [], "маълумот олиб бўлмади")
     rows, n = task_rows(data.tasks, today_local())
-    parts = [f"{len(data.tasks)} та очиқ"]
+    parts = [f"{len(group_tasks(data.tasks))} та очиқ"]
     for key, word in (("overdue", "ўтган"), ("blocked", "тўсиқ")):
         if n[key]:
             parts.append(f"{n[key]} {word}")
@@ -750,38 +754,9 @@ def view(data: BriefData) -> dict[str, Any]:
     when = f"{WEEKDAYS_UZ[day.weekday()].capitalize()}, {day.day} {MONTHS_UZ[day.month - 1]} {day.year} · {now:%H:%M}"
     lower_bound = False
 
-    # 2-3. sales and stock (SAP)
+    # sales (SAP). «Захира» and «Мижоз қарзи» were taken out on 2026-10-17 (the owner).
     sales = _figure_row(data.sales, "sales", "Кечаги сотув", "sales", data.sales_unit, data)
-    stock = _figure_row(data.inventory, "inventory", "Захира", "stock", "қолдиқ", data)
-    lower_bound |= sales["lower"] or stock["lower"]
-    if sap_silent(data) and stock["tone"] not in ("muted", "quiet"):
-        stock.update(sub=f"{_since(data.sap_pushed_at)} ҳолатида", sub_dir=None, sub_alert=True)
-
-    # 4. customer debt (SAP)
-    debt: dict[str, Any] = {"label": "Мижоз қарзи", "icon": "debt", "tone": "plain", "detail": None, "number": "",
-                            "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
-    if data.aging is None:
-        debt.update(tone="muted", number="маълумот йўқ")
-    else:
-        aging = data.aging
-        open_totals = _totals_by_currency(aging.invoices, overdue_only=False)
-        overdue_totals = _totals_by_currency(aging.invoices, overdue_only=True)
-        number, unit = _split(_money(open_totals, short=True)) if open_totals else ("0", "")
-        debt.update(number=number, unit=unit, lower=data.aging_capped)
-        lower_bound |= data.aging_capped
-        if overdue_totals:
-            debt["detail"] = (f"муддати ўтгани {_money(overdue_totals, short=True).replace(NBSP, ' ')} · "
-                              f"{aging.overdue_count} та")
-            debt["tone"] = "alert"
-            old = aging.bucket_counts.get("90_plus", 0)
-            if old:
-                debt.update(sub=f"{old} таси 90 кундан ошган", sub_alert=True)
-        if not debt["sub"]:
-            change = _delta("debt", open_totals, data, comparable=not data.aging_capped and _same_debt_basis(data))
-            if change:
-                debt["sub"], debt["sub_dir"] = change
-        if sap_silent(data):
-            debt.update(sub=f"{_since(data.sap_pushed_at)} ҳолатида", sub_dir=None, sub_alert=True)
+    lower_bound |= sales["lower"]
 
     # 5. payments due today (written permissions)
     pay: dict[str, Any] = {"label": "Бугунги тўловлар", "icon": "payments", "tone": "plain", "detail": None,
@@ -853,7 +828,7 @@ def view(data: BriefData) -> dict[str, Any]:
         blocks.append(_people_block("Давомат", "people", fmt_date(a.day), summary, tone, rows))
 
     return {"date": fmt_date(day), "when": when, "compass": compass(), "lead": lead,
-            "figures": [sales, stock, debt, pay], "blocks": blocks, "lower_bound": lower_bound,
+            "figures": [sales, pay], "blocks": blocks, "lower_bound": lower_bound,
             "notice": sap_notice(data), "foot": FOOT}
 
 
@@ -883,7 +858,7 @@ def caption(data: BriefData) -> str:
     """The photo's caption: the day, and the numbers a notification can show."""
     v = view(data)
     parts = [f"{f['label']}: {'камида ' if f['lower'] else ''}{f['number']}{(' ' + f['unit']) if f['unit'] else ''}"
-             for f in v["figures"] if f["tone"] != "muted" and f["label"] in ("Кечаги сотув", "Мижоз қарзи")]
+             for f in v["figures"] if f["tone"] != "muted" and f["label"] == "Кечаги сотув"]
     notice = f"\n⚠️ {escape(v['notice'])}" if v.get("notice") else ""
     return f"☀️ <b>CEO кунлик ҳисоботи — {v['date']}</b>\n" + escape(" · ".join(parts)) + notice
 

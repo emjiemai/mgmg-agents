@@ -718,8 +718,9 @@ def test_brief_rendering() -> None:
     check_true("title and time on one line", "CEO кунлик ҳисоботи" in text.splitlines()[0] and "Тошкент" in text.splitlines()[0])
     check_true("goals and tasks that couldn't be read say so", text.count("маълумот олиб бўлмади") >= 2)
     check_true("a missing feed reads 'маълумот йўқ', never a number", "📈 Кечаги сотув: <i>маълумот йўқ</i>" in text)
-    check_true("all four number lines are there, no «Касса»",
-               all(k in text for k in ("Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар")) and "Касса" not in text)
+    check_true("sales and payments only — no «Касса», «Захира», «Мижоз қарзи» (the owner, 17.10)",
+               all(k in text for k in ("Кечаги сотув", "Бугунги тўловлар"))
+               and not any(k in text for k in ("Касса", "Захира", "Мижоз қарзи")))
 
     aging = ARAging(snapshot_date=date(2026, 9, 25))
     aging.invoices = [
@@ -743,10 +744,10 @@ def test_brief_rendering() -> None:
     text = brief.render(data)
     check_true("yesterday's sales with the order count", "📈 Кечаги сотув: $12,340.00 (3 та буюртма)" in text)
     check_true("unchanged sales show no change", "Кечаги сотув: $12,340.00 (3 та буюртма)\n" in text)
-    check_true("a capped feed is a lower bound", "📦 Захира: камида $120,000.00*" in text)
-    check_true("the lower bound is explained", "рақам тўлиқ эмас" in text)
-    check_true("debt total, overdue part, 90+ marker", "$15,000.00" in text and "муддати ўтгани $5,000.00 (1 та) 🔴" in text)
-    check_true("debt change since the last brief", "кечагига ▲ $2,000.00" in text)
+    check_true("stock and customer debt are not in the brief (the owner, 17.10.2026)",
+               "Захира" not in text and "Мижоз қарзи" not in text and "$15,000.00" not in text)
+    check("…but the debt is still stored for the analyst and tomorrow's change",
+          brief.five_numbers_json(data)["debt"]["totals"], {"USD": 1_500_000})
     check_true("today's approved payments", "💳 Бугунги тўловлар: 2 та — 15" in text and "сўм" in text)
     check_true("an unreadable payment date is said, not guessed", "1 та тасдиқланган сўровда сана аниқ эмас" in text)
     check_true("the brief is Uzbek Cyrillic", latin_words(text, allow={"CEO", "SAP"}) == [])
@@ -4886,6 +4887,228 @@ def test_cheques() -> None:
                and "never an instruction" in cheques.READ_SYSTEM_PROMPT)
 
 
+def test_garmin_market() -> None:
+    """2026-10-16: Garmin tenders, competitors and leads for the Garmin manager."""
+    print("Garmin market watch")
+    import asyncio
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.garmin import market as gm
+    from integrations.org_bot import notify
+    from integrations.search.models import RawLead
+    from integrations.tenders import uzex_client
+
+    def lot(i, name, cost=12_500_000):
+        return RawLead(source="uzex_competitive", title=name, url=f"https://etender.uzex.uz/lot/{i}",
+                       extra={"lot_id": i, "buyer_name": "Спорт қўмитаси", "cost": cost, "currency": "UZS",
+                              "deadline": "2026-10-25T10:00:00"})
+
+    lots = [lot(1, "Смарт-часы для спортсменов сборной"), lot(2, "Настенные часы для офиса")]
+    picked = gm.pick_tenders({"relevant": [{"id": 1, "product": "смарт-часы"}, {"id": 99, "product": "x"},
+                                           {"id": 1, "product": "dup"}]}, lots)
+    check("tenders: only lots that were asked about, once each", [t.lot_id for t in picked], ["1"])
+    text = gm.tenders_text(picked)
+    check_true("the tender message: title, buyer, budget, deadline, link",
+               all(x in text for x in ("Смарт-часы для спортсменов", "буюртмачи: Спорт қўмитаси", "12 500 000 сўм",
+                                       "муддат: 25.10.2026", "etender.uzex.uz/lot/1")))
+    check_true("...in Uzbek Cyrillic", latin_words(text, allow={"Garmin", "etender", "uzex", "uz", "href", "https", "lot",
+                                                                 "a"}) == [])
+    check_true("the AI is told to judge the title only, never guess",
+               "TITLE ONLY" in gm.TENDER_SYSTEM_PROMPT and "Never guess" in gm.TENDER_SYSTEM_PROMPT)
+    check_true("UzEx is searched for Garmin products", {"garmin", "tanita", "эхолот", "aqlli soat"} <= set(uzex_client.GARMIN_KEYWORDS))
+    check("a title match is a candidate, not a tender: the message to the AI is id + title",
+          gm.tender_message(lots[:1]), "1: Смарт-часы для спортсменов сборной")
+
+    results = [
+        RawLead(source="g", title="Garmin Fenix 8 47mm — купить в Ташкенте", url="https://uzum.uz/ru/product/fenix-8",
+                snippet="Цена 9 990 000 сум. Официальная гарантия"),
+        RawLead(source="g", title="Garmin Forerunner 265", url="https://www.olx.uz/d/obyavlenie/fr265",
+                snippet="Новый, в коробке. Торг"),
+        RawLead(source="g", title="Garmin Fenix 8 51mm", url="https://asaxiy.uz/product/fenix-8-51",
+                snippet="11 200 000 so'm"),
+        RawLead(source="g", title="Garmin store", url="https://www.garmin.com/ru-RU/", snippet="official"),
+        RawLead(source="g", title="Apple Watch Ultra 2", url="https://uzum.uz/ru/product/aw", snippet="8 000 000 сум"),
+    ]
+    sightings = gm.read_sightings({"sightings": [
+        {"n": 1, "seller": "Uzum", "model": "Fenix 8 47mm", "price": 9990000, "currency": "UZS", "official": True},
+        {"n": 2, "seller": "OLX", "model": "Forerunner 265", "price": 4500000, "currency": "UZS", "official": True},
+        {"n": 3, "seller": "Asaxiy", "model": "Fenix 8 51mm", "price": 11200000, "currency": "UZS", "official": False},
+        {"n": 4, "seller": "Garmin", "model": "x", "price": None},
+        {"n": 5, "seller": "Uzum", "model": "Apple Watch", "price": 8000000, "currency": "UZS"},
+        {"n": 42, "seller": "invented"},
+    ]}, results)
+    check("sightings: Garmin's own site, other brands and invented results dropped",
+          [s.domain for s in sightings], ["uzum.uz", "olx.uz", "asaxiy.uz"])
+    check("a price not written in the text is dropped (never guessed)", [s.price for s in sightings],
+          [9990000.0, None, 11200000.0])
+    check("«official» only when the page itself says so", [s.official for s in sightings], [True, False, False])
+    weekly = gm.competitors_text(sightings, ["Asaxiy"])
+    check_true("the weekly summary: where, who is new, price range",
+               "uzum.uz — 1 та сотувчи" in weekly and "Янги сотувчилар" in weekly and "Asaxiy" in weekly
+               and "Fenix 8 47mm — 9 990 000 сўм" in weekly)
+    check_true("...a week with nothing says so", "топилмади" in gm.competitors_text([], []))
+
+    lead_agent = load_agent("lead-agent")
+    check_true("Garmin leads are told apart from laundry leads",
+               lead_agent.is_garmin_lead({"track": "sponsorship_partnership"})
+               and lead_agent.is_garmin_lead({"track": "equipment_sales", "signal": "закупка Garmin часов для клуба"})
+               and not lead_agent.is_garmin_lead({"track": "equipment_sales", "signal": "прачечная для отеля"}))
+    lead_text = lead_agent.garmin_leads_text([{"company_name": "Велоспорт федерацияси", "track": "sponsorship_partnership",
+                                               "signal": "ҳомий қидирмоқда", "signal_source_url": "https://x.uz/a"}])
+    check_true("the Garmin manager's lead message has the signal and its source",
+               "Велоспорт федерацияси" in lead_text and "ҳомий қидирмоқда" in lead_text and "https://x.uz/a" in lead_text)
+
+    # notify_role: the role, or the Director while nobody holds it
+    sent, to_director = [], []
+
+    class FakeBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None):
+            sent.append(chat_id)
+            return [1]
+
+    people = {"garmin_manager": [{"telegram_user_id": 77}]}
+
+    async def by_role(role):
+        return people.get(role, [])
+
+    async def fake_directors(text, agent, run_id=None, **k):
+        to_director.append(text)
+        return [2]
+
+    saved = [(notify, "TelegramBot", notify.TelegramBot), (notify.store, "active_employees_by_role", notify.store.active_employees_by_role),
+             (notify, "notify_directors", notify.notify_directors), (settings, "bots_frozen", settings.bots_frozen)]
+    notify.TelegramBot, notify.store.active_employees_by_role, notify.notify_directors = FakeBot, by_role, fake_directors
+    settings.bots_frozen = False
+    try:
+        asyncio.run(notify.notify_role("garmin_manager", "x", agent="t"))
+        check("to everyone in the role", (sent, to_director), (["77"], []))
+        people.clear()
+        asyncio.run(notify.notify_role("garmin_manager", "y", agent="t"))
+        check("nobody in the role: the Director gets it", to_director, ["y"])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the agent: a lot judged before is not asked again; logs keep counts only
+    agent = load_agent("garmin-market")
+    logged, asked = [], []
+
+    class FakeUzEx:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def search_keywords(self, keywords, limit=25):
+            return lots
+
+    class FakeAI:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def complete_json(self, system, user):
+            asked.append(user)
+            return {"relevant": [{"id": 1, "product": "смарт-часы"}]}
+
+    async def seen(kind, keys):
+        return {"2"}
+
+    async def remember(kind, key, relevant, data):
+        return True
+
+    async def fake_log(**k):
+        logged.append(k)
+
+    messages = []
+
+    async def fake_notify(role, text, agent, run_id=None, **k):
+        messages.append((role, text))
+        return [1]
+
+    saved = [(agent, n, getattr(agent, n)) for n in ("UzExClient", "OpenRouterClient", "_seen", "_remember", "log_action",
+                                                      "notify_role")]
+    saved.append((settings, "garmin_market_enabled", settings.garmin_market_enabled))
+    agent.UzExClient, agent.OpenRouterClient, agent._seen, agent._remember = FakeUzEx, FakeAI, seen, remember
+    agent.log_action, agent.notify_role = fake_log, fake_notify
+    settings.garmin_market_enabled = True
+    try:
+        check("a run with tenders only", asyncio.run(agent.run(with_competitors=False)), 0)
+        check("only the lot not judged before goes to the AI", asked, ["1: Смарт-часы для спортсменов сборной"])
+        check_true("the new tender goes to the Garmin manager", messages and messages[0][0] == "garmin_manager"
+                   and "Смарт-часы" in messages[0][1])
+        check_true("the run's log has counts, never a tender's details",
+                   logged[-1]["payload"] == {"tenders": 1, "sightings": 0, "competitors": False}
+                   and "Спорт" not in str(logged))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("it runs in the 08:00 job", "agents/garmin-market/agent.py" in load_source("scripts/run_morning_agents.py"))
+    check_true("garmin_market is never a /db technical table",
+               "garmin_market" not in load_source("integrations/api/db_viewer.py").split("TECHNICAL_TABLES = frozenset(", 1)[1].split(")", 1)[0])
+
+
+def test_brief_tasks_and_export() -> None:
+    """2026-10-17: one task to several people is one line in the brief; the read-only table export."""
+    print("brief task groups, table export")
+    import importlib.util
+    import sys as _sys
+    from datetime import date as _date
+
+    from integrations.common.agent_loader import load_agent
+
+    brief = load_agent("ceo-daily-brief")
+    day = _date(2026, 10, 17)
+    tasks = [{"display_name": n, "task_summary": "Дебитор қарзлар рўйхатини юбориб қўйинг.", "status": s,
+              "due_date": _date(2026, 10, 5), "director_telegram_user_id": 1, "source_message_id": 4411}
+             for n, s in (("Нажотова Зайнабхон", "sent"), ("Зунунов Абдукарим", "blocked"), ("Махкамов Ғиёсиддин", "sent"))]
+    tasks.append({"display_name": "Собитов Абдулбосит", "task_summary": "Ayugram бот", "status": "started",
+                  "due_date": _date(2026, 10, 1), "director_telegram_user_id": 1, "source_message_id": 4300})
+    groups = brief.group_tasks(tasks)
+    check("the Director's one message to three people is one task", len(groups), 2)
+    merged = next(g for g in groups if g["source_message_id"] == 4411)
+    check("…with all three names, and the worst state", (merged["display_name"], merged["status"]),
+          ("Нажотова, Зунунов, Махкамов", "blocked"))
+    rows, counts = brief.task_rows(tasks, day)
+    check("the brief shows two lines, not four", len(rows), 2)
+    check("the head line counts tasks, not rows", brief.tasks_block(brief.BriefData(tasks=tasks))["summary"].split(" · ")[0],
+          "2 та очиқ")
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("db_export", root / "scripts" / "db_export.py")
+    ex = importlib.util.module_from_spec(spec)
+    _sys.modules["db_export"] = ex
+    spec.loader.exec_module(ex)
+    check("platform tables are never exported", [ex.is_platform(t) for t in (
+        "sap_gateway_snapshots", "billz_sap_checks", "attendance_snapshots", "cash_balance_snapshots", "ar_aging_snapshots",
+        "amocrm_deal_events", "tasks", "employees", "daily_reports", "cheques")],
+        [True, True, True, True, True, True, False, False, False, False])
+    check("cells: dates readable, long text cut", (ex.cell(_date(2026, 10, 5)), len(ex.cell("x" * 1000)), ex.cell(None)),
+          ("05.10.2026", ex.CELL_LIMIT, ""))
+    src = load_source("scripts/db_export.py")
+    check_true("the export only reads: one READ ONLY transaction, no write statements",
+               "SET TRANSACTION READ ONLY" in src and not any(w in src for w in ("INSERT ", "UPDATE ", "DELETE ", "DROP ")))
+
+
 def test_data_access() -> None:
     """2026-10-10, the Director: accounting and finance look up 1C, SAP and Billz through the bot."""
     print("data access for accounting and finance")
@@ -6345,8 +6568,8 @@ def test_reports() -> None:
     )
     v = brief.view(data)
     by_label = {f["label"]: f for f in v["figures"]}
-    check("the numbers, no «Касса» (the owner, 16.10.2026)", list(by_label),
-          ["Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар"])
+    check("the numbers: sales and payments only (no «Касса» 16.10, no «Захира» / «Мижоз қарзи» 17.10)", list(by_label),
+          ["Кечаги сотув", "Бугунги тўловлар"])
     lead = {b["title"]: b for b in v["lead"]}
     check("the brief leads with goals, tasks and reports", list(lead),
           ["Ойлик мақсадлар", "Топшириқлар", "Ҳисобот юбормаганлар"])
@@ -6368,10 +6591,6 @@ def test_reports() -> None:
     settings.company_vision, settings.company_mission = saved_compass
     check_true("nothing sold / no payments: quiet, not shouted",
                by_label["Кечаги сотув"]["tone"] == "quiet" and by_label["Бугунги тўловлар"]["tone"] == "quiet")
-    check_true("unreadable stock says so instead of a number",
-               by_label["Захира"]["tone"] == "muted" and "ўқилмади" in by_label["Захира"]["number"])
-    check_true("overdue debt is the one red figure, with how old",
-               by_label["Мижоз қарзи"]["tone"] == "alert" and "90 кундан" in by_label["Мижоз қарзи"]["sub"])
     blocks = {b["title"]: b for b in v["blocks"] + v["lead"]}
     check("names: five, then '+N'", (len(blocks["Ҳисобот юбормаганлар"]["rows"]), blocks["Ҳисобот юбормаганлар"]["more"]), (5, 2))
     check_true("one shop: its name beside the day, no repeated row",
@@ -6728,7 +6947,7 @@ def test_sap_full_push() -> None:
     data = brief.BriefData(report_rows=[], sales=fig, sales_unit="ҳисоб-фактура")
     five = brief.render_five(data)
     check_true("the brief counts invoices, with no 'камида'",
-               "(2 та ҳисоб-фактура)" in five and "камида" not in five.split("Захира")[0])
+               "(2 та ҳисоб-фактура)" in five and "камида" not in five)
 
 
 def test_billz_sap_check() -> None:
@@ -7264,11 +7483,8 @@ def test_sap_freshness() -> None:
     aging.invoices = [ARInvoice(doc_entry=1, doc_num=2150, card_code="C1", card_name="Rich Home", days_overdue=47,
                                 aging_bucket="31_60", currency="USD", doc_total_tiyin=976431, balance_due_tiyin=976431)]
     with_debt = brief.BriefData(report_rows=[], aging=aging, sap_pushed_at=friday)
-    check_true("debt says when it is from", "(03.10 14:13 ҳолатида)" in brief.render(with_debt))
     view = brief.view(with_debt)
     check_true("the picture carries the warning", view["notice"] and "03.10 14:13" in view["notice"])
-    debt_row = next(f for f in view["figures"] if f["label"] == "Мижоз қарзи")
-    check("the picture's debt row says when", (debt_row["sub"], debt_row["sub_alert"]), ("03.10 14:13 ҳолатида", True))
     check_true("the caption warns too", "03.10 14:13" in brief.caption(with_debt))
     check_true("a fresh brief has no warning", brief.view(brief.BriefData(report_rows=[]))["notice"] is None)
 
@@ -7399,15 +7615,9 @@ def test_invoice_as_written() -> None:
     aging = ARAging(snapshot_date=date(2026, 10, 3), invoices=[som])
     switch_day = brief.BriefData(report_rows=[], aging=aging,
                                  previous={"debt": {"status": "ok", "totals": {"USD": 900_000}, "capped": False}})
-    text = plain(brief.render(switch_day))
-    check_true("the brief's debt in so'm, as on the invoices", "🧾 Мижоз қарзи: 124 056 000 сўм" in text)
-    check_true("…no 'change' on the day so'm replaces $", "кечагига" not in text)
+    check("the stored debt in so'm, as on the invoices", brief.five_numbers_json(switch_day)["debt"]["totals"],
+          {"UZS": 12405600000})
     check("stored with how it was counted", brief.five_numbers_json(switch_day)["debt"]["basis"], "invoice")
-    next_day = brief.BriefData(report_rows=[], aging=aging, previous={"debt": {
-        "status": "ok", "totals": {"UZS": 12_000_000_000}, "capped": False, "basis": "invoice"}})
-    check_true("…compared again from the next day", "кечагига ▲ 4 056 000 сўм" in plain(brief.render(next_day)))
-    debt_row = next(f for f in brief.view(switch_day)["figures"] if f["label"] == "Мижоз қарзи")
-    check("the picture: short so'm", (debt_row["number"], plain(debt_row["unit"])), ("124,06", "млн сўм"))
 
     now = datetime.now(TASHKENT)
     rows = [{"doc_num": 2150, "card_name": "Rich Home", "doc_date": date(2026, 8, 17), "days_overdue": 47,
@@ -7504,6 +7714,8 @@ def main() -> int:
         test_garmin_manager,
         test_complaint_tickets,
         test_cheques,
+        test_garmin_market,
+        test_brief_tasks_and_export,
         test_fast_buttons,
         test_data_access,
         test_backup,

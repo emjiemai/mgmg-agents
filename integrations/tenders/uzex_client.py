@@ -90,6 +90,22 @@ SERVICE_KEYWORDS = [
     "montaj",          # installation (uz)
 ]
 
+# The Garmin business (GARMIN shops, 2026-10-16): what the state buys that
+# Garmin / Tanita / Tacx make. Lot titles are matched by substring, so these
+# are stems; an AI check then drops near misses (a wall clock, a car GPS
+# tracker service) — see integrations/garmin/market.py.
+GARMIN_KEYWORDS = [
+    "garmin", "tanita", "tacx",
+    "смарт-час", "смарт час", "умные час", "умных час", "aqlli soat", "smart soat", "smart watch",
+    "спортивные час", "спортивных час", "sport soat", "фитнес-браслет", "фитнес браслет", "fitnes bilaguzuk",
+    "пульсометр", "пульсомер", "heart rate",
+    "gps-навигатор", "gps навигатор", "навигатор", "navigator", "gps qurilma", "gps-трекер", "gps трекер",
+    "эхолот", "exolot", "картплоттер",
+    "велокомпьютер", "велотренажер", "velotrenajyor", "велостанок",
+    "анализатор состава тела", "состава тела", "биоимпеданс", "tana tarkibi", "весы медицинск", "напольные весы",
+    "спутниковый коммуникатор", "спутниковый трекер",
+]
+
 
 class UzExError(RuntimeError):
     """Raised when the UzEx API returns an unrecoverable error."""
@@ -211,6 +227,16 @@ class UzExClient:
                     seen[lead.url] = lead
 
         log.info("UzEx: {} unique lot(s) across both trade types", len(seen))
+        return list(seen.values())
+
+    async def search_keywords(self, keywords: list[str], limit: int = 25) -> list[RawLead]:
+        """Open lots whose title matches any of ``keywords``, both trade types, deduplicated by lot."""
+        seen: dict[str, RawLead] = {}
+        for type_id in TRADE_TYPES:
+            for keyword in keywords:
+                for lead in await self.search(keyword=keyword, type_id=type_id, limit=limit):
+                    lead.extra["keyword"] = keyword
+                    seen.setdefault(lead.url, lead)
         return list(seen.values())
 
 
