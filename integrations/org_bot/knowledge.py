@@ -50,8 +50,11 @@ so or the conversation makes it clear:
     goes to him, and he gets his own Garmin morning brief.
 People: the Operations Director (Директор, раҳбар, the owner, "the Boss") runs
 every department and all three businesses — he is the one who writes to you.
-Ordinary complaints go to the departments, not to him (Londry → the Londry
-team, Garmin → the Garmin manager). Departments (role slugs):
+The Garmin manager (Garmin менежер) runs Garmin at the Boss's level — Murod
+Umarov, the Boss's brother: he is not an employee to be scored or asked for
+reports; he sets goals for and reads the reports and KPI of his Garmin сотув
+team. Ordinary complaints go to the departments, not to the Boss (Londry →
+the Londry team, Garmin → the Garmin manager). Departments (role slugs):
 {_DEPARTMENTS}. Some staff work on "эркин график" (come when needed or when
 the Director calls): they are never counted late or absent.
 

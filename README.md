@@ -313,6 +313,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-17 | **The Garmin manager (Murod Umarov, the Boss's brother) runs Garmin at the Boss's level:** not scored — no KPI card, goals or ratings of his own, not in KPI tables; `/kpi` = his team's table, `/maqsad` `/maqsadlar` `/natija` = his team's goals and results (only Garmin сотув; his buttons can't reach anyone else); `/baho` stays the Boss's. His ☰ menu: /hisobotlar /kpi /maqsad /maqsadlar /natija /bekor. His card has no working-day or report switches. The bot's company knowledge says who he is. |
 | 2026-10-17 | **The Garmin manager sends no daily report** (like the Director, `kpi.NO_REPORT_ROLES`): never asked or reminded, no minus, not on the calendar, his messages never become a report; no 📝 switch or /hisobot for him — /hisobotlar shows his team. |
 | 2026-10-17 | `/hisobot` (one letter short of `/hisobotlar`) now shows the team calendar to the Director and the Garmin manager, who send no report of their own — it had answered «no report is asked of you». |
 | 2026-10-17 | **Shift weeks for Garmin shop staff:** Admin Bot `/xodimlar` → a Garmin сотув person → seven day buttons (Ду … Як). The report is asked only on ✅ days — a day off is never red, never a minus, not in KPI. Others keep Mon–Fri + Saturday / Sunday. **The Garmin manager's /hisobotlar** (his ☰ menu): the report calendar of his team. |

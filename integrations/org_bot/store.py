@@ -1930,7 +1930,7 @@ async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
 
 _GOAL_COLUMNS = """g.id, g.employee_id, g.month, g.title, g.target, g.actual, g.status,
        g.awaiting_actual_by, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS name,
-       e.telegram_user_id AS employee_telegram_user_id"""
+       e.telegram_user_id AS employee_telegram_user_id, e.role AS employee_role"""
 
 
 async def start_goal_draft(employee_id: str, month: date, director_telegram_id: int) -> dict[str, Any] | None:

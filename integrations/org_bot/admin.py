@@ -544,7 +544,8 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
     if emp["role"] == DIRECTOR_ROLE:
         lines.append("<i>Директорга савол юборилмайди: исми кейинги ёзма рухсат қарорида сўралади.</i>")
     else:
-        lines.append(f"Иш кунлари: {workdays_text(emp)}")
+        if kpi.asked_for_reports(emp):  # the days matter only for report asks
+            lines.append(f"Иш кунлари: {workdays_text(emp)}")
         lines.append(f"Мурожаат: {escape(address_text(emp))}")
         lines.append(f"AI ёрдамчи: {'ўчирилган' if emp.get('ai_chat_off') else 'ёқилган'}")
         if kpi.asked_for_reports(emp):
@@ -567,7 +568,7 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         day_buttons = [{"text": f"{'✅' if week[i] == '1' else '☐'} {kpi.WEEK_SHORT[i]}", "callback_data": f"wd{i}:{employee_id}"}
                        for i in range(7)]
         rows += [day_buttons[:4], day_buttons[4:]]
-    elif emp["role"] != DIRECTOR_ROLE:  # the Director isn't asked for daily reports
+    elif kpi.asked_for_reports(emp):  # the Director and the Garmin manager aren't asked for daily reports
         rows.append(
             [
                 {"text": f"{'✅' if emp.get('works_saturday') else '☐'} Шанба", "callback_data": f"wsat:{employee_id}"},

@@ -4113,10 +4113,30 @@ def test_own_week_and_team_calendar() -> None:
                and "'garmin_manager'" in inspect.getsource(store.close_missed_reports))
     gm_text, gm_keyboard = admin.employee_card(gm)
     check_true("...his card says so and has no 📝 switch; he isn't a calendar row; no /hisobot in his menu",
-               "сўралмайди" in gm_text and "rpof:" not in str(gm_keyboard)
+               "сўралмайди" in gm_text and "rpof:" not in str(gm_keyboard) and "wsat:" not in str(gm_keyboard)
+               and "Иш кунлари" not in gm_text
                and report_calendar.build(date(2026, 10, 1), datetime(2026, 10, 17, 12, tzinfo=TASHKENT), [gm], [])["people"] == []
                and "hisobot" not in [c for c, _ in menus.GARMIN_MANAGER])
     check_true("...and his messages never go into a report", "kpi.asked_for_reports(employee)" in inspect.getsource(ops_manager._try_daily_report))
+
+    # ---- the Garmin manager is a manager for his team, at the Boss's level (17.10): not scored
+    from integrations.org_bot import kpi_flow, knowledge
+
+    check_true("not scored: no KPI card, goals or ratings of his own",
+               kpi_flow._team(gm) == ("garmin_sotuv",) and kpi_flow._is_manager(gm)
+               and kpi_flow._team({"role": "operatsion_direktor"}) is None and kpi_flow._team(seller) == ()
+               and "e[\"role\"] not in NO_REPORT_ROLES" in inspect.getsource(kpi_flow._people))
+    flow = inspect.getsource(kpi_flow.handle_message)
+    check_true("/kpi his team's table; /maqsad /maqsadlar /natija for his team; /baho the Director's only",
+               "_pick_employee(user_id, run_id, _team(employee))" in flow and "_list_goals(user_id, run_id, _team(employee))" in flow
+               and flow.index("if _is_director(employee):\n        if command in RATE_COMMANDS") > 0
+               and "people = [p for p in people if p.employee_id in ids]" in inspect.getsource(kpi_flow._show_kpi))
+    cb = inspect.getsource(kpi_flow.handle_callback)
+    check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
+               and 'prefix == "kr" and not director' in cb)
+    check_true("his menu: team calendar, KPI, goals, results — no /hisobot, /ruxsat or /ism",
+               [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "bekor"])
+    check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
                and "hisobotlar" not in [c for c, _ in menus.EMPLOYEE] and menus.role_menu("londry") is None)

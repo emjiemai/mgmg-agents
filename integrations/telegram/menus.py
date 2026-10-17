@@ -59,9 +59,16 @@ DIRECTOR: list[tuple[str, str]] = [
 
 
 # The Garmin manager (2026-10-17): the employees' menu plus his team's report calendar.
-# He sends no daily report himself (2026-10-17), so no /hisobot.
-GARMIN_MANAGER: list[tuple[str, str]] = [("hisobotlar", "Garmin сотув жамоаси ҳисоботлари календари")] + [
-    item for item in EMPLOYEE if item[0] != "hisobot"]
+# The Garmin manager runs Garmin at the Boss's level (2026-10-17): his team's calendar, KPI and goals —
+# no report, KPI card or permission request of his own.
+GARMIN_MANAGER: list[tuple[str, str]] = [
+    ("hisobotlar", "Garmin сотув жамоаси ҳисоботлари календари"),
+    ("kpi", "Garmin сотув жамоаси KPI жадвали"),
+    ("maqsad", "Жамоадаги ходимга ойлик мақсад қўйиш"),
+    ("maqsadlar", "Жамоа мақсадлари ва натижалари"),
+    ("natija", "Жамоа мақсадлари натижасини киритиш"),
+    ("bekor", "Бошланган ишни бекор қилиш"),
+]
 
 
 def role_menu(role: str | None) -> list[tuple[str, str]] | None:

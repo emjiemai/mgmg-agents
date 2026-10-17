@@ -90,3 +90,10 @@ qanday?"): the `xodimlar_kpi` answers carry every score and part.
 Weights and grade lines are the `PARTS`, `GREEN`, `YELLOW` constants in
 `kpi_score.py`; the four rated criteria are `RATINGS`. Change them there
 and the table, the cards, the bot's answers and the tests follow.
+
+## Managers (2026-10-17)
+
+The Director and the Garmin manager (`kpi.NO_REPORT_ROLES`) are not scored. The Garmin manager is a
+manager for his Garmin сотув team (`report_calendar.TEAM_OF`): `/kpi` his team's table, `/maqsad`
+`/maqsadlar` `/natija` his team's goals and results; his buttons can't reach anyone else. The monthly
+1–5 ratings (`/baho`, the 1st) stay the Director's.

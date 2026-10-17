@@ -35,6 +35,8 @@ from integrations.common.timeutil import today_local
 from integrations.org_bot import answer_check, kpi_score, store
 from integrations.org_bot.kpi_score import RATING_BY_LETTER, RATINGS
 from integrations.org_bot.permissions import Field, is_cancel
+from integrations.org_bot.kpi import NO_REPORT_ROLES
+from integrations.org_bot.report_calendar import TEAM_OF
 from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
@@ -109,9 +111,11 @@ async def _answer(callback: dict[str, Any], text: str) -> None:
 # --------------------------------------------------------------------- data
 
 
-async def _people() -> list[dict[str, Any]]:
-    """Everyone scored: active employees except the Director."""
-    return [e for e in await store.list_active_employees() if e["role"] != DIRECTOR_ROLE]
+async def _people(team: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+    """Everyone scored: active employees except the managers (the Director, the Garmin manager —
+    kpi.NO_REPORT_ROLES, 2026-10-17); ``team`` narrows it to a manager's own people."""
+    return [e for e in await store.list_active_employees()
+            if e["role"] not in NO_REPORT_ROLES and (team is None or e["role"] in team)]
 
 
 async def load_month(month: date, today: date | None = None, with_attendance: bool = True) -> list[kpi_score.EmployeeMonth]:
@@ -166,6 +170,24 @@ def _is_director(employee: dict[str, Any]) -> bool:
     return employee.get("role") == DIRECTOR_ROLE
 
 
+# A manager sets goals and sees KPI for his own people (2026-10-17: the Garmin manager — Murod
+# Umarov, the Boss's brother — runs Garmin at the Boss's level): the Director everyone, the Garmin
+# manager the Garmin сотув team. The monthly 1–5 ratings (/baho) stay the Director's.
+def _team(employee: dict[str, Any]) -> tuple[str, ...] | None:
+    """None = everyone (the Director); a manager's team roles; () = not a manager."""
+    if _is_director(employee):
+        return None
+    return TEAM_OF.get(employee.get("role") or "", ())
+
+
+def _is_manager(employee: dict[str, Any]) -> bool:
+    return _team(employee) != ()
+
+
+def _in_team(team: tuple[str, ...] | None, role: str | None) -> bool:
+    return team is None or (role or "") in team
+
+
 # ----------------------------------------------------------------- messages
 
 
@@ -182,8 +204,8 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     if awaiting is not None and not (command.startswith("/") and not is_cancel(text)):
         return await _take_actual(awaiting, employee, text, run_id)
 
-    # 2. The Director's goal text after /maqsad.
-    if _is_director(employee):
+    # 2. A manager's goal text after /maqsad.
+    if _is_manager(employee):
         draft = await store.goal_draft(user_id)
         if draft is not None and not (command.startswith("/") and not is_cancel(text)):
             return await _take_goal(draft, text, run_id, user_id)
@@ -191,12 +213,15 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     if command in KPI_COMMANDS:
         return await _show_kpi(employee, run_id)
     if command in RESULT_COMMANDS:
+        if _is_manager(employee):  # a manager has no goals of his own: his team's, to enter results
+            return await _list_goals(user_id, run_id, _team(employee))
         return await _ask_which_result(employee, run_id)
-    if _is_director(employee):
+    if _is_manager(employee):
         if command in GOAL_COMMANDS:
-            return await _pick_employee(user_id, run_id)
+            return await _pick_employee(user_id, run_id, _team(employee))
         if command in GOALS_COMMANDS:
-            return await _list_goals(user_id, run_id)
+            return await _list_goals(user_id, run_id, _team(employee))
+    if _is_director(employee):
         if command in RATE_COMMANDS:
             month = kpi_score.score_period(today_local())
             sent = await send_rating_cards(user_id, month, run_id)
@@ -204,8 +229,8 @@ async def handle_message(employee: dict[str, Any], message: dict[str, Any], run_
     return None
 
 
-async def _pick_employee(director_id: int, run_id: uuid.UUID) -> str:
-    people = sorted(await _people(), key=lambda e: (e.get("full_name") or e["display_name"]).lower())
+async def _pick_employee(director_id: int, run_id: uuid.UUID, team: tuple[str, ...] | None = None) -> str:
+    people = sorted(await _people(team), key=lambda e: (e.get("full_name") or e["display_name"]).lower())
     if not people:
         await _send(director_id, "Рўйхатдан ўтган ходим йўқ.", run_id)
         return "kpi_no_employees"
@@ -298,10 +323,10 @@ def _f(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
-async def _list_goals(director_id: int, run_id: uuid.UUID) -> str:
+async def _list_goals(director_id: int, run_id: uuid.UUID, team: tuple[str, ...] | None = None) -> str:
     today = today_local()
     months = sorted({kpi_score.score_period(today), kpi_score.month_start(today), kpi_score.goal_month(today)})
-    goals = await store.goals_for_months(months)
+    goals = [g for g in await store.goals_for_months(months) if _in_team(team, g.get("employee_role"))]
     if not goals:
         await _send(director_id, "🎯 Мақсадлар йўқ. Қўйиш: /maqsad", run_id)
         return "kpi_no_goals"
@@ -322,7 +347,11 @@ async def _list_goals(director_id: int, run_id: uuid.UUID) -> str:
 async def _show_kpi(employee: dict[str, Any], run_id: uuid.UUID) -> str:
     month = kpi_score.score_period(today_local())
     people = await load_month(month)
-    if _is_director(employee):
+    if _is_manager(employee):
+        team = _team(employee)
+        if team is not None:  # the Garmin manager: his team's rows only
+            ids = {str(e["id"]) for e in await _people(team)}
+            people = [p for p in people if p.employee_id in ids]
         period = await store.kpi_period(month)
         final = bool(period and period.get("final_sent_at"))
         await _send_table(employee["telegram_user_id"], month, people, final, run_id)
@@ -348,10 +377,15 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         await _answer(callback, "Рухсат йўқ")
         return "kpi_unauthorized"
     director = _is_director(clicker)
+    team = _team(clicker)
+    manager = team != ()
 
     if prefix == "ka":
         goal = await store.get_goal(rest)
-        if goal is None or goal["status"] != "active" or not (director or str(goal["employee_id"]) == str(clicker["id"])):
+        owner = await store.get_employee(str(goal["employee_id"])) if goal is not None else None
+        allowed = goal is not None and (str(goal["employee_id"]) == str(clicker["id"])
+                                        or (manager and _in_team(team, (owner or {}).get("role"))))
+        if goal is None or goal["status"] != "active" or not allowed:
             await _answer(callback, "Мақсад топилмади")
             return "kpi_goal_missing"
         await store.await_goal_actual(rest, clicker_id)
@@ -364,16 +398,16 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         )
         return "kpi_actual_asked"
 
-    if not director:
+    if not manager or (prefix == "kr" and not director):  # the 1–5 ratings stay the Director's
         await _answer(callback, "Фақат директор учун")
         return "kpi_unauthorized"
 
     if prefix == "kgl":
         await _answer(callback, "👥")
-        return await _pick_employee(clicker_id, run_id)
+        return await _pick_employee(clicker_id, run_id, team)
     if prefix == "kg":
         person = await store.get_employee(rest)
-        if person is None or person["status"] != "active":
+        if person is None or person["status"] != "active" or not _in_team(team, person.get("role")):
             await _answer(callback, "Ходим топилмади")
             return "kpi_employee_missing"
         month = kpi_score.goal_month(today_local())
@@ -387,6 +421,11 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         )
         return "kpi_goal_started"
     if prefix == "kx":
+        target = await store.get_goal(rest)
+        owner = await store.get_employee(str(target["employee_id"])) if target is not None else None
+        if target is None or not _in_team(team, (owner or {}).get("role")):
+            await _answer(callback, "Мақсад топилмади")
+            return "kpi_goal_missing"
         goal = await store.cancel_goal(rest)
         await _answer(callback, "🗑")
         if goal is not None:
