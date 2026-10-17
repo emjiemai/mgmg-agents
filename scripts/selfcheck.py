@@ -1316,6 +1316,10 @@ def test_db_viewer() -> None:
                    and not db_viewer.is_open("sap_gateway_snapshots", date(2026, 11, 1))
                    and db_viewer.is_open("employees", date(2026, 11, 1)) and not db_viewer.is_open("pg_stat_statements"))
         db_viewer.PLATFORM_OPEN_UNTIL = date(2000, 1, 1)
+        check_true("SAP pushes as one /db table per kind, with a readable name (17.10)",
+                   db_viewer.sap_kind("sap_customers") == "customers" and db_viewer.sap_kind("sap_gateway_snapshots") is None
+                   and len(db_viewer.SAP_VIEWS) == 19 and db_viewer.SAP_VIEWS["stock_items"].startswith("Омбор қолдиғи")
+                   and "is_open(\"sap_gateway_snapshots\")" in load_source("integrations/api/db_viewer.py"))
         check_true("every SAP / 1C / Billz / Verifix table stays closed, the bot's records are open",
                    not db_viewer.PLATFORM_TABLES & db_viewer.TECHNICAL_TABLES
                    and {"employees", "tasks", "daily_reports", "client_feedback", "kpi_ratings"} <= db_viewer.TECHNICAL_TABLES

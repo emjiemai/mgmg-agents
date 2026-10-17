@@ -305,6 +305,79 @@ async def _structure_page(table: str) -> Response:
 # ------------------------------------------------------------------ pages
 
 
+# The SAP pushes, one table each (2026-10-17, the owner: sap_gateway_snapshots — every kind in one
+# table of JSON — was hard to read). /db/sap_<kind>: the latest push of that kind, one column per field.
+SAP_VIEWS: dict[str, str] = {
+    "customers": "Мижозлар (OCRD)",
+    "products": "Товарлар (OITM)",
+    "stock_items": "Омбор қолдиғи — товар ва омбор бўйича (OITW)",
+    "stock_value": "Омбор қиймати — омбор бўйича",
+    "warehouses": "Омборлар (OWHS)",
+    "sales": "Сотув ҳужжатлари — ҳисоб-фактура ва қайтариш (OINV, ORIN)",
+    "sales_lines": "Сотув ҳужжатлари қаторлари (INV1, RIN1)",
+    "item_sales_90d": "90 кунлик сотув — товар ва омбор бўйича",
+    "orders": "Очиқ буюртмалар (ORDR)",
+    "payments": "Кирим тўловлари — мижозлардан (ORCT)",
+    "payments_out": "Чиқим тўловлари — етказиб берувчиларга (OVPM)",
+    "ap_open": "Очиқ харид ҳисоб-фактуралари (OPCH)",
+    "po_open": "Очиқ харид буюртмалари (OPOR, POR1)",
+    "supplier_balances": "Етказиб берувчилар қолдиғи (OCRD)",
+    "sales_people": "Сотувчилар (OSLP)",
+    "equipment": "Мижоз ускуналари (OINS)",
+    "service_calls": "Сервис чақирувлари (OSCL)",
+    "service_contracts": "Сервис шартномалари (OCTR)",
+    "inventory": "Эски қолдиқ рўйхати (5 тадан, ишлатилмайди)",
+}
+SAP_PREFIX = "sap_"
+
+
+def sap_kind(table: str) -> str | None:
+    """'sap_customers' -> 'customers' when it is one of the SAP views."""
+    kind = table[len(SAP_PREFIX):] if table.startswith(SAP_PREFIX) else ""
+    return kind if kind in SAP_VIEWS else None
+
+
+async def _sap_counts() -> dict[str, tuple[int, Any]]:
+    rows = await _read("SELECT tool, count(*) AS n, max(captured_at) AS at FROM v_sap_gateway_latest GROUP BY tool")
+    return {r["tool"]: (int(r["n"]), r["at"]) for r in rows}
+
+
+async def _sap_page(kind: str, page: int, search: str) -> Response:
+    """One SAP kind as a table: the latest push, one column per field (keys in the order SAP sends them)."""
+    params: list[Any] = [kind]
+    where = "tool = %s"
+    if search:
+        where += " AND raw::text ILIKE %s"
+        params.append(f"%{search}%")
+    total = (await _read(f"SELECT count(*) AS n FROM v_sap_gateway_latest WHERE {where}", params))[0]["n"]
+    rows = await _read(f"SELECT raw, captured_at FROM v_sap_gateway_latest WHERE {where} ORDER BY natural_key "
+                       "LIMIT %s OFFSET %s", [*params, PAGE_SIZE, (page - 1) * PAGE_SIZE])
+    raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
+    columns: list[str] = []
+    for raw in raws:
+        columns += [k for k in raw if k not in columns]
+    when = cell_text(rows[0]["captured_at"]) if rows else "—"
+    head = "".join(f"<th>{_e(c)}</th>" for c in columns)
+    body = "".join("<tr>" + "".join(_cell(raw.get(c)) for c in columns) + "</tr>" for raw in raws) or \
+        f"<tr><td class='null' colspan='{max(len(columns), 1)}'>Қатор йўқ</td></tr>"
+    first = (page - 1) * PAGE_SIZE + 1 if rows else 0
+    last = (page - 1) * PAGE_SIZE + len(rows)
+    shown = f"{first}–{last} / {total}"
+
+    def link(to_page: int) -> str:
+        return f"/db/{quote(SAP_PREFIX + kind)}?" + urlencode({"page": to_page, **({"q": search} if search else {})})
+
+    prev_link = f"<a href='{_e(link(page - 1))}'>← Олдинги</a>" if page > 1 else "<span></span>"
+    next_link = f"<a href='{_e(link(page + 1))}'>Кейинги →</a>" if last < total else "<span></span>"
+    return _page(f"SAP: {SAP_VIEWS[kind]} — MGMG",
+                 f"<p><a href='/db'>← Жадваллар</a></p>"
+                 f"<h1>SAP: {_e(SAP_VIEWS[kind])} <span class='muted'>{_e(shown)}</span></h1>"
+                 f"<p class='muted'>Охирги юклама: {_e(when)} · <code>{_e(kind)}</code></p>"
+                 f"<form method='get'><input name='q' value='{_e(search)}' placeholder='Қидириш'><button>Қидириш</button></form>"
+                 f"<div class='wrap'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
+                 f"<div class='pager'>{prev_link}<span class='muted'>{_e(shown)}</span>{next_link}</div>")
+
+
 @router.get("", response_class=HTMLResponse)
 async def tables(request: Request) -> Response:
     """Every table and view, with its row count."""
@@ -325,9 +398,20 @@ async def tables(request: Request) -> Response:
         else:
             # closed: the link opens its structure only (no values)
             items.append(f"<li><a href='/db/{quote(name)}'>🔒 {_e(name)}</a>{size}</li>")
+    sap = ""
+    if is_open("sap_gateway_snapshots"):
+        counts = await _sap_counts()
+        sap_items = []
+        for kind, label in SAP_VIEWS.items():
+            n, at = counts.get(kind, (0, None))
+            when = f" · {cell_text(at)}" if at else ""
+            sap_items.append(f"<li><a href='/db/{quote(SAP_PREFIX + kind)}'>{_e(label)}</a>"
+                             f"<span class='muted'>{n} қатор{_e(when)}</span></li>")
+        sap = ("<h2>SAP маълумотлари — энг охирги юклама (ҳар 30 дақиқада)</h2>"
+               f"<ul class='list'>{''.join(sap_items)}</ul><h2>Ҳамма жадваллар</h2>")
     return _page("MGMG — база", f"<h1>Жадваллар</h1><p class='muted'>🔒 — SAP, 1C, Billz, Verifix маълумоти: фақат "
                                 "тузилиши кўринади. Бот ёзувлари очиқ (Директор рухсати, 17.10.2026).</p>"
-                                f"<ul class='list'>{''.join(items)}</ul>")
+                                f"{sap}<ul class='list'>{''.join(items)}</ul>")
 
 
 @router.get("/{table}", response_class=HTMLResponse)
@@ -337,6 +421,9 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "") -
     if denied:
         return denied
 
+    kind = sap_kind(table)
+    if kind is not None and is_open("sap_gateway_snapshots"):  # one SAP kind as its own table (2026-10-17)
+        return await _sap_page(kind, max(page, 1), q.strip()[:100])
     names = {r["name"] for r in await _relations()}
     if table not in names:
         return _page("Топилмади", "<p><a href='/db'>← Жадваллар</a></p><p>Бундай жадвал йўқ.</p>")
