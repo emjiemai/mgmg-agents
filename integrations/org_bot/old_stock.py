@@ -20,6 +20,7 @@ A PDF list, the text if the PDF can't be drawn.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import date
@@ -34,6 +35,8 @@ AGENT = "old-stock"
 log = setup_logging(AGENT)
 
 COMMANDS = ("/eski", "/эски")
+# Display samples ("Dummy Unit…", codes like 010-M2704-00) aren't stock for sale — left out (2026-10-17).
+_DUMMY = re.compile(r"^\s*dummy|^\d{3}-M\d", re.I)
 YEAR_DAYS = 365
 SOON_DAYS = 30  # "getting closer": within a month of a year
 
@@ -84,6 +87,8 @@ def classify(stock: list[dict[str, Any]], products: list[dict[str, Any]], sales9
     soon: list[Row] = []
     for r in stock:
         whs, code = str(r.get("WhsCode") or "").strip(), str(r.get("ItemCode") or "")
+        if _DUMMY.search(str(r.get("ItemName") or "")) or _DUMMY.search(code):
+            continue
         qty = _num(r.get("OnHand"))
         bought = last_buy.get(code)
         if qty <= 0 or bought is None or (codes is not None and whs not in codes):

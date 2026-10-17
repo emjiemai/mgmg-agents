@@ -24,3 +24,5 @@ Once a week (`agent_actions` `old_stock_weekly`); `--force`, `--dry-run`.
 
 First run on 17.10.2026: all warehouses — 428 rows a year or more ($148 361), 2
 approaching; Garmin warehouses — 208 and 0.
+
+**Display dummies left out** (2026-10-17): «Dummy Unit…» and codes like 010-M2704-00 aren't stock for sale. Many items share a last-purchase date (22–23.04.2025, 21.05.2025) — a big shipment or the first stock load into SAP; they are at least that old. After this: all 318 rows, Garmin 137.

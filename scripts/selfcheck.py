@@ -4261,6 +4261,10 @@ def test_old_stock_and_live_views() -> None:
                [r.code for r in old] == ["A"] and [r.code for r in soon] == ["B"] and old[0].whs_name == "Garmin-Minor")
     g_old, g_soon = old_stock.classify(stock, products, sales90, whs, today, frozenset({"05"}))
     check_true("the Garmin manager's list: only the Garmin warehouses", [r.code for r in g_old] == ["A"] and g_soon == [])
+    dummies = [{"ItemCode": "010-M2704-00", "ItemName": "Dummy Unit, tactix 7", "WhsCode": "05", "OnHand": 1, "StockValue": 12},
+               {"ItemCode": "IXU-87580", "ItemName": "Dummy Unit, Glass monitor", "WhsCode": "05", "OnHand": 1, "StockValue": 12}]
+    d_old, _ = old_stock.classify(dummies, [{"ItemCode": d["ItemCode"], "LastPurDat": "2025-04-23"} for d in dummies], [], whs, today)
+    check("display dummies are not old stock", d_old, [])
     cap = old_stock.caption("Эски товарлар", old, soon)
     check_true("the message: counts, value, how many didn't sell in 90 days", "<b>1</b> қатор, $900" in cap and "биттаям сотилмаган" in cap)
     agent_src = load_source("agents/old-stock/agent.py")
