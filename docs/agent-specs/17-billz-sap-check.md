@@ -127,3 +127,12 @@ Checked on the real SAP export too: it finds the 29.09 → 30.09 late entries.
 python agents/billz-sap-check/agent.py --dry-run   # print, send nothing, store nothing
 python agents/billz-sap-check/agent.py --force     # send again today
 ```
+
+## Asked in the bot: live (2026-10-17)
+
+Billz is never stored — every reader asks the Billz API. Only this check's
+08:00 result is (`billz_sap_checks`), and the bot's «which cheques aren't in
+SAP?» read it, so a cheque entered at noon still showed as missing until the
+next morning. `analyst.billz_sap_check` now re-runs the check on the spot
+(Billz now, SAP's latest push, the last 14 days, by cheque) and says when;
+the stored results are the fallback when Billz can't be read.

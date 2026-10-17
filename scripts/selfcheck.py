@@ -3611,6 +3611,41 @@ def test_accountant_test_fixes() -> None:
         for obj, name, value in saved:
             setattr(obj, name, value)
 
+    # live (17.10): Billz read now against the latest SAP push; stored 08:00 results only as a fallback
+    from integrations.billz import sap_check
+    from integrations.common.config import settings as _settings
+
+    class FakeCheckAgent:
+        @staticmethod
+        async def billz_cheques(start, end, run_id):
+            return ([sap_check.Cheque(key="c1", day=date(2026, 10, 16), number="010001060236", amount=19300000, shop="GARMIN MINOR",
+                                      seller="Shirina", items=[])], {}, ["GARMIN MINOR"])
+
+        @staticmethod
+        async def _sap_rows(tool):
+            return []
+
+        @staticmethod
+        def compare(cheques, sales, lines, day, mapping):
+            return sap_check.check(cheques, [], day)
+
+        @staticmethod
+        async def last_sales_push():
+            return datetime(2026, 10, 17, 12, 13, tzinfo=timezone.utc)
+
+    from integrations.common import agent_loader
+
+    saved_live = [(agent_loader, "load_agent", agent_loader.load_agent), (type(_settings), "billz_configured", type(_settings).billz_configured)]
+    try:
+        agent_loader.load_agent = lambda name: FakeCheckAgent
+        type(_settings).billz_configured = property(lambda self: True)
+        live = asyncio.run(analyst.billz_sap_check({}))
+    finally:
+        for obj, name, value in saved_live:
+            setattr(obj, name, value)
+    check_true("the cheque check is LIVE: Billz now, SAP's last push, cheque by cheque",
+               live.startswith("LIVE Billz → SAP check") and "NOT in SAP: cheque 010001060236" in live)
+
     prompt = " ".join(analyst.employee_prompt("Дониёр", "Бухгалтерия", {"sap", "1c", "billz"}).split())
     sap_desc = analyst.SAP_KINDS["supplier_balances"]
     check_true("SAP supplier balance sign: negative = we owe (checked against 1C, 15.10)",

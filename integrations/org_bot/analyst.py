@@ -168,9 +168,9 @@ TOOLS: list[dict] = [
         "the Garmin product catalog with prices, and reports = the Garmin сотув team's daily reports (14 days: "
         "what each wrote, when, who didn't send one).",
         {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog", "reports"]}}, ("source",)),
-    _fn("billz_sap_check", "The Billz → SAP check of the last 7 days: every shop cheque in Billz must be in SAP "
-        "as an invoice — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP documents "
-        "with no cheque; by cheque number.", {}),
+    _fn("billz_sap_check", "The Billz → SAP check, LIVE: every shop cheque of the last 14 days (Billz read now) "
+        "against the latest SAP push — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP "
+        "documents with no cheque; by cheque number. Say the time it was checked.", {}),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -763,30 +763,59 @@ async def garmin_data(args: dict[str, Any]) -> str:
     return "source must be one of: leads, complaints, billz_sap, catalog, reports."
 
 
+def _check_lines(check_date: Any, status: str, res: dict[str, Any]) -> list[str]:
+    """One Billz → SAP result, cheque by cheque."""
+    lines = [f"{check_date} ({status}): Billz {res.get('billz', {}).get('cheques')} cheques "
+             f"{res.get('billz', {}).get('amount')} so'm, SAP {res.get('sap', {}).get('documents')} documents "
+             f"{res.get('sap', {}).get('amount')} so'm."]
+    for c in res.get("missing") or []:
+        lines.append(f"  - NOT in SAP: cheque {c.get('number')} of {c.get('day')}, {c.get('amount')} so'm, "
+                     f"{c.get('shop')}, seller {c.get('seller')}")
+    for p in res.get("amount_diff") or []:
+        lines.append(f"  - wrong amount: cheque {p['cheque'].get('number')} {p['cheque'].get('amount')} so'm "
+                     f"vs SAP #{p['doc'].get('number')} {p['doc'].get('amount')} so'm")
+    for p in res.get("late") or []:
+        lines.append(f"  - entered late: cheque {p['cheque'].get('number')} of {p['cheque'].get('day')}, "
+                     f"SAP #{p['doc'].get('number')} entered {p['doc'].get('created')}")
+    for d in res.get("extra") or []:
+        lines.append(f"  - in SAP but not Billz: #{d.get('number')} {d.get('day')} {d.get('amount')} so'm")
+    return lines
+
+
 async def billz_sap_check(args: dict[str, Any]) -> str:
-    """The last 7 Billz → SAP check results, by cheque (the Garmin manager's garmin_data, accounting with Billz + SAP)."""
+    """Billz → SAP by cheque. LIVE (2026-10-17: the 08:00 result looked old — a cheque entered at noon
+    still showed "not in SAP"): Billz read now against the latest SAP push; the stored 08:00 results
+    only if Billz can't be read."""
+    from integrations.billz import sap_check
+    from integrations.common.agent_loader import load_agent
+
+    if settings.billz_configured:
+        try:
+            agent = load_agent("billz-sap-check")
+            day = _today()
+            start = day - timedelta(days=sap_check.WINDOW_DAYS - 1)
+            cheques, unkeyed, _shops = await agent.billz_cheques(start, day, uuid.uuid4())
+            if not unkeyed:
+                sales, lines = await agent._sap_rows("sales"), await agent._sap_rows("sales_lines")
+                checked = agent.compare(cheques, sales, lines, day, sap_check.warehouse_map(settings.billz_sap_warehouses))
+                pushed = await agent.last_sales_push()
+                head = (f"LIVE Billz → SAP check, now {now_local():%d.%m.%Y %H:%M}: Billz read just now; SAP as of its "
+                        f"last push {pushed:%d.%m %H:%M}. " if pushed else "LIVE Billz → SAP check: ")
+                head += ("Cheques of the last 14 days; today's may still be entered into SAP this evening "
+                         "(the shop often enters the day's sales at 18:00–20:00).")
+                return "\n".join([head, *_check_lines(day, checked.status, sap_check.summary(checked))])
+        except Exception as exc:  # noqa: BLE001 — the stored results instead
+            log.warning("Live Billz → SAP check failed: {}", type(exc).__name__)
     rows = await fetch_read_only(
         "SELECT check_date, status, result, checked_at FROM billz_sap_checks ORDER BY check_date DESC LIMIT 7")
     if not rows:
         return "The Billz → SAP check has no results yet."
-    lines = ["The Billz → SAP check (every shop cheque must be in SAP as an invoice), newest first:"]
+    lines = ["Billz couldn't be read now — the STORED Billz → SAP checks (each made at 08:00 of the next day; "
+             "a cheque entered after that still shows as missing here), newest first:"]
     for r in rows:
         res = r["result"] if isinstance(r["result"], dict) else json.loads(r["result"] or "{}")
-        lines.append(f"{r['check_date']} ({r['status']}): Billz {res.get('billz', {}).get('cheques')} cheques, "
-                     f"SAP {res.get('sap', {}).get('documents')} documents.")
-        for c in res.get("missing") or []:
-            lines.append(f"  - NOT in SAP: cheque {c.get('number')} of {c.get('day')}, {c.get('amount')} so'm, "
-                         f"{c.get('shop')}, seller {c.get('seller')}")
-        for p in res.get("amount_diff") or []:
-            lines.append(f"  - wrong amount: cheque {p['cheque'].get('number')} {p['cheque'].get('amount')} so'm "
-                         f"vs SAP #{p['doc'].get('number')} {p['doc'].get('amount')} so'm")
-        for p in res.get("late") or []:
-            lines.append(f"  - entered late: cheque {p['cheque'].get('number')} of {p['cheque'].get('day')}, "
-                         f"SAP #{p['doc'].get('number')} entered {p['doc'].get('created')}")
-        for d in res.get("extra") or []:
-            lines.append(f"  - in SAP but not Billz: #{d.get('number')} {d.get('day')} {d.get('amount')} so'm")
+        lines += _check_lines(r["check_date"], r["status"], res)
     return "\n".join(lines)
-
 
 async def company_data(args: dict[str, Any]) -> str:
     from integrations.org_bot import ops_manager
