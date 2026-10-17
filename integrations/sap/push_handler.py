@@ -348,7 +348,7 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
     "sales": ("ObjType", "DocEntry", "DocNum", "CardCode", "CardName", "DocDate", "CreateDate", "CreateTS",
               "CANCELED", "DocCur", "DocTotal", "DocTotalFC", "DocTotalSy", "SlpCode", "UserSign"),
     "sales_lines": ("ObjType", "DocEntry", "LineNum", "ItemCode", "Dscription", "Quantity", "WhsCode", "CodeBars",
-                    "LineTotal"),
+                    "LineTotal", "GTotalSC"),
     "stock_value": ("WhsCode", "WhsName", "Items", "OnHand", "StockValue"),
     "supplier_balances": ("CardCode", "CardName", "LicTradNum", "CardType", "Currency", "Balance", "BalanceSys",
                           "BalanceFC"),

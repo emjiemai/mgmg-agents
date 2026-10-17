@@ -39,6 +39,8 @@ const branch = (objType, header, lines) => `
       L."Quantity",
       L."Price",
       L."LineTotal",
+      L."GTotalSC",
+      L."TotalSumSy",
       L."Currency" AS "LineCurrency",
       L."WhsCode"
     FROM ${tableRef(header)} H
@@ -55,6 +57,8 @@ const branch = (objType, header, lines) => `
  * date) is still returned, so the Command Center's Billz -> SAP check can
  * see it and say it was late. Every row carries its document's header
  * fields and one line; ObjType tells an invoice (13) from a credit note (14).
+ * GTotalSC / TotalSumSy are the LINE in so'm (with / without VAT, 2026-10-17): DocTotalSy repeats the
+ * whole document's total on every line, so adding it up line by line counted a two-line invoice twice.
  * DocTotalSy is the total in SAP's system currency (so'm), CreateTS the
  * entry time (hhmmss), UserSign the SAP user who entered it.
  */

@@ -162,7 +162,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   ҳуқуқларини чеклаш»): nothing sent to the admin / Admin Bot carries amounts, customers,
   other people's attendance or the Director's messages — `/billz` `/1c` `/verifix` are status
   only, Billz → SAP trial is counts only, data quality has no amounts, `/db` opens the bot's own
-  tables (the Boss approved, 17.10; access-review §4) — SAP / 1C / Billz / Verifix tables show their structure only,
+  tables (the Boss approved, 17.10; access-review §4) — SAP / 1C / Billz / Verifix tables show their structure only (open to IT until 31.10.2026 to fix the briefs, the Boss 17.10),
   logs keep no question/data/answer text. IT gets `tech_report.py` instead
   (08:00 + `/texnik`). Table for the Director: `docs/access-review-2026-10-07.md`.
 - **The Director's questions go to the analyst** (2026-10-07, `docs/agent-specs/19-director-analyst.md`):

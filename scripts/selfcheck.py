@@ -1284,6 +1284,8 @@ def test_db_viewer() -> None:
         return fake_rows["rows"]
 
     original_read, original_password, original_log = db_viewer._read, settings.db_viewer_password, db_viewer.log_action
+    original_until = db_viewer.PLATFORM_OPEN_UNTIL
+    db_viewer.PLATFORM_OPEN_UNTIL = date(2000, 1, 1)  # these checks are about closed platform tables
     db_viewer._read = fake_read
 
     async def no_audit(**kwargs):  # the test never writes to the real audit log
@@ -1308,6 +1310,12 @@ def test_db_viewer() -> None:
                    "🔒 v_ar_aging_latest" in index.text and "href='/db/v_ar_aging_latest'" in index.text
                    and "href='/db/employees'>employees" in index.text and "🔒 employees" not in index.text
                    and "href='/db/agent_actions'" in index.text)
+        db_viewer.PLATFORM_OPEN_UNTIL = original_until
+        check_true("platform tables open to IT only until the Boss's deadline (31.10), then closed by themselves",
+                   original_until == date(2026, 10, 31) and db_viewer.is_open("sap_gateway_snapshots", date(2026, 10, 31))
+                   and not db_viewer.is_open("sap_gateway_snapshots", date(2026, 11, 1))
+                   and db_viewer.is_open("employees", date(2026, 11, 1)) and not db_viewer.is_open("pg_stat_statements"))
+        db_viewer.PLATFORM_OPEN_UNTIL = date(2000, 1, 1)
         check_true("every SAP / 1C / Billz / Verifix table stays closed, the bot's records are open",
                    not db_viewer.PLATFORM_TABLES & db_viewer.TECHNICAL_TABLES
                    and {"employees", "tasks", "daily_reports", "client_feedback", "kpi_ratings"} <= db_viewer.TECHNICAL_TABLES
@@ -1370,6 +1378,7 @@ def test_db_viewer() -> None:
         db_viewer._read = original_read
         settings.db_viewer_password = original_password
         db_viewer.log_action = original_log
+        db_viewer.PLATFORM_OPEN_UNTIL = original_until
 
 
 def test_plan_agents() -> None:
@@ -3645,6 +3654,24 @@ def test_accountant_test_fixes() -> None:
             setattr(obj, name, value)
     check_true("the cheque check is LIVE: Billz now, SAP's last push, cheque by cheque",
                live.startswith("LIVE Billz → SAP check") and "NOT in SAP: cheque 010001060236" in live)
+
+    async def two_line_doc(query, params=None, timeout="10s"):
+        return [{"captured_at": datetime(2026, 10, 17, 7, tzinfo=timezone.utc), "raw": r} for r in (
+            {"ObjType": "13", "DocEntry": 2496, "LineNum": 0, "DocDate": "2026-10-16", "WhsCode": "05", "ItemCode": "A",
+             "DocTotalSy": 15000000, "GTotalSC": 14200000, "LineTotal": 1321.87},
+            {"ObjType": "13", "DocEntry": 2496, "LineNum": 1, "DocDate": "2026-10-16", "WhsCode": "05", "ItemCode": "B",
+             "DocTotalSy": 15000000, "GTotalSC": 800000, "LineTotal": 59.17})]
+
+    saved_lines = [(analyst, "fetch_read_only", analyst.fetch_read_only), (ops_manager, "sap_freshness", ops_manager.sap_freshness)]
+    try:
+        analyst.fetch_read_only, ops_manager.sap_freshness = two_line_doc, freshness
+        lines_out = asyncio.run(analyst.sap_records({"kind": "sales_lines"}))
+    finally:
+        for obj, name, value in saved_lines:
+            setattr(obj, name, value)
+    check_true("invoice lines: the document's total counted once, the lines' so'm summed (17.10: 15M had become 30M)",
+               "DocTotalSy UZS: 15,000,000" in lines_out and "GTotalSC UZS: 15,000,000" in lines_out
+               and "- A: 14,200,000" in lines_out)
 
     prompt = " ".join(analyst.employee_prompt("Дониёр", "Бухгалтерия", {"sap", "1c", "billz"}).split())
     sap_desc = analyst.SAP_KINDS["supplier_balances"]

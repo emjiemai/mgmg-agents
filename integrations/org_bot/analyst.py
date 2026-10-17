@@ -70,7 +70,9 @@ COMPANY_SOURCES: dict[str, str] = {
 # SAP data pushed from the gateway machine (push_handler.FULL_DATASETS) — what each kind is.
 SAP_KINDS: dict[str, str] = {
     "sales": "A/R invoices and credit notes (OINV + ORIN headers), last ~45 days",
-    "sales_lines": "lines of those invoices: item, quantity, warehouse, line total",
+    "sales_lines": "lines of those invoices: item, quantity, warehouse; the LINE's amount is GTotalSC (so'm with VAT; "
+                   "TotalSumSy without VAT; LineTotal = USD). DocTotal* on a line is the WHOLE document's total "
+                   "repeated on each of its lines — never add it up per line",
     "payments": "incoming payments from customers (ORCT), last 45 days — cash, transfer, cheque, card parts",
     "payments_out": "outgoing payments to suppliers (OVPM), last ~45 days",
     "ap_open": "every open supplier invoice (OPCH): DocDueDate, DocTotal / PaidToDate (USD), DocTotalSy / PaidSys "
@@ -97,9 +99,12 @@ SAP_KINDS: dict[str, str] = {
     "service_contracts": "service contracts (OCTR)",
 }
 # Fields whose sums are worked out here, not left to the model to add up.
-SUM_FIELDS = ("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "PaidFC", "LineTotal", "Quantity",
+SUM_FIELDS = ("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "PaidFC", "LineTotal", "GTotalSC", "TotalSumSy", "Quantity",
               "OnHand", "StockValue", "OpenQty", "CashSum", "TrsfrSum", "CheckSum", "Balance", "BalanceSys")
 DATE_FIELDS = ("DocDate", "TaxDate", "CreateDate", "DocDueDate")
+# Kinds with one row per document LINE, and the fields that are the document's own (2026-10-17).
+LINE_KINDS = ("sales_lines", "po_open")
+DOC_FIELDS = ("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "PaidFC")
 
 
 def _fn(name: str, description: str, properties: dict[str, Any], required: tuple[str, ...] = ()) -> dict:
@@ -494,13 +499,21 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
         if days:
             lines.append(f"Dates in these rows: {min(days)} to {max(days)}.")
     sums: dict[tuple[str, str], float] = defaultdict(float)
+    # A line repeats its document's totals (DocTotal*, PaidToDate…): on line kinds those are added once
+    # per document (2026-10-17: a two-line invoice had been counted twice); line fields once per line.
+    seen_docs: set[tuple[str, str]] = set()
     for x in live:
+        doc_key = (str(x.get("ObjType") or ""), str(x.get("DocEntry") or ""))
+        first_of_doc = doc_key not in seen_docs
+        seen_docs.add(doc_key)
         currency = str(x.get("DocCur") or "")
         for name in SUM_FIELDS:
+            if kind in LINE_KINDS and name in DOC_FIELDS and not first_of_doc:
+                continue
             value = _num(x.get(name))
             if value is not None:
-                # FC = the document's own currency; Sy = SAP's system currency (so'm); plain = local (USD).
-                label = currency if name.endswith("FC") and currency else "UZS" if name.endswith(("Sy", "Sys")) else ""
+                # FC = the document's own currency; Sy / SC = SAP's system currency (so'm); plain = local (USD).
+                label = currency if name.endswith("FC") and currency else "UZS" if name.endswith(("Sy", "Sys", "SC")) else ""
                 sums[(name, label)] += value
     if sums:
         lines.append("SUMS over every non-cancelled match (field as SAP named it; no suffix = SAP local currency USD "
@@ -509,6 +522,8 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
     if kind in ("sales", "sales_lines", "inventory", "stock_items") and live:
         key = {"sales": "CardName", "sales_lines": "ItemCode", "inventory": "WhsCode", "stock_items": "ItemName"}[kind]
         money = {"sales": "DocTotal", "sales_lines": "LineTotal", "inventory": "OnHand", "stock_items": "OnHand"}[kind]
+        if kind == "sales_lines" and any(x.get("GTotalSC") not in (None, "") for x in live):
+            money = "GTotalSC"  # the line in so'm (2026-10-17), not USD
         grouped: dict[str, float] = defaultdict(float)
         for x in live:
             grouped[str(x.get(key) or "—")] += _num(x.get(money)) or 0

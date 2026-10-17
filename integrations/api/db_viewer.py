@@ -72,7 +72,21 @@ TECHNICAL_TABLES = frozenset({
     "client_feedback", "cheques", "garmin_leads",
     "leads", "lead_assignments", "lead_checkins",
 })
-# Never opened: the platforms' data (and what is built from their figures).
+# Open for IT until this day only (2026-10-17, the Boss: find and fix the briefs' SAP / Billz / 1C
+# mismatches — docs/access-review-2026-10-07.md §4); closed again by itself after it.
+PLATFORM_OPEN_UNTIL = date(2026, 10, 31)
+
+
+def is_open(table: str, today: date | None = None) -> bool:
+    """Whether /db shows this table's rows: the bot's own tables; the platforms' only until PLATFORM_OPEN_UNTIL."""
+    from integrations.common.timeutil import today_local
+
+    if table in TECHNICAL_TABLES:
+        return True
+    return table in PLATFORM_TABLES and (today or today_local()) <= PLATFORM_OPEN_UNTIL
+
+
+# The platforms' data (and what is built from their figures): closed except while PLATFORM_OPEN_UNTIL lasts.
 PLATFORM_TABLES = frozenset({
     "ar_aging_snapshots", "v_ar_aging_latest", "sap_gateway_snapshots", "v_sap_gateway_latest",
     "cash_balance_snapshots", "v_cash_latest", "sales_summary_snapshots", "attendance_snapshots",
@@ -306,7 +320,7 @@ async def tables(request: Request) -> Response:
         else:
             count = await _count(name)
             size = f"<span class='muted'>{count if count is not None else '?'} қатор</span>"
-        if name in TECHNICAL_TABLES:
+        if is_open(name):
             items.append(f"<li><a href='/db/{quote(name)}'>{_e(name)}</a>{size}</li>")
         else:
             # closed: the link opens its structure only (no values)
@@ -326,7 +340,7 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "") -
     names = {r["name"] for r in await _relations()}
     if table not in names:
         return _page("Топилмади", "<p><a href='/db'>← Жадваллар</a></p><p>Бундай жадвал йўқ.</p>")
-    if table not in TECHNICAL_TABLES:
+    if not is_open(table):
         log.info("Closed table {} asked for in /db — values refused, structure shown", table)
         await log_action(agent="db-viewer", action="db_viewer_refused", target_system="postgres",
                          status="skipped", target_ref=table, mode="read")
