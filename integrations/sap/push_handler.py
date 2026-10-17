@@ -276,6 +276,18 @@ async def handle_gateway_push(tool: str, payload: dict[str, Any], run_id: uuid.U
         return {"ok": False, "error": f"unknown tool '{tool}', expected one of {sorted(VALID_TOOLS)}"}
 
     rows = payload.get("rows") or []
+    # A capped push (100 rows) after a complete one of the same kind would overwrite its rows with
+    # thinner ones and add closed orders (2026-10-17: the old duplicate Windows task at :17 / :47).
+    # The complete list wins while it is fresh, as for the open invoices.
+    if await fetch_one(
+        """SELECT 1 AS x FROM agent_actions WHERE agent = 'sap-gateway-push' AND action = %s AND status = 'success'
+           AND payload->>'source' = 'gateway_full' AND occurred_at > now() - interval '6 hours' LIMIT 1""",
+        (f"gateway_push_{tool}",),
+    ):
+        await log_action(agent="sap-gateway-push", action=f"gateway_push_{tool}_ignored", target_system="postgres",
+                         status="skipped", run_id=run_id, target_ref="sap_gateway_snapshots", mode="write",
+                         payload={"tool": tool, "rows_received": len(rows), "reason": "complete push is newer"})
+        return {"ok": True, "written": 0, "skipped": len(rows), "ignored": "complete push is newer"}
     snapshot_date = today_local()
     written = 0
 

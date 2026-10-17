@@ -3436,6 +3436,16 @@ def test_data_check_fixes() -> None:
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
+    logged.clear()
+    saved_cap = [(push_handler, "fetch_one", push_handler.fetch_one), (push_handler, "log_action", push_handler.log_action)]
+    push_handler.fetch_one, push_handler.log_action = recent_full, fake_log
+    try:
+        capped = asyncio.run(push_handler.handle_gateway_push("customers", {"rows": [{"CardCode": "C1"}]}, uuid.uuid4()))
+    finally:
+        for obj, name, value in saved_cap:
+            setattr(obj, name, value)
+    check_true("a capped customers / orders / products / payments push after the complete one is ignored (17.10)",
+               capped.get("ignored") and capped["written"] == 0 and logged == ["gateway_push_customers_ignored"])
 
     js = (root / "sap-gateway" / "src" / "stock-value.js").read_text(encoding="utf-8")
     check_true("the gateway values stock with SAP's own per-warehouse value (OITW.StockValue, then OITW.AvgPrice)",
