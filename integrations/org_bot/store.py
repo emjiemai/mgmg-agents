@@ -679,6 +679,7 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
     return await fetch_all(
         """
         SELECT t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker,
+               t.director_telegram_user_id, t.source_message_id,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id

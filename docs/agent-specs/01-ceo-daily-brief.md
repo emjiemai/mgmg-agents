@@ -8,6 +8,19 @@
 Director's questions, and sent if the picture can't be drawn.
 **Source:** A2 "5 рақам дашборди" in the owner's plan (ЭМЖИЕМ AI Агентлар Тизими)
 
+## 2026-10-17: no «Захира», no «Мижоз қарзи»; one line per task
+
+The owner: stock and customer debt are out of the brief (picture, caption and text). The only
+numbers left are yesterday's sales and today's payments. The debt is still read and stored
+(`daily_briefs`, for the analyst and the change) and the overdue detail still comes as its own
+message (receivables, A3).
+
+A task the Director gave to several people is one row per person in `tasks` (by design — each
+person has their own ▶️ / ✅ / ⛔); the brief now shows it once with all their surnames
+(`group_tasks`, grouped by the Director's message), the worst state winning, and counts tasks,
+not rows. On 17.10 «Дебитор қарзлар рўйхатини юбориб қўйинг» showed three times — one task to
+three accountants.
+
 ## 2026-10-16: goals, tasks and reports first; no «Касса»
 
 The owner: the brief is about where the company is going, not money in the

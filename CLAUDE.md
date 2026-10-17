@@ -48,7 +48,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - 1C «Бухгалтерия для Узбекистана» on Clobus, OData read-only (`integrations/onec/`, `docs/agent-specs/16-1c.md`):
   Admin `/1c` check; Q&A `pul_qoldigi` = 1C class-5000 balances (bank / нақд). **No «Касса» in the 08:00
   brief** (the owner, 2026-10-16): it opens with vision/mission (`COMPANY_VISION`/`COMPANY_MISSION`), month
-  goals, tasks and reports, then sales, stock, debt, payments.
+  goals, tasks and reports, then sales and payments only (**no «Захира», «Мижоз қарзи»**, 2026-10-17). A task to
+  several people is one row per person in `tasks` (by design) and one line in the brief (`group_tasks`).
+  `scripts/db_export.py` = read-only PDFs of the bot's own tables (never platform data; company data — Director's OK).
 - Verifix logs in with VERIFIX_LOGIN/PASSWORD/FILIAL_ID (works since 2026-10-01). Most staff are on
   "эркин график" (come when needed / when the Director calls): Admin Bot **`/grafik`** marks them by
   Verifix id (2026-10-03) — never late/absent, the brief only counts them, KPI doesn't penalize them.
