@@ -810,7 +810,8 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await _handle_employee_message(employee, message, run_id, background)
 
     # /hisobotlar: the month's report calendar as a picture (report_calendar.py, 2026-10-17).
-    if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS:
+    # /hisobot too — the Director sends no report of his own (2026-10-17).
+    if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
         return await _send_report_calendar(telegram_user_id, run_id)
 
     has_media = any(message.get(field) for field in MEDIA_FIELDS)
@@ -1381,6 +1382,11 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
 async def _show_today_report(employee: dict[str, Any], run_id: uuid.UUID) -> str:
     """/hisobot: today's report with ✏️ / 🗑, or how to send it."""
     report = await store.report_for_day(employee["telegram_user_id"], today_local())
+    # Someone with a team who has no report of their own (the Garmin manager): /hisobot meant the
+    # team's — the calendar (2026-10-17: «/hisobot» answered "no report is asked of you").
+    team = report_calendar.TEAM_OF.get(employee.get("role") or "")
+    if report is None and team:
+        return await _send_report_calendar(employee["telegram_user_id"], run_id, team)
     if report is None and employee.get("reports_off"):
         await _reply(employee["telegram_user_id"], run_id, report_tools.reports_off_text())
         return "reports_off"

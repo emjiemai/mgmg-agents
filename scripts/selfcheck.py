@@ -4106,6 +4106,10 @@ def test_own_week_and_team_calendar() -> None:
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
                and "hisobotlar" not in [c for c, _ in menus.EMPLOYEE] and menus.role_menu("londry") is None)
     check_true("employees' /hisobotlar only for a role with a team", "report_calendar.TEAM_OF.get(" in inspect.getsource(ops_manager))
+    shown = inspect.getsource(ops_manager._show_today_report)
+    check_true("/hisobot (one letter short) gives a manager with no report of his own the team calendar",
+               "TEAM_OF.get(" in shown and "_send_report_calendar(" in shown
+               and "report_calendar.COMMANDS + report_tools.REPORT_COMMANDS" in inspect.getsource(ops_manager))
 
 
 def test_reregistration_and_order() -> None:
