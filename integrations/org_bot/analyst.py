@@ -72,7 +72,9 @@ SAP_KINDS: dict[str, str] = {
     "sales": "A/R invoices and credit notes (OINV + ORIN headers), last ~45 days",
     "sales_lines": "lines of those invoices: item, quantity, warehouse; the LINE's amount is GTotalSC (so'm with VAT; "
                    "TotalSumSy without VAT; LineTotal = USD). DocTotal* on a line is the WHOLE document's total "
-                   "repeated on each of its lines — never add it up per line",
+                   "repeated on each of its lines — never add it up per line. Line amounts are BEFORE a discount "
+                   "on the whole document (17.10: #2496 lines 18.4M, document and Billz cheque 15M): what was paid "
+                   "is the document total; lines say which items",
     "payments": "incoming payments from customers (ORCT), last 45 days — cash, transfer, cheque, card parts",
     "payments_out": "outgoing payments to suppliers (OVPM), last ~45 days",
     "ap_open": "every open supplier invoice (OPCH): DocDueDate, DocTotal / PaidToDate (USD), DocTotalSy / PaidSys "
