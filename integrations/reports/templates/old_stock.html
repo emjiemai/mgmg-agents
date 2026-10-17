@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_ui.html" import masthead %}
+{% block title %}{{ title }} — {{ date }}{% endblock %}
+{% block style %}
+table.stock { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-top: 6pt; }
+table.stock th { text-align: left; font-weight: 700; color: var(--ink-2); border-bottom: 1.5px solid var(--ink); padding: 3pt 4pt; }
+table.stock td { padding: 3pt 4pt; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.stock td.num, table.stock th.num { text-align: right; white-space: nowrap; }
+table.stock tr.idle td.sold { color: var(--alert); font-weight: 700; }
+h2.part { font-size: 12pt; margin: 14pt 0 2pt; }
+h2.part .sum { font-weight: 400; color: var(--ink-2); font-size: 10pt; }
+.note { margin-top: 10pt; font-size: 8pt; color: var(--ink-3); line-height: 1.4; }
+{% endblock %}
+{% block body %}
+{{ masthead(title, date ~ " · SAP маълумоти " ~ as_of ~ " ҳолатига") }}
+{% for part, rows, total in (("Бир йил ва ундан кўп турган", old, old_value), ("Бир йилга яқинлашмоқда — 30 кун ичида", soon, soon_value)) %}
+{% if rows %}
+<h2 class="part">{{ part }} <span class="sum">— {{ rows|length }} қатор, {{ total }}</span></h2>
+<table class="stock">
+  <thead><tr><th>Товар</th><th>Омбор</th><th class="num">Дона</th><th class="num">Қиймати</th><th class="num">Охирги харид</th><th class="num">Ой</th><th class="num">90 кунда сотилди</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="{{ 'idle' if r.idle else '' }}"><td>{{ r.name }}<br><span style="color: var(--ink-3)">{{ r.code }}</span></td><td>{{ r.whs }}</td>
+      <td class="num">{{ r.qty }}</td><td class="num">{{ r.value }}</td><td class="num">{{ r.bought }}</td><td class="num">{{ r.months }}</td><td class="num sold">{{ r.sold90 }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endfor %}
+<p class="note">Ёши — товарнинг SAP'даги охирги харид санасидан (OITM.LastPurDat): бир йил олдин охирги марта олинган товарнинг ҳар бир донаси камида шунча турган. Кейин яна олинган товарнинг эски доналари бу рўйхатда кўринмайди. Қиймати — SAP'даги омбор қиймати (USD). Қизил «0» — 90 кунда биттаям сотилмаган. Ҳар душанба 08:00 · ҳозир: /eski.</p>
+{% endblock %}

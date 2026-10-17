@@ -87,3 +87,5 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 **SAP data (2026-10-16):** every kind the plan needs is a complete gateway tool (`sap-gateway/src/complete.js`, `docs/sap-gateway-tools.md` "Everything the plan needs") — waiting for the gateway computer to be updated.
 
 **Database review (2026-10-17):** every morning the bot's own tables are checked, safe fixes made (UPDATEs only), counts to IT — `24-db-review.md`, Admin Bot `/baza`. **Report calendar:** the Director's `/hisobotlar`.
+
+**Old stock (2026-10-17):** Mondays 08:00, the Director and the Garmin manager — goods a year or more in stock (`25-old-stock.md`), /eski.

@@ -23,6 +23,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import os  # noqa: E402
 
 os.environ["DATABASE_URL"] = "postgresql://selfcheck@127.0.0.1:9/no-database-in-tests"
+# Nor the platforms or the AI (2026-10-17: with BILLZ_SECRET_TOKEN in .env the run called the real
+# Billz API and took over 15 minutes): their keys are blanked here; a test that needs one fakes it.
+for _key in ("BILLZ_SECRET_TOKEN", "ONEC_ODATA_URL", "ONEC_LOGIN", "ONEC_PASSWORD", "VERIFIX_LOGIN",
+             "VERIFIX_PASSWORD", "OPENROUTER_API_KEY"):
+    os.environ[_key] = ""
+
+# ...and it fails at once rather than after the pool's 10 s wait per call (the run had grown past 10 minutes).
+from integrations.common import db as _db  # noqa: E402
+
+
+async def _no_database_in_tests():
+    raise RuntimeError("selfcheck: no database — fake this call")
+
+
+_db.get_pool = _no_database_in_tests
 
 from integrations.common.money import (
     format_money,
@@ -3827,7 +3842,7 @@ def test_command_menus() -> None:
     ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
-                   *ops_manager.report_calendar.COMMANDS}
+                   *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
@@ -4211,7 +4226,7 @@ def test_own_week_and_team_calendar() -> None:
     check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
                and 'prefix == "kr" and not director' in cb)
     check_true("his menu: team calendar, KPI, goals, results — no /hisobot, /ruxsat or /ism",
-               [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "bekor"])
+               [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "eski", "bekor"])
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
@@ -4221,6 +4236,47 @@ def test_own_week_and_team_calendar() -> None:
     check_true("/hisobot (one letter short) gives a manager with no report of his own the team calendar",
                "TEAM_OF.get(" in shown and "_send_report_calendar(" in shown
                and "report_calendar.COMMANDS + report_tools.REPORT_COMMANDS" in inspect.getsource(ops_manager))
+
+
+def test_old_stock_and_live_views() -> None:
+    """17.10.2026: goods a year or more in stock (the Director, the Garmin manager); 1C / Billz in /db, live."""
+    print("old stock, 1C / Billz live in /db (17.10.2026)")
+    import inspect
+
+    from integrations.api import db_viewer
+    from integrations.org_bot import old_stock, ops_manager
+    from integrations.telegram import menus
+
+    today = date(2026, 10, 17)
+    stock = [{"ItemCode": "A", "ItemName": "fenix 6", "WhsCode": "05", "OnHand": 2, "StockValue": 900},
+             {"ItemCode": "B", "ItemName": "Venu", "WhsCode": "01", "OnHand": 1, "StockValue": 300},
+             {"ItemCode": "C", "ItemName": "new", "WhsCode": "05", "OnHand": 5, "StockValue": 100},
+             {"ItemCode": "D", "ItemName": "gone", "WhsCode": "05", "OnHand": 0, "StockValue": 0}]
+    products = [{"ItemCode": "A", "LastPurDat": "2025-09-01"}, {"ItemCode": "B", "LastPurDat": "2025-11-01"},
+                {"ItemCode": "C", "LastPurDat": "2026-09-01"}, {"ItemCode": "D", "LastPurDat": "2024-01-01"}]
+    sales90 = [{"ItemCode": "A", "WhsCode": "05", "Quantity": 0}]
+    whs = [{"WhsCode": "05", "WhsName": "Garmin-Minor"}]
+    old, soon = old_stock.classify(stock, products, sales90, whs, today)
+    check_true("a year or more: A (13 months); approaching (within 30 days): B; new and empty ones out",
+               [r.code for r in old] == ["A"] and [r.code for r in soon] == ["B"] and old[0].whs_name == "Garmin-Minor")
+    g_old, g_soon = old_stock.classify(stock, products, sales90, whs, today, frozenset({"05"}))
+    check_true("the Garmin manager's list: only the Garmin warehouses", [r.code for r in g_old] == ["A"] and g_soon == [])
+    cap = old_stock.caption("Эски товарлар", old, soon)
+    check_true("the message: counts, value, how many didn't sell in 90 days", "<b>1</b> қатор, $900" in cap and "биттаям сотилмаган" in cap)
+    agent_src = load_source("agents/old-stock/agent.py")
+    check_true("Mondays, once a week; the Director all warehouses, the Garmin manager his",
+               "weekday() != 0" in agent_src and "old_stock_weekly" in agent_src
+               and "(\"garmin_manager\", old_stock.garmin_codes())" in agent_src
+               and "agents/old-stock/agent.py" in load_source("scripts/run_morning_agents.py"))
+    src = inspect.getsource(ops_manager)
+    check_true("/eski for both, in their menus", "old_stock.send(telegram_user_id, None, run_id)" in src
+               and "old_stock.send(telegram_user_id, old_stock.garmin_codes(), run_id)" in src
+               and "eski" in [c for c, _ in menus.DIRECTOR] and "eski" in [c for c, _ in menus.GARMIN_MANAGER])
+
+    check_true("1C and Billz in /db: read live, only while the platform tables are open",
+               set(db_viewer.LIVE_VIEWS) == {"1c_balances", "1c_turnovers", "billz_cheques", "billz_shops"}
+               and "table in LIVE_VIEWS and is_open(\"sap_gateway_snapshots\")" in load_source("integrations/api/db_viewer.py")
+               and db_viewer.BILLZ_DAYS[0] == 3)
 
 
 def test_reregistration_and_order() -> None:
@@ -7521,6 +7577,7 @@ def main() -> int:
         test_sap_everything,
         test_cleanup_round_17_10,
         test_own_week_and_team_calendar,
+        test_old_stock_and_live_views,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

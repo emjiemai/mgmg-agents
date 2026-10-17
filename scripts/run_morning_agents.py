@@ -42,6 +42,7 @@ AGENTS = [
     "agents/task-tracker/agent.py --morning",
     "agents/data-quality/agent.py",  # sends only on Mondays
     "agents/cash-calendar/agent.py",  # sends only on Mondays
+    "agents/old-stock/agent.py",  # Mondays: goods a year or more in stock — the Director, the Garmin manager
     "agents/task-tracker/agent.py --monthly",  # sends only on the 1st
     "agents/db-review/agent.py",  # the bot's own tables: stale, test, duplicate rows (counts to IT)
     "agents/tech-report/agent.py",  # last: IT's report on how the runs above went (no figures)

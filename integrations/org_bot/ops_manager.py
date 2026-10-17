@@ -33,7 +33,7 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheques, report_calendar, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheques, old_stock, report_calendar, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -810,6 +810,9 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await _handle_employee_message(employee, message, run_id, background)
 
     # /hisobotlar: the month's report calendar as a picture (report_calendar.py, 2026-10-17).
+    # /eski: goods a year or more in the warehouse, every warehouse (old_stock.py, 2026-10-17).
+    if (message.get("text") or "").strip().lower() in old_stock.COMMANDS:
+        return await old_stock.send(telegram_user_id, None, run_id)
     # /hisobot too — the Director sends no report of his own (2026-10-17).
     if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
         return await _send_report_calendar(telegram_user_id, run_id)
@@ -1533,6 +1536,8 @@ async def _handle_employee_message(
         return "ignored"
     if text.lower() in report_tools.REPORT_COMMANDS:
         return await _show_today_report(employee, run_id)
+    if employee.get("role") == "garmin_manager" and text.lower() in old_stock.COMMANDS:  # his warehouses' old stock
+        return await old_stock.send(telegram_user_id, old_stock.garmin_codes(), run_id)
     team = report_calendar.TEAM_OF.get(employee.get("role") or "")
     if team and text.lower() in report_calendar.COMMANDS:  # the Garmin manager: his team's calendar (17.10)
         return await _send_report_calendar(telegram_user_id, run_id, team)

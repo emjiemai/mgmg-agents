@@ -30,6 +30,7 @@ import base64
 import html
 import json
 import secrets
+import uuid
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -378,6 +379,98 @@ async def _sap_page(kind: str, page: int, search: str) -> Response:
                  f"<div class='pager'>{prev_link}<span class='muted'>{_e(shown)}</span>{next_link}</div>")
 
 
+# 1C and Billz aren't stored — the bot reads them live — so their /db pages read them live too
+# (2026-10-17, the owner: "do the same for 1C and Billz"). Open while the platform tables are.
+LIVE_VIEWS: dict[str, str] = {
+    "1c_balances": "1C: ҳисобварақ қолдиқлари — ҳозир, контрагент бўйича",
+    "1c_turnovers": "1C: айланмалар — шу ой, контрагент бўйича",
+    "billz_cheques": "Billz: чеклар — товарлари билан (охирги 3 кун; 7 / 14 кун — секинроқ)",
+    "billz_shops": "Billz: дўконлар",
+}
+
+
+# Billz answers one day per call (~15 s a day): 3 days by default, up to 14 on request.
+BILLZ_DAYS = (3, 7, 14)
+
+
+async def _live_rows(view: str, days: int = 3) -> tuple[list[str], list[dict[str, Any]], str]:
+    """(columns, rows, note) — read now from 1C (OData) or Billz (API)."""
+    from datetime import timedelta
+
+    from integrations.common.timeutil import now_local, today_local
+
+    if view.startswith("1c_"):
+        from integrations.org_bot import analyst
+
+        now = now_local().replace(tzinfo=None)
+        if view == "1c_balances":
+            resource, kind = f"Balance(Period=datetime'{now:%Y-%m-%dT%H:%M:%S}')", "Balance"
+            note = f"1C, {now:%d.%m.%Y %H:%M} ҳолатига (мусбат — дебет)"
+        else:
+            start = now.replace(day=1)
+            resource = (f"Turnovers(StartPeriod=datetime'{start:%Y-%m-%d}T00:00:00',"
+                        f"EndPeriod=datetime'{now:%Y-%m-%dT%H:%M:%S}')")
+            kind, note = "Turnover", f"1C, {start:%d.%m}–{now:%d.%m.%Y} айланмалари"
+        rows, accounts, names = await analyst._onec_rows(resource)
+        fields = sorted({k for r in rows for k, v in r.items() if k.startswith("Сумма") and kind in k
+                         and isinstance(v, (int, float)) and not isinstance(v, bool)})
+        out = []
+        for r in rows:
+            code, name = accounts.get(str(r.get("Account_Key")), ("?", ""))
+            party = names.get(str(r.get("ExtDimension1") or ""), "") if r.get("ExtDimension1") else ""
+            out.append({"Ҳисобварақ": code, "Номи": name, "Контрагент": party, **{f: r.get(f) for f in fields}})
+        out.sort(key=lambda x: (str(x["Ҳисобварақ"]), str(x["Контрагент"])))
+        return ["Ҳисобварақ", "Номи", "Контрагент", *fields], out, note
+    if view == "billz_shops":
+        from integrations.billz.client import BillzClient
+
+        async with BillzClient(agent="db-viewer") as client:
+            shops = await client.shops()
+        cols = ["name", "id", "deleted_at"]
+        return cols, [{c: s.get(c) for c in cols} for s in shops], "Billz, ҳозир"
+    from integrations.common.agent_loader import load_agent
+
+    end = today_local()
+    start = end - timedelta(days=(days if days in BILLZ_DAYS else BILLZ_DAYS[0]) - 1)
+    cheques, _unkeyed, _shops = await load_agent("billz-sap-check").billz_cheques(start, end, uuid.uuid4())
+    out = [{"Кун": c.day, "Дўкон": c.shop, "Чек": c.number, "Сумма": c.amount, "Сотувчи": c.seller,
+            "Товарлар": "; ".join(i.name for i in c.items)} for c in sorted(cheques, key=lambda c: (c.day, c.shop, c.number), reverse=True)]
+    return ["Кун", "Дўкон", "Чек", "Сумма", "Сотувчи", "Товарлар"], out, f"Billz, {start:%d.%m}–{end:%d.%m.%Y}, ҳозир ўқилди"
+
+
+async def _live_page(view: str, page: int, search: str, days: int = 3) -> Response:
+    try:
+        columns, rows, note = await _live_rows(view, days)
+    except Exception as exc:  # noqa: BLE001 — say so instead of a 500
+        log.warning("Live view {} failed: {}", view, type(exc).__name__)
+        return _page(LIVE_VIEWS[view], f"<p><a href='/db'>← Жадваллар</a></p><p>Ўқиб бўлмади: {_e(type(exc).__name__)}</p>")
+    if search:
+        rows = [r for r in rows if search.lower() in " ".join(str(v) for v in r.values()).lower()]
+    total = len(rows)
+    chunk = rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+    head = "".join(f"<th>{_e(c)}</th>" for c in columns)
+    body = "".join("<tr>" + "".join(_cell(r.get(c)) for c in columns) + "</tr>" for r in chunk) or \
+        f"<tr><td class='null' colspan='{max(len(columns), 1)}'>Қатор йўқ</td></tr>"
+    first, last = ((page - 1) * PAGE_SIZE + 1 if chunk else 0), (page - 1) * PAGE_SIZE + len(chunk)
+    shown = f"{first}–{last} / {total}"
+
+    def link(to_page: int, to_days: int = days) -> str:
+        return f"/db/{quote(view)}?" + urlencode({"page": to_page, "days": to_days, **({"q": search} if search else {})})
+
+    prev_link = f"<a href='{_e(link(page - 1))}'>← Олдинги</a>" if page > 1 else "<span></span>"
+    next_link = f"<a href='{_e(link(page + 1))}'>Кейинги →</a>" if last < total else "<span></span>"
+    periods = ""
+    if view == "billz_cheques":
+        periods = "<p>" + " · ".join(f"<b>{d} кун</b>" if d == days else f"<a href='{_e(link(1, d))}'>{d} кун</a>"
+                                      for d in BILLZ_DAYS) + "</p>"
+    return _page(f"{LIVE_VIEWS[view]} — MGMG",
+                 f"<p><a href='/db'>← Жадваллар</a></p><h1>{_e(LIVE_VIEWS[view])} <span class='muted'>{_e(shown)}</span></h1>"
+                 f"<p class='muted'>{_e(note)} · сақланмайди, ҳар очилганда жонли ўқилади</p>{periods}"
+                 f"<form method='get'><input name='q' value='{_e(search)}' placeholder='Қидириш'><button>Қидириш</button></form>"
+                 f"<div class='wrap'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
+                 f"<div class='pager'>{prev_link}<span class='muted'>{_e(shown)}</span>{next_link}</div>")
+
+
 @router.get("", response_class=HTMLResponse)
 async def tables(request: Request) -> Response:
     """Every table and view, with its row count."""
@@ -407,15 +500,19 @@ async def tables(request: Request) -> Response:
             when = f" · {cell_text(at)}" if at else ""
             sap_items.append(f"<li><a href='/db/{quote(SAP_PREFIX + kind)}'>{_e(label)}</a>"
                              f"<span class='muted'>{n} қатор{_e(when)}</span></li>")
+        live = "".join(f"<li><a href='/db/{quote(v)}'>{_e(label)}</a><span class='muted'>жонли</span></li>"
+                       for v, label in LIVE_VIEWS.items())
         sap = ("<h2>SAP маълумотлари — энг охирги юклама (ҳар 30 дақиқада)</h2>"
-               f"<ul class='list'>{''.join(sap_items)}</ul><h2>Ҳамма жадваллар</h2>")
+               f"<ul class='list'>{''.join(sap_items)}</ul>"
+               "<h2>1C ва Billz — сақланмайди, очилганда жонли ўқилади</h2>"
+               f"<ul class='list'>{live}</ul><h2>Ҳамма жадваллар</h2>")
     return _page("MGMG — база", f"<h1>Жадваллар</h1><p class='muted'>🔒 — SAP, 1C, Billz, Verifix маълумоти: фақат "
                                 "тузилиши кўринади. Бот ёзувлари очиқ (Директор рухсати, 17.10.2026).</p>"
                                 f"{sap}<ul class='list'>{''.join(items)}</ul>")
 
 
 @router.get("/{table}", response_class=HTMLResponse)
-async def table_rows(request: Request, table: str, page: int = 1, q: str = "") -> Response:
+async def table_rows(request: Request, table: str, page: int = 1, q: str = "", days: int = 3) -> Response:
     """One table's rows, newest first, with an optional text search."""
     denied = await _gate(request)
     if denied:
@@ -424,6 +521,8 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "") -
     kind = sap_kind(table)
     if kind is not None and is_open("sap_gateway_snapshots"):  # one SAP kind as its own table (2026-10-17)
         return await _sap_page(kind, max(page, 1), q.strip()[:100])
+    if table in LIVE_VIEWS and is_open("sap_gateway_snapshots"):  # 1C / Billz read now (2026-10-17)
+        return await _live_page(table, max(page, 1), q.strip()[:100], days)
     names = {r["name"] for r in await _relations()}
     if table not in names:
         return _page("Топилмади", "<p><a href='/db'>← Жадваллар</a></p><p>Бундай жадвал йўқ.</p>")
