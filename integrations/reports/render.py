@@ -69,20 +69,21 @@ def pdf(template: str, **context: Any) -> bytes:
     return html_to_pdf(render_html(template, image=False, **context))
 
 
-def image(template: str, **context: Any) -> bytes:
-    """A one-page template as a PNG, 1080 px wide, exactly as tall as its content."""
+def image(template: str, *, width_css: int = IMAGE_WIDTH_CSS, **context: Any) -> bytes:
+    """A one-page template as a PNG, 1080 px wide (or ``width_css`` × 2 — the report calendar's
+    31 days need more room), exactly as tall as its content."""
     import pypdfium2 as pdfium
     from PIL import Image, ImageChops
 
     html = render_html(
-        template, image=True, page_width=IMAGE_WIDTH_CSS, page_height=IMAGE_PAGE_HEIGHT_CSS,
+        template, image=True, page_width=width_css, page_height=IMAGE_PAGE_HEIGHT_CSS,
         sentinel="#{:02x}{:02x}{:02x}".format(*SENTINEL), **context,
     )
     document = pdfium.PdfDocument(html_to_pdf(html))
     if len(document) != 1:
         raise RenderError(f"{template}: the content needs {len(document)} pages, an image holds one")
     page = document[0]
-    scale = IMAGE_WIDTH_PX / page.get_width()  # PDF points to pixels
+    scale = IMAGE_WIDTH_PX * width_css / IMAGE_WIDTH_CSS / page.get_width()  # PDF points to pixels
     picture = page.render(scale=scale).to_pil().convert("RGB")
     # Everything that isn't the sentinel colour is content; cut just below it.
     box = ImageChops.difference(picture, Image.new("RGB", picture.size, SENTINEL)).getbbox()

@@ -120,3 +120,17 @@ full:
 - **G1 owner's assistant** — needs Outlook access.
 - **E2 AI operations manager** — the plan says build it last, on top of A1,
   A2, A3, B1, B2. OPS Manager Bot already covers its routing part.
+
+## The same task again; a role change (2026-10-17)
+
+The owner: a task the Director gives again while the person's earlier one is
+still open is **not added a second time** — a reminder (🔁) goes as a reply on
+their existing card, the history gets `repeated`, and the Director's card says
+who was reminded. "The same" = the summaries or the Director's words ≥ 80 %
+alike (`task_register.same_task`). Someone without it open gets a new task as
+before (each person has their own row).
+
+A role change is a clean start (`store.change_employee_role`): that person's
+open tasks are cancelled (a co-assignee keeps theirs), today's unanswered
+report ask closes without a minus, the work AI forgets the old chat, and KPI
+counts only the role held now. Removal already did this (2026-10-14).

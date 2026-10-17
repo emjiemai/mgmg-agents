@@ -81,18 +81,37 @@ async def reset_employee_name(employee_id: str, changed_by: str) -> dict[str, An
 
 
 async def change_employee_role(employee_id: str, role: str, changed_by: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    """Move an employee to another role (a new position), logged.
+    """Move an employee to another role (a new position), logged — a clean start in it (2026-10-17).
+
+    The owner: someone who changes role leaves the old role's work behind, like
+    someone removed. So their open tasks are cancelled (each person has their
+    own task row — a co-assignee keeps theirs), today's unanswered report ask
+    closes without a minus, and the work AI forgets the old chat. KPI counts
+    only the new role's reports and tasks (``kpi_month_rows``); history stays.
 
     Returns:
         ``(before, after)``, or None if there's no such active employee or
-        the role is unchanged.
+        the role is unchanged. ``after["tasks_cancelled"]`` says how many went.
     """
     before = await fetch_one("SELECT * FROM employees WHERE id = %s AND status = 'active'", (employee_id,))
     if before is None or before["role"] == role:
         return None
     after = await fetch_one("UPDATE employees SET role = %s WHERE id = %s RETURNING *", (role, employee_id))
     await log_employee_change(employee_id, "role", before["role"], role, changed_by)
-    return before, after
+    cancelled = await fetch_all(
+        """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL
+           WHERE assigned_employee_id = %s AND status IN ('sent', 'started', 'blocked', 'review') RETURNING id""",
+        (employee_id,),
+    )
+    for task in cancelled:
+        await log_task_event(str(task["id"]), "cancelled", changed_by, "ходимнинг роли ўзгарди")
+    await execute(
+        """UPDATE daily_reports SET penalized_at = now(), penalty_points = 0
+           WHERE employee_id = %s AND status = 'asked' AND penalized_at IS NULL""",
+        (employee_id,),
+    )
+    await execute("DELETE FROM ai_chat_turns WHERE telegram_user_id = %s", (after["telegram_user_id"],))
+    return before, {**after, "tasks_cancelled": len(cancelled)}
 
 
 async def toggle_weekend_day(employee_id: str, day: str, changed_by: str) -> dict[str, Any] | None:
@@ -593,6 +612,15 @@ async def create_task(
     if row is not None:
         await log_task_event(str(row["id"]), "created", str(director_telegram_user_id))
     return row
+
+
+async def open_tasks_of(employee_id: str) -> list[dict[str, Any]]:
+    """One person's tasks not finished yet (sent, started, blocked, in review), newest first."""
+    return await fetch_all(
+        """SELECT * FROM tasks WHERE assigned_employee_id = %s AND status IN ('sent', 'started', 'blocked', 'review')
+           ORDER BY created_at DESC""",
+        (employee_id,),
+    )
 
 
 # ------------------------------------------------------ A3: task deadlines
@@ -1368,6 +1396,21 @@ async def team_reports(role: str, since: date) -> list[dict[str, Any]]:
     )
 
 
+async def run_fix(sql: str) -> int:
+    """One of db_review's fixed UPDATEs (never a DELETE); how many rows it settled."""
+    if not sql.lstrip().upper().startswith("UPDATE "):
+        raise ValueError("db_review fixes are UPDATEs only")
+    return await execute(sql)
+
+
+async def reports_between_rows(start: date, end: date) -> list[dict[str, Any]]:
+    """Every daily-report ask in ``[start, end]`` (the report calendar, 2026-10-17)."""
+    return await fetch_all(
+        "SELECT employee_id, report_date, status, penalty_points FROM daily_reports WHERE report_date BETWEEN %s AND %s",
+        (start, end),
+    )
+
+
 async def close_missed_reports(report_date: date, points: int) -> list[dict[str, Any]]:
     """22:00: every ask of that day still unanswered gets its minus points — once (2026-10-15).
 
@@ -2008,23 +2051,25 @@ async def mark_kpi_period(month: date, column: str) -> bool:
 async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any]]]:
     """Everything the KPI needs for ``[start, end]``, keyed by employee_id."""
     reports = await fetch_all(
+        # Only the role the person holds now (2026-10-17: a role change is a clean start).
         """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, r.penalty_points, e.display_name
            FROM daily_reports r JOIN employees e ON e.id = r.employee_id
-           WHERE r.report_date BETWEEN %s AND %s""",
+           WHERE r.report_date BETWEEN %s AND %s AND r.role = e.role""",
         (start, end),
     )
     tasks = await fetch_all(
         """SELECT t.assigned_employee_id AS employee_id, t.status, t.due_date, t.completed_at, t.created_at,
                   e.display_name
            FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
-           WHERE t.due_date BETWEEN %s AND %s""",
+           WHERE t.due_date BETWEEN %s AND %s AND t.status <> 'cancelled' AND t.target_role = e.role""",
         (start, end),
     )
     done = await fetch_all(
-        """SELECT assigned_employee_id AS employee_id, count(*) AS n FROM tasks
-           WHERE status IN ('done', 'review') AND assigned_employee_id IS NOT NULL
-             AND (completed_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s
-           GROUP BY assigned_employee_id""",
+        """SELECT t.assigned_employee_id AS employee_id, count(*) AS n FROM tasks t
+           JOIN employees e ON e.id = t.assigned_employee_id
+           WHERE t.status IN ('done', 'review') AND t.target_role = e.role
+             AND (t.completed_at AT TIME ZONE 'Asia/Tashkent')::date BETWEEN %s AND %s
+           GROUP BY t.assigned_employee_id""",
         (start, end),
     )
     return {"reports": reports, "tasks": tasks, "done": done, "leads": await lead_kpi_rows(start, end)}

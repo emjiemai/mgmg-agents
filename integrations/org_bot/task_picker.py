@@ -77,5 +77,11 @@ def sent_text(task_summary: str, sent: list[dict[str, Any]]) -> str:
     return f"📋 {sanitize_model_html(task_summary)}\n\n✅ Юборилди: {who}."
 
 
+def reminded_text(people: list[dict[str, Any]]) -> str:
+    """Those who already had this task open: reminded, not given it twice (2026-10-17)."""
+    who = ", ".join(escape(names.person_name(p)) for p in people)
+    return f"🔁 Аввалги топшириғи ҳали тугамаган — эслатилди: {who}."
+
+
 def cancelled_text(task_summary: str) -> str:
     return f"📋 {sanitize_model_html(task_summary)}\n\n❌ Бекор қилинди — ҳеч кимга юборилмади."

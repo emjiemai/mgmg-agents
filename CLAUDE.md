@@ -38,6 +38,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **Leads to B2B sales: STOPPED 2026-10-07** by the Director (he will do it another way) — the AI
   sends nothing to B2B Sotuv; `agents/lead-handout/` is deleted; history kept (`14-lead-handout.md`).
   The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1).
+- **Database review** (2026-10-17, `agents/db-review/`, `docs/agent-specs/24-db-review.md`, Admin Bot `/baza`): the bot's own
+  tables only, safe UPDATE fixes, counts to IT. **Report calendar**: the Director's `/hisobotlar` (PNG).
 - IT's technical report (`agents/tech-report/`, last in the 08:00 job, Admin Bot `/texnik`): connections,
   SAP push, brief delivered, runs/errors, DB size, refused attempts — counts and times only.
 - KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`

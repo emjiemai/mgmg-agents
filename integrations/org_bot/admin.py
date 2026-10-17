@@ -57,6 +57,8 @@ FLEXIBLE_LOOKBACK_DAYS = 30
 DAY_OFF_DAYS = 14
 # "/texnik" -> IT's technical report now (tech_report.py; also every morning).
 TECH_REPORT_COMMANDS = ("/texnik", "/tech")
+# "/baza" -> the bot's own tables checked now: stale, test, duplicate rows (db_review.py, 2026-10-17).
+DB_REVIEW_COMMANDS = ("/baza", "/база")
 # "/elon" (+ text) -> one message to every employee, after a confirm tap.
 ANNOUNCE_COMMAND = "/elon"
 # What /elon sends when no text is given: the "something went wrong" notice.
@@ -223,6 +225,10 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await _check_billz(run_id)
     if text in ONEC_COMMANDS:
         return await _check_onec(run_id)
+    if text in DB_REVIEW_COMMANDS:  # the bot's own tables checked now (db_review.py)
+        from integrations.org_bot import db_review
+
+        return await db_review.send(run_id)
     if text in TECH_REPORT_COMMANDS:
         from integrations.org_bot import tech_report
 
@@ -1050,6 +1056,7 @@ async def _handle_employee_action(
             await _answer(query_id, "Роль ўзгармади")
             return "role_unchanged"
         before, after = changed
+        cancelled = after.pop("tasks_cancelled", 0)  # a clean start in the new role (store.change_employee_role)
         if DIRECTOR_ROLE in (before["role"], after["role"]):  # the ☰ menu follows the role (menus.py)
             await menus.sync_person(after["telegram_user_id"], after["role"])
         # Data access belongs to Бухгалтерия / Молия, and a role-given one (Garmin manager) to that
@@ -1067,10 +1074,12 @@ async def _handle_employee_action(
         new_label = ROLE_LABELS.get(after["role"], after["role"])
         await _tell_employee(
             after["telegram_user_id"],
-            f"🔁 Ролингиз ўзгартирилди: <b>{escape(old_label)}</b> → <b>{escape(new_label)}</b>.",
+            f"🔁 Ролингиз ўзгартирилди: <b>{escape(old_label)}</b> → <b>{escape(new_label)}</b>."
+            + (f" Аввалги ролдаги {cancelled} та очиқ топшириқ ёпилди." if cancelled else ""),
             run_id,
         )
-        text, keyboard = employee_card(after, f"🔁 Роль ўзгартирилди: {escape(old_label)} → {escape(new_label)}")
+        text, keyboard = employee_card(after, f"🔁 Роль ўзгартирилди: {escape(old_label)} → {escape(new_label)}"
+                                       + (f"\nАввалги ролдаги {cancelled} та очиқ топшириқ бекор қилинди." if cancelled else ""))
         await _edit(callback, text, keyboard, run_id)
         await log_action(
             agent=AGENT, action="employee_role_changed", target_system="postgres", status="success", run_id=run_id,

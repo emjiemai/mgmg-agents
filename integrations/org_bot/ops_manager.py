@@ -33,7 +33,7 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheques, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheques, report_calendar, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -808,6 +808,10 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
 
     if employee["role"] != DIRECTOR_ROLE:
         return await _handle_employee_message(employee, message, run_id, background)
+
+    # /hisobotlar: the month's report calendar as a picture (report_calendar.py, 2026-10-17).
+    if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS:
+        return await _send_report_calendar(telegram_user_id, run_id)
 
     has_media = any(message.get(field) for field in MEDIA_FIELDS)
     text = (message.get("text") or "").strip()
@@ -1869,9 +1873,17 @@ async def _handle_draft_send(rest: str, callback: dict[str, Any], run_id: uuid.U
     await _answer(query_id, "Юборилмоқда")
     selected = {str(i) for i in draft["selected_ids"]}
     recipients = [p for p in await _draft_people(draft) if str(p["id"]) in selected]
-    sent = await _send_task_cards(draft, recipients, run_id)
+    reminded: list[dict[str, Any]] = []
+    sent = await _send_task_cards(draft, recipients, run_id, reminded)
 
-    text = task_picker.sent_text(draft["task_summary"], sent) if sent else "⚠️ Ҳеч кимга етказиб бўлмади."
+    if sent:
+        text = task_picker.sent_text(draft["task_summary"], sent)
+    elif reminded:
+        text = f"📋 {sanitize_model_html(draft['task_summary'])}"
+    else:
+        text = "⚠️ Ҳеч кимга етказиб бўлмади."
+    if reminded:
+        text += "\n" + task_picker.reminded_text(reminded)
     keyboard: dict[str, Any] = {"inline_keyboard": []}
     if sent and draft["due_date"] is not None:
         text += f"\n{task_tracker.deadline_line(draft['due_date'], today_local())}"
@@ -1896,8 +1908,26 @@ async def _handle_draft_cancel(rest: str, callback: dict[str, Any], run_id: uuid
     return "draft_cancelled"
 
 
-async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]], run_id: uuid.UUID) -> list[dict[str, Any]]:
-    """One task row and card per person — a text card, or the Director's file copied with the card as caption."""
+async def _send_report_calendar(chat_id: int, run_id: uuid.UUID) -> str:
+    """The Director's /hisobotlar: green sent, red missed, this month (a text if the picture fails)."""
+    png, view = await report_calendar.picture()
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        if png is not None:
+            await bot.send_file(png, "hisobotlar.png", str(chat_id), report_calendar.caption(view), photo=True)
+            return "report_calendar"
+        await bot.send_message(report_calendar.text_fallback(view), chat_id=str(chat_id))
+    return "report_calendar_text"
+
+
+async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]], run_id: uuid.UUID,
+                           reminded: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """One task row and card per person — a text card, or the Director's file copied with the card as caption.
+
+    Someone who already has the same task open (2026-10-17, the owner) gets no second row: a reminder
+    goes on their existing card and they are added to ``reminded``.
+    """
     sent: list[dict[str, Any]] = []
     director_id = draft["director_telegram_user_id"]
     due_date = draft["due_date"]
@@ -1905,6 +1935,19 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         for employee in employees:
+            existing = next((t for t in await store.open_tasks_of(str(employee["id"]))
+                             if task_register.same_task(t, draft)), None)
+            if existing is not None:
+                try:
+                    await bot.send_message(task_register.repeated_text(existing), chat_id=str(employee["telegram_user_id"]),
+                                           reply_to_message_id=existing.get("telegram_message_id"))
+                except TelegramError as exc:
+                    log.error("Could not remind {} of a repeated task: {}", names.person_name(employee), exc)
+                    continue
+                await store.log_task_event(str(existing["id"]), "repeated", str(director_id))
+                if reminded is not None:
+                    reminded.append(employee)
+                continue
             task = await store.create_task(
                 director_telegram_user_id=director_id,
                 source_message_id=draft["source_message_id"] or 0,

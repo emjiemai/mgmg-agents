@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — {{ month }}{% endblock %}
+{% block style %}
+.legend { display: flex; gap: 22px; white-space: nowrap; margin: 14px 0 12px; font-size: 12.5px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sq { display: inline-block; width: 13px; height: 13px; border-radius: 3px; }
+.sent { background: var(--ok); }
+.missed { background: var(--alert); }
+.open { background: #f2b33d; }
+.none { background: #eceef1; }
+.future { background: transparent; border: 1px dashed var(--rule-strong); }
+table.cal { width: 100%; border-collapse: separate; border-spacing: 2px 3px; table-layout: fixed; }
+table.cal th { font-size: 9.5px; font-weight: 700; color: var(--ink-3); text-align: center; padding: 0; line-height: 1.15; }
+table.cal th.we, table.cal th .we { color: var(--ink-2); }
+table.cal th.today { color: var(--ink); }
+table.cal td { padding: 0; height: 22px; border-radius: 4px; }
+table.cal td.who { width: 175px; padding-right: 8px; height: auto; }
+table.cal th.who { width: 175px; }
+table.cal th.tot { width: 52px; }
+.who .n { font-size: 12.5px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.who .r { font-size: 10.5px; color: var(--ink-3); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+td.tot { text-align: right; font-size: 12px; font-weight: 700; white-space: nowrap; padding-left: 6px; }
+td.tot .bad { color: var(--alert); }
+.summary { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--ink-2); }
+.summary b { color: var(--ink); }
+{% endblock %}
+{% block body %}
+<header class="masthead">
+  <div>
+    <h1>{{ title }} — {{ month }}</h1>
+    <p class="when">{{ when }}</p>
+  </div>
+  <div class="mark">ЭМЖИЕМ</div>
+</header>
+<div class="legend">
+  <span><i class="sq sent"></i>юборилди</span>
+  <span><i class="sq missed"></i>юборилмади (−балл)</span>
+  <span><i class="sq open"></i>бугун, 22:00 гача</span>
+  <span><i class="sq none"></i>сўралмаган</span>
+</div>
+<table class="cal">
+  <thead>
+    <tr>
+      <th class="who"></th>
+      {% for d in days %}<th class="{% if d.weekend %}we{% endif %}{% if d.today %} today{% endif %}">{{ d.n }}<br>{{ d.wd }}</th>{% endfor %}
+      <th class="tot"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in people %}
+    <tr>
+      <td class="who"><div class="n">{{ p.name }}</div><div class="r">{{ p.role }}{% if p.off %} · ҳисобот ўчирилган{% endif %}</div></td>
+      {% for c in p.cells %}<td class="{{ c }}"></td>{% endfor %}
+      <td class="tot num">{{ p.sent }}{% if p.missed %} / <span class="bad">{{ p.missed }}</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="summary">Жами: <b>{{ sent }}</b> та ҳисобот юборилди, <b>{{ missed }}</b> та юборилмади{% if share is not none %} — <b>{{ share }}%</b>{% endif %}. Ҳисобот 16:00 да сўралади, 22:00 гача қабул қилинади.</p>
+{% endblock %}

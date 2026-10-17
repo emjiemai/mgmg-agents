@@ -147,3 +147,31 @@ def answer_line(task: dict[str, Any]) -> str:
     if status == "blocked" and task.get("blocker"):
         line += f" (тўсиқ: {task['blocker']})"
     return line
+
+
+# ------------------------------------------------- the same task again (2026-10-17)
+
+# The owner: a task the Director gives again while it is still open isn't added a second time —
+# the person is reminded on the card they already have. This close counts as the same task.
+SAME_TASK_RATIO = 0.8
+
+
+def _norm(text: str | None) -> str:
+    return " ".join(re.sub(r"<[^>]+>|[^\w\s]", " ", (text or "").lower()).split())
+
+
+def same_task(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Whether two tasks are the same instruction: their summaries (or the Director's words) nearly equal."""
+    from difflib import SequenceMatcher
+
+    for key in ("task_summary", "raw_message"):
+        x, y = _norm(a.get(key)), _norm(b.get(key))
+        if x and y and (x == y or SequenceMatcher(None, x, y).ratio() >= SAME_TASK_RATIO):
+            return True
+    return False
+
+
+def repeated_text(task: dict[str, Any]) -> str:
+    """The reminder on the existing card when the Director gives the same task again."""
+    return (f"🔁 Директор бу топшириқни яна берди — {code_of(task)} ҳали тугамаган. "
+            "Илтимос, бажариб, «✅ Бажардим» тугмасини босинг.")

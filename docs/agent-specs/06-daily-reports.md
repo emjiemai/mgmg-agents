@@ -217,3 +217,10 @@ the question as the report. Now a message with «?» goes straight to the AI
 (`report_message_kind` → "question"); any other message is still confirmed
 with one tap. Held messages nobody taps close at 22:00 (`pending_relays.outcome
 = 'expired'`, `store.expire_held_messages`) instead of staying open for weeks.
+
+## The report calendar (2026-10-17)
+
+The Director's **/hisobotlar** (OPS Manager Bot, ☰ menu): one picture of the
+month — people down the side, days across; green sent, red missed (the
+minus), amber today before 22:00, grey not asked. `integrations/org_bot/report_calendar.py`,
+template `reports_calendar.html` (a wider page, 1920 px). Text if the picture fails.

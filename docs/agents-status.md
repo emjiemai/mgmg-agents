@@ -85,3 +85,5 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 **Bot menus (2026-10-16):** both bots show their / commands behind the ☰ button — per role in OPS Manager (`integrations/telegram/menus.py`).
 
 **SAP data (2026-10-16):** every kind the plan needs is a complete gateway tool (`sap-gateway/src/complete.js`, `docs/sap-gateway-tools.md` "Everything the plan needs") — waiting for the gateway computer to be updated.
+
+**Database review (2026-10-17):** every morning the bot's own tables are checked, safe fixes made (UPDATEs only), counts to IT — `24-db-review.md`, Admin Bot `/baza`. **Report calendar:** the Director's `/hisobotlar`.

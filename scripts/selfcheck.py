@@ -3745,11 +3745,12 @@ def test_command_menus() -> None:
                    all(re.fullmatch(r"[a-z0-9_]{1,32}", c) and 0 < len(d) <= 256 and re.search("[а-яўқғҳ]", d.lower())
                        for c, d in items) and len({c for c, _ in items}) == len(items))
     admin_handles = {*admin.EMPLOYEE_LIST_COMMANDS, *admin.ASK_NAMES_COMMANDS, *admin.DATA_QUALITY_COMMANDS,
-                     admin.QR_COMMAND, admin.VERIFIX_COMMAND, admin.BILLZ_COMMAND, *admin.ONEC_COMMANDS,
+                     admin.QR_COMMAND, admin.VERIFIX_COMMAND, admin.BILLZ_COMMAND, *admin.ONEC_COMMANDS, *admin.DB_REVIEW_COMMANDS,
                      *admin.DAY_OFF_COMMANDS, *admin.FLEXIBLE_COMMANDS, *admin.TECH_REPORT_COMMANDS, admin.ANNOUNCE_COMMAND}
     ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
-                   *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS}
+                   *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
+                   *ops_manager.report_calendar.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR))
@@ -3919,6 +3920,124 @@ def test_sap_everything() -> None:
     schema = (root / "database" / "schema.sql").read_text(encoding="utf-8")
     check_true("the table accepts item_sales_90d; big pushes fit", "'item_sales_90d'" in schema
                and push_handler.MAX_FULL_ROWS >= 100_000)
+
+
+def test_cleanup_round_17_10() -> None:
+    """17.10.2026: a repeated task reminds instead of a second row; a role change is a clean start;
+    the report calendar; the bot's own database reviewed every morning."""
+    print("repeated tasks, role change, report calendar, database review (17.10.2026)")
+    import asyncio
+    import inspect
+    import uuid
+    from datetime import datetime
+
+    from integrations.common.timeutil import TASHKENT
+    from integrations.org_bot import db_review, ops_manager, report_calendar, store, task_register
+    from integrations.reports import render
+
+    # ---- the same task again: a reminder on the open card, no second row
+    old = {"id": "t1", "code": "T-2026-10-0001", "task_summary": "Юнусобод филиали ҳисоботини тайёрланг",
+           "raw_message": "Зиёдага ҳисобот тайёрлашни топшир", "telegram_message_id": 77, "status": "sent"}
+    draft = {"task_summary": "Юнусобод филиали ҳисоботини тайёрланг.", "raw_message": "Зиёда ҳисоботни тайёрласин",
+             "director_telegram_user_id": 1, "source_message_id": 5, "has_media": False, "due_date": None}
+    check_true("the same instruction is recognised; a different one isn't",
+               task_register.same_task(old, draft)
+               and not task_register.same_task(old, {"task_summary": "Омбордаги қолдиқни санаб чиқинг", "raw_message": "x"}))
+    created, events, sent_msgs = [], [], []
+
+    class FakeBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, reply_to_message_id=None):
+            sent_msgs.append((chat_id, text, reply_to_message_id))
+            return [900]
+
+    async def open_tasks_of(employee_id):
+        return [old] if employee_id == "e1" else []
+
+    async def create_task(**kw):
+        created.append(kw["assigned_employee_id"])
+        return {"id": "t2", "code": "T-2026-10-0002"}
+
+    async def log_event(task_id, event, actor, note=None):
+        events.append((task_id, event))
+
+    async def nothing(*a, **k):
+        return None
+
+    saved = [(ops_manager, "TelegramBot", ops_manager.TelegramBot), (store, "open_tasks_of", store.open_tasks_of),
+             (store, "create_task", store.create_task), (store, "log_task_event", store.log_task_event),
+             (store, "set_task_message_id", store.set_task_message_id)]
+    try:
+        ops_manager.TelegramBot, store.open_tasks_of, store.create_task = FakeBot, open_tasks_of, create_task
+        store.log_task_event, store.set_task_message_id = log_event, nothing
+        reminded: list = []
+        people = [{"id": "e1", "telegram_user_id": 11, "role": "londry", "full_name": "Зиёда"},
+                  {"id": "e2", "telegram_user_id": 12, "role": "londry", "full_name": "Шерзод"}]
+        sent = asyncio.run(ops_manager._send_task_cards(draft, people, uuid.uuid4(), reminded))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("who has it open is reminded on the existing card; only the other gets a new task",
+               created == ["e2"] and [p["id"] for p in sent] == ["e2"] and [p["id"] for p in reminded] == ["e1"]
+               and ("11", task_register.repeated_text(old), 77) in sent_msgs and ("t1", "repeated") in events)
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("the task history accepts 'repeated'", "'cancelled', 'repeated'" in schema)
+
+    # ---- a role change: a clean start (own rows only — a co-assignee keeps theirs)
+    src = inspect.getsource(store.change_employee_role)
+    check_true("role change: own open tasks cancelled, today's ask closed without a minus, AI memory cleared",
+               "WHERE assigned_employee_id = %s AND status IN" in src and "penalty_points = 0" in src
+               and "DELETE FROM ai_chat_turns" in src)
+    kpi_src = inspect.getsource(store.kpi_month_rows)
+    check_true("KPI counts only the role held now, never cancelled tasks",
+               "r.role = e.role" in kpi_src and "t.target_role = e.role" in kpi_src and "t.status <> 'cancelled'" in kpi_src)
+
+    # ---- the report calendar
+    now = datetime(2026, 10, 17, 18, 0, tzinfo=TASHKENT)
+    check("cells: sent / missed / open today / not asked / future",
+          [report_calendar.cell({"status": "submitted"}, date(2026, 10, 15), now),
+           report_calendar.cell({"status": "asked"}, date(2026, 10, 15), now),
+           report_calendar.cell({"status": "asked"}, date(2026, 10, 17), now),
+           report_calendar.cell(None, date(2026, 10, 11), now),
+           report_calendar.cell(None, date(2026, 10, 20), now)],
+          ["sent", "missed", "open", "none", "future"])
+    emps = [{"id": "e1", "full_name": "Алишер Каримов", "role": "londry"}, {"id": "d", "full_name": "Бош", "role": "operatsion_direktor"}]
+    rows = [{"employee_id": "e1", "report_date": date(2026, 10, 15), "status": "submitted", "penalty_points": 0},
+            {"employee_id": "e1", "report_date": date(2026, 10, 16), "status": "asked", "penalty_points": 1}]
+    view = report_calendar.build(date(2026, 10, 1), now, emps, rows)
+    check_true("one row per employee (not the Director), every day of the month, the minus counted",
+               len(view["people"]) == 1 and len(view["days"]) == 31 and view["people"][0].missed == 1
+               and view["people"][0].minus == 1 and view["share"] == 50)
+    png = render.image("reports_calendar.html", width_css=report_calendar.CALENDAR_WIDTH_CSS, **view)
+    check_true("drawn as one picture", png[:4] == b"\x89PNG")
+    check_true("the Director's /hisobotlar sends it", "report_calendar.COMMANDS" in inspect.getsource(ops_manager))
+
+    # ---- the database review: the bot's own tables, UPDATE fixes only, counts to IT
+    sql = " ".join(c.count_sql + " " + (c.fix_sql or "") for c in db_review.CHECKS).lower()
+    check_true("never the platforms' tables", not any(t in sql for t in ("sap_gateway", "ar_aging", "billz", "attendance_snap")))
+    check_true("fixes are UPDATEs only, and run_fix refuses anything else",
+               all(c.fix_sql is None or c.fix_sql.lstrip().upper().startswith("UPDATE ") for c in db_review.CHECKS))
+    try:
+        asyncio.run(store.run_fix("DELETE FROM tasks"))
+        refused = False
+    except ValueError:
+        refused = True
+    check_true("...a DELETE is refused before it reaches the database", refused)
+    findings = [db_review.Finding(db_review.CHECKS[0], 3, 3), db_review.Finding(db_review.CHECKS[3], 2, 0),
+                db_review.Finding(db_review.CHECKS[4], 0, 0)]
+    msg = db_review.text(findings)
+    check_true("the message: what it fixed, what to look at and where — counts only",
+               "Ўзи тузатди" in msg and ": 3" in msg and "<code>tasks</code>" in msg and "саволлар" not in msg)
+    check("nothing found: one line", db_review.text([db_review.Finding(db_review.CHECKS[0], 0)]),
+          "🧹 <b>Бот базаси текшируви</b>\n✅ Ҳаммаси тартибда.")
 
 
 def test_reregistration_and_order() -> None:
@@ -7217,6 +7336,7 @@ def main() -> int:
         test_garmin_memory_and_team_reports,
         test_stock_items,
         test_sap_everything,
+        test_cleanup_round_17_10,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

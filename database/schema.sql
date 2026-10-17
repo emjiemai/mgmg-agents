@@ -495,6 +495,11 @@ CREATE TABLE IF NOT EXISTS task_events (
     note       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events (task_id, at);
+-- 'repeated' (2026-10-17): the Director gave the same task again while it was still open — no new row,
+-- the person is reminded on the existing card.
+ALTER TABLE task_events DROP CONSTRAINT IF EXISTS task_events_event_check;
+ALTER TABLE task_events ADD CONSTRAINT task_events_event_check CHECK (event IN (
+    'created', 'accepted', 'blocked', 'unblocked', 'submitted', 'closed', 'returned', 'cancelled', 'repeated'));
 
 DROP INDEX IF EXISTS idx_tasks_open;
 CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started', 'blocked', 'review');
