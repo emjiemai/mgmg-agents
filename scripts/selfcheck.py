@@ -108,8 +108,8 @@ def friendly_problems(text: str, names: tuple[str, ...] = ()) -> list[str]:
     """What breaks the friendly voice (tone.py) in a message, if anything.
 
     One line, lowercase except the names in it (which must keep their capital,
-    2026-10-01), polite ("сиз", never "сен"), no markup, and at most one emoji
-    — at the very end.
+    2026-10-01), polite ("сиз", never "сен"), no markup, and no emoji (2026-10-19,
+    the owner — it was one at the very end).
     """
     from integrations.org_bot import tone
 
@@ -127,11 +127,8 @@ def friendly_problems(text: str, names: tuple[str, ...] = ()) -> list[str]:
         problems.append("not polite")
     if "<" in text:
         problems.append("markup")
-    emoji_at = [i for i, char in enumerate(text) if tone._EMOJI.match(char) and char not in "\ufe0f\u200d"]
-    if len(emoji_at) > 1:
-        problems.append("more than one emoji")
-    if emoji_at and text[emoji_at[0]:].strip("\ufe0f\u200d ") != text[emoji_at[0]]:
-        problems.append("emoji not at the end")
+    if tone._EMOJI.search(text):
+        problems.append("emoji")
     return problems
 
 
@@ -1907,8 +1904,11 @@ def test_politeness_days_off_announcements() -> None:
     from integrations.org_bot import admin, kpi, ops_manager, store, tone
 
     # ---- names keep their capitals; the sentence stays lowercase
-    check("a name keeps its capitals", tone.casual("Алишер ака, БУГУН зўр кун", "☀️", keep=["Алишер ака"]),
-          "Алишер ака, бугун зўр кун ☀️")
+    check("a name keeps its capitals, and no emoji (19.10)", tone.casual("Алишер ака, БУГУН зўр кун ☀️", keep=["Алишер ака"]),
+          "Алишер ака, бугун зўр кун")
+    check("the 16:00 ask and the 17:00 reminder end without an emoji (the owner, 19.10)",
+          [t.rsplit(" ", 1)[-1] for t in (kpi.build_request_text("Улуғбек ака", ()), kpi.build_reminder_text("Улуғбек ака", ()))],
+          ["чарчаманг", "каттакон"])
 
     # ---- "сиз", never "сен"
     for text, polite in (("бугун зўр ишладингиз", True), ("илтимос ёзиб юборсангиз", True), ("нима қилдингиз?", True),
@@ -3735,8 +3735,8 @@ def test_report_deadline_penalty() -> None:
     check_true("the 16:00 ask and the 17:00 reminder say «соат 22:00 гача»",
                "22:00" in kpi.build_request_text("Алишер ака", []) and "22:00" in kpi.build_reminder_text("Алишер ака", []))
     text = kpi.build_penalty_text("Алишер ака", 1, 3)
-    check_true("the minus, told politely in red: name kept, 'сиз', −1 today and −3 this month",
-               text.startswith("Алишер ака,") and "1 балл" in text and "−3 балл" in text and text.endswith("🔴")
+    check_true("the minus, told politely, no emoji: name kept, 'сиз', −1 today and −3 this month",
+               text.startswith("Алишер ака,") and "1 балл" in text and "−3 балл" in text and not tone._EMOJI.search(text)
                and "KPI" in text and tone.is_polite(text))
     schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
     check_true("schema: penalty_points and penalized_at", "ADD COLUMN IF NOT EXISTS penalty_points" in schema

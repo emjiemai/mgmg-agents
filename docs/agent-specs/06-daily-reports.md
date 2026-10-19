@@ -33,19 +33,19 @@ follows at 17:00.
 
 **How it sounds (2026-09-30).** Employees felt the old ask — "🕓 **Кунлик
 ҳисобот**" and two paragraphs — as one more alarm. Every message in this flow
-is now one friendly lowercase line with one emoji at the very end
-(`integrations/org_bot/tone.py`), addressed by first name plus ака/опа when the
+is now one friendly lowercase line, **no emoji** (2026-10-19, the owner — it used
+to end with one; `integrations/org_bot/tone.py`), addressed by first name plus ака/опа when the
 admin set it (`names.call_name`):
 
 | When | Message |
 | ---- | ------- |
-| 16:00 ask | Алишер ака, ишларингиз билан чарчамаяпсизми, илтимос бугунги ҳисоботингизни ёзиб юборинг, раҳмат каттакон, чарчаманг 🙏 |
-| 17:00 reminder | Алишер ака, ҳисоботингизни кутиб турибман, иш тугагунча ёзиб юборсангиз, раҳмат каттакон 🙏 |
-| report saved | раҳмат каттакон, ҳисоботингиз қабул қилинди, чарчаманг 😊 |
-| vague report | the AI's one question, same voice: "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди? 🙂" |
-| answer added | раҳмат каттакон, ҳисоботингизга қўшиб қўйдим 😊 |
-| too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 22:00 гача олинади 🙂 |
-| any typed message while the report is owed (not a Reply to the ask) | бу бугунги ҳисоботингизми? 🙂 — ҳа, ҳисобот · йўқ, бу савол (→ the work AI). **Never guessed** (2026-10-02). |
+| 16:00 ask | Алишер ака, ишларингиз билан чарчамаяпсизми, илтимос бугунги ҳисоботингизни ёзиб юборинг, раҳмат каттакон, чарчаманг |
+| 17:00 reminder | Алишер ака, ҳисоботингизни кутиб турибман, иш тугагунча ёзиб юборсангиз, раҳмат каттакон |
+| report saved | раҳмат каттакон, ҳисоботингиз қабул қилинди, чарчаманг |
+| vague report | the AI's one question, same voice: "нечта қўнғироққа жавоб бердингиз ва қанча сотув бўлди?" |
+| answer added | раҳмат каттакон, ҳисоботингизга қўшиб қўйдим |
+| too late | 29.09 кунги ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида соат 22:00 гача олинади |
+| any typed message while the report is owed (not a Reply to the ask) | бу бугунги ҳисоботингизми? — ҳа, ҳисобот · йўқ, бу савол (→ the work AI). **Never guessed** (2026-10-02). |
 | a photo / video / file | бу расм нима учун? 🙂 — бугунги ҳисобот · директорга юбориш · бекор қилиш; report or Director: the file itself is forwarded to the Director with who sent it; the AI never reads it |
 | /hisobot | today's report with ✏️ ўзгартириш (the next message is the new text) and 🗑 ўчириш (after «ҳа, ўчириш» it's owed again until 22:00). Only today's, only one's own. |
 

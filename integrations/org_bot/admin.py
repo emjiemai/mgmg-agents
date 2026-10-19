@@ -811,7 +811,7 @@ async def _draft_announcement(text: str, sender: dict[str, Any], run_id: uuid.UU
     """/elon [text]: keep it and show the admin a preview with Send/Cancel. No text = the tech-error notice."""
     from integrations.org_bot.tone import casual  # local import keeps admin light
 
-    body = text or casual(TECH_ERROR_TEXT, "🙏")
+    body = text or casual(TECH_ERROR_TEXT)
     announcement = await store.create_announcement(body, sender.get("username") or str(sender.get("id", "")))
     recipients = len(await store.list_active_employees())
     preview, keyboard = announcement_view(announcement, recipients)

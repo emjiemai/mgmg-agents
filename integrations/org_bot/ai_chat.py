@@ -159,22 +159,22 @@ def clean_answer(answer: str) -> str:
     text = sanitize_model_html((answer or "").strip())
     if len(text) > ANSWER_MAX:
         text = text[:ANSWER_MAX].rsplit(" ", 1)[0] + "…"
-    return text or casual("кечирасиз, жавоб топа олмадим, саволни бошқача ёзиб кўринг", "🙏")
+    return text or casual("кечирасиз, жавоб топа олмадим, саволни бошқача ёзиб кўринг")
 
 
 def hint_text() -> str:
-    return casual("ишингиз бўйича саволингизни шунчаки ёзаверинг, AI жавоб беради", "🙂", keep=["AI"])
+    return casual("ишингиз бўйича саволингизни шунчаки ёзаверинг, AI жавоб беради", keep=["AI"])
 
 
 def off_text() -> str:
     return casual(
-        "бу бот фақат иш учун: ҳисобот ва топшириқлар, бошқа хабарлар ҳеч кимга юборилмайди", "🙂"
+        "бу бот фақат иш учун: ҳисобот ва топшириқлар, бошқа хабарлар ҳеч кимга юборилмайди"
     )
 
 
 def limit_text() -> str:
-    return casual("бугунги AI саволлари чегарасига етдингиз, эртага давом этамиз", "🙂", keep=["AI"])
+    return casual("бугунги AI саволлари чегарасига етдингиз, эртага давом этамиз", keep=["AI"])
 
 
 def error_text() -> str:
-    return casual("техник хатолик юз берди, бир оздан кейин қайта ёзинг", "🙏")
+    return casual("техник хатолик юз берди, бир оздан кейин қайта ёзинг")

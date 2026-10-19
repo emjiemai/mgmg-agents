@@ -184,13 +184,12 @@ def build_request_text(name: str, metrics: Sequence[Metric]) -> str:
         metrics: Their role's numbers, asked for in the same sentence when any.
 
     Returns:
-        Telegram text — one lowercase sentence, one emoji at the end.
+        Telegram text — one lowercase sentence, no emoji.
     """
     numbers = f" рақамлари билан ({_numbers_hint(metrics)})" if metrics else ""
     return casual(
         f"{escape(name)}, ишларингиз билан чарчамаяпсизми, илтимос бугунги ҳисоботингизни{numbers} "
         "соат 22:00 гача ёзиб юборинг, раҳмат каттакон, чарчаманг",
-        "🙏",
         keep=[escape(name)],
     )
 
@@ -203,22 +202,20 @@ def build_reminder_text(name: str, metrics: Sequence[Metric]) -> str:
         metrics: Their role's numbers, repeated in the same sentence when any.
 
     Returns:
-        Telegram text — one lowercase sentence, one emoji at the end.
+        Telegram text — one lowercase sentence, no emoji.
     """
     numbers = f" рақамлари билан ({_numbers_hint(metrics)})" if metrics else ""
     return casual(
         f"{escape(name)}, ҳисоботингизни кутиб турибман, соат 22:00 гача{numbers} ёзиб юборсангиз, раҳмат каттакон",
-        "🙏",
         keep=[escape(name)],
     )
 
 
 def build_penalty_text(name: str, points: int, month_points: int) -> str:
-    """22:00, no report (2026-10-15, the Director): the minus points, told to the person — politely, in red."""
+    """22:00, no report (2026-10-15, the Director): the minus points, told to the person — politely."""
     return casual(
         f"{escape(name)}, бугунги ҳисоботингиз соат 22:00 гача келмади, шунинг учун KPI баллингиздан {points} балл "
         f"айирилди, шу ойда жами −{month_points} балл, эртага вақтида юборишингизни сўраймиз",
-        "🔴",
         keep=[escape(name), "KPI"],
     )
 

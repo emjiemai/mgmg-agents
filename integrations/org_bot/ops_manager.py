@@ -977,7 +977,7 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="failure",
                          run_id=run_id, mode="read", error_message=type(exc).__name__)
         try:
-            await _reply(telegram_user_id, run_id, "Техническая ошибка, попробуйте чуть позже 🙏" if ru
+            await _reply(telegram_user_id, run_id, "Техническая ошибка, попробуйте чуть позже" if ru
                          else ai_chat.error_text())
         except Exception:  # noqa: BLE001
             pass
@@ -1206,7 +1206,7 @@ async def _try_daily_report(
                 fresh = kpi.parse_metrics(text, metrics_def) if metrics_def else {}
                 if fresh:
                     await store.merge_report_metrics(str(followup["id"]), fresh)
-                await _reply(employee["telegram_user_id"], run_id, casual("раҳмат каттакон, ҳисоботингизга қўшиб қўйдим", "😊"))
+                await _reply(employee["telegram_user_id"], run_id, casual("раҳмат каттакон, ҳисоботингизга қўшиб қўйдим"))
                 return "daily_report_followup"
 
         # A reply to an ask that has closed (22:00, or an earlier day), so say
@@ -1220,7 +1220,6 @@ async def _try_daily_report(
                     casual(
                         f"{expired['report_date'].strftime('%d.%m')} кунги ҳисоботнинг вақти ўтиб кетибди, "
                         "ҳисоботлар шу куннинг ўзида соат 22:00 гача олинади",
-                        "🙂",
                     ),
                 )
                 return "daily_report_expired"
@@ -1293,15 +1292,14 @@ async def _save_daily_report(
     follow_up = await _report_follow_up(text, employee["role"], run_id)
     if follow_up:
         await store.mark_report_followup(str(saved["id"]))
-        await _reply(employee["telegram_user_id"], run_id, casual(escape(follow_up), "🙂"))
+        await _reply(employee["telegram_user_id"], run_id, casual(escape(follow_up)))
         return "daily_report_weak"
 
-    ack = casual("раҳмат каттакон, ҳисоботингиз қабул қилинди, ўзгартириш учун /hisobot, чарчаманг", "😊")
+    ack = casual("раҳмат каттакон, ҳисоботингиз қабул қилинди, ўзгартириш учун /hisobot, чарчаманг")
     missing = kpi.missing_metrics(values, metrics_def)
     if missing:
         ack = casual(
             f"раҳмат, ҳисоботингиз қабул қилинди, {escape(', '.join(missing))} рақамларини ҳам ёзсангиз қўшиб қўяман",
-            "🙏",
         )
     await _reply(employee["telegram_user_id"], run_id, ack)
     return "daily_report"
@@ -1313,7 +1311,7 @@ async def _ask_report_or_ai(employee: dict[str, Any], text: str, run_id: uuid.UU
     await _reply(
         employee["telegram_user_id"],
         run_id,
-        casual("бу бугунги ҳисоботингизми?", "🙂"),
+        casual("бу бугунги ҳисоботингизми?"),
         report_or_ai_keyboard(str(held["id"])),
     )
     return "report_or_ai_asked"
@@ -1455,7 +1453,7 @@ async def _handle_held_as_question(
         ) as bot:
             await bot._edit_message(  # noqa: SLF001 — same-package reuse of a generic edit helper
                 chat_id=str(message["chat"]["id"]), message_id=message["message_id"],
-                text=casual("савол сифатида қабул қилдим", "🙂"), reply_markup={"inline_keyboard": []},
+                text=casual("савол сифатида қабул қилдим"), reply_markup={"inline_keyboard": []},
             )
     if employee is None or employee["status"] != "active":
         return "unknown_employee"
@@ -1478,12 +1476,12 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
     if employee is not None and pending is not None:
         outcome = await _save_daily_report(employee, pending, relay["message_text"], run_id)
     if outcome is not None:
-        status_line = casual("ҳисобот сифатида сақладим, раҳмат каттакон", "😊")
+        status_line = casual("ҳисобот сифатида сақладим, раҳмат каттакон")
     elif await store.submitted_report_today(clicker_id, day) is not None:
-        status_line = casual("бугунги ҳисоботингиз аллақачон қабул қилинган", "🙂")
+        status_line = casual("бугунги ҳисоботингиз аллақачон қабул қилинган")
         outcome = "report_already_submitted"
     else:
-        status_line = casual("ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида олинади", "🙂")
+        status_line = casual("ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида олинади")
         outcome = "report_window_closed"
 
     message = callback.get("message") or {}

@@ -362,7 +362,7 @@ resolved against the prior turn's task.
   reported. The Director's brief, the Friday scorecard and the monthly KPI
   still run. Stored in `days_off`.
 - **`/elon`** — the "something went wrong" notice ("кечирасиз, техник хатолик
-  юз берди, бугунги хабарларни инобатга олманг, тез орада тузатамиз 🙏");
+  юз берди, бугунги хабарларни инобатга олманг, тез орада тузатамиз");
   **`/elon <text>`** — your own words. Either way a preview with ✅ Юбориш /
   ❌ Бекор comes first; on Send it goes to every active employee through OPS
   Manager Bot, once (`announcements`), and the card shows how many got it.

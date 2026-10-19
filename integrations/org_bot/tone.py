@@ -3,8 +3,11 @@
 2026-09-30, from the owner: employees felt the bot's cheer, motivation and
 report messages as alarms — a bold header, an emoji, two paragraphs, just
 like a task. These now read like a colleague texting: one short sentence,
-lowercase, no line breaks, no bold, and at most one emoji — at the very end.
-Tasks keep their card format; they are work, not chat.
+lowercase, no line breaks, no bold. Tasks keep their card format; they are
+work, not chat.
+
+2026-10-19, the owner: no emoji in these messages at all (it was one at the
+very end — «… чарчаманг 🙏»). ``casual`` removes every emoji and adds none.
 
 2026-10-01, from the owner: names always keep their capital letter
 ("Алишер ака", «Hyatt Regency») — lowercase is for the sentence,
@@ -35,10 +38,10 @@ SHORT_MAX = 110  # characters, name included
 PROPER_NAMES: tuple[str, ...] = ()
 
 
-def casual(text: str, emoji: str = "", keep: tuple[str, ...] | list[str] = ()) -> str:
-    """One chat line: no markup, one space between words, lowercase, no full stop.
+def casual(text: str, keep: tuple[str, ...] | list[str] = ()) -> str:
+    """One chat line: no markup, no emoji, one space between words, lowercase, no full stop.
 
-    Any emoji inside ``text`` is removed; ``emoji`` (one) goes at the end.
+    Any emoji inside ``text`` is removed (2026-10-19, the owner: none at all).
     ``keep`` are the names in it (a person, a company) — they keep their
     capital letters, as do ``PROPER_NAMES``. Everything the caller passes in
     must already be HTML-escaped where it came from a person; tags are
@@ -50,7 +53,7 @@ def casual(text: str, emoji: str = "", keep: tuple[str, ...] | list[str] = ()) -
     for name in sorted(names, key=len, reverse=True):
         # Whole words only, and never inside a /command ("/ai" stays "/ai").
         text = re.sub(rf"(?<![\w/]){re.escape(name.lower())}(?!\w)", lambda _m, n=name: n, text)
-    return f"{text} {emoji}" if emoji and is_emoji(emoji) else text
+    return text
 
 
 def capitalized(name: str) -> str:
