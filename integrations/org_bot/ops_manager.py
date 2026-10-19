@@ -1537,7 +1537,7 @@ async def _handle_employee_message(
     if text.lower() in report_tools.REPORT_COMMANDS:
         return await _show_today_report(employee, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in old_stock.COMMANDS:  # his warehouses' old stock
-        return await old_stock.send(telegram_user_id, old_stock.garmin_codes(), run_id)
+        return await old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)
     team = report_calendar.TEAM_OF.get(employee.get("role") or "")
     if team and text.lower() in report_calendar.COMMANDS:  # the Garmin manager: his team's calendar (17.10)
         return await _send_report_calendar(telegram_user_id, run_id, team)

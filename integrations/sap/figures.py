@@ -136,8 +136,8 @@ def invoices_on(rows: list[dict[str, Any]], day: date, currency: str, *, as_of: 
     Sales are invoices (SAP OINV), not orders (2026-10-03: on 02.10 the shops
     sold through invoices while no order was written). Cancelled documents
     and their cancellations (``CANCELED`` "Y"/"C") are left out; a credit
-    note (``ObjType`` 14) is subtracted. ``DocTotal`` is SAP's local currency
-    (USD here) even for a document written in so'm.
+    note (``ObjType`` 14) is subtracted. Counted in so'm (``DocTotalSy``) when
+    SAP sends it; ``DocTotal`` (SAP's local currency, USD) only for a document without it.
 
     Returns:
         The figure (``count`` = invoices); ``unknown_format`` if no row has a date and a total.
@@ -147,7 +147,8 @@ def invoices_on(rows: list[dict[str, Any]], day: date, currency: str, *, as_of: 
     readable = [r for r in rows if _pick(r, "DocDate") is not None and _pick(r, "DocTotal") is not None]
     if not readable:
         return Figure(status="unknown_format", as_of=as_of)
-    total, count = 0, 0
+    totals: dict[str, int] = {}
+    count = 0
     seen: set[tuple[str, str]] = set()
     for row in readable:
         if str(_pick(row, "CANCELED", "Canceled") or "N").upper() != "N":
@@ -159,13 +160,17 @@ def invoices_on(rows: list[dict[str, Any]], day: date, currency: str, *, as_of: 
         if identity in seen:
             continue
         seen.add(identity)
-        amount = to_tiyin(_pick(row, "DocTotal"))
+        # In so'm (DocTotalSy) — the documents are written in so'm and Billz counts so'm; SAP's USD
+        # (DocTotal) only when the so'm total is missing (19.10.2026: "$722" next to Billz's 14,76 млн).
+        som = _pick(row, "DocTotalSy")
+        amount, cur = (to_tiyin(som), "UZS") if som not in (None, "") else (to_tiyin(_pick(row, "DocTotal")), currency)
         if str(row.get("ObjType")) == "14":
-            total -= amount
+            totals[cur] = totals.get(cur, 0) - amount
         else:
-            total += amount
+            totals[cur] = totals.get(cur, 0) + amount
             count += 1
-    return Figure(status="ok", totals={currency: total} if (count or total) else {}, count=count, as_of=as_of)
+    totals = {c: v for c, v in totals.items() if v}
+    return Figure(status="ok", totals=totals, count=count, as_of=as_of)
 
 
 def inventory_value(

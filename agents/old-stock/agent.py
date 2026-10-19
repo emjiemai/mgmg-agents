@@ -47,7 +47,7 @@ async def run(force: bool = False, dry_run: bool = False) -> int:
     try:
         if dry_run:
             old, soon, _ = await old_stock.load()
-            g_old, g_soon, _ = await old_stock.load(old_stock.garmin_codes())
+            g_old, g_soon, _ = await old_stock.load(await old_stock.garmin_codes_now())
             print(f"all: {len(old)} old, {len(soon)} soon | Garmin: {len(g_old)} old, {len(g_soon)} soon")
             return 0
         if not force and today_local().weekday() != 0:
@@ -56,7 +56,7 @@ async def run(force: bool = False, dry_run: bool = False) -> int:
             return 0
         run_id = uuid.uuid4()
         sent = 0
-        for role, codes in ((DIRECTOR_ROLE, None), ("garmin_manager", old_stock.garmin_codes())):
+        for role, codes in ((DIRECTOR_ROLE, None), ("garmin_manager", await old_stock.garmin_codes_now())):
             for person in await store.active_employees_by_role(role):
                 try:
                     await old_stock.send(person["telegram_user_id"], codes, run_id)

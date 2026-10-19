@@ -470,7 +470,7 @@ def render_five(data: BriefData) -> str:
 
     sales, capped = _figure_value(data.sales, "sales", data, what=data.sales_unit)
     if data.sales is not None and data.sales.ok and data.sales.count:
-        sales += f" ({data.sales.count} та {data.sales_unit})"
+        sales += f" ({data.sales.count} та {data.sales_unit}, 08:00 гача SAP'га киритилгани)"
     lines.append(f"📈 Кечаги сотув: {sales}")
     lower_bound |= capped
 
@@ -620,7 +620,8 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
     number, unit = _split(_money(figure.totals))
     row.update(number=number, unit=unit, lower=figure.capped)
     if figure.count and key == "sales":
-        row["detail"] = f"{figure.count} та {unit_word}"
+        # The shop enters a day's sales late (19.10: 2 of 5 by 08:00) — say what this counts.
+        row["detail"] = f"{figure.count} та {unit_word} · 08:00 гача SAP'га киритилгани"
     change = _delta(key, figure.totals, data, comparable=not figure.capped)
     if change:
         row["sub"], row["sub_dir"] = change
@@ -771,7 +772,7 @@ def view(data: BriefData) -> dict[str, Any]:
         lower_bound |= data.aging_capped
         if overdue_totals:
             debt["detail"] = (f"муддати ўтгани {_money(overdue_totals, short=True).replace(NBSP, ' ')} · "
-                              f"{aging.overdue_count} та")
+                              f"{aging.overdue_count} та · тўлов муддати SAP'да йўқ бўлса {settings.ar_payment_days} кун")
             debt["tone"] = "alert"
             old = aging.bucket_counts.get("90_plus", 0)
             if old:

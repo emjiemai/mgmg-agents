@@ -22,15 +22,22 @@ database's role checks list it (`schema.sql`, both `employees_role_check`s).
 ## The Garmin brief
 
 The same designed picture as the Director's (`brief.html`, now with `title`
-and `foot`), five figures:
+and `foot`), four figures:
 
 1. **Дўкон савдоси (Billz)** — yesterday, so'm, cheques;
 2. **SAP'даги сотув** — yesterday's invoices minus credit notes with a line in
-   the Garmin warehouses (`BILLZ_SAP_WAREHOUSES`), so'm (`DocTotalSy`), via
-   `sap_check.docs_from_sap`;
-3. **Garmin захираси** — SAP's stock value of those warehouses (USD);
-4. **Очиқ шикоятлар** — open Garmin tickets, and how many came yesterday;
-5. **Garmin бот лидлари** — yesterday, and how many want to buy now.
+   a Garmin warehouse — the shops' (`BILLZ_SAP_WAREHOUSES`) **and every SAP
+   warehouse named «Garmin»** (`old_stock.garmin_codes`, 19.10.2026: 09
+   zahiralar, 10 Ambasador, 03 Bodomzor, 04 Abay, 06 faulty had been left out),
+   so'm (`DocTotalSy`), via `sap_check.docs_from_sap`. Labelled «08:00 гача SAP'га
+   киритилгани»: the shops enter a day's sales late (19.10: 11 cheques entered
+   12:05–14:39), so the 08:00 figure is what SAP had then;
+3. **Очиқ шикоятлар** — open Garmin tickets, and how many came yesterday;
+4. **Garmin бот лидлари** — yesterday, and how many want to buy now.
+
+**Garmin захираси was removed** (19.10.2026, the owner) — old stock is `/eski`.
+The Billz → SAP block is titled «DD.MM.YYYY · 08:00 ҳолатига»: it is the check
+at 08:00; the bot's «қайси чеклар SAP'да йўқ?» checks again live.
 
 Blocks: the shops (when more than one sells), **Billz → SAP** (cheques not in
 SAP / wrong amount, from `billz_sap_checks`), Garmin сотув people who didn't
@@ -69,5 +76,5 @@ not a row on the report calendar, his messages never become a report; his card s
 `scripts/selfcheck.py`, `test_garmin_manager`: the role and its picker
 button, complaint routing, the scope (no 1C), the Director's notice, the
 tools offered, `garmin_data`, the brief's SAP sum (Garmin warehouses only,
-credit notes off) and stock, the five figures and blocks, the picture, the
+credit notes off, every warehouse named «Garmin»), no stock, the four figures, the 08:00 labels, the blocks, the picture, the
 08:00 order, the Billz → SAP recipients.

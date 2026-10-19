@@ -4,13 +4,14 @@
 picture (``brief.html``), with only Garmin's figures, to everyone holding the
 ``garmin_manager`` role, at 08:00 after the Billz → SAP check.
 
-Five figures:
+Four figures:
   1. shop sales yesterday — BILLZ (so'm, cheques);
   2. Garmin's sales in SAP yesterday — invoices minus credit notes with a line
-     in the Garmin warehouses (``BILLZ_SAP_WAREHOUSES``), in so'm;
-  3. Garmin stock — SAP's stock value of those warehouses (USD);
-  4. open Garmin complaint tickets (and how many came yesterday);
-  5. Garmin AI bot leads yesterday (how many want to buy now).
+     in a Garmin warehouse (the shops' ``BILLZ_SAP_WAREHOUSES`` and every SAP
+     warehouse named «Garmin»), in so'm, as entered into SAP by 08:00;
+  3. open Garmin complaint tickets (and how many came yesterday);
+  4. Garmin AI bot leads yesterday (how many want to buy now).
+Garmin stock was taken out (19.10.2026, the owner) — old stock is /eski.
 Blocks: the shops, the Billz → SAP check (cheques not in SAP), Garmin sales
 people who didn't report, the open complaints.
 
@@ -41,11 +42,11 @@ from integrations.billz import sap_check  # noqa: E402
 from integrations.common.config import settings  # noqa: E402
 from integrations.common.db import close_pool, fetch_one, log_action  # noqa: E402
 from integrations.common.logging_setup import setup_logging  # noqa: E402
-from integrations.common.money import format_money  # noqa: E402
 from integrations.common.timeutil import fmt_date, now_local, to_local, today_local  # noqa: E402
 from integrations.onec import cash as onec_cash  # noqa: E402
 from integrations.org_bot import feedback  # noqa: E402
 from integrations.org_bot import store as org_store  # noqa: E402
+from integrations.org_bot import old_stock  # noqa: E402
 from integrations.reports import brief_parts  # noqa: E402
 from integrations.telegram.bot import TelegramBot, TelegramError  # noqa: E402
 
@@ -66,7 +67,6 @@ class GarminData:
     sap_docs: int = 0
     sap_unknown: int = 0            # documents without a so'm total
     sap_as_of: datetime | None = None
-    stock_usd: float | None = None
     complaints_open: list[dict[str, Any]] = field(default_factory=list)
     complaints_new: int = 0
     leads: int = 0
@@ -74,10 +74,6 @@ class GarminData:
     check: dict[str, Any] | None = None  # yesterday's Billz → SAP result (billz_sap_checks)
     reports: list[dict[str, Any]] | None = None
     errors: list[str] = field(default_factory=list)
-
-
-def warehouses() -> frozenset[str]:
-    return frozenset(c for group in sap_check.warehouse_map(settings.billz_sap_warehouses).values() for c in group)
 
 
 async def _latest(tool: str) -> tuple[list[dict[str, Any]], datetime | None]:
@@ -92,20 +88,9 @@ def sap_sales(sales: list[dict[str, Any]], lines: list[dict[str, Any]], day: dat
     return sum(d.amount for d in docs if d.amount_known), len(docs), sum(1 for d in docs if not d.amount_known)
 
 
-def stock_value(rows: list[dict[str, Any]], codes: frozenset[str]) -> float | None:
-    mine = [r for r in rows if str(r.get("WhsCode") or "").strip() in codes]
-    if not mine:
-        return None
-    total = sum(float(r.get("StockValue") or 0) for r in mine)
-    # Stock worth exactly nothing while rows exist is a feed problem (15.10: the gateway's value
-    # came out 0 everywhere), never a real "$0.00" — shown as "маълумот йўқ".
-    return total or None
-
-
 async def collect(today: date | None = None) -> GarminData:
     today = today or today_local()
     data = GarminData(day=today - timedelta(days=1))
-    codes = warehouses()
 
     if settings.billz_configured:
         try:
@@ -116,11 +101,12 @@ async def collect(today: date | None = None) -> GarminData:
     try:
         sales, as_of = await _latest("sales")
         lines, _ = await _latest("sales_lines")
+        whs, _ = await _latest("warehouses")
         if sales:
+            # Every Garmin warehouse, not only the two shops (19.10.2026: 09, 10, 03, 04, 06 were missed).
+            codes = old_stock.garmin_codes(whs)
             data.sap_amount, data.sap_docs, data.sap_unknown = sap_sales(sales, lines, data.day, codes)
             data.sap_as_of = as_of
-        stock, _ = await _latest("stock_value")
-        data.stock_usd = stock_value(stock, codes)
     except Exception as exc:  # noqa: BLE001
         data.errors.append(f"sap: {type(exc).__name__}")
     try:
@@ -188,7 +174,7 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
         sap.update(tone="quiet", number="0", detail="Garmin омборларидан ҳужжат йўқ")
     else:
         number, unit = _split(onec_cash.som(data.sap_amount))
-        sap.update(number=number, unit=unit, detail=f"{data.sap_docs} та ҳужжат · Garmin омборлари")
+        sap.update(number=number, unit=unit, detail=f"{data.sap_docs} та ҳужжат · 08:00 гача SAP'га киритилгани")
     notes = []
     if data.sap_unknown:
         notes.append(f"{data.sap_unknown} тасида сўмдаги сумма йўқ")
@@ -197,13 +183,7 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
     if notes:  # both warnings when both hold — neither hides the other
         sap.update(sub=" · ".join(notes), sub_alert=True)
 
-    stock = _row("Garmin захираси", "stock")
-    if data.stock_usd is None:
-        stock.update(tone="muted", number="маълумот йўқ")
-    else:
-        number, unit = _split(format_money(round(data.stock_usd * 100), "USD"))
-        stock.update(number=number, unit=unit, detail="SAP, Garmin омборлари")
-
+    # «Garmin захираси» was taken out (19.10.2026, the owner) — stock is in /eski and the bot.
     complaints = _row("Очиқ шикоятлар", "alert")
     complaints.update(number=str(len(data.complaints_open)), detail=f"кеча келгани: {data.complaints_new} та")
     if data.complaints_open:
@@ -227,10 +207,10 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
             rows = [{"who": f"Чек {c.get('number')}", "what": f"SAP'га киритилмаган · {c.get('shop') or ''}".strip(" ·"),
                      "alert": True} for c in missing]
             rows += [{"who": f"Чек {p['cheque'].get('number')}", "what": "SAP'да суммаси бошқа", "alert": True} for p in wrong]
-            blocks.append(_block("Billz → SAP", "report", fmt_date(data.day),
+            blocks.append(_block("Billz → SAP", "report", f"{fmt_date(data.day)} · 08:00 ҳолатига",
                                  f"{len(missing)} та киритилмаган · {len(wrong)} та сумма фарқи", "alert", rows))
         else:
-            blocks.append(_block("Billz → SAP", "ok", fmt_date(data.day), "ҳамма чек SAP'да", "ok", []))
+            blocks.append(_block("Billz → SAP", "ok", f"{fmt_date(data.day)} · 08:00 ҳолатига", "ҳамма чек SAP'да", "ok", []))
     if data.reports is not None and data.reports:
         missed = [r for r in data.reports if r["status"] != "submitted"]
         if missed:
@@ -248,9 +228,9 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
         blocks.append(_block("Очиқ шикоятлар", "alert", None, f"{len(data.complaints_open)} та", "alert", rows))
     notice = "Баъзи маълумотлар олинмади: " + ", ".join(data.errors) if data.errors else None
     return {"title": "Garmin кунлик ҳисоботи", "date": fmt_date(today), "when": when,
-            "foot": "Дўконлар — Billz · сотув ва захира — SAP (Garmin омборлари) · шикоятлар — QR саҳифа · лидлар — "
-                    "Garmin бот. Батафсил: OPS Manager'дан сўранг.",
-            "figures": [shop, sap, stock, complaints, leads], "blocks": blocks, "lower_bound": False, "notice": notice}
+            "foot": "Дўконлар — Billz · сотув — SAP (Garmin омборлари, 08:00 гача киритилгани) · шикоятлар — QR саҳифа · "
+                    "лидлар — Garmin бот. Эски товарлар: /eski. Батафсил: OPS Manager'дан сўранг.",
+            "figures": [shop, sap, complaints, leads], "blocks": blocks, "lower_bound": False, "notice": notice}
 
 
 def caption(data: GarminData) -> str:

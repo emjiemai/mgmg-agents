@@ -708,12 +708,16 @@ async def garmin_sap(args: dict[str, Any]) -> str:
     """Garmin's part of SAP only (2026-10-14, the Garmin manager): rows of the Garmin warehouses
     (``BILLZ_SAP_WAREHOUSES``), and the invoices / credit notes with a line in them — never the
     other businesses' customers, debts or payments."""
-    from integrations.billz import sap_check
-
     kind = args.get("kind")
     if kind not in GARMIN_SAP_KINDS:
         return f"Unknown kind {kind!r}; one of: {', '.join(GARMIN_SAP_KINDS)}."
-    codes = {c for group in sap_check.warehouse_map(settings.billz_sap_warehouses).values() for c in group}
+    from integrations.org_bot import old_stock
+
+    # Every Garmin warehouse — the shops' and every one SAP names «Garmin» (19.10.2026: 09, 10, 03, 04, 06
+    # had been left out of the Garmin manager's stock answers).
+    whs_rows = await fetch_read_only("SELECT raw FROM v_sap_gateway_latest WHERE tool = 'warehouses'")
+    codes = set(old_stock.garmin_codes([r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}")
+                                        for r in whs_rows]))
     docs: set[tuple[str, str]] = set()
     if kind == "sales":
         for row in await fetch_read_only("SELECT raw FROM v_sap_gateway_latest WHERE tool = 'sales_lines'"):

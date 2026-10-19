@@ -245,6 +245,10 @@ class Settings(BaseSettings):
     # that month's total, and the person is told. 0 = no minus, the report still closes at 22:00.
     report_miss_penalty: int = 1
 
+    # Days a customer has to pay when SAP's invoice has no payment terms (its due date is the
+    # invoice date — 19.10.2026: every invoice showed as overdue the day after). AR_PAYMENT_DAYS.
+    ar_payment_days: int = 30
+
     # --- Written permission requests (EMJ-SOP-ADM-01) ---
     # The SOP allows an electronic approval only in the system the director
     # officially designates, with the approver and the decision history kept

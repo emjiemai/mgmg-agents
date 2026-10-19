@@ -145,7 +145,7 @@ async def handle_ar_aging_push(payload: dict[str, Any], run_id: uuid.UUID) -> di
                 skipped += 1
                 continue
 
-            due_date = parse_sap_date(row.get("DocDueDate"))
+            due_date = effective_due(parse_sap_date(row.get("DocDate")), parse_sap_date(row.get("DocDueDate")))
             overdue = max(days_between(due_date, as_of), 0) if due_date else 0
             doc_total_tiyin = to_tiyin(row.get("DocTotal"))
             # The gateway's get_invoices doesn't return PaidToDate yet, so
@@ -448,7 +448,7 @@ def aging_row(row: dict[str, Any], as_of: date, slp_names: dict[int, str]) -> tu
     paid = to_tiyin(row.get("PaidToDate"))
     if total - paid <= 0:
         return None
-    due = parse_sap_date(str(row.get("DocDueDate") or ""))
+    due = effective_due(parse_sap_date(str(row.get("DocDate") or "")), parse_sap_date(str(row.get("DocDueDate") or "")))
     overdue = max(days_between(due, as_of), 0) if due else 0
     try:
         slp = int(row.get("SlpCode"))
@@ -462,6 +462,15 @@ def aging_row(row: dict[str, Any], as_of: date, slp_names: dict[int, str]) -> tu
         slp if slp >= 0 else None, seller if slp >= 0 else None,
         *invoice_currency(row),
     )
+
+
+def effective_due(doc_date: date | None, due: date | None) -> date | None:
+    """When the customer has to pay: SAP's due date — unless SAP has no payment terms for the
+    invoice (due date on or before the invoice date, as for every invoice on 19.10.2026), then
+    the invoice date + ``AR_PAYMENT_DAYS`` (30). Before, a 3-day-old invoice counted as overdue."""
+    if doc_date is not None and (due is None or due <= doc_date):
+        return doc_date + timedelta(days=settings.ar_payment_days)
+    return due
 
 
 def invoice_currency(row: dict[str, Any]) -> tuple[str | None, int | None, int | None]:

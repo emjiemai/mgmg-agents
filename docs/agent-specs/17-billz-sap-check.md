@@ -135,4 +135,7 @@ Billz is never stored — every reader asks the Billz API. Only this check's
 SAP?» read it, so a cheque entered at noon still showed as missing until the
 next morning. `analyst.billz_sap_check` now re-runs the check on the spot
 (Billz now, SAP's latest push, the last 14 days, by cheque) and says when;
-the stored results are the fallback when Billz can't be read.
+the stored results are the fallback when Billz can't be read. The morning
+pictures title their Billz → SAP block «DD.MM.YYYY · 08:00 ҳолатига» (19.10.2026):
+the 08:02 Garmin brief listed 11 cheques the shops then entered at 12:05–14:39,
+so the picture and the bot's later answer differed — both were right for their hour.

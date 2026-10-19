@@ -16,8 +16,10 @@ days (`item_sales_90d`).
 - an item bought again since may still hold older units — not visible (SAP's
   batch history isn't pushed); the PDF says so.
 
-**Who:** the Director every warehouse; the Garmin manager the Garmin warehouses
-(`BILLZ_SAP_WAREHOUSES`: 05 Garmin-Minor, G.A._01 Garmin Abay, G.A._02 Garmin Tanita).
+**Who:** the Director every warehouse; the Garmin manager the Garmin warehouses —
+the shops' (`BILLZ_SAP_WAREHOUSES`: 05 Garmin-Minor, G.A._01 Garmin Abay, G.A._02
+Garmin Tanita) and, since 19.10.2026, every SAP warehouse named «Garmin»
+(`garmin_codes`: 09 zahiralar, 10 Ambasador, 03 Bodomzor, 04 Abay, 06 faulty).
 A caption (rows, value, how many sold nothing in 90 days) + the PDF list, biggest
 value first, red «0» where nothing sold in 90 days. **/eski** (their ☰ menus) any time.
 Once a week (`agent_actions` `old_stock_weekly`); `--force`, `--dry-run`.

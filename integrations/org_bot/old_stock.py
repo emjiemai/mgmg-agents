@@ -104,10 +104,19 @@ def classify(stock: list[dict[str, Any]], products: list[dict[str, Any]], sales9
     return sorted(old, key=key), sorted(soon, key=key)
 
 
-def garmin_codes() -> frozenset[str]:
+def garmin_codes(warehouses: list[dict[str, Any]] | None = None) -> frozenset[str]:
+    """Every Garmin warehouse: the shops' (BILLZ_SAP_WAREHOUSES) and every SAP warehouse named «Garmin»
+    (19.10.2026: 09 «Garmin zahiralar», 10 Ambassador, 03 Bodomzor, 04 Abay, 06 faulty had been left out)."""
     from integrations.billz import sap_check
 
-    return frozenset(c for group in sap_check.warehouse_map(settings.billz_sap_warehouses).values() for c in group)
+    shops = {c for group in sap_check.warehouse_map(settings.billz_sap_warehouses).values() for c in group}
+    named = {str(w.get("WhsCode")) for w in warehouses or [] if "garmin" in str(w.get("WhsName") or "").lower()}
+    return frozenset(shops | named)
+
+
+async def garmin_codes_now() -> frozenset[str]:
+    rows = await fetch_all("SELECT raw FROM v_sap_gateway_latest WHERE tool = 'warehouses'")
+    return garmin_codes([_raw(r) for r in rows])
 
 
 async def load(codes: frozenset[str] | None = None) -> tuple[list[Row], list[Row], Any]:

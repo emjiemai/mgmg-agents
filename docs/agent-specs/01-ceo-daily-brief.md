@@ -53,9 +53,9 @@ The overdue-debt detail by age follows as its own message (receivables).
 | Line | Source | Notes |
 | ---- | ------ | ----- |
 | 💰 Касса | — | **Not connected.** The SAP gateway has no cash tool, and the SAP Service Layer was never reachable from Render (its client was removed 2026-09-25). Shown as "уланмаган", never as a number. |
-| 📈 Кечаги сотув | SAP orders (ORDR) pushed by the gateway, `DocDate` = yesterday, cancelled left out | |
+| 📈 Кечаги сотув | SAP A/R invoices less credit notes (complete `sales` push), `DocDate` = yesterday, cancelled left out, each document once | **In so'm** (`DocTotalSy`; USD `DocTotal` only for a document without it — 19.10.2026). Labelled «08:00 гача SAP'га киритилгани»: the shops enter a day's sales late, so it is what SAP had at 08:00. |
 | 📦 Захира | SAP stock (OITW) pushed by the gateway: `StockValue`, else `OnHand × AvgPrice` | |
-| 🧾 Мижоз қарзи | SAP open invoices (`v_ar_aging_latest`) | Overdue part, and 🔴 when anything is 90+ days late |
+| 🧾 Мижоз қарзи | SAP open invoices (`v_ar_aging_latest`) | Overdue part, and 🔴 when anything is 90+ days late. SAP has no payment terms on most invoices (due date = invoice date), which made every invoice «муддати ўтган» from day one; since 19.10.2026 such an invoice falls due `AR_PAYMENT_DAYS` (30) days after its date (`push_handler.effective_due`), and the page says so. |
 | 💳 Бугунги тўловлар | Approved written permissions (B1) whose "Бажариш муддати" is today | The payment gate makes that form the single channel for spending. A date that can't be read (`integrations/common/dates.py` reads only explicit dates and бугун/эртага/N кун) is counted as "сана аниқ эмас", never put on a guessed day. |
 
 **Change since yesterday** is shown when the previous sent brief has the same

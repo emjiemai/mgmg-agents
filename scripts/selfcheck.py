@@ -763,8 +763,9 @@ def test_brief_rendering() -> None:
                   "sales": {"status": "ok", "totals": {"USD": 1_234_000}, "capped": False}},
     )
     text = brief.render(data)
-    check_true("yesterday's sales with the order count", "📈 Кечаги сотув: $12,340.00 (3 та буюртма)" in text)
-    check_true("unchanged sales show no change", "Кечаги сотув: $12,340.00 (3 та буюртма)\n" in text)
+    check_true("yesterday's sales with the order count, as entered by 08:00",
+               "📈 Кечаги сотув: $12,340.00 (3 та буюртма, 08:00 гача SAP'га киритилгани)" in text)
+    check_true("unchanged sales show no change", "Кечаги сотув: $12,340.00 (3 та буюртма, 08:00 гача SAP'га киритилгани)\n" in text)
     check_true("a capped feed is a lower bound", "📦 Захира: камида $120,000.00*" in text)
     check_true("the lower bound is explained", "рақам тўлиқ эмас" in text)
     check_true("debt total, overdue part, 90+ marker", "$15,000.00" in text and "муддати ўтгани $5,000.00 (1 та) 🔴" in text)
@@ -3474,8 +3475,8 @@ def test_data_check_fixes() -> None:
     gb = importlib.util.module_from_spec(spec)
     sys.modules["garmin_brief_chk"] = gb
     spec.loader.exec_module(gb)
-    check("Garmin stock worth exactly 0 is 'no data', never $0.00", gb.stock_value([{"WhsCode": "G.A._01", "StockValue": 0.0}],
-                                                                                    frozenset({"G.A._01"})), None)
+    check_true("the Garmin brief carries no stock (19.10, the owner)", not hasattr(gb, "stock_value")
+               and "stock_value" not in load_source("agents/garmin-brief/agent.py"))
 
     async def recent(days=60):
         return [{"place": "garmin", "branch": "abay", "message": "test", "phone": None, "contact_name": None, "kind": "complaint",
@@ -4270,11 +4271,11 @@ def test_old_stock_and_live_views() -> None:
     agent_src = load_source("agents/old-stock/agent.py")
     check_true("Mondays, once a week; the Director all warehouses, the Garmin manager his",
                "weekday() != 0" in agent_src and "old_stock_weekly" in agent_src
-               and "(\"garmin_manager\", old_stock.garmin_codes())" in agent_src
+               and "(\"garmin_manager\", await old_stock.garmin_codes_now())" in agent_src
                and "agents/old-stock/agent.py" in load_source("scripts/run_morning_agents.py"))
     src = inspect.getsource(ops_manager)
     check_true("/eski for both, in their menus", "old_stock.send(telegram_user_id, None, run_id)" in src
-               and "old_stock.send(telegram_user_id, old_stock.garmin_codes(), run_id)" in src
+               and "old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)" in src
                and "eski" in [c for c, _ in menus.DIRECTOR] and "eski" in [c for c, _ in menus.GARMIN_MANAGER])
 
     check_true("1C and Billz in /db: read live, only while the platform tables are open",
@@ -4441,11 +4442,17 @@ def test_garmin_manager() -> None:
     codes = frozenset({"G.A._01", "05"})
     check("SAP sales: yesterday, Garmin warehouses only, credit notes taken off", gb.sap_sales(sales, lines, date(2026, 10, 13), codes),
           (4000000, 2, 0))
-    check("stock: only the Garmin warehouses", gb.stock_value([{"WhsCode": "G.A._01", "StockValue": "100.5"},
-                                                               {"WhsCode": "PR_01", "StockValue": "900"}], codes), 100.5)
+    from integrations.org_bot import old_stock as _os
+    whs_rows = [{"WhsCode": "09", "WhsName": "Garmin zahiralar (Tanita)"}, {"WhsCode": "10", "WhsName": "Garmin Ambasador"},
+                {"WhsCode": "06", "WhsName": "Faulty Product Garmin"}, {"WhsCode": "01", "WhsName": "Main warehouse"}]
+    gcodes = _os.garmin_codes(whs_rows)
+    check_true("every warehouse named «Garmin» counts as Garmin's, with the shops (19.10: 09, 10, 06 were missed)",
+               {"09", "10", "06", "G.A._01", "05"} <= gcodes and "01" not in gcodes)
+    check_true("the Garmin brief's SAP sales use every Garmin warehouse",
+               "old_stock.garmin_codes(whs)" in load_source("agents/garmin-brief/agent.py"))
     data = gb.GarminData(day=date(2026, 10, 13),
                          shop_sales=DaySales(day=date(2026, 10, 13), shops=[ShopDay("GARMIN ABAY", 18_400_000, 18_400_000, 4, 0)]),
-                         sap_amount=4_000_000, sap_docs=2, stock_usd=100.5,
+                         sap_amount=4_000_000, sap_docs=2,
                          complaints_open=[{"code": "T-2026-10-0035", "place": "garmin", "branch": "abay",
                                            "created_at": datetime(2026, 10, 13, 9, 0, tzinfo=timezone.utc)}],
                          complaints_new=1, leads=6, leads_now=2,
@@ -4453,9 +4460,12 @@ def test_garmin_manager() -> None:
                          reports=[{"report_date": date(2026, 10, 13), "status": "missed", "display_name": "Абдурашид",
                                    "role": "garmin_sotuv"}])
     v = gb.view(data, datetime(2026, 10, 14, 8, 5))
-    check("five Garmin figures, nothing of the Boss's (no cash, customer debt, payments)",
+    check("four Garmin figures, no stock and nothing of the Boss's (no cash, customer debt, payments)",
           [f["label"] for f in v["figures"]],
-          ["Дўкон савдоси (Billz)", "SAP'даги сотув", "Garmin захираси", "Очиқ шикоятлар", "Garmin бот лидлари"])
+          ["Дўкон савдоси (Billz)", "SAP'даги сотув", "Очиқ шикоятлар", "Garmin бот лидлари"])
+    check_true("SAP sales say they count what was entered by 08:00",
+               "08:00 гача SAP'га киритилгани" in v["figures"][1]["detail"])
+    check_true("the Billz → SAP block says it is the 08:00 picture", "08:00 ҳолатига" in str(v["blocks"][0]))
     check("blocks: Billz → SAP, who didn't report, open complaints", [b["title"] for b in v["blocks"]],
           ["Billz → SAP", "Ҳисобот юбормаганлар", "Очиқ шикоятлар"])
     check_true("an open complaint shows its age in hours", "18 соат" in v["blocks"][-1]["rows"][0]["what"])
@@ -6808,7 +6818,28 @@ def test_sap_full_push() -> None:
     data = brief.BriefData(report_rows=[], sales=fig, sales_unit="ҳисоб-фактура")
     five = brief.render_five(data)
     check_true("the brief counts invoices, with no 'камида'",
-               "(2 та ҳисоб-фактура)" in five and "камида" not in five.split("Захира")[0])
+               "(2 та ҳисоб-фактура, 08:00 гача SAP'га киритилгани)" in five and "камида" not in five.split("Захира")[0])
+
+    # in so'm when SAP sends it (19.10: "$722" next to Billz's 14,76 млн); a document's total once, not per line
+    som_rows = [
+        {"ObjType": "13", "DocEntry": 1, "DocDate": "2026-10-18", "DocTotal": "500", "DocTotalSy": "6000000", "CANCELED": "N"},
+        {"ObjType": "13", "DocEntry": 1, "DocDate": "2026-10-18", "DocTotal": "500", "DocTotalSy": "6000000", "CANCELED": "N"},
+        {"ObjType": "13", "DocEntry": 2, "DocDate": "2026-10-18", "DocTotal": "300", "DocTotalSy": "3600000", "CANCELED": "N"},
+        {"ObjType": "14", "DocEntry": 7, "DocDate": "2026-10-18", "DocTotal": "100", "DocTotalSy": "1200000", "CANCELED": "N"},
+    ]
+    fig = figures.invoices_on(som_rows, date(2026, 10, 18), "USD", as_of=as_of)
+    check("sales in so'm, each document once, the credit note off", (fig.totals, fig.count), ({"UZS": 840_000_000}, 2))
+    check("a change is only between days in the same currency (no false arrow the day it turned so'm)",
+          figures.change({"UZS": 1}, {"USD": 5}), {})
+
+    # overdue: SAP writes the due date = the invoice date (no payment terms) — then the invoice date + AR_PAYMENT_DAYS
+    from integrations.sap.push_handler import effective_due
+    check("no payment terms in SAP → invoice date + 30 days", effective_due(date(2026, 10, 1), date(2026, 10, 1)),
+          date(2026, 10, 31))
+    check("no due date at all → invoice date + 30 days", effective_due(date(2026, 10, 1), None), date(2026, 10, 31))
+    check("real payment terms are kept", effective_due(date(2026, 10, 1), date(2026, 10, 15)), date(2026, 10, 15))
+    from integrations.common.config import settings as _settings
+    check("the payment days are a setting (AR_PAYMENT_DAYS, 30)", _settings.ar_payment_days, 30)
 
 
 def test_billz_sap_check() -> None:
