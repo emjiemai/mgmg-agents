@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "_ui.html" import masthead %}
+{% block title %}{{ title }} — {{ date }}{% endblock %}
+{% block style %}
+table.list { width: 100%; border-collapse: collapse; font-size: 8pt; margin-top: 6pt; }
+table.list th { text-align: left; font-weight: 700; color: var(--ink-2); border-bottom: 1.5px solid var(--ink); padding: 3pt 4pt; }
+table.list td { padding: 3pt 4pt; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.list td.num, table.list th.num { text-align: right; white-space: nowrap; }
+table.list td.alert { color: var(--alert); font-weight: 700; }
+table.list a { color: var(--ink); text-decoration: none; }
+.tag { font-size: 7pt; font-weight: 700; color: var(--alert); }
+.muted { color: var(--ink-3); }
+h2.part { font-size: 12pt; margin: 14pt 0 2pt; }
+h2.part .sum { font-weight: 400; color: var(--ink-2); font-size: 10pt; }
+p.lead { font-size: 9.5pt; margin: 6pt 0 0; line-height: 1.45; }
+.note { margin-top: 10pt; font-size: 8pt; color: var(--ink-3); line-height: 1.4; }
+{% endblock %}
+{% block body %}
+{{ masthead(title, date ~ " · текширилди " ~ when) }}
+<p class="lead">OLX'да <b>{{ olx_count }}</b> та Garmin эълони: {{ olx_new }} та янги товар, {{ olx_used }} та б/у.
+{% if fresh_count is not none %} Кейинги текширувдан бери янги эълонлар: <b>{{ fresh_count }}</b> та.{% endif %}
+Бизнинг нарх — garmin.com.uz ({{ ours_count }} та товар).{% for n in notes %} {{ n }}{% endfor %}</p>
+
+<h2 class="part">Янги товар — нархи биздан арзон <span class="sum">— {{ cheaper|length }} та</span></h2>
+{% if cheaper %}
+<table class="list">
+  <thead><tr><th>Эълон</th><th>Модел</th><th class="num">Нархи</th><th class="num">Бизда</th><th class="num">Фарқ</th><th>Сотувчи</th><th class="num">Сана</th></tr></thead>
+  <tbody>
+  {% for r in cheaper %}
+    <tr><td><a href="{{ r.url }}">{{ r.title }}</a>{% if r.fresh %} <span class="tag">ЯНГИ</span>{% endif %}{% if r.dropped %}<br><span class="muted">аввал {{ r.dropped }}</span>{% endif %}</td>
+      <td>{{ r.key }}</td><td class="num">{{ r.price }}</td><td class="num">{{ r.ours }}</td><td class="num alert">{{ r.diff }}</td>
+      <td>{{ r.seller }}</td><td class="num">{{ r.date }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="lead muted">Йўқ.</p>{% endif %}
+
+{% if shops %}
+<h2 class="part">OLX'даги дўконлар <span class="sum">— {{ shops|length }} та (бизнес аккаунтлар)</span></h2>
+<table class="list">
+  <thead><tr><th>Дўкон</th><th class="num">Эълон</th><th class="num">Янги товар</th><th>Моделлар</th><th class="num">Энг арзони</th><th class="num">Биздан арзон</th></tr></thead>
+  <tbody>
+  {% for s in shops %}
+    <tr><td><a href="{{ s.url }}">{{ s.name }}</a>{% if s.fresh and compared %} <span class="tag">ЯНГИ</span>{% endif %}</td><td class="num">{{ s.count }}</td><td class="num">{{ s.new }}</td>
+      <td>{{ s.models }}</td><td class="num">{{ s.low_text }}</td><td class="num {{ 'alert' if s.cheaper else '' }}">{{ s.cheaper }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2 class="part">Бошқа сайтлар ва дўконлар (Google) <span class="sum">— {{ web|length }} та</span></h2>
+{% if web_note %}<p class="lead muted">{{ web_note }}</p>{% endif %}
+{% if web %}
+<table class="list">
+  <thead><tr><th>Сайт</th><th>Саҳифа</th><th>Модел</th><th class="num">Нархи</th><th class="num">Бизда</th></tr></thead>
+  <tbody>
+  {% for r in web %}
+    <tr><td>{{ r.seller }}{% if r.fresh %} <span class="tag">ЯНГИ</span>{% endif %}</td><td><a href="{{ r.url }}">{{ r.title }}</a></td>
+      <td>{{ r.key }}</td><td class="num">{{ r.price }}</td><td class="num">{{ r.ours }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if suspicious %}
+<h2 class="part">Шубҳали арзон — нусха ёки хато нарх бўлиши мумкин <span class="sum">— {{ suspicious|length }} та</span></h2>
+<table class="list">
+  <thead><tr><th>Эълон</th><th class="num">Нархи</th><th class="num">Бизда</th><th>Сотувчи</th><th class="num">Сана</th></tr></thead>
+  <tbody>
+  {% for r in suspicious %}
+    <tr><td><a href="{{ r.url }}">{{ r.title }}</a></td><td class="num">{{ r.price }}</td><td class="num">{{ r.ours }}</td><td>{{ r.seller }}</td><td class="num">{{ r.date }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if all %}
+<h2 class="part">Барча OLX эълонлари <span class="sum">— {{ all|length }} та, модел бўйича</span></h2>
+<table class="list">
+  <thead><tr><th>Эълон</th><th>Модел</th><th>Ҳолати</th><th class="num">Нархи</th><th class="num">Бизда</th><th>Сотувчи</th><th class="num">Сана</th></tr></thead>
+  <tbody>
+  {% for r in all %}
+    <tr><td><a href="{{ r.url }}">{{ r.title }}</a>{% if r.fresh %} <span class="tag">ЯНГИ</span>{% endif %}{% if r.dropped %}<br><span class="muted">аввал {{ r.dropped }}</span>{% endif %}</td>
+      <td>{{ r.key }}</td><td>{{ r.state }}</td><td class="num">{{ r.price }}</td><td class="num">{{ r.ours }}</td><td>{{ r.seller }}</td><td class="num">{{ r.date }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p class="note">Манбалар: OLX.uz (сайтнинг очиқ эълонлар рўйхати; у.е.даги нархни OLX ўзи сўмга ўгиради), Google қидируви
+(Ўзбекистон: .uz сайтлар, Telegram, Instagram; нарх — фақат натижада ёзилган бўлса), бизнинг нарх — garmin.com.uz.
+Модел номи бўйича солиштирилди (масалан «fenix 8», «forerunner 970»; ўлчам иккаласида ёзилган бўлса — ўша ўлчам):
+ранг, ойна ёки ремешок фарқ қилиши мумкин. «Биздан арзон» — янги товар, бизнинг энг арзон нархимиздан 5% дан кўп арзон;
+30% дан ҳам арзони — «шубҳали». Нусхалар («1:1», «копия»), ремешок ва эҳтиёт қисмлар, таъмирлаш киритилмаган.
+Хусусий шахснинг исми ва телефони кўрсатилмайди ва сақланмайди. Ҳар ҳафта · ҳозир: /raqobat.</p>
+{% endblock %}

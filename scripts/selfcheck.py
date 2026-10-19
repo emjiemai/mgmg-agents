@@ -3843,7 +3843,8 @@ def test_command_menus() -> None:
     ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
-                   *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS}
+                   *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
+                   *ops_manager.competitors.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
@@ -4226,8 +4227,9 @@ def test_own_week_and_team_calendar() -> None:
     cb = inspect.getsource(kpi_flow.handle_callback)
     check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
                and 'prefix == "kr" and not director' in cb)
-    check_true("his menu: team calendar, KPI, goals, results — no /hisobot, /ruxsat or /ism",
-               [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "eski", "bekor"])
+    check_true("his menu: team calendar, KPI, goals, results, old stock, competitors — no /hisobot, /ruxsat or /ism",
+               [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "eski", "raqobat",
+                                                         "bekor"])
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
@@ -4237,6 +4239,133 @@ def test_own_week_and_team_calendar() -> None:
     check_true("/hisobot (one letter short) gives a manager with no report of his own the team calendar",
                "TEAM_OF.get(" in shown and "_send_report_calendar(" in shown
                and "report_calendar.COMMANDS + report_tools.REPORT_COMMANDS" in inspect.getsource(ops_manager))
+
+
+def test_garmin_competitors() -> None:
+    """19.10.2026: who else sells Garmin in Uzbekistan (OLX, Google) against our garmin.com.uz prices — offline."""
+    print("Garmin competitors (19.10.2026)")
+    import inspect
+    from datetime import timezone
+
+    from integrations.api import db_viewer
+    from integrations.common.config import settings
+    from integrations.garmin import competitors as c
+    from integrations.org_bot import analyst, ops_manager
+    from integrations.reports import render
+    from integrations.telegram import menus
+
+    # model names, as sellers and our site write them
+    for title, key in (("Garmin Fenix 8 47mm Amoled", "fenix 8"), ("fēnix 8 — 47 mm, Solar", "fenix 8"),
+                       ("Garmin Fenix 8 Pro 51mm", "fenix 8 pro"), ("Garmin Epix Pro Gen 2", "epix 2 pro"),
+                       ("Epix Pro (Gen 2) Sapphire", "epix 2 pro"), ("Garmin forerunner 970 black", "forerunner 970"),
+                       ("Venu X1 French Gray", "venu x1"), ("Instinct Crossover AMOLED, Tactical, Black", "instinct crossover"),
+                       ("MARQ Athlete Gen 2, Carbon", "marq athlete 2"), ("Навигатор гармин Монтана 700", "montana 700"),
+                       ("Garmin Instinct 2X Solar", "instinct 2x"), ("Garmin vivoactive5 42mm", "vivoactive 5"),
+                       ("Garmin Cirqa Smart Band New 2026", "cirqa"), ("Garmin Instinct E 45 мм Black", "instinct e"),
+                       ("Descent Mk3i — 51 mm", "descent mk3i"), ("Гармин Феникс 7", "fenix 7")):
+        check(f"model: {title}", c.model_key(title), key)
+    check("size from «47 mm» / «45 мм»", (c.size_mm("fēnix 8 — 47 mm"), c.size_mm("Instinct E 45 мм")), (47, 45))
+    for title, why in (("Garmin HD350 43mm pro 1:1", "copy"), ("часы копия 1x1 GARMIN 8 Pro", "copy"),
+                       ("Remont Garmin soat, Ремонт часов Garmin", "repair"), ("Ремешок Garmin 47 мм Quickfit", "part"),
+                       ("Чехол для Smart watch Garmin Fenix 7x", "part"), ("Garmin кабель+зарядка для часов", "part"),
+                       ("Polar Pacer спортивные часы", "not_garmin"),
+                       ("Пульсометр CooSpo H808S совместим с Garmin", "part"),
+                       ("Forerunner 165 Music", None), ("Garmin Venu 3S, оригинал, с коробкой и зарядкой", None),
+                       ("Fenix 9 PRO - inReach, 47 mm Titanium + 2 ремешка", None)):
+        check(f"left out: {title}", c.left_out(title), why)
+
+    # our prices (garmin.com.uz): by model, that size's when we sell it; «0» (ask) is not a price
+    ours = c.OurPrices.from_products([
+        {"name": "fenix 8 47mm,AMOLED,Sapphire", "price": 17800000}, {"name": "fēnix 8 — 47 mm, Solar", "price": 18000000},
+        {"name": "fenix 8 51mm,AMOLED,Sapphire", "price": 20100000}, {"name": "Forerunner 970", "price": 12000000},
+        {"name": "MARQ® Athlete (Gen 3)", "price": 0}])
+    check("our range by model and size", (ours.range("fenix 8", 47), ours.range("fenix 8"), ours.range("fenix 8", 43)),
+          ((17800000, 18000000), (17800000, 20100000), (17800000, 20100000)))
+    check("a «0 so'm» product isn't a price", (ours.count, ours.range("marq athlete 3")), (4, None))
+
+    def olx(id_, title, price, currency="UZS", converted=None, state="new", business=False, user=None, shop=None, prev=None):
+        value = {"value": price, "currency": currency, "converted_value": converted, "negotiable": True}
+        if prev:
+            value.update(previous_value=prev, converted_previous_value=prev * 12000 if currency == "UYE" else prev)
+        params = [{"key": "price", "value": value}]
+        if state:
+            params.append({"key": "state", "value": {"key": state, "label": state}})
+        return {"id": id_, "title": title, "url": f"https://www.olx.uz/d/obyavlenie/{id_}.html", "params": params,
+                "business": business, "user": user or {"id": 900 + id_, "name": "Улугбек", "company_name": ""},
+                "shop": shop or {"subdomain": None}, "created_time": "2026-10-18T07:27:47+05:00",
+                "location": {"city": {"name": "Ташкент"}}}
+
+    raw = [olx(1, "Garmin Fenix 8 47mm", 10_280_920), olx(2, "Garmin Forerunner 970", 600, "UYE", 7_257_120, prev=650),
+           olx(3, "Garmin fenix 8 47mm", 710, "UYE", 8_587_592, state="used"),
+           olx(4, "Garmin tactix 8 smart watch soat", 483_808),
+           olx(5, "Garmin Fenix 8 47mm AMOLED", 17_500_000, business=True,
+               user={"id": 5, "name": "998901234567", "company_name": "Garmin Shop UZ"}),
+           olx(6, "Ремешок на garmin", 50_000), olx(7, "Garmin Venu X1", 12_000_000, business=True, user={"id": 77, "name": "Улугбек"})]
+    offers = [o for o in (c.parse_olx(r) for r in raw) if o is not None]
+    check("straps left out; у.е. read in OLX's so'm", ([o.external_id for o in offers], offers[1].price),
+          (["1", "2", "3", "4", "5", "7"], 7_257_120))
+    check_true("a private seller has no name; a shop its company name only (never a phone or a person's name)",
+               offers[0].seller is None and offers[4].seller == "Garmin Shop UZ" and offers[5].seller is None
+               and offers[5].business)
+    c.compare(offers, ours)
+    check("cheaper = a NEW item under 95 % of our lowest price; used and suspicious ones aren't",
+          [o.external_id for o in offers if c.cheaper(o)], ["1", "2"])
+    check("a new item under 30 % of ours is suspicious (a copy or a wrong price)", [o.external_id for o in offers if c.suspicious(o)], [])
+    offers[3].ours = (21_850_000, 26_400_000)
+    check_true("...tactix 8 at 484 минг is suspicious, not cheaper", c.suspicious(offers[3]) and not c.cheaper(offers[3]))
+
+    check("the first check marks nothing new", (c.diff({}, offers), any(o.is_new for o in offers)), (False, False))
+    check("OLX's own «price before» shows as a drop", offers[1].dropped_from, 650 * 12000)
+    prev = {("olx", "1"): 11_000_000, ("olx", "3"): 8_587_592}
+    check("then: new since the last check, and cheaper than last time", (c.diff(prev, offers),
+          [o.external_id for o in offers if o.is_new], offers[0].dropped_from), (True, ["2", "4", "5", "7"], 11_000_000))
+
+    # web search results: Uzbek pages selling Garmin only, the price only when it is written
+    hits = [c.parse_web(r) for r in (
+        {"url": "https://shop.uz/garmin-fenix-8", "title": "Garmin Fenix 8 купить в Ташкенте", "snippet": "Цена: 15 900 000 сум"},
+        {"url": "https://www.olx.uz/d/x", "title": "Garmin", "snippet": "купить"},
+        {"url": "https://garmin.com.uz/catalog", "title": "Garmin", "snippet": "купить"},
+        {"url": "https://kun.uz/news/garmin", "title": "Garmin представила fenix 8", "snippet": "цена"},
+        {"url": "https://www.amazon.com/garmin", "title": "Garmin fenix 8 buy", "snippet": "price $999"},
+        {"url": "https://t.me/garmin_tashkent", "title": "Garmin Ташкент", "snippet": "часы в наличии, доставка"})]
+    check("web: a .uz shop and a Telegram channel; not OLX, not ours, not news, not abroad",
+          [h.seller if h else None for h in hits], ["shop.uz", None, None, None, None, "t.me"])
+    check("web: the price as written in the result", (hits[0].price, hits[5].price), (15_900_000, None))
+
+    # the page and the caption
+    report = c.Report(olx=offers, web=[h for h in hits if h], ours=ours, compared=True, web_state="ok",
+                      at=datetime(2026, 10, 19, 8, 0, tzinfo=timezone.utc))
+    v = c.view(report)
+    check("the page: cheaper new items, shops, web pages", (len(v["cheaper"]), [s["name"] for s in v["shops"]], len(v["web"])),
+          (2, ["Garmin Shop UZ", "номи кўрсатилмаган"], 2))
+    pdf = render.pdf("garmin_competitors.html", **v)
+    html = render.render_html("garmin_competitors.html", image=False, **v)
+    check_true("the PDF is drawn, with the listing links", pdf[:4] == b"%PDF" and "olx.uz/d/obyavlenie/1.html" in html)
+    text = c.caption(report) + c.text_fallback(report) + html
+    check_true("no private person's name or phone anywhere", "Улугбек" not in text and "998901234567" not in text)
+    check_true("no emoji in the caption", not any(0x1F000 <= ord(ch) <= 0x1FAFF or 0x2600 <= ord(ch) <= 0x27BF for ch in c.caption(report)))
+    check("so'm the short way", (c.som(10_280_920), c.som(850_000), c.som(None)), ("10,3 млн", "850 минг", "—"))
+
+    # wiring
+    check_true("weekly in the 08:00 job, on its weekday (Thursday), for the Garmin manager",
+               "agents/garmin-competitors/agent.py" in load_source("scripts/run_morning_agents.py")
+               and settings.garmin_competitors_weekday == 3 and settings.garmin_competitors_enabled
+               and 'ROLE = "garmin_manager"' in load_source("agents/garmin-competitors/agent.py"))
+    check_true("/raqobat in the Garmin manager's ☰ menu, answered in the background",
+               ("raqobat", "Рақобатчилар: Garmin'ни бошқалар қанчага сотмоқда") in menus.GARMIN_MANAGER
+               and "background.add_task(_send_competitors" in inspect.getsource(ops_manager._handle_employee_message))
+    check_true("/raqobat reuses today's web search (search credits); the weekly run searches fresh",
+               "fresh_web=False" in inspect.getsource(ops_manager._send_competitors)
+               and "fresh_web=sent == 0" in load_source("agents/garmin-competitors/agent.py"))
+    check_true("the bot answers about competitors (garmin_data → competitors)",
+               "competitors" in inspect.getsource(analyst.garmin_data) and "competitors.answer_lines()" in inspect.getsource(analyst.garmin_data))
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("schema: garmin_competitor_offers, open in /db (public listings, no company figures)",
+               "CREATE TABLE IF NOT EXISTS garmin_competitor_offers" in schema and db_viewer.is_open("garmin_competitor_offers"))
+    serp = load_source("integrations/search/serpapi_client.py")
+    check_true("Google is searched from Uzbekistan in Russian (gl / hl)", 'params["gl"] = country' in serp
+               and 'params["hl"] = language' in serp and 'country="uz", language="ru"' in inspect.getsource(c.search_web))
+    check_true("nothing goes to the AI", "openrouter" not in load_source("integrations/garmin/competitors.py").lower())
 
 
 def test_old_stock_and_live_views() -> None:
@@ -7613,6 +7742,7 @@ def main() -> int:
         test_cleanup_round_17_10,
         test_own_week_and_team_calendar,
         test_old_stock_and_live_views,
+        test_garmin_competitors,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

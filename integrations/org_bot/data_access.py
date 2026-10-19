@@ -34,7 +34,7 @@ ROLES = ("buxgalteriya", "moliya")
 # the Boss when he is Garmin manager"); the Director is told when the role is
 # given or taken, and changing the role closes it.
 ROLE_SCOPES: dict[str, frozenset[str]] = {"garmin_manager": frozenset({"sap_garmin", "billz", "garmin"})}
-NAMES = {**SYSTEMS, "sap_garmin": "SAP (Garmin омборлари)", "garmin": "Garmin (лидлар, шикоятлар, каталог, Garmin сотув ҳисоботлари)"}
+NAMES = {**SYSTEMS, "sap_garmin": "SAP (Garmin омборлари)", "garmin": "Garmin (лидлар, шикоятлар, каталог, Garmin сотув ҳисоботлари, рақобатчилар)"}
 
 
 def granted(employee: dict[str, Any] | None) -> set[str]:

@@ -65,7 +65,8 @@ class SerpAPIClient:
             self._client = None
 
     async def search(
-        self, query: str, engine: Engine, num: int = 10, *, freshness: str | None = "d"
+        self, query: str, engine: Engine, num: int = 10, *, freshness: str | None = "d",
+        country: str | None = None, language: str | None = None,
     ) -> list[RawLead]:
         """Run one search and return normalized leads.
 
@@ -82,6 +83,9 @@ class SerpAPIClient:
                 time-bounded at all and old articles rank alongside new ones
                 — a real risk for anything but the tender-portal searches,
                 where the tender's own deadline matters more than crawl date.
+            country: Google's ``gl`` (two-letter country, e.g. "uz") — results
+                as searched from that country (Google engine only).
+            language: Google's ``hl`` (interface language, e.g. "ru").
 
         Returns:
             Normalized ``RawLead`` objects, ranked order preserved.
@@ -102,6 +106,10 @@ class SerpAPIClient:
         }
         if freshness:
             params["tbs"] = f"qdr:{freshness}"
+        if engine == "google" and country:
+            params["gl"] = country
+        if engine == "google" and language:
+            params["hl"] = language
 
         async with audited(
             agent=self.agent,

@@ -1166,3 +1166,24 @@ CREATE TABLE IF NOT EXISTS cheques (
 );
 CREATE INDEX IF NOT EXISTS idx_cheques_fiscal ON cheques (fiscal_module, fiscal_sign) WHERE fiscal_sign IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_cheques_rrn ON cheques (rrn) WHERE rrn IS NOT NULL;
+
+-- Garmin competitors (2026-10-19, integrations/garmin/competitors.py, agents/garmin-competitors):
+-- public OLX listings and Uzbek web pages that sell Garmin — what is new and what got cheaper since the
+-- last check. A private seller is never named (no name, no phone): `seller` is a shop's name or a site.
+CREATE TABLE IF NOT EXISTS garmin_competitor_offers (
+    source          TEXT         NOT NULL CHECK (source IN ('olx', 'web')),
+    external_id     TEXT         NOT NULL,             -- OLX listing id / the page's address
+    title           TEXT         NOT NULL,
+    model_key       TEXT,                              -- «fenix 8», «forerunner 970» …
+    state           TEXT,                              -- new / used (OLX); NULL when not said
+    price_uzs       BIGINT,
+    prev_price_uzs  BIGINT,                            -- the price before it last changed
+    seller          TEXT,
+    is_business     BOOLEAN      NOT NULL DEFAULT false,
+    url             TEXT         NOT NULL,
+    posted_on       DATE,
+    first_seen      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_seen       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (source, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_garmin_competitor_offers_seen ON garmin_competitor_offers (last_seen DESC);

@@ -172,9 +172,11 @@ TOOLS: list[dict] = [
     _fn("garmin_data", "The Garmin business's own records: Garmin AI bot leads (customers from Instagram and the "
         "web catalog), Garmin client complaints (from the /f/garmin QR page — each with its own code and state), the "
         "Billz → SAP check (which shop cheques are not in SAP, wrong amount or entered late — by cheque number), and "
-        "the Garmin product catalog with prices, and reports = the Garmin сотув team's daily reports (14 days: "
-        "what each wrote, when, who didn't send one).",
-        {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog", "reports"]}}, ("source",)),
+        "the Garmin product catalog with prices, reports = the Garmin сотув team's daily reports (14 days: "
+        "what each wrote, when, who didn't send one), and competitors = who else sells Garmin in Uzbekistan and for "
+        "how much (OLX listings and Uzbek web shops from the last weekly check; compare with catalog for our prices).",
+        {"source": {"type": "string", "enum": ["leads", "complaints", "billz_sap", "catalog", "reports", "competitors"]}},
+        ("source",)),
     _fn("billz_sap_check", "The Billz → SAP check, LIVE: every shop cheque of the last 14 days (Billz read now) "
         "against the latest SAP push — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP "
         "documents with no cheque; by cheque number. Say the time it was checked.", {}),
@@ -781,7 +783,11 @@ async def garmin_data(args: dict[str, Any]) -> str:
         return "\n".join(lines)
     if source == "billz_sap":
         return await billz_sap_check({})
-    return "source must be one of: leads, complaints, billz_sap, catalog, reports."
+    if source == "competitors":  # public OLX / web listings, the last weekly check (2026-10-19)
+        from integrations.garmin import competitors
+
+        return await competitors.answer_lines()
+    return "source must be one of: leads, complaints, billz_sap, catalog, reports, competitors."
 
 
 def _check_lines(check_date: Any, status: str, res: dict[str, Any]) -> list[str]:

@@ -31,6 +31,7 @@ from integrations.common.db import fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
+from integrations.garmin import competitors
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
     admin, ai_chat, cheques, old_stock, report_calendar, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
@@ -1502,6 +1503,18 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
 # -------------------------------------------------------------- employee updates
 
 
+async def _send_competitors(telegram_user_id: int, run_id: uuid.UUID) -> None:
+    """/raqobat: the competitor check; a failure is told, not raised (it runs in the background)."""
+    try:
+        await competitors.send(telegram_user_id, run_id, fresh_web=False)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Competitors check failed: {}", type(exc).__name__)
+        try:
+            await _reply(telegram_user_id, run_id, "Рақобатчиларни текшириб бўлмади, бир оздан кейин қайта уриниб кўринг.")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def _handle_employee_message(
     employee: dict[str, Any], message: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks | None = None
 ) -> str:
@@ -1536,6 +1549,13 @@ async def _handle_employee_message(
         return await _show_today_report(employee, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in old_stock.COMMANDS:  # his warehouses' old stock
         return await old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)
+    if employee.get("role") == "garmin_manager" and text.lower() in competitors.COMMANDS:  # who else sells Garmin (19.10)
+        await _reply(telegram_user_id, run_id, "OLX ва бошқа сайтларни текширяпман, бир-икки дақиқа кутинг.")
+        if background is not None:  # OLX pages and the search take a while — not inside the webhook
+            background.add_task(_send_competitors, telegram_user_id, run_id)
+        else:
+            await _send_competitors(telegram_user_id, run_id)
+        return "competitors_asked"
     team = report_calendar.TEAM_OF.get(employee.get("role") or "")
     if team and text.lower() in report_calendar.COMMANDS:  # the Garmin manager: his team's calendar (17.10)
         return await _send_report_calendar(telegram_user_id, run_id, team)

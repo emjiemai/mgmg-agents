@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     # (2026-10-14); his morning brief also shows the result while on trial.
     billz_sap_check_roles: str = "garmin_manager"
 
+    # --- Garmin competitors (2026-10-19, agents/garmin-competitors) ---
+    # Who else sells Garmin in Uzbekistan (OLX, Google) and for how much, to the Garmin manager once a
+    # week in the 08:00 job, on this weekday (0 = Monday … 6 = Sunday; Thursday), and /raqobat any time.
+    garmin_competitors_enabled: bool = True
+    garmin_competitors_weekday: int = 3
+
     # --- Garmin AI bot leads (POST /webhooks/garmin-lead/{secret}) ---
     # The same long random value goes into the Garmin bot's COMMAND_CENTER_SECRET.
     garmin_leads_secret: SecretStr = SecretStr("")

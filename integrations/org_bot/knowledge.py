@@ -47,7 +47,9 @@ so or the conversation makes it clear:
     invoice, often a day or more later. The Garmin AI Telegram bot
     (@garminofficialuzbot) brings customers from Instagram and the web catalog.
     The Garmin manager (garmin_manager) runs Garmin: every Garmin complaint
-    goes to him, and he gets his own Garmin morning brief.
+    goes to him, and he gets his own Garmin morning brief. Competitors: other
+    sellers of Garmin in Uzbekistan (OLX listings, other shops' sites) against
+    our garmin.com.uz prices — weekly to the Garmin manager, /raqobat any time.
 People: the Operations Director (Директор, раҳбар, the owner, "the Boss") runs
 every department and all three businesses — he is the one who writes to you.
 The Garmin manager (Garmin менежер) runs Garmin at the Boss's level — Murod
