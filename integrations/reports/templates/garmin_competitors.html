@@ -7,6 +7,7 @@ table.list th { text-align: left; font-weight: 700; color: var(--ink-2); border-
 table.list td { padding: 3pt 4pt; border-bottom: 1px solid var(--rule); vertical-align: top; }
 table.list td.num, table.list th.num { text-align: right; white-space: nowrap; }
 table.list td.alert { color: var(--alert); font-weight: 700; }
+table.list td.ph, table.list td.ph a { white-space: nowrap; }
 table.list a { color: var(--ink); text-decoration: none; }
 .tag { font-size: 7pt; font-weight: 700; color: var(--alert); }
 .muted { color: var(--ink-3); }
@@ -36,13 +37,17 @@ p.lead { font-size: 9.5pt; margin: 6pt 0 0; line-height: 1.45; }
 {% else %}<p class="lead muted">Йўқ.</p>{% endif %}
 
 {% if shops %}
-<h2 class="part">OLX'даги дўконлар <span class="sum">— {{ shops|length }} та (бизнес аккаунтлар)</span></h2>
+<h2 class="part">Рақобатчи дўконлар <span class="sum">— {{ shops|length }} та: номи, телефони, Instagram, Telegram, сайти</span></h2>
 <table class="list">
-  <thead><tr><th>Дўкон</th><th class="num">Эълон</th><th class="num">Янги товар</th><th>Моделлар</th><th class="num">Энг арзони</th><th class="num">Биздан арзон</th></tr></thead>
+  <thead><tr><th>Дўкон</th><th>Телефон</th><th>Instagram</th><th>Telegram / сайт</th><th class="num">OLX эълон</th><th class="num">Энг арзони</th><th class="num">Биздан арзон</th></tr></thead>
   <tbody>
   {% for s in shops %}
-    <tr><td><a href="{{ s.url }}">{{ s.name }}</a>{% if s.fresh and compared %} <span class="tag">ЯНГИ</span>{% endif %}</td><td class="num">{{ s.count }}</td><td class="num">{{ s.new }}</td>
-      <td>{{ s.models }}</td><td class="num">{{ s.low_text }}</td><td class="num {{ 'alert' if s.cheaper else '' }}">{{ s.cheaper }}</td></tr>
+    <tr><td>{% if s.url %}<a href="{{ s.url }}">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %}{% if s.fresh and compared %} <span class="tag">ЯНГИ</span>{% endif %}
+        {% if s.address %}<br><span class="muted">{{ s.address }}</span>{% endif %}{% if s.models %}<br><span class="muted">{{ s.models }}</span>{% endif %}</td>
+      <td class="ph">{% for ph in s.phones %}{{ ph }}{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">—</span>{% endfor %}</td>
+      <td>{% if s.instagram %}<a href="https://instagram.com/{{ s.instagram }}">@{{ s.instagram }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="ph">{% if s.telegram %}<a href="https://t.me/{{ s.telegram }}">t.me/{{ s.telegram }}</a>{% endif %}{% if s.telegram and s.website %}<br>{% endif %}{% if s.website %}<a href="https://{{ s.website }}/">{{ s.website }}</a>{% endif %}{% if not s.telegram and not s.website %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num">{{ s.count or "—" }}</td><td class="num">{{ s.low_text }}</td><td class="num {{ 'alert' if s.cheaper else '' }}">{{ s.cheaper }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -92,5 +97,7 @@ p.lead { font-size: 9.5pt; margin: 6pt 0 0; line-height: 1.45; }
 Модел номи бўйича солиштирилди (масалан «fenix 8», «forerunner 970»; ўлчам иккаласида ёзилган бўлса — ўша ўлчам):
 ранг, ойна ёки ремешок фарқ қилиши мумкин. «Биздан арзон» — янги товар, бизнинг энг арзон нархимиздан 5% дан кўп арзон;
 30% дан ҳам арзони — «шубҳали». Нусхалар («1:1», «копия»), ремешок ва эҳтиёт қисмлар, таъмирлаш киритилмаган.
-Хусусий шахснинг исми ва телефони кўрсатилмайди ва сақланмайди. Ҳар ҳафта · ҳозир: /raqobat.</p>
+Дўконларнинг алоқаси — уларнинг ўзи мижозлар учун ёзгани: OLX'даги дўкон саҳифаси, сайти, Telegram канали;
+Instagram топилмаса — Google'да дўкон номи билан қидирилади. Хусусий шахс (дўкон эмас) — исми ва телефони
+олинмайди, кўрсатилмайди ва сақланмайди. Ҳар ҳафта · ҳозир: /raqobat.</p>
 {% endblock %}

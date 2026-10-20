@@ -104,6 +104,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   **Sends no daily report** (2026-10-17, `kpi.NO_REPORT_ROLES`); /hisobotlar = his team's report calendar.
   **Competitors** (2026-10-19, `integrations/garmin/competitors.py`, spec 26): Thursdays 08:00 + `/raqobat` — OLX.uz
   listings and Uzbek shops' pages (Google gl=uz) vs our garmin.com.uz prices by model; private sellers never named.
+  Shops' contacts (2026-10-20, `competitor_shops.py`): name, phones, Instagram, Telegram, site, address — only what the
+  shop publishes (OLX shop page, site, Telegram channel; Instagram by Google name search). Private persons' phones: never.
   Mobile app: not now.
 - **Google reviews: separate pages and QR codes** (2026-10-08, `docs/agent-specs/20-google-reviews.md`):
   `/r` Londry, `/r/garmin` Garmin — the branch button opens that branch's Google review page

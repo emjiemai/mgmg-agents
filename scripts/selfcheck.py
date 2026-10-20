@@ -4245,6 +4245,7 @@ def test_garmin_competitors() -> None:
     """19.10.2026: who else sells Garmin in Uzbekistan (OLX, Google) against our garmin.com.uz prices — offline."""
     print("Garmin competitors (19.10.2026)")
     import inspect
+    import json
     from datetime import timezone
 
     from integrations.api import db_viewer
@@ -4268,6 +4269,7 @@ def test_garmin_competitors() -> None:
     for title, why in (("Garmin HD350 43mm pro 1:1", "copy"), ("часы копия 1x1 GARMIN 8 Pro", "copy"),
                        ("Remont Garmin soat, Ремонт часов Garmin", "repair"), ("Ремешок Garmin 47 мм Quickfit", "part"),
                        ("Чехол для Smart watch Garmin Fenix 7x", "part"), ("Garmin кабель+зарядка для часов", "part"),
+                       ("Безель на часы garmin fenix 7", "part"),
                        ("Polar Pacer спортивные часы", "not_garmin"),
                        ("Пульсометр CooSpo H808S совместим с Garmin", "part"),
                        ("Forerunner 165 Music", None), ("Garmin Venu 3S, оригинал, с коробкой и зарядкой", None),
@@ -4283,7 +4285,8 @@ def test_garmin_competitors() -> None:
           ((17800000, 18000000), (17800000, 20100000), (17800000, 20100000)))
     check("a «0 so'm» product isn't a price", (ours.count, ours.range("marq athlete 3")), (4, None))
 
-    def olx(id_, title, price, currency="UZS", converted=None, state="new", business=False, user=None, shop=None, prev=None):
+    def olx(id_, title, price, currency="UZS", converted=None, state="new", business=False, user=None, shop=None, prev=None,
+            contact=None):
         value = {"value": price, "currency": currency, "converted_value": converted, "negotiable": True}
         if prev:
             value.update(previous_value=prev, converted_previous_value=prev * 12000 if currency == "UYE" else prev)
@@ -4292,7 +4295,8 @@ def test_garmin_competitors() -> None:
             params.append({"key": "state", "value": {"key": state, "label": state}})
         return {"id": id_, "title": title, "url": f"https://www.olx.uz/d/obyavlenie/{id_}.html", "params": params,
                 "business": business, "user": user or {"id": 900 + id_, "name": "Улугбек", "company_name": ""},
-                "shop": shop or {"subdomain": None}, "created_time": "2026-10-18T07:27:47+05:00",
+                "shop": shop or {"subdomain": None}, "contact": contact or {"name": (user or {}).get("name") or "Улугбек"},
+                "created_time": "2026-10-18T07:27:47+05:00",
                 "location": {"city": {"name": "Ташкент"}}}
 
     raw = [olx(1, "Garmin Fenix 8 47mm", 10_280_920), olx(2, "Garmin Forerunner 970", 600, "UYE", 7_257_120, prev=650),
@@ -4300,13 +4304,18 @@ def test_garmin_competitors() -> None:
            olx(4, "Garmin tactix 8 smart watch soat", 483_808),
            olx(5, "Garmin Fenix 8 47mm AMOLED", 17_500_000, business=True,
                user={"id": 5, "name": "998901234567", "company_name": "Garmin Shop UZ"}),
-           olx(6, "Ремешок на garmin", 50_000), olx(7, "Garmin Venu X1", 12_000_000, business=True, user={"id": 77, "name": "Улугбек"})]
+           olx(6, "Ремешок на garmin", 50_000), olx(7, "Garmin Venu X1", 12_000_000, business=True, user={"id": 77, "name": "998909779778"}),
+           olx(8, "Garmin Instinct 3 45mm", 6_000_000, business=True, user={"id": 88, "name": "x"},
+               contact={"name": "Hyper Phone"}, shop={"subdomain": "hyperphone"})]
     offers = [o for o in (c.parse_olx(r) for r in raw) if o is not None]
     check("straps left out; у.е. read in OLX's so'm", ([o.external_id for o in offers], offers[1].price),
-          (["1", "2", "3", "4", "5", "7"], 7_257_120))
-    check_true("a private seller has no name; a shop its company name only (never a phone or a person's name)",
-               offers[0].seller is None and offers[4].seller == "Garmin Shop UZ" and offers[5].seller is None
-               and offers[5].business)
+          (["1", "2", "3", "4", "5", "7", "8"], 7_257_120))
+    check_true("a private seller: no name, no phone; a shop: the name it sells under, its number when that is its name, "
+               "its OLX shop page",
+               offers[0].seller is None and offers[0].seller_phone is None and offers[4].seller == "Garmin Shop UZ"
+               and offers[5].seller is None and offers[5].seller_phone == "+998 90 977 97 78"
+               and offers[6].seller == "Hyper Phone" and offers[6].shop_page == "https://hyperphone.olx.uz/")
+    offers = offers[:6]  # the counts below are for the first six
     c.compare(offers, ours)
     check("cheaper = a NEW item under 95 % of our lowest price; used and suspicious ones aren't",
           [o.external_id for o in offers if c.cheaper(o)], ["1", "2"])
@@ -4336,8 +4345,11 @@ def test_garmin_competitors() -> None:
     report = c.Report(olx=offers, web=[h for h in hits if h], ours=ours, compared=True, web_state="ok",
                       at=datetime(2026, 10, 19, 8, 0, tzinfo=timezone.utc))
     v = c.view(report)
-    check("the page: cheaper new items, shops, web pages", (len(v["cheaper"]), [s["name"] for s in v["shops"]], len(v["web"])),
-          (2, ["Garmin Shop UZ", "номи кўрсатилмаган"], 2))
+    check("the page: cheaper new items, shops (OLX accounts, a site, a Telegram channel), web pages",
+          (len(v["cheaper"]), [s["name"] for s in v["shops"]], len(v["web"])),
+          (2, ["Garmin Shop UZ", "shop.uz", "t.me/garmin_tashkent", "номи кўрсатилмаган"], 2))
+    check("...a shop whose OLX name is its number: no name, the number as its phone", v["shops"][-1]["phones"],
+          ["+998 90 977 97 78"])
     pdf = render.pdf("garmin_competitors.html", **v)
     html = render.render_html("garmin_competitors.html", image=False, **v)
     check_true("the PDF is drawn, with the listing links", pdf[:4] == b"%PDF" and "olx.uz/d/obyavlenie/1.html" in html)
@@ -4366,6 +4378,63 @@ def test_garmin_competitors() -> None:
     check_true("Google is searched from Uzbekistan in Russian (gl / hl)", 'params["gl"] = country' in serp
                and 'params["hl"] = language' in serp and 'country="uz", language="ru"' in inspect.getsource(c.search_web))
     check_true("nothing goes to the AI", "openrouter" not in load_source("integrations/garmin/competitors.py").lower())
+
+    # ---- the shops' contacts (2026-10-20): what each SHOP publishes; a private person is never looked up
+    from integrations.garmin import competitor_shops as cs
+
+    check("phones in any form → «+998 90 123 45 67»", [cs.phone(x) for x in ("+998998446162", "(90) 123-45-67", "998 71 1234567", "12345")],
+          ["+998 99 844 61 62", "+998 90 123 45 67", "+998 71 123 45 67", None])
+    html = ('<a href="tel:+998901234567">call</a> Тел: +998 (97) 732-37-27 · OLX +998 (71) 202-07-07 '
+            '<a href="https://instagram.com/p/abc">post</a> <a href="https://www.instagram.com/texnikach/">ig</a> '
+            '<a href="https://t.me/share/url?x">s</a> <a href="https://t.me/texnikach">tg</a>')
+    check("a page's phones, Instagram, Telegram — not OLX's own number, not «/p/» or «/share»", cs.contacts_in(html),
+          (["+998 90 123 45 67", "+998 97 732 37 27"], "texnikach", "texnikach"))
+    state = json.dumps({"x": {"y": [{"name": "Texnikach", "contact": {"external_page_url": "http://t.me/texnikach",
+                                                                       "phones": ["+998998446162", "998908456162"]},
+                                     "address": {"street": "Малика", "number": "Б2"}}]}})
+    page = cs.olx_shop_page('<script>window.__PRERENDERED_STATE__= ' + json.dumps(state) + ';</script>')
+    check("an OLX shop page: its name, phones, link, address", page,
+          {"name": "Texnikach", "phones": ["+998 99 844 61 62", "+998 90 845 61 62"], "link": "http://t.me/texnikach",
+           "address": "Малика Б2"})
+    check("a page's og: title and description", cs.page_meta('<meta property="og:title" content="Texnikach">'
+          '<meta property="og:description" content="Заказ: +998901112233">').get("og:title"), "Texnikach")
+    private = c.parse_olx(olx(9, "Garmin Forerunner 970", 9_000_000, user={"id": 9, "name": "Улугбек"},
+                              contact={"name": "Улугбек"}))
+    web_hits = [c.Offer(source="web", external_id="a", title="Garmin", url="https://t.me/s/texnikach"),
+                c.Offer(source="web", external_id="b", title="Garmin", url="https://deviceuz.uz/garmin"),
+                c.Offer(source="web", external_id="c", title="Garmin", url="https://www.instagram.com/garmin_tashkent/")]
+    shops = cs.gather([private, *offers], web_hits)
+    check("shops: OLX business accounts, a Telegram channel (t.me/s/… too), a site, an Instagram — no private person",
+          sorted(sh.key for sh in shops), ["ig:garmin_tashkent", "olx:5", "olx:77", "site:deviceuz.uz", "tg:texnikach"])
+    olx_shop = next(sh for sh in shops if sh.key == "olx:5")
+    olx_shop.telegram = "texnikach"
+    check("the same Telegram (or Instagram, site, name) is one shop", len(cs.merge(shops)), 4)
+    check_true("«Seller» isn't a name; a lone first name isn't searched (someone else's page), a shop-like one is",
+               cs.real_name("Seller") is None and not cs.looks_like_shop(cs.Shop(key="k", name="Умида"))
+               and cs.looks_like_shop(cs.Shop(key="k", name="Hyper Phone")) and cs.looks_like_shop(cs.Shop(key="k", name="A.Mobile"))
+               and cs.looks_like_shop(cs.Shop(key="k", name="Texnikach", olx_page="https://texnikach.olx.uz/")))
+    check_true("an Instagram is taken only when its title or address holds the shop's name",
+               cs.name_matches("Texnikach", "Texnikach (@texnikach) • Instagram") and not cs.name_matches("Texnikach", "Mobilon.Uz"))
+    shop_rows = [cs.Shop(key="olx:5", name="Texnikach", phones=["+998 99 844 61 62"], instagram="texnikach",
+                         telegram="texnikach", address="Малика Б2", offers=[offers[4]])]
+    rv = c.view(c.Report(olx=offers, web=[], ours=ours, compared=False, shop_list=shop_rows,
+                         at=datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)))
+    shop_html = render.render_html("garmin_competitors.html", image=False, **rv)
+    check_true("the page lists each shop's name, phone, Instagram, Telegram, address",
+               all(x in shop_html for x in ("Рақобатчи дўконлар", "+998 99 844 61 62", "instagram.com/texnikach",
+                                             "t.me/texnikach", "Малика Б2")))
+    check_true("the caption counts shops with a phone and with an Instagram",
+               "телефони бор: 1, Instagram'и бор: 1" in c.caption(c.Report(olx=offers, web=[], ours=ours, compared=False,
+                                                                              shop_list=shop_rows, at=None)))
+    src = inspect.getsource(cs)
+    check_true("pages are read only where robots.txt allows; Google only in the weekly run, a few shops, once a month",
+               "can_fetch(USER_AGENT, url)" in src and cs.SEARCH_BUDGET <= 10 and cs.SEARCH_DAYS >= 30
+               and "search=fresh_web and report.web_state" in inspect.getsource(c.collect))
+    check_true("phones never go to the AI (the analyst gets names and links only)",
+               "SELECT name, instagram, telegram, website, address, olx_page FROM garmin_competitor_shops"
+               in inspect.getsource(c.answer_lines))
+    check_true("schema: garmin_competitor_shops, open in /db", "CREATE TABLE IF NOT EXISTS garmin_competitor_shops" in schema
+               and db_viewer.is_open("garmin_competitor_shops"))
 
 
 def test_old_stock_and_live_views() -> None:

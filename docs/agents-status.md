@@ -90,4 +90,4 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 
 **Old stock (2026-10-17):** Mondays 08:00, the Director and the Garmin manager — goods a year or more in stock (`25-old-stock.md`), /eski.
 
-**Garmin competitors (2026-10-19):** Thursdays 08:00, the Garmin manager — who else sells Garmin in Uzbekistan (OLX, Google) and for how much against garmin.com.uz (`26-garmin-competitors.md`), /raqobat.
+**Garmin competitors (2026-10-19):** Thursdays 08:00, the Garmin manager — who else sells Garmin in Uzbekistan (OLX, Google) and for how much against garmin.com.uz (`26-garmin-competitors.md`), /raqobat. Since 2026-10-20 with each shop's name, phones, Instagram, Telegram, site (what the shop publishes; private persons never).

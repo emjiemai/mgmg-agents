@@ -1187,3 +1187,21 @@ CREATE TABLE IF NOT EXISTS garmin_competitor_offers (
     PRIMARY KEY (source, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_garmin_competitor_offers_seen ON garmin_competitor_offers (last_seen DESC);
+
+-- Competitor shops' contacts (2026-10-20, integrations/garmin/competitor_shops.py): what each SHOP publishes
+-- for customers — its OLX shop page, its site, its Telegram channel (and its Instagram found by name).
+-- Shops only: OLX business accounts, sites, channels; a private person is never looked up or stored.
+CREATE TABLE IF NOT EXISTS garmin_competitor_shops (
+    key           TEXT         PRIMARY KEY,           -- olx:<account> / site:<domain> / tg:<channel> / ig:<handle>
+    name          TEXT,
+    phones        TEXT[]       NOT NULL DEFAULT '{}',
+    instagram     TEXT,
+    telegram      TEXT,
+    website       TEXT,
+    address       TEXT,
+    olx_page      TEXT,
+    first_seen    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_seen     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    checked_at    TIMESTAMPTZ,                        -- their pages read
+    searched_at   TIMESTAMPTZ                         -- Google asked for their Instagram
+);

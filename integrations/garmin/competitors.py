@@ -19,8 +19,9 @@ and repairs are left out; a new item at under 30 % of our price is listed
 apart as suspicious (a copy or a wrong price), never as "cheaper".
 
 Privacy: a private seller is «хусусий шахс» — no name, no phone, nothing about
-them is stored. A shop is named only by its OLX company name or shop page.
-Nothing goes to the AI.
+them is stored. Shops (OLX business accounts, sites, Telegram channels) are listed
+with what they publish for customers — name, phones, Instagram, Telegram, site,
+address (``competitor_shops.py``, 2026-10-20). Phones never go to the AI.
 
 Stored in ``garmin_competitor_offers`` (first and last seen, price, the price
 before), so the page marks what is new since the last check and what got
@@ -93,7 +94,7 @@ _TRANSLIT = {"гармин": "garmin", "феникс": "fenix", "фeникс": "
              "circa": "cirqa", "venus": "venu", "феникс8": "fenix 8"}
 
 _COPY = re.compile(r"\b1\s*[:x]\s*1\b|коп[иі]я|реплик|replica|\bcopy\b|аналог|lux\s*copy|люкс\s*коп", re.I)
-_PART = re.compile(r"ремеш|ремен|remesh|\bstrap|стекл|пл[её]нк|защитн|заряд|кабел|\bcable|charger|чехол|бампер|"
+_PART = re.compile(r"ремеш|ремен|remesh|\bstrap|безел|bezel|стекл|пл[её]нк|защитн|заряд|кабел|\bcable|charger|чехол|бампер|"
                    r"крепл|держател|адаптер|совмест|для\s+(?:garmin|гармин)|garmin\s+uchun|запчаст|аккумулятор|"
                    r"батаре|\bbattery", re.I)
 _REPAIR = re.compile(r"ремонт|remont|repair|прошив|русифик|ta['ʼ’]?mir", re.I)
@@ -213,8 +214,10 @@ class Offer:
     price: int | None = None        # so'm
     state: str | None = None        # "new" / "used" / None (not said)
     business: bool = False
-    seller: str | None = None       # a shop's name; never a private person's
-    shop_ref: str | None = None     # groups one shop's listings in this run only (not stored, not shown)
+    seller: str | None = None       # a shop's name (its OLX name); never a private person's
+    shop_ref: str | None = None     # the shop's OLX account — groups its listings (not shown)
+    shop_page: str | None = None    # its OLX shop page (<name>.olx.uz), when it has one
+    seller_phone: str | None = None  # a shop that put its number as its OLX name
     posted: date | None = None
     city: str | None = None
     olx_prev: int | None = None     # OLX's own "price before"
@@ -250,9 +253,16 @@ def parse_olx(o: dict[str, Any]) -> Offer | None:
     business = bool(o.get("business"))
     user = o.get("user") if isinstance(o.get("user"), dict) else {}
     shop = o.get("shop") if isinstance(o.get("shop"), dict) else {}
-    seller = None
-    if business:  # a shop: its company name or its OLX shop page — never a person's name or phone
-        seller = (str(user.get("company_name") or "").strip() or str(shop.get("subdomain") or "").strip()) or None
+    seller = seller_phone = shop_page = None
+    if business:  # a shop: the name it sells under on OLX — a private person's is never read
+        from integrations.garmin.competitor_shops import phone
+
+        contact = o.get("contact") if isinstance(o.get("contact"), dict) else {}
+        shown = str(user.get("company_name") or "").strip() or str(contact.get("name") or "").strip()
+        seller_phone = phone(shown) if re.fullmatch(r"\D?\d{9,12}", shown) else None
+        seller = None if re.fullmatch(r"\D?\d+", shown) else (shown or None)  # digits alone aren't a name
+        sub = str(shop.get("subdomain") or "").strip().lower()
+        shop_page = f"https://{sub}.olx.uz/" if re.fullmatch(r"[a-z0-9-]{2,40}", sub) else None
     posted = None
     try:
         posted = datetime.fromisoformat(str(o.get("created_time"))).date()
@@ -261,7 +271,8 @@ def parse_olx(o: dict[str, Any]) -> Offer | None:
     city = ((o.get("location") or {}).get("city") or {}).get("name") if isinstance(o.get("location"), dict) else None
     return Offer(source="olx", external_id=str(o.get("id")), title=title, url=str(o.get("url") or ""),
                  price=price if price and price > 0 else None, state=state, business=business, seller=seller,
-                 shop_ref=str(user.get("id")) if business else None, posted=posted, city=city,
+                 shop_ref=str(user.get("id")) if business else None, shop_page=shop_page, seller_phone=seller_phone,
+                 posted=posted, city=city,
                  olx_prev=prev if prev and price and prev > price else None, key=model_key(title), size=size_mm(title))
 
 
@@ -333,6 +344,7 @@ class Report:
     olx_failed: bool = False
     web_state: str = "ok"       # ok / reused / off / failed
     at: datetime | None = None
+    shop_list: list[Any] | None = None  # competitor_shops.Shop rows with their contacts (None: not read)
 
     @property
     def cheaper(self) -> list[Offer]:
@@ -343,23 +355,28 @@ class Report:
         return [o for o in self.olx if suspicious(o)]
 
     def shops(self) -> list[dict[str, Any]]:
-        """OLX shops (business accounts) with their Garmin listings — named ones by name, the rest unnamed."""
-        groups: dict[str, list[Offer]] = {}
-        for o in self.olx:
-            if o.business:
-                groups.setdefault(o.seller or f"#{o.shop_ref}", []).append(o)
+        """The competitor shops — OLX business accounts and the sites / channels Google found — with their contacts."""
+        from integrations.garmin import competitor_shops as cs
+
+        items = self.shop_list if self.shop_list is not None else cs.merge(cs.gather(self.olx, self.web))
         rows = []
-        for ref, items in groups.items():
-            prices = [o.price for o in items if o.price]
-            models = sorted({o.key for o in items if o.key})
-            rows.append({"name": items[0].seller or "номи кўрсатилмаган", "count": len(items),
-                         "new": sum(1 for o in items if o.state == "new"),
+        for shop in items:
+            olx = [o for o in shop.offers if o.source == "olx"]
+            prices = [o.price for o in olx if o.price]
+            models = sorted({o.key for o in shop.offers if o.key})
+            link = shop.olx_page or (olx[0].url if olx else f"https://{shop.website}/" if shop.website
+                                     else shop.offers[0].url if shop.offers else "")
+            shown = (shop.name or shop.website or (f"t.me/{shop.telegram}" if shop.telegram else None)
+                     or (f"@{shop.instagram}" if shop.instagram else None) or "номи кўрсатилмаган")
+            rows.append({"name": shown, "address": shop.address or "",
+                         "phones": list(shop.phones), "instagram": shop.instagram or "", "telegram": shop.telegram or "",
+                         "website": shop.website or "", "url": link, "count": len(olx), "pages": len(shop.offers) - len(olx),
+                         "new": sum(1 for o in olx if o.state == "new"),
                          "models": ", ".join(models[:5]) + (f" +{len(models) - 5}" if len(models) > 5 else ""),
                          "low": min(prices) if prices else None, "low_text": som(min(prices) if prices else None),
-                         "url": items[0].url,
-                         "cheaper": sum(1 for o in items if cheaper(o)), "fresh": any(o.is_new for o in items)})
-        # Named shops first (biggest first), then the unnamed ones.
-        return sorted(rows, key=lambda r: (r["name"] == "номи кўрсатилмаган", -r["count"], r["name"]))
+                         "cheaper": sum(1 for o in olx if cheaper(o)), "fresh": any(o.is_new for o in shop.offers)})
+        # Named shops first (most listings first), then the unnamed ones.
+        return sorted(rows, key=lambda r: (r["name"] == "номи кўрсатилмаган", -r["count"], -r["pages"], r["name"]))
 
 
 # ---- reading the sources ----------------------------------------------------------------------------------
@@ -497,6 +514,13 @@ async def collect(run_id: uuid.UUID | str | None = None, *, fresh_web: bool = Tr
     previous = await _previous()
     report.compared = diff(previous, fresh)
     await _store(fresh)
+    try:  # the shops' names, phones, Instagram, Telegram, site (2026-10-20)
+        from integrations.garmin import competitor_shops
+
+        report.shop_list = await competitor_shops.collect(report.olx, report.web, run_id,
+                                                          search=fresh_web and report.web_state == "ok")
+    except Exception as exc:  # noqa: BLE001 — the listings still go, the shops without contacts
+        log.warning("Shop contacts not read: {}", type(exc).__name__)
     return report
 
 
@@ -571,7 +595,8 @@ def caption(report: Report) -> str:
         lines.append(f"OLX: {v['olx_count']} та Garmin эълони ({v['olx_new']} та янги товар, {v['olx_used']} та б/у){fresh}")
         if report.ours is not None:
             lines.append(f"Янги товарда нархи биздан арзон: <b>{len(v['cheaper'])}</b> та (бизнинг нарх — garmin.com.uz)")
-        lines.append(f"OLX'даги дўконлар: {len(v['shops'])} та")
+        lines.append(f"Рақобатчи дўконлар: {len(v['shops'])} та — телефони бор: {sum(1 for x in v['shops'] if x['phones'])}, "
+                     f"Instagram'и бор: {sum(1 for x in v['shops'] if x['instagram'])}")
     if v["web_note"] and report.web_state != "reused":
         lines.append(f"Бошқа сайтлар: {v['web_note']}")
     else:
@@ -588,8 +613,11 @@ def text_fallback(report: Report) -> str:
         lines += [f"• {r['title'][:50]} — {r['price']} (бизда {r['ours']}, {r['diff']}) · {r['seller']}" for r in v["cheaper"][:20]]
     if v["shops"]:
         lines.append("")
-        lines.append("<b>OLX'даги дўконлар:</b>")
-        lines += [f"• {s['name']} — {s['count']} та эълон" for s in v["shops"][:15]]
+        lines.append("<b>Рақобатчи дўконлар:</b>")
+        lines += [f"• {s['name']}" + (f" — {', '.join(s['phones'][:2])}" if s["phones"] else "")
+                  + (f" · instagram.com/{s['instagram']}" if s["instagram"] else "")
+                  + (f" · t.me/{s['telegram']}" if s["telegram"] else "")
+                  + (f" · {s['count']} та эълон" if s["count"] else "") for s in v["shops"][:15]]
     if v["web"]:
         lines.append("")
         lines.append("<b>Бошқа сайтлар:</b>")
@@ -642,4 +670,16 @@ async def answer_lines(days: int = 8) -> str:
         before = f" (was {int(r['prev_price_uzs']):,})".replace(",", " ") if r["prev_price_uzs"] else ""
         lines.append(f"- {r['source']} | {r['model_key'] or '?'} | {r['state'] or '-'} | {price}{before} | {who} | "
                      f"{r['posted_on'] or ''} | «{r['title']}» | {r['url']}")
+    shops = await fetch_all(
+        """SELECT name, instagram, telegram, website, address, olx_page FROM garmin_competitor_shops
+            WHERE last_seen >= now() - make_interval(days => %s) ORDER BY name NULLS LAST""",
+        (days,),
+    )
+    if shops:
+        # Phones stay out of the AI (personal data is masked before AI — the owner's IT instruction); they are in the PDF.
+        lines.append("Competitor shops (their own published contacts; phone numbers: in the /raqobat PDF):")
+        for r in shops:
+            parts = [f"instagram.com/{r['instagram']}" if r["instagram"] else "", f"t.me/{r['telegram']}" if r["telegram"] else "",
+                     r["website"] or "", r["address"] or "", r["olx_page"] or ""]
+            lines.append(f"- {r['name'] or 'no name'} | " + " | ".join(x for x in parts if x))
     return "\n".join(lines)
