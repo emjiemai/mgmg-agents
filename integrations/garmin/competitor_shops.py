@@ -397,15 +397,15 @@ async def collect(olx: list[Any], web: list[Any], run_id: uuid.UUID | str | None
 
 
 async def _search_missing(shops: list[Shop], run_id: uuid.UUID | str | None, now: datetime) -> None:
-    from integrations.common.config import settings
-    from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
+    from integrations.search.google_cse_client import search_client, search_configured
+    from integrations.search.serpapi_client import SerpAPIError
 
     wanted = [s for s in shops if s.name and not s.instagram and len(_norm(s.name)) >= 4 and looks_like_shop(s)
               and not _fresh(s.searched_at, SEARCH_DAYS, now)][:SEARCH_BUDGET]
-    if not wanted or not settings.serpapi_api_key.get_secret_value():
+    if not wanted or not search_configured():
         return
     try:
-        async with SerpAPIClient(agent=AGENT, run_id=run_id) as client:
+        async with search_client(AGENT, run_id) as client:
             for s in wanted:
                 try:
                     await _search_instagram(client, s)

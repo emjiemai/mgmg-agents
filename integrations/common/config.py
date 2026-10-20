@@ -278,6 +278,10 @@ class Settings(BaseSettings):
 
     # --- Lead Agent sources ---
     serpapi_api_key: SecretStr = SecretStr("")
+    # Google Programmable Search (2026-10-20): the competitor agent's search when both are set
+    # (the engine searches the Uzbek shop sites set in it); SerpAPI otherwise and for the Lead Agent.
+    google_search_api_key: SecretStr = SecretStr("")
+    google_search_cx: str = ""
     tavily_api_key: SecretStr = SecretStr("")
     # eTender UZEX / xt-xarid / data.egov.uz endpoints: added once confirmed
     # against the real n8n workflow (their sites serve an SPA shell, not JSON,

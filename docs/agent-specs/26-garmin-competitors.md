@@ -40,6 +40,12 @@ OLX listing by model. **ЯНГИ** = first seen since the last check; «авва
 cheaper (OLX's own «price before», or ours from the last check). The first check marks
 nothing new. The text if the PDF can't be drawn.
 
+## Search engine (2026-10-20)
+
+Google Programmable Search (`integrations/search/google_cse_client.py`) when `GOOGLE_SEARCH_API_KEY` and
+`GOOGLE_SEARCH_CX` are set — engine `b184cf4c519404a9b`, limited to the Uzbek shop sites set in it
+(100 searches/day free); SerpAPI otherwise. Both the weekly searches and the Instagram look-ups use it.
+
 ## Who, when
 
 - Every **Thursday 08:00** (`GARMIN_COMPETITORS_WEEKDAY`, 0 = Monday) to everyone in the

@@ -425,11 +425,12 @@ async def fetch_our_prices(run_id: uuid.UUID | str | None = None) -> OurPrices:
 
 async def search_web(run_id: uuid.UUID | str | None = None) -> list[Offer]:
     """Google (SerpAPI) in Uzbekistan, Russian: pages selling Garmin here. Raises SerpAPIError when not set up."""
-    from integrations.search.serpapi_client import SerpAPIClient, SerpAPIError
+    from integrations.search.google_cse_client import search_client
+    from integrations.search.serpapi_client import SerpAPIError
 
     found: dict[str, Offer] = {}
     failures = 0
-    async with SerpAPIClient(agent=AGENT, run_id=run_id) as client:
+    async with search_client(AGENT, run_id) as client:
         for query in WEB_QUERIES:
             try:
                 results = await client.search(query, "google", num=20, freshness=None, country="uz", language="ru")
@@ -486,6 +487,12 @@ async def _stored_web() -> list[Offer] | None:
                   key=r["model_key"]) for r in rows]
 
 
+def search_configured() -> bool:
+    from integrations.search.google_cse_client import search_configured as configured
+
+    return configured()
+
+
 async def collect(run_id: uuid.UUID | str | None = None, *, fresh_web: bool = True) -> Report:
     """Read every source, compare with our prices, store, and mark new / cheaper. A failing source says so."""
     report = Report(olx=[], web=[], ours=None, compared=False, at=now_local())
@@ -501,7 +508,7 @@ async def collect(run_id: uuid.UUID | str | None = None, *, fresh_web: bool = Tr
     reused = None if fresh_web else await _stored_web()
     if reused is not None:
         report.web, report.web_state = reused, "reused"
-    elif not settings.serpapi_api_key.get_secret_value():
+    elif not search_configured():
         report.web_state = "off"
     else:
         try:
@@ -569,7 +576,7 @@ def view(report: Report) -> dict[str, Any]:
         notes.append("OLX'дан маълумот олиб бўлмади.")
     if report.ours is None:
         notes.append("garmin.com.uz'дан нархларимизни олиб бўлмади — солиштирилмади.")
-    web_note = {"off": "веб қидирув уланмаган (SERPAPI_API_KEY)", "failed": "веб қидирув ишламади",
+    web_note = {"off": "веб қидирув уланмаган (GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX ёки SERPAPI_API_KEY)", "failed": "веб қидирув ишламади",
                 "reused": "охирги қидирув натижаси (кредит тежаш учун бир кунда бир марта қидирилади)"}.get(report.web_state)
     return {
         "title": "Garmin рақобатчилари — Ўзбекистон",

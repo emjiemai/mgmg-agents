@@ -4379,6 +4379,26 @@ def test_garmin_competitors() -> None:
                and 'params["hl"] = language' in serp and 'country="uz", language="ru"' in inspect.getsource(c.search_web))
     check_true("nothing goes to the AI", "openrouter" not in load_source("integrations/garmin/competitors.py").lower())
 
+    # Google Programmable Search (20.10): used when its key and engine are set, SerpAPI otherwise
+    from pydantic import SecretStr
+
+    from integrations.search import google_cse_client as gcse
+    from integrations.search.serpapi_client import SerpAPIClient
+    saved = (settings.google_search_api_key, settings.google_search_cx, settings.serpapi_api_key)
+    try:
+        settings.google_search_api_key, settings.google_search_cx = SecretStr("k"), "cx1"
+        on = isinstance(gcse.search_client("t"), gcse.GoogleSearchClient)
+        settings.google_search_cx = ""
+        settings.serpapi_api_key = SecretStr("")
+        off = isinstance(gcse.search_client("t"), SerpAPIClient) and not gcse.search_configured()
+    finally:
+        settings.google_search_api_key, settings.google_search_cx, settings.serpapi_api_key = saved
+    check_true("Google search when GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX are set; SerpAPI otherwise", on and off)
+    check_true("a failed Google search is handled like a failed SerpAPI one",
+               issubclass(gcse.GoogleSearchError, __import__("integrations.search.serpapi_client", fromlist=["x"]).SerpAPIError)
+               and "search_client(AGENT, run_id)" in inspect.getsource(c.search_web)
+               and "search_client(AGENT, run_id)" in load_source("integrations/garmin/competitor_shops.py"))
+
     # ---- the shops' contacts (2026-10-20): what each SHOP publishes; a private person is never looked up
     from integrations.garmin import competitor_shops as cs
 
