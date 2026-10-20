@@ -4379,6 +4379,26 @@ def test_garmin_competitors() -> None:
                and 'params["hl"] = language' in serp and 'country="uz", language="ru"' in inspect.getsource(c.search_web))
     check_true("nothing goes to the AI", "openrouter" not in load_source("integrations/garmin/competitors.py").lower())
 
+    # the Director's test of 20.10: «Бир йилдан ошган товарлар қанча?» → "not available"; prices from the August snapshot
+    import asyncio
+
+    from integrations.org_bot import old_stock as _ostock
+    row = _ostock.Row("A", "fenix 6", "05", "Garmin-Minor", 2, 900.0, date(2025, 9, 1), 414, 0.0)
+    saved_load = _ostock.load
+
+    async def fake_load(codes=None):
+        return [row], [], datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+    _ostock.load = fake_load
+    try:
+        answer = asyncio.run(analyst.old_stock_tool({}))
+    finally:
+        _ostock.load = saved_load
+    check_true("the analyst has old stock (as /eski): counts, value, each row", "old_stock" in analyst.TOOL_NAMES
+               and analyst.TOOL_SYSTEMS["old_stock"] == {"sap"} and "A year or more: 1 rows, $900" in answer
+               and "fenix 6 (A) | Garmin-Minor" in answer)
+    check_true("our prices for the bot come live from garmin.com.uz (the snapshot only if the site can't be read)",
+               "competitors.our_catalog_text()" in inspect.getsource(analyst.garmin_data))
+
     # Google Programmable Search (20.10): used when its key and engine are set, SerpAPI otherwise
     from pydantic import SecretStr
 

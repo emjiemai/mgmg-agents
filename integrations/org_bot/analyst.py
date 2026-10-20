@@ -63,7 +63,7 @@ COMPANY_SOURCES: dict[str, str] = {
     "lidlar": "history: leads handed to B2B sales people until the hand-out was stopped on 2026-10-07",
     "lead_agent": "every lead the Lead Agent found (the leads Google Sheet)",
     "garmin_lidlar": "customers who came through the Garmin AI bot (30 days)",
-    "garmin_catalog": "Garmin products and prices (garmin.com.uz snapshot)",
+    "garmin_catalog": "Garmin products and prices (garmin.com.uz — live through garmin_data catalog; this is the 21.08 snapshot)",
     "reporter_agent": "14 days of the morning brief's own figures (overdue receivables trend)",
 }
 
@@ -180,6 +180,10 @@ TOOLS: list[dict] = [
     _fn("billz_sap_check", "The Billz → SAP check, LIVE: every shop cheque of the last 14 days (Billz read now) "
         "against the latest SAP push — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP "
         "documents with no cheque; by cheque number. Say the time it was checked.", {}),
+    _fn("old_stock", "Old stock from SAP (the same as /eski): goods a year or more in the warehouse (by the item's last "
+        "purchase date) and those within 30 days of a year — count, value (USD), warehouse, how many sold in 90 days. "
+        "garmin_only = the Garmin warehouses only.",
+        {"garmin_only": {"type": "boolean", "description": "only the Garmin warehouses (default false = all)"}}),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -200,6 +204,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "garmin_sap": {"sap_garmin"},
     "garmin_data": {"garmin"},
     "billz_sap_check": {"billz", "sap"},
+    "old_stock": {"sap"},
     "attendance": None,
     "company_data": None,
 }
@@ -747,8 +752,14 @@ async def garmin_data(args: dict[str, Any]) -> str:
     source = args.get("source")
     if source == "leads":
         return await ops_manager._fetch_agent_data("garmin_lidlar")
-    if source == "catalog":
-        return await ops_manager._fetch_agent_data("garmin_catalog")
+    if source == "catalog":  # our prices, live from garmin.com.uz (2026-10-20); the August snapshot if the site can't be read
+        from integrations.garmin import competitors
+
+        try:
+            return await competitors.our_catalog_text()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("garmin.com.uz not read: {}", type(exc).__name__)
+            return await ops_manager._fetch_agent_data("garmin_catalog")
     if source == "reports":
         # His own team only (2026-10-16): the Garmin сотув people's daily reports — never anyone else's.
         since = _today() - timedelta(days=GARMIN_REPORT_DAYS - 1)
@@ -853,6 +864,27 @@ async def company_data(args: dict[str, Any]) -> str:
     return await ops_manager._fetch_agent_data(source)
 
 
+async def old_stock_tool(args: dict[str, Any]) -> str:
+    """Old stock (2026-10-20: the Director asked «Бир йилдан ошган товарлар қанча?» and got "not available")."""
+    from integrations.org_bot import old_stock
+
+    codes = await old_stock.garmin_codes_now() if args.get("garmin_only") else None
+    old, soon, at = await old_stock.load(codes)
+    where = "the Garmin warehouses" if codes is not None else "all warehouses"
+    lines = [f"Old stock in {where}, SAP push of {to_local(at):%Y-%m-%d %H:%M}" if at else f"Old stock in {where}",
+             f"A year or more: {len(old)} rows, ${sum(r.value for r in old):,.0f} (SAP value, USD); "
+             f"{sum(1 for r in old if r.sold90 <= 0)} of them sold nothing in 90 days.",
+             f"Within 30 days of a year: {len(soon)} rows, ${sum(r.value for r in soon):,.0f}.",
+             "Age = from the item's last purchase date in SAP; display dummies left out. Biggest value first:"]
+    for label, rows in (("A YEAR OR MORE", old), ("APPROACHING", soon)):
+        for r in rows[:40]:
+            lines.append(f"- {label} | {r.name} ({r.code}) | {r.whs_name or r.whs} | {r.qty:g} pcs | ${r.value:,.0f} | "
+                         f"last bought {r.last_buy} | sold in 90 days: {r.sold90:g}")
+        if len(rows) > 40:
+            lines.append(f"- … {len(rows) - 40} more {label.lower()} rows (the full list: /eski)")
+    return "\n".join(lines)
+
+
 HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "data_sources": data_sources,
     "sap_receivables": sap_receivables,
@@ -865,6 +897,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "garmin_sap": garmin_sap,
     "garmin_data": garmin_data,
     "billz_sap_check": billz_sap_check,
+    "old_stock": old_stock_tool,
     "company_data": company_data,
 }
 

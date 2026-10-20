@@ -203,5 +203,6 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **Backups (IT-5, due 24.10):** code done 2026-10-10 (`scripts/backup/README.md`). To do by hand: the
   owner makes the GnuPG key (Kleopatra); set `BACKUP_SECRET` + `BACKUP_PUBLIC_KEY` in Render; install
   `pull-backup.ps1` + the task on an office computer with a second disk; restore test with the owner.
+- **1C OData «410 Gone» (20.10.2026):** the web client works, OData doesn't — re-enable the database's OData publication in Clobus.
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

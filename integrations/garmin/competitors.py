@@ -411,6 +411,21 @@ async def fetch_olx(run_id: uuid.UUID | str | None = None) -> list[Offer]:
     return list(seen.values())
 
 
+async def our_catalog_text() -> str:
+    """Our price list, live from garmin.com.uz — for the analyst's «catalog» (2026-10-20)."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), headers={"User-Agent": USER_AGENT}) as http:
+        response = await request_with_retry(http, "GET", OUR_PRICES_URL)
+        response.raise_for_status()
+        products = response.json().get("data") or []
+    if not products:
+        raise ValueError("garmin.com.uz returned no products")
+    lines = [f"Our Garmin price list, live from garmin.com.uz ({now_local():%Y-%m-%d %H:%M}), so'm; 0 = price on request:"]
+    for p in sorted(products, key=lambda x: str(x.get("name") or "").lower()):
+        lines.append(f"- {str(p.get('name') or '').strip()} — {int(float(p.get('price') or 0)):,}".replace(",", " ")
+                     + (f" ({p['category']})" if p.get("category") else ""))
+    return "\n".join(lines)
+
+
 async def fetch_our_prices(run_id: uuid.UUID | str | None = None) -> OurPrices:
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), headers={"User-Agent": USER_AGENT}) as http:
         async with audited(agent=AGENT, action="api_call", target_system="garmin_com_uz", run_id=run_id,

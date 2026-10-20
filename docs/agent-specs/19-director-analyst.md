@@ -88,3 +88,12 @@ The OData user must have, on the «Состав» tab: `ChartOfAccounts_Хозр
 
 `OPS_ANALYST_ENABLED` (default true), `OPS_ANALYST_MAX_ROUNDS` (default 6),
 model: `OPS_MANAGER_BOT_MODEL` / `OPS_MANAGER_BOT_FALLBACK_MODELS`.
+
+## 2026-10-20 — old stock, live prices
+
+- `old_stock` tool (systems: SAP): the same list as `/eski` — a year or more / within 30 days of a year, value (USD),
+  warehouse, sold in 90 days; `garmin_only` for the Garmin warehouses.
+- `garmin_data` `catalog`: our prices live from garmin.com.uz (`competitors.our_catalog_text`); the 21.08 snapshot
+  only when the site can't be read.
+- 1C answered «410 Gone» on every OData address (20.10.2026) while the web client worked: the database's OData
+  publication is off on Clobus — the analyst says 1C can't be read.
