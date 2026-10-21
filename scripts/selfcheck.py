@@ -244,8 +244,11 @@ def test_bot_flows() -> None:
     replies: list[str] = []
     edits: list[tuple] = []
 
-    async def fake_reply(_chat_id, _run_id, text, reply_markup=None):
+    reply_tos: list = []
+
+    async def fake_reply(_chat_id, _run_id, text, reply_markup=None, reply_to=None):
         replies.append(text)
+        reply_tos.append(reply_to)
         return [100]
 
     class FakeAI:
@@ -347,8 +350,10 @@ def test_bot_flows() -> None:
         FakeAI.classification = {"target_type": "agent", "target_agent": "xodimlar_kpi", "task_summary": "",
                                  "target_employee": None, "due_date": None}
         replies.clear()
+        reply_tos.clear()
         asyncio.run(ops_manager._dispatch_director_task(1, "kechagi hisobotlarni korsat", 11, uuid.uuid4()))
         check("a question gets the AI's answer, not the error", replies, ["Жавоб"])
+        check("...as a reply to his question, like every other role's (21.10)", reply_tos, [11])
 
         # 2026-10-02: a task first comes back to the Director as a list of
         # people to tick; it goes out only on "Юбориш".
@@ -418,7 +423,7 @@ def test_bot_flows() -> None:
         clarifications: dict = {}
         dispatched: list[str] = []
 
-        async def reply_with_markup(_chat_id, _run_id, text, reply_markup=None):
+        async def reply_with_markup(_chat_id, _run_id, text, reply_markup=None, reply_to=None):
             asked.append((text, reply_markup))
             return [300]
 
@@ -1189,7 +1194,7 @@ def test_registration_states() -> None:
         saved.append((obj, name, getattr(obj, name)))
         setattr(obj, name, value)
 
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((text, reply_markup))
         return [1]
 
@@ -2102,7 +2107,7 @@ def test_ai_chat_and_sheet() -> None:
             assert "HONESTY FIRST" in system and "КП тайёрланг" in system
             return "Бу маълумот менда йўқ, раҳбарингиздан сўранг"
 
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((text, reply_markup))
         return [1]
 
@@ -2297,7 +2302,7 @@ def test_files_reports_cheer_off() -> None:
         async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
             edits.append((text, reply_markup))
 
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((text, reply_markup))
         return [1]
 
@@ -2538,7 +2543,7 @@ def test_analyst() -> None:
         check_true("SAP sales: dated rows only, cancelled out of the sums",
                    "3 rows (1 cancelled, left out of sums)" in text and "DocTotal: 130" in text
                    and "DocTotalSy UZS: 1,270,000" in text and "DocNum=4" not in text)
-        check_true("...grouped by customer", "- Hilton: 100" in text and "- Hyatt: 30" in text)
+        check_true("...grouped by customer", "- Hilton: 1 rows, 100" in text and "- Hyatt: 1 rows, 30" in text)
     finally:
         restore()
 
@@ -2650,10 +2655,10 @@ def test_analyst() -> None:
     replies: list[str] = []
     old_path: list[str] = []
 
-    async def reply(director_id, run_id, text):
+    async def reply(director_id, run_id, text, reply_to=None):
         replies.append(text)
 
-    async def from_agent(director_id, slug, question, run_id, history=""):
+    async def from_agent(director_id, slug, question, run_id, history="", reply_to=None):
         old_path.append(slug)
 
     async def good(question, history, run_id, hint=None):
@@ -2787,7 +2792,7 @@ def test_analyst() -> None:
         async def __aexit__(self, *exc):
             return None
 
-        async def send_file(self, content, filename, chat_id, caption=None, photo=False):
+        async def send_file(self, content, filename, chat_id, caption=None, photo=False, reply_to=None):
             uploads.append((filename, chat_id))
 
         async def send_message(self, text, chat_id=None, reply_markup=None):
@@ -3173,7 +3178,7 @@ def test_task_register() -> None:
     async def with_employee(task_id):
         return {**state["task"], "employee_telegram_user_id": 501, "display_name": "Алишер Каримов"}
 
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((chat_id, text))
         return [1]
 
@@ -3308,7 +3313,7 @@ def test_review_fixes() -> None:
         reopened.append(task_id)
         return {**task, "status": "started", "awaiting": "evidence"}
 
-    async def fake_reply(chat, run_id, text, reply_markup=None):
+    async def fake_reply(chat, run_id, text, reply_markup=None, reply_to=None):
         replies.append(text)
         return [1]
 
@@ -3701,7 +3706,7 @@ def test_accountant_test_fixes() -> None:
             setattr(obj, name, value)
     check_true("invoice lines: the document's total counted once, the lines' so'm summed (17.10: 15M had become 30M)",
                "DocTotalSy UZS: 15,000,000" in lines_out and "GTotalSC UZS: 15,000,000" in lines_out
-               and "- A: 14,200,000" in lines_out)
+               and "- A: 1 rows, 14,200,000" in lines_out)
 
     prompt = " ".join(analyst.employee_prompt("Дониёр", "Бухгалтерия", {"sap", "1c", "billz"}).split())
     sap_desc = analyst.SAP_KINDS["supplier_balances"]
@@ -4241,6 +4246,139 @@ def test_own_week_and_team_calendar() -> None:
                and "report_calendar.COMMANDS + report_tools.REPORT_COMMANDS" in inspect.getsource(ops_manager))
 
 
+def test_analyst_speed_and_style() -> None:
+    """21.10.2026, the Director's SAP test: answers as replies, faster lookups, grouping, short clear answers."""
+    print("analyst: speed, grouping, answer style (21.10.2026)")
+    import asyncio
+    import inspect
+    import json
+    import time
+    import uuid
+    from datetime import timezone
+
+    from integrations.org_bot import analyst, old_stock, ops_manager
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    # ---- one round's lookups run together, and one kind is read from the database once per answer
+    reads: list[str] = []
+
+    async def fake_read(query, params=None, timeout="10s"):
+        kind = (params or {}).get("k")
+        reads.append(kind)
+        rows = {"sales": [{"DocNum": 1, "DocDate": "2026-10-20", "CardName": "Hilton", "SlpCode": 3, "DocTotalSy": 5_000_000},
+                          {"DocNum": 2, "DocDate": "2026-10-20", "CardName": "Hyatt", "SlpCode": 3, "DocTotalSy": 2_000_000},
+                          {"DocNum": 3, "DocDate": "2026-10-19", "CardName": "Hyatt", "SlpCode": 7, "DocTotalSy": 1_500_000}],
+                "sales_people": [{"SlpCode": 3, "SlpName": "Зунунов Абдукарим"}, {"SlpCode": 7, "SlpName": "Ёрқинов Рустам"}],
+                "stock_items": [{"ItemCode": "010-02904-00", "ItemName": "fenix 8 47mm", "WhsCode": "05", "OnHand": 12},
+                                {"ItemCode": "010-M2904-00", "ItemName": "Dummy Unit, fenix 8", "WhsCode": "05", "OnHand": 3}]}
+        return [{"captured_at": datetime(2026, 10, 21, 8, 43, tzinfo=timezone.utc), "raw": r} for r in rows.get(kind, [])]
+
+    async def freshness():
+        return "SAP data is current.", False
+
+    class TwoAtOnce:
+        def __init__(self, *args, **kwargs):
+            self.turn = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def chat(self, messages, tools=None):
+            self.turn += 1
+            if self.turn == 1:
+                return {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {"name": "slow_a", "arguments": "{}"}},
+                    {"id": "b", "type": "function", "function": {"name": "slow_b", "arguments": "{}"}},
+                    {"id": "c", "type": "function", "function": {"name": "sap_records", "arguments": '{"kind": "sales"}'}},
+                    {"id": "d", "type": "function", "function": {"name": "sap_records",
+                                                                 "arguments": '{"kind": "sales", "search": "Hyatt"}'}}]}
+            return {"role": "assistant", "content": "<b>7 000 000 сўм</b>"}
+
+    async def slow(_args):
+        await asyncio.sleep(0.4)
+        return "ok"
+
+    patch(analyst, "OpenRouterClient", TwoAtOnce)
+    patch(analyst, "HANDLERS", {**analyst.HANDLERS, "slow_a": slow, "slow_b": slow})
+    patch(analyst, "fetch_read_only", fake_read)
+    patch(ops_manager, "sap_freshness", freshness)
+    try:
+        started = time.monotonic()
+        result = asyncio.run(analyst.answer("кечаги сотув", "", uuid.uuid4()))
+        took = time.monotonic() - started
+    finally:
+        restore()
+    check_true("a round's lookups run together (two 0.4 s lookups in well under 0.8 s), results in the asked order",
+               took < 0.7 and result.tools == ["slow_a", "slow_b", "sap_records", "sap_records"])
+    check("one SAP kind is read from the database once per answer (the second lookup searches it in memory)",
+          reads.count("sales"), 1)
+
+    # ---- group by any field; a sales person's code shows with the name
+    patch(analyst, "fetch_read_only", fake_read)
+    patch(ops_manager, "sap_freshness", freshness)
+    try:
+        by_seller = asyncio.run(analyst.sap_records({"kind": "sales", "group_by": "SlpCode"}))
+        stock = asyncio.run(analyst.sap_records({"kind": "stock_items", "search": "fenix 8"}))
+        short = asyncio.run(analyst.sap_records({"kind": "sales", "fields": ["DocNum", "CardName"], "limit": 2}))
+    finally:
+        restore()
+    check_true("sales per sales person — SAP CAN split it (the 21.10 answer said it couldn't)",
+               "By SlpCode" in by_seller and "- 3 Зунунов Абдукарим: 2 rows, 7,000,000" in by_seller
+               and "- 7 Ёрқинов Рустам: 1 rows, 1,500,000" in by_seller)
+    check_true("display dummies aren't counted as stock (21.10: «54 дона, Dummy unit'лар ҳам киритилган»)",
+               "OnHand: 12" in stock and "1 display dummies" in stock and "Dummy Unit" not in stock.split("Rows")[1])
+    check_true("rows show only the fields asked (shorter, faster)", "DocNum=1, CardName=Hilton" in short
+               and "DocTotalSy=" not in short.split("Rows")[1])
+    check("amounts from 1 000 up are whole («340 408 750,11 сўм» on 21.10)",
+          (analyst._amount(340_408_750.11), analyst._amount(54_528.97), analyst._amount(12.5)), ("340,408,750", "54,529", "12.5"))
+
+    # ---- in stock, nothing sold in 90 days — any age
+    stock_rows = [{"ItemCode": "A", "ItemName": "fenix 8 51mm", "WhsCode": "G.A._01", "OnHand": 3, "StockValue": 2242},
+                  {"ItemCode": "B", "ItemName": "Forerunner 970", "WhsCode": "G.A._01", "OnHand": 2, "StockValue": 900},
+                  {"ItemCode": "010-M1", "ItemName": "Dummy Unit", "WhsCode": "G.A._01", "OnHand": 1, "StockValue": 50}]
+    idle = old_stock.idle(stock_rows, [{"ItemCode": "A", "LastPurDat": "2026-08-01"}],
+                          [{"ItemCode": "B", "WhsCode": "G.A._01", "Quantity": 1}], [], date(2026, 10, 21))
+    check("idle stock: on hand, nothing sold in 90 days, whatever its age; dummies out", [r.code for r in idle], ["A"])
+    check_true("the analyst offers it (old_stock idle_90d)", "idle_90d" in json.dumps(analyst.TOOLS, ensure_ascii=False))
+
+    # ---- short, clear answers
+    prompt = analyst.ANALYST_SYSTEM_PROMPT
+    check_true("answer rules: the answer first, at most 8 «• » lines, a titled block per question, whole so'm, "
+               "one source line, no SAP field names / HTTP codes",
+               all(x in prompt for x in ("First line: the answer itself", "at most 8 lines", "2–4 word <b>title</b>",
+                                         "whole so'm", "<i>SAP · 21.10 13:43</i>", "OpenQty", "HTTP codes")))
+    check_true("...and how to split totals (group_by), never «SAP can't split it»", "group_by" in prompt
+               and "never say SAP can't split it" in prompt)
+    check_true("the same rules for everyone the analyst answers (employees with data access, the Garmin manager)",
+               "First line: the answer itself" in analyst.employee_prompt("Мурод", "Garmin менежер", {"garmin"}))
+
+    # ---- replies: every answer under its question; files too
+    src = inspect.getsource(ops_manager._dispatch_director_task)
+    check_true("the Director's answers, questions back and refusals reply to his message",
+               src.count("source_message_id") >= 6 and "reply_to=source_message_id" in src)
+    check_true("a file (the Excel) also replies to the question",
+               "reply_parameters" in load_source("integrations/telegram/bot.py")
+               and "reply_to=reply_to" in inspect.getsource(ops_manager._send_files))
+
+    # ---- what the gateway will send once its new src/ is copied
+    js = load_source("sap-gateway/src/complete.js")
+    check_true("gateway: customers' CreateDate («энг охирги қўшилган»); service calls with the technician's and "
+               "assignee's names", 'C."CreateDate"' in js and '"TechnicianName"' in js and '"AssigneeName"' in js)
+
+
 def test_garmin_competitors() -> None:
     """19.10.2026: who else sells Garmin in Uzbekistan (OLX, Google) against our garmin.com.uz prices — offline."""
     print("Garmin competitors (19.10.2026)")
@@ -4553,7 +4691,7 @@ def test_reregistration_and_order() -> None:
     replies: list = []
     asked: list = []
 
-    async def fake_reply(chat, run_id, text, reply_markup=None):
+    async def fake_reply(chat, run_id, text, reply_markup=None, reply_to=None):
         replies.append(text)
         return [1]
 
@@ -5079,7 +5217,7 @@ def test_cheques() -> None:
                 raise state["ai"]
             return state["ai"]
 
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((chat_id, text, reply_markup))
         return [1]
 
@@ -5314,11 +5452,11 @@ def test_data_access() -> None:
         asked.append((question, employee["telegram_user_id"], sorted(scope)))
         return analyst.Answer(text="Ответ", tools=["onec_balances"], rounds=2, files=[(b"PK", "x-RU.xlsx")])
 
-    async def fake_reply(chat_id, run_id, text, reply_markup=None):
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((chat_id, text))
         return [1]
 
-    async def fake_send_files(chat_id, run_id, files):
+    async def fake_send_files(chat_id, run_id, files, reply_to=None):
         sent.append((chat_id, [f[1] for f in files]))
 
     async def fake_work_ai(employee, text, task, run_id, reply_to=None, quoted=None):
@@ -5858,7 +5996,7 @@ def test_reports_off() -> None:
     async def report_for_day(tg_id, day):
         return None
 
-    async def fake_reply(tg_id, run_id, text, reply_markup=None):
+    async def fake_reply(tg_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append(text)
         return [1]
 
@@ -7852,6 +7990,7 @@ def main() -> int:
         test_own_week_and_team_calendar,
         test_old_stock_and_live_views,
         test_garmin_competitors,
+        test_analyst_speed_and_style,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

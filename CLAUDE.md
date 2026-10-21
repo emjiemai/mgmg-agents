@@ -203,6 +203,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **Backups (IT-5, due 24.10):** code done 2026-10-10 (`scripts/backup/README.md`). To do by hand: the
   owner makes the GnuPG key (Kleopatra); set `BACKUP_SECRET` + `BACKUP_PUBLIC_KEY` in Render; install
   `pull-backup.ps1` + the task on an office computer with a second disk; restore test with the owner.
+- **Gateway update (21.10.2026):** copy `sap-gateway/src/` to the gateway computer and restart — customers'
+  `CreateDate`, service calls' `TechnicianName` / `AssigneeName` (joins OHEM / OUSR: if `service_calls` stops
+  arriving, the gateway's HANA user lacks SELECT on them). Customers' phone / address: the owner to decide (personal
+  data rule — server in Uzbekistan + masking before AI, not met today).
 - **1C OData «410 Gone» (20.10.2026):** the web client works, OData doesn't — re-enable the database's OData publication in Clobus.
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

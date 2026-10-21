@@ -972,7 +972,7 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
                          run_id=run_id, mode="read",
                          payload={"systems": sorted(scope), "tools": result.tools, "rounds": result.rounds})
         await _answer_reply(telegram_user_id, run_id, answer, reply_to)
-        await _send_files(telegram_user_id, run_id, result.files)
+        await _send_files(telegram_user_id, run_id, result.files, reply_to)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("Data question failed for {}: {}", telegram_user_id, type(exc).__name__)
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="failure",
@@ -1081,7 +1081,8 @@ async def _handle_unregistered_sender(telegram_user_id: int, sender: dict[str, A
 
 
 async def _reply(
-    telegram_user_id: int, run_id: uuid.UUID, text: str, reply_markup: dict[str, Any] | None = None
+    telegram_user_id: int, run_id: uuid.UUID, text: str, reply_markup: dict[str, Any] | None = None,
+    reply_to: int | None = None,
 ) -> list[int]:
     """Send a message to one user via OPS Manager Bot's own token.
 
@@ -1093,7 +1094,8 @@ async def _reply(
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        return await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup)
+        return await bot.send_message(text, chat_id=str(telegram_user_id), reply_markup=reply_markup,
+                                      reply_to_message_id=reply_to)
 
 
 async def _show_typing(telegram_user_id: int, run_id: uuid.UUID) -> None:
@@ -1106,11 +1108,16 @@ async def _show_typing(telegram_user_id: int, run_id: uuid.UUID) -> None:
         await bot.send_chat_action(chat_id=str(telegram_user_id))
 
 
-async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text: str) -> None:
+async def _reply_and_log(director_telegram_user_id: int, run_id: uuid.UUID, text: str,
+                         reply_to: int | None = None) -> None:
     """Send the Director a substantive reply and remember it as conversation
     memory — used for the actual outcome of a request, not UX filler like the
-    "got it, routing..." ack (logging every ack would bury real content in noise)."""
-    await _reply(director_telegram_user_id, run_id, text)
+    "got it, routing..." ack (logging every ack would bury real content in noise).
+
+    ``reply_to``: his question's message — the answer sits under it as a reply (2026-10-21, the owner:
+    several questions sent at once came back as loose messages, as every other role's already were).
+    """
+    await _reply(director_telegram_user_id, run_id, text, reply_to=reply_to)
     await store.log_conversation_turn(director_telegram_user_id, "bot", text)
 
 
@@ -1627,7 +1634,8 @@ async def _dispatch_director_task(
         person, known = _pick_person(result, roster)
         if not known:
             await _reply_and_log(
-                director_telegram_user_id, run_id, "Кимга юборишни аниқлай олмадим — исмни аниқроқ ёзинг."
+                director_telegram_user_id, run_id, "Кимга юборишни аниқлай олмадим — исмни аниқроқ ёзинг.",
+                source_message_id,
             )
             return
         validated = validate_classification(result)
@@ -1641,6 +1649,7 @@ async def _dispatch_director_task(
                 director_telegram_user_id,
                 run_id,
                 "Аниқ тушунмадим — илтимос, аниқроқ ёзинг.",
+                source_message_id,
             )
             return
 
@@ -1657,14 +1666,16 @@ async def _dispatch_director_task(
                 due_date, person,
             )
         elif target_type == "agent":
-            await _answer_question(director_telegram_user_id, target_agent, raw_message, run_id, history)
+            await _answer_question(director_telegram_user_id, target_agent, raw_message, run_id, history,
+                                   reply_to=source_message_id)
         elif target_type == "clarify":
-            await _ask_clarification(director_telegram_user_id, task_summary, clarify_options(result), run_id)
+            await _ask_clarification(director_telegram_user_id, task_summary, clarify_options(result), run_id,
+                                     reply_to=source_message_id)
         elif target_type == "refused":
             # The guardrail path — the model's own polite refusal, already in
             # Uzbek/Russian per prompt.py's GUARDRAILS block.
             log.info("Classification refused a message from {}", director_telegram_user_id)
-            await _reply_and_log(director_telegram_user_id, run_id, sanitize_model_html(task_summary))
+            await _reply_and_log(director_telegram_user_id, run_id, sanitize_model_html(task_summary), source_message_id)
         else:  # "none"
             # Use the model's own explanation (e.g. "I can't delete records,
             # that needs to be done manually in the Sheet") rather than a
@@ -1675,6 +1686,7 @@ async def _dispatch_director_task(
                 director_telegram_user_id,
                 run_id,
                 sanitize_model_html(task_summary) or "Буни кимга йўналтиришни тушунмадим — аниқроқ ёзиб бера оласизми?",
+                source_message_id,
             )
 
     except OpenRouterError as exc:
@@ -1693,7 +1705,8 @@ async def _dispatch_director_task(
         await _safe_notify_failure(director_telegram_user_id, run_id)
 
 
-async def _ask_clarification(director_id: int, question: str, options: list[str], run_id: uuid.UUID) -> None:
+async def _ask_clarification(director_id: int, question: str, options: list[str], run_id: uuid.UUID,
+                             reply_to: int | None = None) -> None:
     """The router didn't understand: ask back, with its 2–3 readings as buttons (2026-10-10).
 
     The question and the options go into the conversation memory, so a typed
@@ -1701,10 +1714,10 @@ async def _ask_clarification(director_id: int, question: str, options: list[str]
     """
     question = sanitize_model_html(question) or "Аниқ тушунмадим — нимани назарда тутдингиз?"
     if not options:
-        await _reply_and_log(director_id, run_id, question)
+        await _reply_and_log(director_id, run_id, question, reply_to)
         return
     row = await store.create_clarification(director_id, _plain(question), options)
-    await _reply(director_id, run_id, question, reply_markup=clarify_keyboard(str(row["id"]), options))
+    await _reply(director_id, run_id, question, reply_markup=clarify_keyboard(str(row["id"]), options), reply_to=reply_to)
     await store.log_conversation_turn(
         director_id, "bot", question + "\n" + "\n".join(f"{i}) {o}" for i, o in enumerate(options, start=1))
     )
@@ -2322,7 +2335,8 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
 
 
 async def _answer_question(
-    director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = ""
+    director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = "", *,
+    reply_to: int | None = None,
 ) -> None:
     """A Director's question: the analyst looks it up across every system (analyst.py).
 
@@ -2348,14 +2362,15 @@ async def _answer_question(
                     agent=AGENT, action="analyst_answer", target_system="openrouter", status="success",
                     run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools},
                 )
-                await _reply_and_log(director_id, run_id, sanitize_model_html(result.text))
-                await _send_files(director_id, run_id, result.files)
+                await _reply_and_log(director_id, run_id, sanitize_model_html(result.text), reply_to)
+                await _send_files(director_id, run_id, result.files, reply_to)
                 return
             log.warning("Analyst returned nothing, answering from {} alone", agent_slug)
-    await _answer_from_agent(director_id, agent_slug, question, run_id, history)
+    await _answer_from_agent(director_id, agent_slug, question, run_id, history, reply_to=reply_to)
 
 
-async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[bytes, str]]) -> None:
+async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[bytes, str]],
+                      reply_to: int | None = None) -> None:
     """Files the analyst made for its answer (the 1C ↔ SAP supplier-debt workbook), after the text.
 
     ``director_id``: whoever asked — the Director, or an employee given data access.
@@ -2367,14 +2382,15 @@ async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[byt
     ) as bot:
         for content, filename in files:
             try:
-                await bot.send_file(content, filename, str(director_id))
+                await bot.send_file(content, filename, str(director_id), reply_to=reply_to)
             except Exception as exc:  # noqa: BLE001 — the text answer already went
                 log.error("Sending {} to the Director failed: {}", filename, type(exc).__name__)
                 await bot.send_message("Файлни юбориб бўлмади — бироздан кейин яна сўранг.", chat_id=str(director_id))
 
 
 async def _answer_from_agent(
-    director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = ""
+    director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = "", *,
+    reply_to: int | None = None,
 ) -> None:
     """Answer a Director's question using one agent's already-computed data.
 
@@ -2403,7 +2419,7 @@ async def _answer_from_agent(
             ANSWER_SYSTEM_PROMPT, build_answer_message(AGENT_LABELS[agent_slug], data, question, history)
         )
     log.info("Answer for agent={}: {} char(s)", agent_slug, len(answer))
-    await _reply_and_log(director_id, run_id, sanitize_model_html(answer))
+    await _reply_and_log(director_id, run_id, sanitize_model_html(answer), reply_to)
 
 
 # ------------------------------------------------------------- agent data reads

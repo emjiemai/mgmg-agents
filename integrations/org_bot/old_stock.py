@@ -49,7 +49,7 @@ class Row:
     whs_name: str
     qty: float
     value: float  # USD (SAP's local currency)
-    last_buy: date
+    last_buy: date | None  # None: SAP has no purchase date (idle list only)
     days: int
     sold90: float
 
@@ -104,6 +104,29 @@ def classify(stock: list[dict[str, Any]], products: list[dict[str, Any]], sales9
     return sorted(old, key=key), sorted(soon, key=key)
 
 
+def idle(stock: list[dict[str, Any]], products: list[dict[str, Any]], sales90: list[dict[str, Any]],
+         warehouses: list[dict[str, Any]], today: date, codes: frozenset[str] | None = None) -> list[Row]:
+    """On hand, nothing sold in 90 days in that warehouse — any age (2026-10-21), most valuable first."""
+    last_buy = {str(p.get("ItemCode")): _day(p.get("LastPurDat")) for p in products}
+    names = {str(w.get("WhsCode")): str(w.get("WhsName") or "") for w in warehouses}
+    sold: dict[tuple[str, str], float] = {}
+    for s in sales90:
+        key = (str(s.get("ItemCode")), str(s.get("WhsCode")))
+        sold[key] = sold.get(key, 0.0) + _num(s.get("Quantity"))
+    out: list[Row] = []
+    for r in stock:
+        whs, code = str(r.get("WhsCode") or "").strip(), str(r.get("ItemCode") or "")
+        if _DUMMY.search(str(r.get("ItemName") or "")) or _DUMMY.search(code):
+            continue
+        qty = _num(r.get("OnHand"))
+        if qty <= 0 or (codes is not None and whs not in codes) or sold.get((code, whs), 0.0) > 0:
+            continue
+        bought = last_buy.get(code)
+        out.append(Row(code, str(r.get("ItemName") or ""), whs, names.get(whs, ""), qty, _num(r.get("StockValue")),
+                       bought, (today - bought).days if bought else 0, 0.0))
+    return sorted(out, key=lambda x: -x.value)
+
+
 def garmin_codes(warehouses: list[dict[str, Any]] | None = None) -> frozenset[str]:
     """Every Garmin warehouse: the shops' (BILLZ_SAP_WAREHOUSES) and every SAP warehouse named «Garmin»
     (19.10.2026: 09 «Garmin zahiralar», 10 Ambassador, 03 Bodomzor, 04 Abay, 06 faulty had been left out)."""
@@ -128,6 +151,16 @@ async def load(codes: frozenset[str] | None = None) -> tuple[list[Row], list[Row
     old, soon = classify(stock, await kind("products"), await kind("item_sales_90d"), await kind("warehouses"),
                          today_local(), codes)
     return old, soon, rows[0]["at"] if rows else None
+
+
+async def load_idle(codes: frozenset[str] | None = None) -> tuple[list[Row], Any]:
+    async def kind(tool: str) -> list[dict[str, Any]]:
+        return [_raw(r) for r in await fetch_all("SELECT raw FROM v_sap_gateway_latest WHERE tool = %s", (tool,))]
+
+    rows = await fetch_all("SELECT max(captured_at) AS at FROM v_sap_gateway_latest WHERE tool = 'stock_items'")
+    found = idle(await kind("stock_items"), await kind("products"), await kind("item_sales_90d"), await kind("warehouses"),
+                 today_local(), codes)
+    return found, rows[0]["at"] if rows else None
 
 
 def _usd(value: float) -> str:

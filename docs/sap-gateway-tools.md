@@ -223,7 +223,7 @@ doesn't have yet is skipped and the capped one is used meanwhile.
 
 | Tool | Kind | SAP | For |
 | ---- | ---- | --- | --- |
-| `get_customers_all` | `customers` | OCRD (C) + OCRG | every customer: group, balance, credit line, sales person |
+| `get_customers_all` | `customers` | OCRD (C) + OCRG | every customer: group, balance, credit line, sales person, `CreateDate` / `UpdateDate` (2026-10-21) |
 | `get_items_all` | `products` | OITM + OITB | every item: group, stock, MinLevel / MaxLevel, last purchase — reordering (А3) |
 | `get_open_orders` | `orders` | ORDR | every open sales order |
 | `get_incoming_payments` | `payments` | ORCT, 45 days | customer payments by type (cash / transfer / cheque / card) |
@@ -232,7 +232,7 @@ doesn't have yet is skipped and the capped one is used meanwhile.
 | `get_open_purchase_orders` | `po_open` | OPOR + POR1 open lines | what is ordered and still to arrive (import) |
 | `get_sales_people` | `sales_people` | OSLP | names for SlpCode |
 | `get_equipment` | `equipment` | OINS | customer equipment (service reminders) |
-| `get_service_calls` | `service_calls` | OSCL open + 180 days | service follow-up |
+| `get_service_calls` | `service_calls` | OSCL open + 180 days, + OHEM / OUSR | service follow-up; `TechnicianName` (OHEM) and `AssigneeName` (OUSR) since 2026-10-21 |
 | `get_service_contracts` | `service_contracts` | OCTR | contract renewals |
 | `get_item_sales` | `item_sales_90d` | INV1 − RIN1, 90 days | what sells, what doesn't (reordering, slow stock) |
 

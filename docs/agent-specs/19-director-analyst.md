@@ -97,3 +97,20 @@ model: `OPS_MANAGER_BOT_MODEL` / `OPS_MANAGER_BOT_FALLBACK_MODELS`.
   only when the site can't be read.
 - 1C answered «410 Gone» on every OData address (20.10.2026) while the web client worked: the database's OData
   publication is off on Clobus — the analyst says 1C can't be read.
+
+## 2026-10-21 — replies, speed, grouping, short answers (the Director's SAP test)
+
+- **Every answer replies to its question** — the Director's too (answers, questions back, refusals, the
+  Excel file), as every other role's already did; several questions sent at once can be told apart.
+- **Faster:** a round's lookups run together (`asyncio.gather`), and one SAP kind is read from the database
+  once per answer (`_kind_rows`, kept only while that answer runs), searched in memory after that.
+- **sap_records** `group_by` (any field — `SlpCode` with the sales person's name, `CardName`, `customer`,
+  `WhsName`…), `sum_field`, `fields` (only those fields in the rows), `sort` (newest / oldest / amount);
+  rows default 30. Display dummies are left out of stock kinds (`include_dummies` to count them).
+  Amounts from 1 000 up are whole numbers.
+- **old_stock** `idle_90d`: on hand, nothing sold in 90 days, any age, most valuable first.
+- **Answer rules** (all roles): the answer first with the key figure in bold, at most 8 «• » lines, one
+  titled block per question, whole so'm, one source line in italics; no SAP field names, "gateway",
+  HTTP codes or method notes.
+- Gateway (`sap-gateway/src/complete.js`, to be copied to the gateway computer): customers' `CreateDate`,
+  service calls' `TechnicianName` / `AssigneeName`.

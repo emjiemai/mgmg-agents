@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 import html
+import json
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -258,6 +259,7 @@ class TelegramBot:
 
     async def send_file(
         self, content: bytes, filename: str, chat_id: str, caption: str | None = None, *, photo: bool = False,
+        reply_to: int | None = None,
     ) -> int | None:
         """Upload bytes to one chat: a document (PDF, PNG kept sharp) or, with
         ``photo``, a picture shown inline (the morning brief).
@@ -271,6 +273,7 @@ class TelegramBot:
             chat_id: Destination chat.
             caption: Optional HTML caption (Telegram allows 1024 characters).
             photo: Send with sendPhoto instead of sendDocument.
+            reply_to: Shown as a reply to that message (the question it answers); sent anyway if it's gone.
 
         Returns:
             The Telegram message id, or None in dry-run mode.
@@ -288,6 +291,8 @@ class TelegramBot:
         if caption:
             payload["caption"] = caption
             payload["parse_mode"] = "HTML"
+        if reply_to:  # form data: the nested object goes as JSON text
+            payload["reply_parameters"] = json.dumps({"message_id": reply_to, "allow_sending_without_reply": True})
 
         async with audited(
             agent=self.agent,

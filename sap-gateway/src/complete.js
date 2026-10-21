@@ -25,7 +25,8 @@ export async function getCustomersAll({ limit = 20000 } = {}) {
   const safeLimit = normalizeLimit(limit, 20000, 50000);
   const rows = await exec(`
     SELECT C."CardCode", C."CardName", C."LicTradNum", C."GroupCode", G."GroupName", C."Currency",
-           C."Balance", C."BalanceSys", C."CreditLine", C."SlpCode", C."City", C."validFor", C."frozenFor"
+           C."Balance", C."BalanceSys", C."CreditLine", C."SlpCode", C."City", C."validFor", C."frozenFor",
+           C."CreateDate", C."UpdateDate"
     FROM ${tableRef('OCRD')} C
     LEFT JOIN ${tableRef('OCRG')} G ON G."GroupCode" = C."GroupCode"
     WHERE C."CardType" = 'C'
@@ -141,15 +142,20 @@ export async function getEquipment({ limit = 50000 } = {}) {
   return result('equipment', 'OINS', rows);
 }
 
-/** Service calls (OSCL): every one still open, and every one created in the last `days` days. */
+/** Service calls (OSCL): every one still open, and every one created in the last `days` days —
+ *  with the technician's (OHEM) and the assignee's (OUSR) names, not only their ids (2026-10-21). */
 export async function getServiceCalls({ days: wanted = 180, limit = 50000 } = {}) {
   const safeLimit = normalizeLimit(limit, 50000, 100000);
   const back = days(wanted, 180, 730);
   const rows = await exec(`
     SELECT Q."callID", Q."subject", Q."customer", Q."custmrName", Q."itemCode", Q."itemName", Q."manufSN",
            Q."internalSN", Q."status", Q."priority", Q."origin", Q."problemTyp", Q."callType", Q."createDate",
-           Q."closeDate", Q."assignee", Q."technician"
+           Q."closeDate", Q."assignee", Q."technician",
+           TRIM(COALESCE(TCH."lastName", '') || ' ' || COALESCE(TCH."firstName", '')) AS "TechnicianName",
+           USR."U_NAME" AS "AssigneeName"
     FROM ${tableRef('OSCL')} Q
+    LEFT JOIN ${tableRef('OHEM')} TCH ON TCH."empID" = Q."technician"
+    LEFT JOIN ${tableRef('OUSR')} USR ON USR."USERID" = Q."assignee"
     WHERE Q."closeDate" IS NULL OR Q."createDate" >= ADD_DAYS(CURRENT_DATE, ?)
     ORDER BY Q."createDate" DESC, Q."callID" DESC
     LIMIT ${safeLimit}

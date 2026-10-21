@@ -26,6 +26,7 @@ employees' work AI (``ai_chat.py``) has no company data at all.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -93,11 +94,13 @@ SAP_KINDS: dict[str, str] = {
                 "AvgPrice, LastPurPrc / LastPurDat",
     "item_sales_90d": "quantity sold per item and warehouse in the last 90 days (invoices minus credit notes), "
                       "LastSold — with stock_items and products' MinLevel: what to reorder, what doesn't sell",
-    "customers": "every customer (OCRD): group, Balance (USD) / BalanceSys (so'm), CreditLine, sales person",
+    "customers": "every customer (OCRD): group, Balance (USD) / BalanceSys (so'm), CreditLine, sales person (SlpCode), "
+                 "City, CreateDate (when the card was made — «энг охирги қўшилган») once the gateway sends it",
     "warehouses": "warehouse list (OWHS)",
     "sales_people": "sales employees (OSLP)",
     "equipment": "customer equipment cards (OINS)",
-    "service_calls": "service calls (OSCL): every open one and every one of the last 180 days, with status and dates",
+    "service_calls": "service calls (OSCL): every open one and every one of the last 180 days, with status and dates; "
+                     "TechnicianName / AssigneeName = who handles it (once the gateway sends them; else only the ids)",
     "service_contracts": "service contracts (OCTR)",
 }
 # Fields whose sums are worked out here, not left to the model to add up.
@@ -131,7 +134,16 @@ TOOLS: list[dict] = [
         {"kind": {"type": "string", "enum": list(SAP_KINDS)},
          "search": {"type": "string", "description": "text that must appear in the row (customer, item, code), optional"},
          "date_from": _DATE, "date_to": _DATE,
-         "limit": {"type": "integer", "description": "rows to list (default 80, max 400); sums cover every match"}},
+         "group_by": {"type": "string", "description": "a field to group by, with count and sum per group — e.g. "
+                      "SlpCode (sales person; names added), CardName (customer / supplier), customer or custmrName "
+                      "(equipment, service calls), WhsName, ItemName, ItmsGrpNam, status. Use it instead of listing rows"},
+         "sum_field": {"type": "string", "description": "the field to add up per group (default: the kind's main amount, "
+                       "so'm when there is one)"},
+         "fields": {"type": "array", "items": {"type": "string"},
+                    "description": "only these fields in the listed rows (shorter, faster) — e.g. DocNum, DocDate, CardName, DocTotalSy"},
+         "sort": {"type": "string", "enum": ["newest", "oldest", "amount"], "description": "row order (default newest)"},
+         "include_dummies": {"type": "boolean", "description": "count display dummies («Dummy Unit…») too — default no"},
+         "limit": {"type": "integer", "description": "rows to list (default 30, max 400); sums and groups cover every match"}},
         ("kind",)),
     _fn("onec_balances", "Balances on 1C accounting accounts (Бухгалтерия для Узбекистана, chart НСБУ 21) at a "
         "moment, by account and by counterparty, in so'm. 40 = receivables from customers (4010 so'm, 4015 in "
@@ -180,10 +192,12 @@ TOOLS: list[dict] = [
     _fn("billz_sap_check", "The Billz → SAP check, LIVE: every shop cheque of the last 14 days (Billz read now) "
         "against the latest SAP push — which cheques are NOT in SAP, have a wrong amount, were entered late, and SAP "
         "documents with no cheque; by cheque number. Say the time it was checked.", {}),
-    _fn("old_stock", "Old stock from SAP (the same as /eski): goods a year or more in the warehouse (by the item's last "
-        "purchase date) and those within 30 days of a year — count, value (USD), warehouse, how many sold in 90 days. "
-        "garmin_only = the Garmin warehouses only.",
-        {"garmin_only": {"type": "boolean", "description": "only the Garmin warehouses (default false = all)"}}),
+    _fn("old_stock", "Old and idle stock from SAP: by default the /eski list — goods a year or more in the warehouse "
+        "(by the item's last purchase date) and those within 30 days of a year; with idle_90d = every item on hand that "
+        "sold NOTHING in the last 90 days, whatever its age, most valuable first. Count, value (USD), warehouse, sold in "
+        "90 days; display dummies left out. garmin_only = the Garmin warehouses only.",
+        {"garmin_only": {"type": "boolean", "description": "only the Garmin warehouses (default false = all)"},
+         "idle_90d": {"type": "boolean", "description": "on hand but not sold in 90 days, any age (default false)"}}),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -255,6 +269,13 @@ if asked to change data, say plainly that you can only look things up.
 - A tool that fails or has no data: say that system is unavailable right
   now, and answer from the others. Never invent a figure.
 - Several tools can be called at once when they don't depend on each other.
+- Totals per someone or something (sales per sales person, equipment per
+  customer, payments per customer, purchases per supplier, stock per
+  warehouse): sap_records with group_by (SlpCode, CardName, customer, WhsName…)
+  — never say SAP can't split it. Rows only when the question needs rows; then
+  ask for just the fields you need (fields=[…]).
+- «Омборда бор, лекин сотилмаган»: old_stock idle_90d=true (any age); «бир
+  йилдан ошган»: old_stock.
 - Asked to compare supplier debt, or for an Excel / file / table of it: call
   supplier_debt_compare with excel=true. The bot attaches the .xlsx to your
   answer itself — say in one line that the full table is in the file; never
@@ -268,12 +289,25 @@ if asked to change data, say plainly that you can only look things up.
 - Use the totals the tools worked out; don't re-add long lists yourself.
 - Say how fresh the data is when a tool warns it is old or partial.
 
-# ANSWER
-- Uzbek, Cyrillic script. Short — a Telegram reply: the answer first, then
-  at most ~10 short lines (top items), one line per source when comparing.
-- Name the source briefly: "SAP бўйича", "1C бўйича", "Billz бўйича".
-- You may use <b>…</b> around one or two key figures. No other tags, no
-  markdown (**, #, bullet dashes, code blocks).
+# ANSWER — short, clear, no padding (the owner, 2026-10-21: "it is yapping")
+Uzbek, Cyrillic script. A Telegram reply someone reads on a phone:
+- First line: the answer itself, the key figure in <b>…</b>. No preamble, no
+  restating the question, no "Ҳисобот —" titles.
+- Then only what the question needs: at most 8 lines, each starting with
+  "• " (e.g. "• Karakalpal Palace Hotel — 149 255 000 сўм"). Top items only;
+  say "яна N та" for the rest.
+- Several questions in one message: answer each in order, each block opening
+  with a 2–4 word <b>title</b> on its own line, one empty line between blocks.
+  Never number the lines of different blocks as one list.
+- Amounts: whole so'm with spaces ("542 435 705 сўм"), no tiyin; dollars as
+  "$54 529". Dates "21.10.2026".
+- Last line, once: the source and its time in <i>…</i> — e.g.
+  "<i>SAP · 21.10 13:43</i>", "<i>Billz · ҳозир</i>".
+- Leave out: SAP field or table names (OpenQty, SlpCode, DocEntry, OCRD),
+  "gateway", "push", HTTP codes and error texts (say "1C ҳозир уланмаган"),
+  how you looked it up, and caveats that don't change the answer. Something
+  you can't answer: one line saying why — no more.
+- Tags: only <b> and <i>. No markdown (**, #, dashes as bullets, code blocks).
 
 {GUARDRAILS}
 """
@@ -383,7 +417,10 @@ def _num(value: Any) -> float | None:
 
 
 def _amount(value: float) -> str:
-    """A plain number with thousands separators (no currency guessed)."""
+    """A plain number with thousands separators (no currency guessed); whole from 1 000 up (2026-10-21:
+    "340 408 750,11 сўм" — tiyin don't help anyone read an amount)."""
+    if abs(value) >= 1000:
+        return f"{round(value):,}"
     return f"{value:,.2f}".rstrip("0").rstrip(".")
 
 
@@ -467,28 +504,95 @@ def _cancelled(raw: dict[str, Any]) -> bool:
     return str(raw.get("CANCELED") or "").upper() in ("Y", "C")
 
 
+# The latest push of each SAP kind, parsed once per answer (2026-10-21, the owner: "retrieving data is slow"):
+# one question often reads the same kind several times (sales and its lines, warehouses, sales people).
+# Kept only while that answer runs — never stale, never shared between questions.
+_kind_cache: ContextVar[dict[str, tuple[list[dict[str, Any]], Any]] | None] = ContextVar("sap_kind_cache", default=None)
+# Display samples («Dummy Unit…», codes 010-M…) aren't stock for sale (old_stock._DUMMY, 2026-10-17).
+DUMMY_KINDS = ("stock_items", "products", "item_sales_90d", "inventory")
+# The amount a kind is best summed by, first one present (so'm before USD).
+MONEY_FIELDS = ("GTotalSC", "DocTotalSy", "BalanceSys", "StockValue", "DocTotal", "LineTotal", "Balance", "OnHand", "Quantity")
+
+
+async def _kind_rows(kind: str, search: str = "") -> tuple[list[dict[str, Any]], Any]:
+    """(rows, captured_at) of a kind's latest push. Inside an answer the whole kind is read once and
+    searched in memory; outside one, a search is done by the database."""
+    cache = _kind_cache.get()
+    needle = search.lower()
+    if cache is not None and kind in cache:
+        raws, captured = cache[kind]
+        return ([x for x in raws if _matches(x, needle)] if needle else raws), captured
+    if needle and cache is None:
+        rows = await fetch_read_only(
+            "SELECT raw, captured_at FROM v_sap_gateway_latest WHERE tool = %(k)s AND raw::text ILIKE %(like)s "
+            "ORDER BY natural_key", {"k": kind, "like": f"%{search}%"})
+    else:
+        rows = await fetch_read_only(
+            "SELECT raw, captured_at FROM v_sap_gateway_latest WHERE tool = %(k)s ORDER BY natural_key", {"k": kind})
+    raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
+    captured = rows[0]["captured_at"] if rows else None
+    if cache is not None:
+        cache[kind] = (raws, captured)
+        if needle:
+            raws = [x for x in raws if _matches(x, needle)]
+    return raws, captured
+
+
+def _matches(raw: dict[str, Any], needle: str) -> bool:
+    return needle in json.dumps(raw, ensure_ascii=False, default=str).lower()
+
+
+def _slp_names(rows: list[dict[str, Any]]) -> dict[str, str]:
+    return {str(r.get("SlpCode")): str(r.get("SlpName") or "") for r in rows}
+
+
+def _group(live: list[dict[str, Any]], kind: str, by: str, money: str, names: dict[str, str]) -> list[str]:
+    """Count and sum per value of ``by`` — a document's own totals once per document on line kinds."""
+    count: dict[str, int] = defaultdict(int)
+    total: dict[str, float] = defaultdict(float)
+    seen: set[tuple[str, str, str]] = set()
+    for x in live:
+        key = str(x.get(by) if x.get(by) not in (None, "") else "—")
+        if kind in LINE_KINDS and money in DOC_FIELDS:
+            doc = (key, str(x.get("ObjType") or ""), str(x.get("DocEntry") or ""))
+            if doc in seen:
+                continue
+            seen.add(doc)
+        count[key] += 1
+        total[key] += _num(x.get(money)) or 0
+    ranked = sorted(count, key=lambda k: (-total[k], -count[k]))
+    label = lambda k: f"{k} {names[k]}" if k in names and names[k] else k  # noqa: E731
+    lines = [f"By {by} ({len(ranked)} groups; rows, {money} summed), biggest first:"]
+    lines += [f"  - {label(k)}: {count[k]} rows, {_amount(total[k])}" for k in ranked[:40]]
+    if len(ranked) > 40:
+        lines.append(f"  - … {len(ranked) - 40} more groups")
+    return lines
+
+
 async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], list[dict]] | None = None) -> str:
     """``keep``: narrows the rows (the Garmin manager's ``garmin_sap`` — the Garmin warehouses only)."""
-    from integrations.org_bot import ops_manager
+    from integrations.org_bot import old_stock, ops_manager
 
     kind = args.get("kind")
     if kind not in SAP_KINDS:
         return f"Unknown kind {kind!r}; one of: {', '.join(SAP_KINDS)}."
     search = str(args.get("search") or "").strip()[:80]
-    limit = _limit(args.get("limit"), 80, 400)
+    limit = _limit(args.get("limit"), 30, 400)
+    group_by = str(args.get("group_by") or "").strip()[:40]
+    fields = [str(f).strip() for f in (args.get("fields") or []) if str(f).strip()][:12]
     has_dates = bool(args.get("date_from") or args.get("date_to"))
     start, end = period(args, default_days=MAX_DAYS) if has_dates else (None, None)
-    rows = await fetch_read_only(
-        "SELECT raw, captured_at FROM v_sap_gateway_latest WHERE tool = %(k)s "
-        "AND (%(s)s = '' OR raw::text ILIKE %(like)s) ORDER BY natural_key",
-        {"k": kind, "s": search, "like": f"%{search}%"},
-    )
+    raws, captured = await _kind_rows(kind, search)
     freshness, _silent = await ops_manager.sap_freshness()
-    if not rows:
+    if not raws:
         return f"{freshness}\nNo SAP {kind} rows" + (f" matching '{search}'" if search else "") + " in the latest push."
-    raws = [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
     if keep is not None:
         raws = keep(kind, raws)
+    dummies = 0
+    if kind in DUMMY_KINDS and not args.get("include_dummies"):
+        kept = [x for x in raws if not (old_stock._DUMMY.search(str(x.get("ItemName") or ""))
+                                        or old_stock._DUMMY.search(str(x.get("ItemCode") or "")))]
+        dummies, raws = len(raws) - len(kept), kept
     undated = bool(start) and not any(_row_day(x) for x in raws)
     if undated:
         # 15.10.2026: supplier balances (and stock, customers…) carry no date — a period asked
@@ -496,13 +600,15 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
         start = end = None
     if start:
         raws = [x for x in raws if (d := _row_day(x)) is not None and start <= d <= end]
-    raws.sort(key=lambda x: str(_row_day(x) or ""), reverse=True)
+    raws = sorted(raws, key=lambda x: str(_row_day(x) or ""), reverse=True)
     live = [x for x in raws if not _cancelled(x)]
-    lines = [freshness, f"SAP {kind} ({SAP_KINDS[kind]}), captured {to_local(rows[0]['captured_at']):%Y-%m-%d %H:%M}"
+    lines = [freshness, f"SAP {kind} ({SAP_KINDS[kind]}), captured {to_local(captured):%Y-%m-%d %H:%M}"
              + (f", text '{search}'" if search else "") + (f", dated {start}..{end}" if start else "")
              + f": {len(raws)} rows" + (f" ({len(raws) - len(live)} cancelled, left out of sums)" if len(live) != len(raws) else "")
              + "." + (" These rows have no dates — they are the state at the push time, so the period asked "
                       "doesn't apply." if undated else "")]
+    if dummies:
+        lines.append(f"{dummies} display dummies («Dummy Unit…», codes 010-M…) left out — not stock for sale.")
     if raws:
         days = [d for d in (_row_day(x) for x in raws) if d]
         if days:
@@ -526,21 +632,34 @@ async def sap_records(args: dict[str, Any], keep: Callable[[str, list[dict]], li
                 sums[(name, label)] += value
     if sums:
         lines.append("SUMS over every non-cancelled match (field as SAP named it; no suffix = SAP local currency USD "
-                     "for money fields, *Sy / *Sys = so'm, *FC = the document's currency):")
+                     "for money fields, *Sy / *Sys / *SC = so'm, *FC = the document's currency):")
         lines += [f"  {name}{' ' + label if label else ''}: {_amount(total)}" for (name, label), total in sorted(sums.items())]
-    if kind in ("sales", "sales_lines", "inventory", "stock_items") and live:
+    money = str(args.get("sum_field") or "").strip()
+    if not money or not any(x.get(money) not in (None, "") for x in live):
+        # The first amount every row has (so'm before USD); else the first any row has.
+        money = next((f for f in MONEY_FIELDS if live and all(x.get(f) not in (None, "") for x in live)), "") or \
+            next((f for f in MONEY_FIELDS if any(x.get(f) not in (None, "") for x in live)), "")
+    names: dict[str, str] = {}
+    if group_by and "slp" in group_by.lower():  # SlpCode → the sales person's name
+        names = _slp_names((await _kind_rows("sales_people"))[0])
+    if group_by and live:
+        if not any(group_by in x for x in live):
+            lines.append(f"No field {group_by!r} in {kind}; fields: {', '.join(list(live[0])[:40])}.")
+        else:
+            lines += _group(live, kind, group_by, money, names)
+    elif kind in ("sales", "sales_lines", "inventory", "stock_items") and live:
         key = {"sales": "CardName", "sales_lines": "ItemCode", "inventory": "WhsCode", "stock_items": "ItemName"}[kind]
-        money = {"sales": "DocTotal", "sales_lines": "LineTotal", "inventory": "OnHand", "stock_items": "OnHand"}[kind]
-        if kind == "sales_lines" and any(x.get("GTotalSC") not in (None, "") for x in live):
-            money = "GTotalSC"  # the line in so'm (2026-10-17), not USD
-        grouped: dict[str, float] = defaultdict(float)
-        for x in live:
-            grouped[str(x.get(key) or "—")] += _num(x.get(money)) or 0
-        lines.append(f"By {key} ({money} summed), biggest first:")
-        lines += [f"  - {k}: {_amount(v)}" for k, v in sorted(grouped.items(), key=lambda kv: -kv[1])[:30]]
-    lines.append(f"Rows (newest first, {min(limit, len(raws))} of {len(raws)}):")
+        lines += _group(live, kind, key, money, names)[:31]
+    order = str(args.get("sort") or "newest")
+    if order == "amount" and money:
+        raws = sorted(raws, key=lambda x: -(_num(x.get(money)) or 0))
+    elif order == "oldest":
+        raws = list(reversed(raws))
+    lines.append(f"Rows ({order} first, {min(limit, len(raws))} of {len(raws)}"
+                 + (f"; fields {', '.join(fields)}" if fields else "") + "):")
     for x in raws[:limit]:
-        lines.append("  - " + ", ".join(f"{k}={v}" for k, v in x.items() if v not in (None, "")))
+        shown = {k: x.get(k) for k in fields} if fields else x
+        lines.append("  - " + ", ".join(f"{k}={v}" for k, v in shown.items() if v not in (None, "")))
     return "\n".join(lines)
 
 
@@ -722,13 +841,10 @@ async def garmin_sap(args: dict[str, Any]) -> str:
 
     # Every Garmin warehouse — the shops' and every one SAP names «Garmin» (19.10.2026: 09, 10, 03, 04, 06
     # had been left out of the Garmin manager's stock answers).
-    whs_rows = await fetch_read_only("SELECT raw FROM v_sap_gateway_latest WHERE tool = 'warehouses'")
-    codes = set(old_stock.garmin_codes([r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}")
-                                        for r in whs_rows]))
+    codes = set(old_stock.garmin_codes((await _kind_rows("warehouses"))[0]))
     docs: set[tuple[str, str]] = set()
     if kind == "sales":
-        for row in await fetch_read_only("SELECT raw FROM v_sap_gateway_latest WHERE tool = 'sales_lines'"):
-            line = row["raw"] if isinstance(row["raw"], dict) else json.loads(row["raw"] or "{}")
+        for line in (await _kind_rows("sales_lines"))[0]:
             if str(line.get("WhsCode") or "").strip() in codes:
                 docs.add((str(line.get("ObjType") or "13"), str(line.get("DocEntry"))))
 
@@ -869,8 +985,16 @@ async def old_stock_tool(args: dict[str, Any]) -> str:
     from integrations.org_bot import old_stock
 
     codes = await old_stock.garmin_codes_now() if args.get("garmin_only") else None
-    old, soon, at = await old_stock.load(codes)
     where = "the Garmin warehouses" if codes is not None else "all warehouses"
+    if args.get("idle_90d"):  # 2026-10-21: «омборда бор, лекин 90 кунда сотилмаган энг қиммат 10 та»
+        idle, at = await old_stock.load_idle(codes)
+        lines = [f"On hand in {where} but NOT sold in the last 90 days (any age), SAP push of "
+                 f"{to_local(at):%Y-%m-%d %H:%M}" if at else f"On hand in {where} but not sold in 90 days",
+                 f"{len(idle)} rows, ${sum(r.value for r in idle):,.0f} (SAP value, USD). Most valuable first:"]
+        lines += [f"- {r.name} ({r.code}) | {r.whs_name or r.whs} | {r.qty:g} pcs | ${r.value:,.0f} | last bought "
+                  f"{r.last_buy or 'unknown'}" for r in idle[:40]]
+        return "\n".join(lines)
+    old, soon, at = await old_stock.load(codes)
     lines = [f"Old stock in {where}, SAP push of {to_local(at):%Y-%m-%d %H:%M}" if at else f"Old stock in {where}",
              f"A year or more: {len(old)} rows, ${sum(r.value for r in old):,.0f} (SAP value, USD); "
              f"{sum(1 for r in old if r.sold90 <= 0)} of them sold nothing in 90 days.",
@@ -973,6 +1097,7 @@ async def answer(
     ]
     result = Answer(text="")
     _files.set(result.files)
+    _kind_cache.set({})
     _wants_file.set(bool(FILE_WORDS.search(question)))
     _lang.set(lang)
     async with OpenRouterClient(
@@ -987,15 +1112,17 @@ async def answer(
                 result.text = reply.get("content") or ""
                 return result
             messages.append(reply)
-            for index, call in enumerate(calls):
-                function = call.get("function") or {}
-                name = str(function.get("name") or "")
-                if index < MAX_CALLS_PER_ROUND:
-                    content = await run_tool(name, function.get("arguments"), allowed)
-                    result.tools.append(name)
-                else:
-                    content = "Skipped: too many lookups at once — ask again for what's still needed."
+            # The round's lookups run together, not one after another (2026-10-21: answers took 1–2 minutes);
+            # the results go back in the order they were asked.
+            ran = calls[:MAX_CALLS_PER_ROUND]
+            contents = await asyncio.gather(*(run_tool(str((c.get("function") or {}).get("name") or ""),
+                                                       (c.get("function") or {}).get("arguments"), allowed) for c in ran))
+            for call, content in zip(ran, contents):
+                result.tools.append(str((call.get("function") or {}).get("name") or ""))
                 messages.append({"role": "tool", "tool_call_id": call.get("id") or "", "content": content})
+            for call in calls[MAX_CALLS_PER_ROUND:]:
+                messages.append({"role": "tool", "tool_call_id": call.get("id") or "",
+                                 "content": "Skipped: too many lookups at once — ask again for what's still needed."})
         messages.append({"role": "user", "content": "That's enough looking up — answer now from what you found."})
         reply = await ai.chat(messages, None)
         result.text = reply.get("content") or ""
