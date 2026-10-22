@@ -181,6 +181,7 @@ class EmployeeMonth:
     attendance: Attendance | None = None
     leads: LeadScore = field(default_factory=LeadScore)
     penalty: int = 0  # minus points: daily reports not in by 22:00 (2026-10-15, the Director)
+    bonus: int = 0  # plus points: reports sent (Garmin сотув, the morning bonus, 2026-10-22)
     missed_days: int = 0
     parts: dict[str, float | None] = field(default_factory=dict)
     total: float | None = None
@@ -227,8 +228,8 @@ def score(people: list[EmployeeMonth]) -> list[EmployeeMonth]:
         p.parts = parts
         weights = {k: PARTS[k][2] for k, v in parts.items() if v is not None}
         p.total = sum(parts[k] * w for k, w in weights.items()) / sum(weights.values()) if weights else None
-        if p.total is not None and p.penalty:
-            p.total = max(0.0, p.total - p.penalty)
+        if p.total is not None and (p.penalty or p.bonus):
+            p.total = min(100.0, max(0.0, p.total + p.bonus - p.penalty))
     return sorted(people, key=lambda p: (p.total is None, -(p.total or 0), p.name))
 
 
@@ -276,6 +277,7 @@ def build(
                 attendance=(attendance or {}).get(eid),
                 leads=leads.get(eid, LeadScore()),
                 penalty=sum(int(r.get("penalty_points") or 0) for r in rows.get("reports", [])),
+                bonus=sum(int(r.get("bonus_points") or 0) for r in rows.get("reports", [])),
                 missed_days=sum(1 for r in rows.get("reports", []) if int(r.get("penalty_points") or 0) > 0),
             )
         )
@@ -364,6 +366,8 @@ def card_text(month: date, p: EmployeeMonth) -> str:
     lines = [f"📈 <b>{escape(p.name)} — KPI, {month_title(month)}</b>", f"{grade(p.total)} Жами: <b>{total}</b> / 100"]
     if p.penalty:
         lines.append(f"🔴 Ҳисобот соат 22:00 гача келмагани учун: <b>−{p.penalty}</b> балл ({p.missed_days} кун) — жамидан айирилган")
+    if p.bonus:
+        lines.append(f"🟢 Ҳисоботлар учун: <b>+{p.bonus}</b> балл — жамига қўшилган")
     lines.append("")
     for key, (emoji, label, weight) in PARTS.items():
         value = p.parts.get(key)

@@ -259,3 +259,7 @@ team only (`report_calendar.TEAM_OF`).
   a miss in the calendar or its minus count, unless they sent a report anyway. Once, at the first start after
   this change, unsent asks on days off were removed with their minus points (`report_close.clear_days_off_once`,
   marked `dayoff_misses_cleared` in agent_actions).
+
+## Report bonus (2026-10-22, the owner)
+
+Every morning (`agents/report-bonus/`, 08:00, before the explanations) each person in `REPORT_BONUS_ROLES` (garmin_sotuv) hears about yesterday's report, once (`daily_reports.bonus_at`): sent by them → `REPORT_BONUS_POINTS` (+1) into `bonus_points` and a polite thank-you with the month's total; missed, or «[чатдан тузилди]» → «бу сафар балл берилмади», politely, with how to get it. The 22:00 minus stays.

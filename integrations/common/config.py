@@ -158,6 +158,10 @@ class Settings(BaseSettings):
     garmin_competitors_enabled: bool = True
     # Explanations (2026-10-22, the Boss): each morning, absent yesterday / report not sent → asked why.
     explanations_enabled: bool = True
+    # Report bonus (2026-10-22, the owner): each morning, a report of yesterday sent by the person themselves
+    # → +REPORT_BONUS_POINTS KPI, told politely; a missed one is told no point was given. Roles: comma-separated.
+    report_bonus_roles: str = "garmin_sotuv"
+    report_bonus_points: int = 1
     garmin_competitors_weekday: int = 3
 
     # --- Garmin AI bot leads (POST /webhooks/garmin-lead/{secret}) ---

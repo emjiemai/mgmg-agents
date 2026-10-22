@@ -97,3 +97,7 @@ The Director and the Garmin manager (`kpi.NO_REPORT_ROLES`) are not scored. The 
 manager for his Garmin сотув team (`report_calendar.TEAM_OF`): `/kpi` his team's table, `/maqsad`
 `/maqsadlar` `/natija` his team's goals and results; his buttons can't reach anyone else. The monthly
 1–5 ratings (`/baho`, the 1st) stay the Director's.
+
+## Report bonus (2026-10-22)
+
+`daily_reports.bonus_points` (Garmin сотув, +1 per report they sent themselves — spec 06) are added to the month's total after the parts: total = parts + bonus − minus, kept within 0–100. /kpi shows «🟢 Ҳисоботлар учун: +N балл».

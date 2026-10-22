@@ -1427,6 +1427,30 @@ async def reports_between_rows(start: date, end: date) -> list[dict[str, Any]]:
     )
 
 
+async def settle_report_bonus(day: date, roles: list[str], points: int) -> list[dict[str, Any]]:
+    """Once per report: yesterday's report of these roles — sent by the person themselves → ``points``; missed or
+    put together from their messages → 0. Returns the rows with the person's name fields and the month's bonus."""
+    return await fetch_all(
+        """
+        WITH done AS (
+            UPDATE daily_reports r SET bonus_points = CASE WHEN r.status = 'submitted' AND NOT r.auto_built THEN %(p)s ELSE 0 END,
+                                       bonus_at = now()
+            FROM employees e
+            WHERE e.id = r.employee_id AND e.status = 'active' AND NOT e.reports_off AND e.role = ANY(%(roles)s)
+              AND r.report_date = %(d)s AND r.bonus_at IS NULL
+            RETURNING r.id, r.employee_id, r.telegram_user_id, r.report_date, r.status, r.auto_built, r.bonus_points,
+                      e.full_name, e.display_name, e.address_form
+        )
+        SELECT d.*, d.bonus_points + COALESCE((
+            SELECT sum(o.bonus_points) FROM daily_reports o
+            WHERE o.employee_id = d.employee_id AND o.id <> d.id
+              AND date_trunc('month', o.report_date) = date_trunc('month', d.report_date::timestamp)), 0) AS month_bonus
+        FROM done d
+        """,
+        {"p": points, "roles": roles, "d": day},
+    )
+
+
 async def delete_missed_on_days_off() -> int:
     """Unsent report asks that fall on the person's day off in their own week (``work_days``) — removed with
     their minus points (2026-10-22, once: asked before the Garmin сотув weeks were set, they showed red)."""
@@ -2079,7 +2103,7 @@ async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any
     """Everything the KPI needs for ``[start, end]``, keyed by employee_id."""
     reports = await fetch_all(
         # Only the role the person holds now (2026-10-17: a role change is a clean start).
-        """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, r.penalty_points, e.display_name
+        """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, r.penalty_points, r.bonus_points, e.display_name
            FROM daily_reports r JOIN employees e ON e.id = r.employee_id
            WHERE r.report_date BETWEEN %s AND %s AND r.role = e.role""",
         (start, end),

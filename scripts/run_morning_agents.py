@@ -35,6 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # cron service's dockerCommand in render.yaml.
 AGENTS = [
     "agents/ceo-daily-brief/agent.py",
+    "agents/report-bonus/agent.py",  # Garmin сотув: yesterday's report → +1 KPI, or politely none
     "agents/explanations/agent.py",  # absent yesterday / report not sent: asked why; yesterday's answers summed up
     "agents/billz-sap-check/agent.py",  # did every shop cheque reach SAP? (needs the full SAP push)
     "agents/garmin-brief/agent.py",  # the Garmin manager's brief (after the check: it shows its result)

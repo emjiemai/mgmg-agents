@@ -144,6 +144,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   cheer or task reminders that day. **Announce**:
   `/elon` (no text = "техник хатолик юз берди…" notice) or `/elon <text>`,
   preview + confirm, goes to every active employee once (2026-10-01).
+- **Report bonus** (2026-10-22, `agents/report-bonus/`): 08:00, Garmin сотув — yesterday's report sent by them → +1 KPI
+  (polite thanks + month total); missed / «[чатдан тузилди]» → politely no point. KPI = parts + bonus − minus (≤ 100).
 - Daily reports accepted only until **22:00** of that day (the Director, 2026-10-15); one not in by then
   costs `REPORT_MISS_PENALTY` (1) KPI points and the person is told (`report_close.py`, from 16.10); one follow-up
   question max for vague reports; a question during the report window gets

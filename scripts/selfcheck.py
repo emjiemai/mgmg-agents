@@ -4980,6 +4980,42 @@ def test_pulse() -> None:
     check_true("employees: only the Garmin manager's /pulse is answered", 'employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS' in src)
 
 
+def test_report_bonus() -> None:
+    """22.10.2026, the owner: each morning Garmin сотув get +1 KPI for yesterday's report, or politely none."""
+    print("report bonus (22.10.2026)")
+    import inspect
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.org_bot import kpi_score, store
+
+    agent = load_agent("report-bonus")
+    base = {"report_date": date(2026, 10, 21), "full_name": "Нодира Алиева", "address_form": "опа"}
+    sent = agent.message({**base, "status": "submitted", "auto_built": False, "bonus_points": 1, "month_bonus": 5}, 1)
+    built = agent.message({**base, "status": "submitted", "auto_built": True, "bonus_points": 0, "month_bonus": 4}, 1)
+    missed = agent.message({**base, "status": "asked", "auto_built": False, "bonus_points": 0, "month_bonus": 4}, 1)
+    for text in (sent, built, missed):
+        check(f"friendly: {text[:32]}…", friendly_problems(text, ("Нодира", "Нодира опа", "KPI")), [])
+    check_true("sent: thanks, +1 and the month's total; built from messages or missed: no point this time, politely, "
+               "and how to get it", "+1 балл қўшилди" in sent and "жами +5 балл" in sent and "балл берилмади" in built
+               and "ўзингиз юборсангиз" in built and "келмагани учун бу сафар балл берилмади" in missed and "22:00" in missed)
+    sql = inspect.getsource(store.settle_report_bonus)
+    check_true("once per report; only reports the person sent themselves get the point; active, reports on, the roles set",
+               "bonus_at IS NULL" in sql and "NOT r.auto_built" in sql and "e.role = ANY" in sql and "NOT e.reports_off" in sql)
+    check("Garmin сотув, +1 by default", (settings.report_bonus_roles, settings.report_bonus_points), ("garmin_sotuv", 1))
+    p = kpi_score.EmployeeMonth(employee_id="e", name="x", role_label="", bonus=6, penalty=2)
+    p.reports = kpi_score.ReportScore(asked=10, reported=8, on_time=8)
+    plain = kpi_score.EmployeeMonth(employee_id="f", name="y", role_label="")
+    plain.reports = kpi_score.ReportScore(asked=10, reported=8, on_time=8)
+    kpi_score.score([p, plain])
+    check("the KPI: + the month's bonus − the minus (never over 100)", round(p.total - plain.total, 1), 4.0)
+    check_true("the person's /kpi card says it", "+6</b> балл" in kpi_score.card_text(date(2026, 10, 1), p))
+    check_true("the KPI reads bonus_points", "r.bonus_points" in inspect.getsource(store.kpi_month_rows))
+    morning = load_source("scripts/run_morning_agents.py")
+    check_true("08:00, before the explanations", morning.index("agents/report-bonus") < morning.index("agents/explanations"))
+    check_true("schema: bonus_points, bonus_at", "ADD COLUMN IF NOT EXISTS bonus_points" in load_source("database/schema.sql"))
+
+
 def test_garmin_competitors() -> None:
     """19.10.2026: who else sells Garmin in Uzbekistan (OLX, Google) against our garmin.com.uz prices — offline."""
     print("Garmin competitors (19.10.2026)")
@@ -8623,6 +8659,7 @@ def main() -> int:
         test_report_media_and_auto,
         test_explanations_and_start_times,
         test_pulse,
+        test_report_bonus,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,
