@@ -208,6 +208,15 @@ svg.spark circle { stroke: none; fill: var(--ink); }
 .icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
 .icon-btn svg { width: 18px; height: 18px; }
 .p-chart { height: 200px; }
+/* the day's three parts under the person's line: drawn icon + number, no words */
+.parts { display: flex; align-items: center; gap: 18px; padding: 8px 0 2px; font-size: 14px; }
+.parts .when { color: var(--ink-3); margin-right: auto; }
+.parts .part { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.parts .part .ic { width: 16px; height: 16px; }
+.parts .part.off { color: var(--ink-3); font-weight: 400; }
+.parts .part .ic { color: var(--ink-2); }
+.parts .part.zero { color: var(--down); }
+.parts .part.zero .ic { color: var(--down); }
 .day-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--rule-strong); }
 .day-nav p { font-weight: 700; }
 .timeline li { display: grid; grid-template-columns: 46px 20px minmax(0, 1fr); gap: 0 8px; padding: 9px 0; border-bottom: 1px solid var(--rule); }

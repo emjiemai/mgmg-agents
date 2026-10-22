@@ -315,6 +315,7 @@
       pChart.applyOptions({ rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.08 } } });
       pArea = pChart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, priceFormat: { type: "price", precision: 0, minMove: 1 } });
       pChart.subscribeClick((param) => { if (param.time && state.person) openPerson(state.person, param.time); });
+      pChart.subscribeCrosshairMove((param) => parts(param && param.time ? param.time : state.personDay));
     }
     if (pChart) {
       pChart.applyOptions(chartOptions());
@@ -324,6 +325,8 @@
       pChart.timeScale().fitContent();
     }
     state.personDay = p.day;
+    state.personLine = p.line;
+    parts(p.day);
     const days = p.line.map((x) => x.d), at = days.indexOf(p.day);
     $("day-prev").disabled = at <= 0;
     $("day-next").disabled = at < 0 || at >= days.length - 1;
@@ -343,6 +346,26 @@
       if (it.detail) what.appendChild(el("span", "det", it.detail));
       li.appendChild(what);
       list.appendChild(li);
+    });
+  }
+
+  // the day's three parts — attendance, report, tasks — each by its drawn icon, as a number (— = not counted)
+  const PARTS = [["attendance", "in", "Давомат"], ["report", "report", "Ҳисобот"], ["tasks", "task", "Топшириқ"]];
+  function parts(day) {
+    const box = $("p-parts"), line = state.personLine || [];
+    const at = line.find((x) => x.d === day);
+    box.textContent = "";
+    if (!at) return;
+    const [y, m, d] = at.d.split("-");
+    box.appendChild(el("span", "when", `${d}.${m}`));
+    PARTS.forEach(([key, kind, said]) => {
+      const v = at.parts ? at.parts[key] : null;
+      const part = el("span", `part${v === null || v === undefined ? " off" : v === 0 ? " zero" : ""}`);
+      part.title = said;
+      part.appendChild(icon(kind));
+      part.appendChild(el("span", "sr", said));
+      part.appendChild(document.createTextNode(v === null || v === undefined ? "—" : fmtInt.format(v)));
+      box.appendChild(part);
     });
   }
 

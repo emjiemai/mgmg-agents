@@ -31,7 +31,8 @@ nothing cached by the browser.
   explanations, complaints in and resolved. Refreshes every minute; a name opens that person.
 - **Ходимлар:** everyone ranked by their period score, today's arrival dot, sparkline, ▲▼; Ҳамма / Garmin /
   Primus / Londry / Офис filter.
-- **One person** (a panel; a sheet on a phone): their score line (tap a day), and that day in time order —
+- **One person** (a panel; a sheet on a phone): their score line (tap a day), the day's three parts as numbers by
+  their drawn icons (attendance / report / tasks; a 0 in red; follows the crosshair), and that day in time order —
   arrived, task received / started / done / accepted, report, explanation, left.
 
 A source that can't be read shows «—», never 0. The Garmin manager sees his team and Garmin's sales only.

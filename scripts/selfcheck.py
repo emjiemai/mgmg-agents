@@ -4946,6 +4946,9 @@ def test_pulse() -> None:
                "what it means, pressed buttons not tabs, a flat wash",
                "row && row.score !== null ? row.score" in js and "subscribeCrosshairMove" in js and "Кечикди" in js
                and 'role="tab"' not in load_source("integrations/api/static/pulse.html") and 'bottomColor: "rgba(0,0,0,0)"' not in js)
+    check_true("one person's day: attendance, report, tasks as numbers by their drawn icons (no words), "
+               "following the crosshair", 'PARTS = [["attendance", "in"' in js and "pChart.subscribeCrosshairMove" in js
+               and 'id="p-parts"' in load_source("integrations/api/static/pulse.html"))
     html = load_source("integrations/api/static/pulse.html")
     check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE"}) == []
                and "<script>" not in html)
