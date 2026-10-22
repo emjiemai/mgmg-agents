@@ -1,0 +1,731 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-22T13:51:42Z",
+  "title": "Design System: MGMG Command Center",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "primary",
+        "displayName": "Press Ink",
+        "canonical": "oklch(20.5% 0.010 268)",
+        "tonalRamp": [
+          "oklch(15% 0.010 268)",
+          "oklch(26% 0.010 268)",
+          "oklch(37% 0.010 268)",
+          "oklch(49% 0.010 268)",
+          "oklch(60% 0.010 268)",
+          "oklch(72% 0.010 268)",
+          "oklch(83% 0.010 268)",
+          "oklch(95% 0.010 268)"
+        ]
+      },
+      "ok": {
+        "role": "secondary",
+        "displayName": "Ledger Green",
+        "canonical": "oklch(47.1% 0.096 158)",
+        "tonalRamp": [
+          "oklch(15% 0.096 158)",
+          "oklch(26% 0.096 158)",
+          "oklch(37% 0.096 158)",
+          "oklch(49% 0.096 158)",
+          "oklch(60% 0.096 158)",
+          "oklch(72% 0.096 158)",
+          "oklch(83% 0.096 158)",
+          "oklch(95% 0.096 158)"
+        ]
+      },
+      "warn": {
+        "role": "secondary",
+        "displayName": "Late Amber",
+        "canonical": "oklch(49.4% 0.109 67)",
+        "tonalRamp": [
+          "oklch(15% 0.109 67)",
+          "oklch(26% 0.109 67)",
+          "oklch(37% 0.109 67)",
+          "oklch(49% 0.109 67)",
+          "oklch(60% 0.109 67)",
+          "oklch(72% 0.109 67)",
+          "oklch(83% 0.109 67)",
+          "oklch(95% 0.109 67)"
+        ]
+      },
+      "alert": {
+        "role": "secondary",
+        "displayName": "Signal Red",
+        "canonical": "oklch(50.1% 0.178 29)",
+        "tonalRamp": [
+          "oklch(15% 0.130 29)",
+          "oklch(26% 0.130 29)",
+          "oklch(37% 0.130 29)",
+          "oklch(49% 0.130 29)",
+          "oklch(60% 0.130 29)",
+          "oklch(72% 0.130 29)",
+          "oklch(83% 0.130 29)",
+          "oklch(95% 0.130 29)"
+        ]
+      },
+      "ok-wash": {
+        "role": "secondary",
+        "displayName": "Green Wash",
+        "canonical": "oklch(95.1% 0.018 161)",
+        "tonalRamp": [
+          "oklch(15% 0.018 161)",
+          "oklch(26% 0.018 161)",
+          "oklch(37% 0.018 161)",
+          "oklch(49% 0.018 161)",
+          "oklch(60% 0.018 161)",
+          "oklch(72% 0.018 161)",
+          "oklch(83% 0.018 161)",
+          "oklch(95% 0.018 161)"
+        ]
+      },
+      "warn-wash": {
+        "role": "secondary",
+        "displayName": "Amber Wash",
+        "canonical": "oklch(96.4% 0.030 84)",
+        "tonalRamp": [
+          "oklch(15% 0.030 84)",
+          "oklch(26% 0.030 84)",
+          "oklch(37% 0.030 84)",
+          "oklch(49% 0.030 84)",
+          "oklch(60% 0.030 84)",
+          "oklch(72% 0.030 84)",
+          "oklch(83% 0.030 84)",
+          "oklch(95% 0.030 84)"
+        ]
+      },
+      "alert-wash": {
+        "role": "secondary",
+        "displayName": "Red Wash",
+        "canonical": "oklch(95.5% 0.018 26)",
+        "tonalRamp": [
+          "oklch(15% 0.018 26)",
+          "oklch(26% 0.018 26)",
+          "oklch(37% 0.018 26)",
+          "oklch(49% 0.018 26)",
+          "oklch(60% 0.018 26)",
+          "oklch(72% 0.018 26)",
+          "oklch(83% 0.018 26)",
+          "oklch(95% 0.018 26)"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Paper White",
+        "canonical": "oklch(100.0% 0.000 90)",
+        "tonalRamp": [
+          "oklch(15% 0.000 90)",
+          "oklch(26% 0.000 90)",
+          "oklch(37% 0.000 90)",
+          "oklch(49% 0.000 90)",
+          "oklch(60% 0.000 90)",
+          "oklch(72% 0.000 90)",
+          "oklch(83% 0.000 90)",
+          "oklch(95% 0.000 90)"
+        ]
+      },
+      "band": {
+        "role": "neutral",
+        "displayName": "Ledger Band",
+        "canonical": "oklch(97.0% 0.003 265)",
+        "tonalRamp": [
+          "oklch(15% 0.003 265)",
+          "oklch(26% 0.003 265)",
+          "oklch(37% 0.003 265)",
+          "oklch(49% 0.003 265)",
+          "oklch(60% 0.003 265)",
+          "oklch(72% 0.003 265)",
+          "oklch(83% 0.003 265)",
+          "oklch(95% 0.003 265)"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Slate Ink",
+        "canonical": "oklch(41.9% 0.021 264)",
+        "tonalRamp": [
+          "oklch(15% 0.021 264)",
+          "oklch(26% 0.021 264)",
+          "oklch(37% 0.021 264)",
+          "oklch(49% 0.021 264)",
+          "oklch(60% 0.021 264)",
+          "oklch(72% 0.021 264)",
+          "oklch(83% 0.021 264)",
+          "oklch(95% 0.021 264)"
+        ]
+      },
+      "ink-3": {
+        "role": "neutral",
+        "displayName": "Pencil Grey",
+        "canonical": "oklch(52.6% 0.022 263)",
+        "tonalRamp": [
+          "oklch(15% 0.022 263)",
+          "oklch(26% 0.022 263)",
+          "oklch(37% 0.022 263)",
+          "oklch(49% 0.022 263)",
+          "oklch(60% 0.022 263)",
+          "oklch(72% 0.022 263)",
+          "oklch(83% 0.022 263)",
+          "oklch(95% 0.022 263)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(92.5% 0.006 265)",
+        "tonalRamp": [
+          "oklch(15% 0.006 265)",
+          "oklch(26% 0.006 265)",
+          "oklch(37% 0.006 265)",
+          "oklch(49% 0.006 265)",
+          "oklch(60% 0.006 265)",
+          "oklch(72% 0.006 265)",
+          "oklch(83% 0.006 265)",
+          "oklch(95% 0.006 265)"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Strong Rule",
+        "canonical": "oklch(85.0% 0.012 260)",
+        "tonalRamp": [
+          "oklch(15% 0.012 260)",
+          "oklch(26% 0.012 260)",
+          "oklch(37% 0.012 260)",
+          "oklch(49% 0.012 260)",
+          "oklch(60% 0.012 260)",
+          "oklch(72% 0.012 260)",
+          "oklch(83% 0.012 260)",
+          "oklch(95% 0.012 260)"
+        ]
+      },
+      "chart-bars": {
+        "role": "neutral",
+        "displayName": "Volume Grey",
+        "canonical": "oklch(85.0% 0.012 260)",
+        "tonalRamp": [
+          "oklch(15% 0.012 260)",
+          "oklch(26% 0.012 260)",
+          "oklch(37% 0.012 260)",
+          "oklch(49% 0.012 260)",
+          "oklch(60% 0.012 260)",
+          "oklch(72% 0.012 260)",
+          "oklch(83% 0.012 260)",
+          "oklch(95% 0.012 260)"
+        ]
+      },
+      "chart-area": {
+        "role": "neutral",
+        "displayName": "Chart Wash",
+        "canonical": "rgba(21, 23, 28, 0.07)",
+        "tonalRamp": [
+          "oklch(15% 0.010 268)",
+          "oklch(26% 0.010 268)",
+          "oklch(37% 0.010 268)",
+          "oklch(49% 0.010 268)",
+          "oklch(60% 0.010 268)",
+          "oklch(72% 0.010 268)",
+          "oklch(83% 0.010 268)",
+          "oklch(95% 0.010 268)"
+        ]
+      },
+      "select": {
+        "role": "neutral",
+        "displayName": "Selection",
+        "canonical": "oklch(91.5% 0.009 258)",
+        "tonalRamp": [
+          "oklch(15% 0.009 258)",
+          "oklch(26% 0.009 258)",
+          "oklch(37% 0.009 258)",
+          "oklch(49% 0.009 258)",
+          "oklch(60% 0.009 258)",
+          "oklch(72% 0.009 258)",
+          "oklch(83% 0.009 258)",
+          "oklch(95% 0.009 258)"
+        ]
+      },
+      "ground-dark": {
+        "role": "neutral",
+        "displayName": "Graphite Ground",
+        "canonical": "oklch(18.6% 0.009 264)",
+        "tonalRamp": [
+          "oklch(15% 0.009 264)",
+          "oklch(26% 0.009 264)",
+          "oklch(37% 0.009 264)",
+          "oklch(49% 0.009 264)",
+          "oklch(60% 0.009 264)",
+          "oklch(72% 0.009 264)",
+          "oklch(83% 0.009 264)",
+          "oklch(95% 0.009 264)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "ground"
+      },
+      "band-dark": {
+        "role": "neutral",
+        "displayName": "Graphite Band",
+        "canonical": "oklch(22.1% 0.011 261)",
+        "tonalRamp": [
+          "oklch(15% 0.011 261)",
+          "oklch(26% 0.011 261)",
+          "oklch(37% 0.011 261)",
+          "oklch(49% 0.011 261)",
+          "oklch(60% 0.011 261)",
+          "oklch(72% 0.011 261)",
+          "oklch(83% 0.011 261)",
+          "oklch(95% 0.011 261)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "band"
+      },
+      "ink-dark": {
+        "role": "primary",
+        "displayName": "Paper Ink",
+        "canonical": "oklch(94.8% 0.005 258)",
+        "tonalRamp": [
+          "oklch(15% 0.005 258)",
+          "oklch(26% 0.005 258)",
+          "oklch(37% 0.005 258)",
+          "oklch(49% 0.005 258)",
+          "oklch(60% 0.005 258)",
+          "oklch(72% 0.005 258)",
+          "oklch(83% 0.005 258)",
+          "oklch(95% 0.005 258)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "ink"
+      },
+      "ink-2-dark": {
+        "role": "neutral",
+        "displayName": "Slate (graphite)",
+        "canonical": "oklch(79.7% 0.014 262)",
+        "tonalRamp": [
+          "oklch(15% 0.014 262)",
+          "oklch(26% 0.014 262)",
+          "oklch(37% 0.014 262)",
+          "oklch(49% 0.014 262)",
+          "oklch(60% 0.014 262)",
+          "oklch(72% 0.014 262)",
+          "oklch(83% 0.014 262)",
+          "oklch(95% 0.014 262)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "ink-2"
+      },
+      "ink-3-dark": {
+        "role": "neutral",
+        "displayName": "Pencil (graphite)",
+        "canonical": "oklch(66.8% 0.020 261)",
+        "tonalRamp": [
+          "oklch(15% 0.020 261)",
+          "oklch(26% 0.020 261)",
+          "oklch(37% 0.020 261)",
+          "oklch(49% 0.020 261)",
+          "oklch(60% 0.020 261)",
+          "oklch(72% 0.020 261)",
+          "oklch(83% 0.020 261)",
+          "oklch(95% 0.020 261)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "ink-3"
+      },
+      "rule-dark": {
+        "role": "neutral",
+        "displayName": "Hairline (graphite)",
+        "canonical": "oklch(28.3% 0.015 257)",
+        "tonalRamp": [
+          "oklch(15% 0.015 257)",
+          "oklch(26% 0.015 257)",
+          "oklch(37% 0.015 257)",
+          "oklch(49% 0.015 257)",
+          "oklch(60% 0.015 257)",
+          "oklch(72% 0.015 257)",
+          "oklch(83% 0.015 257)",
+          "oklch(95% 0.015 257)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "rule"
+      },
+      "rule-strong-dark": {
+        "role": "neutral",
+        "displayName": "Strong Rule (graphite)",
+        "canonical": "oklch(35.0% 0.018 258)",
+        "tonalRamp": [
+          "oklch(15% 0.018 258)",
+          "oklch(26% 0.018 258)",
+          "oklch(37% 0.018 258)",
+          "oklch(49% 0.018 258)",
+          "oklch(60% 0.018 258)",
+          "oklch(72% 0.018 258)",
+          "oklch(83% 0.018 258)",
+          "oklch(95% 0.018 258)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "rule-strong"
+      },
+      "ok-dark": {
+        "role": "secondary",
+        "displayName": "Ledger Green (graphite)",
+        "canonical": "oklch(70.4% 0.129 160)",
+        "tonalRamp": [
+          "oklch(15% 0.129 160)",
+          "oklch(26% 0.129 160)",
+          "oklch(37% 0.129 160)",
+          "oklch(49% 0.129 160)",
+          "oklch(60% 0.129 160)",
+          "oklch(72% 0.129 160)",
+          "oklch(83% 0.129 160)",
+          "oklch(95% 0.129 160)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "ok"
+      },
+      "warn-dark": {
+        "role": "secondary",
+        "displayName": "Late Amber (graphite)",
+        "canonical": "oklch(76.5% 0.129 75)",
+        "tonalRamp": [
+          "oklch(15% 0.129 75)",
+          "oklch(26% 0.129 75)",
+          "oklch(37% 0.129 75)",
+          "oklch(49% 0.129 75)",
+          "oklch(60% 0.129 75)",
+          "oklch(72% 0.129 75)",
+          "oklch(83% 0.129 75)",
+          "oklch(95% 0.129 75)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "warn"
+      },
+      "alert-dark": {
+        "role": "secondary",
+        "displayName": "Signal Red (graphite)",
+        "canonical": "oklch(69.3% 0.160 27)",
+        "tonalRamp": [
+          "oklch(15% 0.130 27)",
+          "oklch(26% 0.130 27)",
+          "oklch(37% 0.130 27)",
+          "oklch(49% 0.130 27)",
+          "oklch(60% 0.130 27)",
+          "oklch(72% 0.130 27)",
+          "oklch(83% 0.130 27)",
+          "oklch(95% 0.130 27)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "alert"
+      },
+      "chart-bars-dark": {
+        "role": "neutral",
+        "displayName": "Volume Grey (graphite)",
+        "canonical": "oklch(37.3% 0.020 257)",
+        "tonalRamp": [
+          "oklch(15% 0.020 257)",
+          "oklch(26% 0.020 257)",
+          "oklch(37% 0.020 257)",
+          "oklch(49% 0.020 257)",
+          "oklch(60% 0.020 257)",
+          "oklch(72% 0.020 257)",
+          "oklch(83% 0.020 257)",
+          "oklch(95% 0.020 257)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "chart-bars"
+      },
+      "chart-area-dark": {
+        "role": "neutral",
+        "displayName": "Chart Wash (graphite)",
+        "canonical": "rgba(236, 238, 241, 0.08)",
+        "tonalRamp": [
+          "oklch(15% 0.005 258)",
+          "oklch(26% 0.005 258)",
+          "oklch(37% 0.005 258)",
+          "oklch(49% 0.005 258)",
+          "oklch(60% 0.005 258)",
+          "oklch(72% 0.005 258)",
+          "oklch(83% 0.005 258)",
+          "oklch(95% 0.005 258)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "chart-area"
+      },
+      "select-dark": {
+        "role": "neutral",
+        "displayName": "Selection (graphite)",
+        "canonical": "oklch(31.1% 0.018 258)",
+        "tonalRamp": [
+          "oklch(15% 0.018 258)",
+          "oklch(26% 0.018 258)",
+          "oklch(37% 0.018 258)",
+          "oklch(49% 0.018 258)",
+          "oklch(60% 0.018 258)",
+          "oklch(72% 0.018 258)",
+          "oklch(83% 0.018 258)",
+          "oklch(95% 0.018 258)"
+        ],
+        "mode": "dark",
+        "lightCounterpart": "select"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The index price on the quote line; 34px on phones."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "A person's score at the head of their sheet."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "A ticker's value; the board's score at 18px."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "A person's name in the sheet; the PULSE wordmark tracked +0.08em."
+      },
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "Section heads (Бугун, Ходимлар); a report's block head."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default text; board names in 700."
+      },
+      "body-sm": {
+        "displayName": "Body small",
+        "purpose": "Tape rows, switch and chip labels, the time stamp, units beside figures."
+      },
+      "symbol": {
+        "displayName": "Symbol",
+        "purpose": "A quote's name, uppercase in Slate Ink, on the price's baseline (ИНДЕКС)."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Ticker labels, column headers, roles, chart legend and axes."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "state-change",
+        "value": "160ms ease-out",
+        "purpose": "Background, colour and outline changes on the segmented switch and sector chips."
+      },
+      {
+        "name": "row-hover",
+        "value": "140ms ease-out",
+        "purpose": "The band laid under a board row and an icon button on hover."
+      },
+      {
+        "name": "tape-arrive",
+        "value": "520ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "A new tape row drops 6px into place through a band flash."
+      },
+      {
+        "name": "sheet-in",
+        "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The person sheet slides in from the right."
+      },
+      {
+        "name": "sheet-out",
+        "value": "200ms ease-in",
+        "purpose": "The person sheet slides out."
+      },
+      {
+        "name": "live-breathe",
+        "value": "2.4s ease-in-out infinite",
+        "purpose": "The tape's live dot fades to 35% and back."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "Under prefers-reduced-motion every animation and transition is off."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "tablet",
+        "value": "1100px",
+        "query": "(max-width: 1100px)",
+        "purpose": "Tape 290px; tickers fold 3 x 2."
+      },
+      {
+        "name": "phone",
+        "value": "760px",
+        "query": "(max-width: 760px)",
+        "purpose": "One column, 16px gutter, ticker strip with scroll-snap, 40px controls, full-screen person sheet."
+      }
+    ],
+    "layout": {
+      "maxWidth": "1480px",
+      "tapeWidth": "340px",
+      "boardMaxWidth": "1040px",
+      "chartHeight": "380px",
+      "chartHeightPhone": "260px",
+      "personSheetWidth": "440px"
+    },
+    "chart": {
+      "library": "TradingView Lightweight Charts 4.2.0 (vendored, /pulse/static/)",
+      "background": "--ground",
+      "text": "--ink-3, 12px Noto Sans",
+      "grid": "horizontal only, --rule",
+      "line": "--line (= --ink), 2px area series over --area",
+      "volume": "histogram on a hidden scale in the bottom 20%, --bars; today's bar --ink-3",
+      "crosshair": "--ink-3 lines, --ink labels",
+      "interaction": "scroll and zoom off; legend follows the crosshair"
+    },
+    "icons": {
+      "grid": "24",
+      "stroke": "1.7 on screen, 1.8 in the reports' renderer, 2.2 for the PULSE mark",
+      "caps": "round",
+      "joins": "round",
+      "color": "currentColor",
+      "delta": "drawn 10px filled triangles"
+    }
+  },
+  "components": [
+    {
+      "name": "Top Bar",
+      "kind": "nav",
+      "refersTo": "top-bar",
+      "description": "Sticky bar closed by the 2px ink masthead rule: drawn mark and PULSE, the time stamp, the period switch pushed right.",
+      "html": "<header class=\"ds-bar\"><span class=\"ds-brand\"><svg class=\"ds-mark\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2 13h4l2.5-6 4 11 3-8 1.5 3H22\"/></svg>PULSE</span><span class=\"ds-asof\">22.10.2026 15:40</span><span class=\"ds-range\" role=\"group\" aria-label=\"Давр\"><button type=\"button\" aria-pressed=\"false\">7 кун</button><button type=\"button\" aria-pressed=\"true\">30 кун</button><button type=\"button\" aria-pressed=\"false\">90 кун</button></span></header>",
+      "css": ".ds-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--ground, #ffffff); color: var(--ink, #15171c); border-bottom: 2px solid var(--ink, #15171c); font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; font-size: 14px; } .ds-brand { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; letter-spacing: 0.08em; } .ds-mark { width: 22px; height: 22px; } .ds-asof { color: var(--ink-3, #646b78); font-size: 13px; } .ds-range { margin-left: auto; display: flex; border: 1px solid var(--rule-strong, #c9ced6); border-radius: 6px; overflow: hidden; } .ds-range button { border: 0; background: transparent; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-2, #474d59); cursor: pointer; transition: background-color 160ms ease-out, color 160ms ease-out; } .ds-range button + button { border-left: 1px solid var(--rule-strong, #c9ced6); } .ds-range button:hover { background: var(--band, #f4f5f7); color: var(--ink, #15171c); } .ds-range button[aria-pressed=\"true\"] { background: var(--ink, #15171c); color: var(--ground, #ffffff); font-weight: 700; } .ds-range button:focus-visible { outline: 2px solid var(--ink, #15171c); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Segmented Switch",
+      "kind": "button",
+      "refersTo": "range-switch",
+      "description": "The 7 / 30 / 90 кун period switch: one outline, hairline dividers, the pressed segment inked.",
+      "html": "<div class=\"ds-seg\" role=\"group\" aria-label=\"Давр\"><button type=\"button\" aria-pressed=\"false\">7 кун</button><button type=\"button\" aria-pressed=\"true\">30 кун</button><button type=\"button\" aria-pressed=\"false\">90 кун</button></div>",
+      "css": ".ds-seg { display: inline-flex; border: 1px solid var(--rule-strong, #c9ced6); border-radius: 6px; overflow: hidden; font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; } .ds-seg button { border: 0; background: transparent; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-2, #474d59); cursor: pointer; transition: background-color 160ms ease-out, color 160ms ease-out; } .ds-seg button + button { border-left: 1px solid var(--rule-strong, #c9ced6); } .ds-seg button:hover { background: var(--band, #f4f5f7); color: var(--ink, #15171c); } .ds-seg button:active { background: var(--rule, #e4e6ea); } .ds-seg button[aria-pressed=\"true\"] { background: var(--ink, #15171c); color: var(--ground, #ffffff); font-weight: 700; } .ds-seg button:focus-visible { outline: 2px solid var(--ink, #15171c); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "36px square, 8px corners, 1px strong rule, an 18px drawn icon; close and day-to-day steps in the person sheet.",
+      "html": "<span class=\"ds-icons\"><button class=\"ds-icon-btn\" type=\"button\" aria-label=\"Ёпиш\"><svg class=\"ds-ic \" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M6 6l12 12M18 6L6 18\"/></svg></button><button class=\"ds-icon-btn\" type=\"button\" aria-label=\"Олдинги кун\"><svg class=\"ds-ic \" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M15 5l-7 7 7 7\"/></svg></button><button class=\"ds-icon-btn\" type=\"button\" aria-label=\"Кейинги кун\" disabled><svg class=\"ds-ic \" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 5l7 7-7 7\"/></svg></button></span>",
+      "css": ".ds-icons { display: inline-flex; gap: 8px; } .ds-icon-btn { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--rule-strong, #c9ced6); border-radius: 8px; background: transparent; color: var(--ink, #15171c); cursor: pointer; transition: background-color 140ms ease-out; } .ds-icon-btn:hover { background: var(--band, #f4f5f7); } .ds-icon-btn:focus-visible { outline: 2px solid var(--ink, #15171c); outline-offset: 2px; border-radius: 3px; } .ds-icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; } .ds-icon-btn .ds-ic { width: 18px; height: 18px; }"
+    },
+    {
+      "name": "Sector Chip",
+      "kind": "chip",
+      "refersTo": "sector-chip",
+      "description": "Business filter over the board: pill outline, label with the sector's score in bold; pressed is inked.",
+      "html": "<div class=\"ds-chips\" role=\"group\" aria-label=\"Бизнес\"><button type=\"button\" aria-pressed=\"true\">Ҳамма<span>71</span></button><button type=\"button\" aria-pressed=\"false\">Garmin<span>84</span></button><button type=\"button\" aria-pressed=\"false\">Londry<span>73</span></button></div>",
+      "css": ".ds-chips { display: flex; gap: 6px; font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; } .ds-chips button { border: 1px solid var(--rule-strong, #c9ced6); background: transparent; border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; color: var(--ink-2, #474d59); cursor: pointer; white-space: nowrap; transition: background-color 160ms ease-out, color 160ms ease-out, border-color 160ms ease-out; } .ds-chips button span { margin-left: 6px; font-weight: 700; } .ds-chips button:hover { border-color: var(--ink-3, #646b78); color: var(--ink, #15171c); } .ds-chips button[aria-pressed=\"true\"] { background: var(--ink, #15171c); border-color: var(--ink, #15171c); color: var(--ground, #ffffff); } .ds-chips button:focus-visible { outline: 2px solid var(--ink, #15171c); outline-offset: 2px; border-radius: 3px; }"
+    },
+    {
+      "name": "Quote",
+      "kind": "custom",
+      "refersTo": "quote",
+      "description": "The index on the quote line: symbol on the price's baseline, 40px price, delta coloured by whether the change is good.",
+      "html": "<div class=\"ds-quote\"><h2 class=\"ds-symbol\">Индекс</h2><p class=\"ds-price\"><span class=\"ds-value\">71</span><span class=\"ds-delta ds-up\"><svg class=\"ds-tri\" viewBox=\"0 0 10 10\" aria-hidden=\"true\"><path d=\"M5 1.5 9.2 8.5H.8z\"/></svg>3,4</span></p></div>",
+      "css": ".ds-quote { display: flex; align-items: baseline; gap: 6px 14px; color: var(--ink, #15171c); font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; } .ds-symbol { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2, #474d59); } .ds-price { margin: 0; display: flex; align-items: baseline; gap: 10px; } .ds-value { font-size: 40px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; } .ds-price .ds-delta { font-size: 15px; } .ds-delta { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-3, #646b78); white-space: nowrap; } .ds-delta.ds-up { color: var(--up, #1d6b46); } .ds-delta.ds-down { color: var(--down, #b3261e); } .ds-tri { width: 10px; height: 10px; fill: currentColor; stroke: none; }"
+    },
+    {
+      "name": "Ticker",
+      "kind": "custom",
+      "refersTo": "ticker",
+      "description": "One quote in the ticker row: label, value with its quiet unit, delta, sparkline; hairline-separated, never boxed.",
+      "html": "<div class=\"ds-tickers\"><article class=\"ds-ticker\"><span class=\"ds-label\">Сотув</span><span class=\"ds-tval\">1,3<small>млрд</small></span><span class=\"ds-delta ds-up\"><svg class=\"ds-tri\" viewBox=\"0 0 10 10\" aria-hidden=\"true\"><path d=\"M5 1.5 9.2 8.5H.8z\"/></svg>12,4%</span><svg class=\"ds-spark\" viewBox=\"0 0 120 26\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-a\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7L120,26L0,26Z\"/><path class=\"ds-l\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7\" vector-effect=\"non-scaling-stroke\"/><circle cx=\"120\" cy=\"7\" r=\"2\"/></svg></article><article class=\"ds-ticker\"><span class=\"ds-label\">Шикоят</span><span class=\"ds-tval\">3</span><span class=\"ds-delta ds-down\"><svg class=\"ds-tri\" viewBox=\"0 0 10 10\" aria-hidden=\"true\"><path d=\"M5 1.5 9.2 8.5H.8z\"/></svg>2</span><svg class=\"ds-spark\" viewBox=\"0 0 120 26\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-a\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7L120,26L0,26Z\"/><path class=\"ds-l\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7\" vector-effect=\"non-scaling-stroke\"/><circle cx=\"120\" cy=\"7\" r=\"2\"/></svg></article><article class=\"ds-ticker ds-off\"><span class=\"ds-label\">Давомат</span><span class=\"ds-tval\">—</span><span class=\"ds-delta\"></span><svg class=\"ds-spark\" viewBox=\"0 0 120 26\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-a\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7L120,26L0,26Z\"/><path class=\"ds-l\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7\" vector-effect=\"non-scaling-stroke\"/><circle cx=\"120\" cy=\"7\" r=\"2\"/></svg></article></div>",
+      "css": ".ds-tickers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--rule, #e4e6ea); color: var(--ink, #15171c); font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; } .ds-ticker { display: flex; flex-direction: column; padding: 14px 14px 12px; min-width: 0; } .ds-ticker:first-child { padding-left: 0; } .ds-ticker + .ds-ticker { border-left: 1px solid var(--rule, #e4e6ea); } .ds-label { color: var(--ink-3, #646b78); font-size: 12px; } .ds-tval { margin-top: 2px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; } .ds-tval small { font-size: 13px; font-weight: 400; color: var(--ink-2, #474d59); margin-left: 2px; letter-spacing: 0; } .ds-off .ds-tval { color: var(--ink-3, #646b78); font-weight: 400; font-size: 16px; } .ds-ticker .ds-delta { margin-top: 1px; font-size: 12.5px; } .ds-delta { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-3, #646b78); white-space: nowrap; } .ds-delta.ds-up { color: var(--up, #1d6b46); } .ds-delta.ds-down { color: var(--down, #b3261e); } .ds-tri { width: 10px; height: 10px; fill: currentColor; stroke: none; } .ds-spark { display: block; width: 100%; height: 26px; margin-top: 6px; } .ds-spark .ds-l { stroke: var(--ink-2, #474d59); stroke-width: 1.5; fill: none; } .ds-spark .ds-a { stroke: none; fill: var(--area, rgba(21, 23, 28, 0.07)); } .ds-spark circle { stroke: none; fill: var(--ink, #15171c); }"
+    },
+    {
+      "name": "Tape",
+      "kind": "custom",
+      "refersTo": "tape-row",
+      "description": "Time and sales for the company: newest first, time, a drawn icon coloured by kind, name in bold, action, detail.",
+      "html": "<aside class=\"ds-tape\"><div class=\"ds-tape-head\"><h2>Бугун</h2><span class=\"ds-live\" aria-hidden=\"true\"></span></div><ol><li><span class=\"ds-t\">15:32</span><svg class=\"ds-ic ds-ok\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M7 3h7l4 4v14H7zM14 3v4h4M10 12h5M10 16h5\"/></svg><span><button class=\"ds-who\" type=\"button\">Исм Фамилия</button> <span class=\"ds-act\">Ҳисобот</span></span></li><li><span class=\"ds-t\">10:41</span><svg class=\"ds-ic ds-warn\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2\"/></svg><span><button class=\"ds-who\" type=\"button\">Исм Фамилия</button> <span class=\"ds-act\">Келди</span> <span class=\"ds-det\">+41 дақ</span></span></li><li><span class=\"ds-t\">09:58</span><svg class=\"ds-ic ds-alert\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3 22 20H2zM12 10v4M12 17v.01\"/></svg><span><span class=\"ds-act\">Шикоят келди</span> <span class=\"ds-det\">Londry</span></span></li><li><span class=\"ds-t\">13:05</span><svg class=\"ds-ic ds-plain\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 4h14v16H5zM9 12l2 2 4-4\"/></svg><span><button class=\"ds-who\" type=\"button\">Исм Фамилия</button> <span class=\"ds-act\">Бошлади</span> <span class=\"ds-det\">T-2026-10-0139</span></span></li></ol></aside>",
+      "css": ".ds-tape { max-width: 340px; color: var(--ink, #15171c); font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; font-size: 14px; } .ds-tape-head { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--rule-strong, #c9ced6); } .ds-tape-head h2 { margin: 0; font-size: 15px; font-weight: 700; } .ds-live { width: 7px; height: 7px; border-radius: 50%; background: var(--up, #1d6b46); animation: ds-breathe 2.4s ease-in-out infinite; } @keyframes ds-breathe { 50% { opacity: 0.35; } } .ds-tape ol { margin: 0; padding: 0; list-style: none; } .ds-tape li { display: grid; grid-template-columns: 42px 18px minmax(0, 1fr); align-items: start; gap: 0 8px; padding: 7px 0; border-bottom: 1px solid var(--rule, #e4e6ea); font-size: 13px; } .ds-t { color: var(--ink-3, #646b78); padding-top: 1px; } .ds-tape .ds-ic { width: 16px; height: 16px; margin-top: 2px; } .ds-ok { color: var(--up, #1d6b46); } .ds-warn { color: var(--warn, #8a5300); } .ds-alert { color: var(--down, #b3261e); } .ds-plain { color: var(--ink-2, #474d59); } .ds-who { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; } .ds-who:hover { text-decoration-color: currentColor; } .ds-who:focus-visible { outline: 2px solid var(--ink, #15171c); outline-offset: 2px; border-radius: 3px; } .ds-act { color: var(--ink-2, #474d59); } .ds-det { color: var(--ink-3, #646b78); white-space: nowrap; } @media (prefers-reduced-motion: reduce) { .ds-live { animation: none; } }"
+    },
+    {
+      "name": "Board Row",
+      "kind": "custom",
+      "refersTo": "board-row",
+      "description": "The ranked board: rank, status dot, name over role, sparkline, score and delta right-aligned; the row is the target.",
+      "html": "<table class=\"ds-rows\"><thead><tr><th class=\"ds-n\">#</th><th>Ходим</th><th class=\"ds-sp\">Давр</th><th class=\"ds-num\">Балл</th><th class=\"ds-num\">Ўзгариш</th></tr></thead><tbody><tr tabindex=\"0\"><td class=\"ds-n\">1</td><td><span class=\"ds-cell\"><span class=\"ds-dot ds-in\" title=\"Келди\"></span><span><span class=\"ds-name\">Исм Фамилия</span><span class=\"ds-role\">Garmin сотув</span></span></span></td><td class=\"ds-sp\"><svg class=\"ds-spark\" viewBox=\"0 0 120 26\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-a\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7L120,26L0,26Z\"/><path class=\"ds-l\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7\" vector-effect=\"non-scaling-stroke\"/><circle cx=\"120\" cy=\"7\" r=\"2\"/></svg></td><td class=\"ds-num ds-score\">96</td><td class=\"ds-num\"><span class=\"ds-delta ds-up\"><svg class=\"ds-tri\" viewBox=\"0 0 10 10\" aria-hidden=\"true\"><path d=\"M5 1.5 9.2 8.5H.8z\"/></svg>6,2</span></td></tr><tr tabindex=\"0\"><td class=\"ds-n\">2</td><td><span class=\"ds-cell\"><span class=\"ds-dot ds-absent\" title=\"Келмади\"></span><span><span class=\"ds-name\">Исм Фамилия</span><span class=\"ds-role\">Londry</span></span></span></td><td class=\"ds-sp\"><svg class=\"ds-spark\" viewBox=\"0 0 120 26\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-a\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7L120,26L0,26Z\"/><path class=\"ds-l\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7\" vector-effect=\"non-scaling-stroke\"/><circle cx=\"120\" cy=\"7\" r=\"2\"/></svg></td><td class=\"ds-num ds-score\">90</td><td class=\"ds-num\"><span class=\"ds-delta ds-down\"><svg class=\"ds-tri\" viewBox=\"0 0 10 10\" aria-hidden=\"true\"><path d=\"M5 8.5 .8 1.5h8.4z\"/></svg>0,6</span></td></tr><tr tabindex=\"0\"><td class=\"ds-n\">3</td><td><span class=\"ds-cell\"><span class=\"ds-dot\"></span><span><span class=\"ds-name\">Исм Фамилия</span><span class=\"ds-role\">Омбор</span></span></span></td><td class=\"ds-sp\"><svg class=\"ds-spark\" viewBox=\"0 0 120 26\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ds-a\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7L120,26L0,26Z\"/><path class=\"ds-l\" d=\"M0,18L12,14L24,16L36,10L48,12L60,8L72,11L84,6L96,9L108,5L120,7\" vector-effect=\"non-scaling-stroke\"/><circle cx=\"120\" cy=\"7\" r=\"2\"/></svg></td><td class=\"ds-num ds-score ds-none\">—</td><td class=\"ds-num\"><span class=\"ds-delta\"></span></td></tr></tbody></table>",
+      "css": ".ds-rows { width: 100%; border-collapse: collapse; color: var(--ink, #15171c); font-family: \"Noto Sans\", system-ui, sans-serif; font-variant-numeric: tabular-nums lining-nums; font-size: 14px; line-height: 1.4; } .ds-rows th { text-align: left; font-size: 12px; font-weight: 400; color: var(--ink-3, #646b78); padding: 10px 8px 6px; border-bottom: 1px solid var(--rule, #e4e6ea); } .ds-rows td { padding: 9px 8px; border-bottom: 1px solid var(--rule, #e4e6ea); vertical-align: middle; } .ds-rows .ds-n { width: 36px; color: var(--ink-3, #646b78); padding-left: 0; } .ds-rows .ds-num { text-align: right; white-space: nowrap; } .ds-rows tbody tr { cursor: pointer; transition: background-color 140ms ease-out; } .ds-rows tbody tr:hover { background: var(--band, #f4f5f7); } .ds-rows tbody tr:focus-visible { outline: 2px solid var(--ink, #15171c); outline-offset: -2px; } .ds-cell { display: flex; align-items: center; gap: 10px; min-width: 0; } .ds-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--rule-strong, #c9ced6); box-sizing: border-box; } .ds-dot.ds-in { background: var(--up, #1d6b46); border-color: var(--up, #1d6b46); } .ds-dot.ds-late { background: var(--warn, #8a5300); border-color: var(--warn, #8a5300); } .ds-dot.ds-absent { background: var(--down, #b3261e); border-color: var(--down, #b3261e); } .ds-name { display: block; font-weight: 700; white-space: nowrap; } .ds-role { display: block; color: var(--ink-3, #646b78); font-size: 12px; } .ds-rows td.ds-sp { width: 180px; } .ds-rows td.ds-sp .ds-spark { width: 180px; height: 28px; margin: 0; } .ds-score { font-size: 18px; font-weight: 700; } .ds-score.ds-none { color: var(--ink-3, #646b78); font-weight: 400; font-size: 14px; } .ds-delta { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-3, #646b78); white-space: nowrap; } .ds-delta.ds-up { color: var(--up, #1d6b46); } .ds-delta.ds-down { color: var(--down, #b3261e); } .ds-tri { width: 10px; height: 10px; fill: currentColor; stroke: none; } .ds-spark { display: block; width: 100%; height: 26px; margin-top: 6px; } .ds-spark .ds-l { stroke: var(--ink-2, #474d59); stroke-width: 1.5; fill: none; } .ds-spark .ds-a { stroke: none; fill: var(--area, rgba(21, 23, 28, 0.07)); } .ds-spark circle { stroke: none; fill: var(--ink, #15171c); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Paper Exchange",
+    "overview": "The morning brief's paper, read like an exchange. Every surface made for the Director and his managers — the 08:00 brief picture, the A4 report PDFs (`integrations/reports/templates/`) and the PULSE screen (`integrations/api/static/pulse.*`) — is near-black ink on a white page, divided by hairline rules, set in one sans with tabular figures. PULSE carries that paper onto a screen and borrows a trading terminal's grammar: a quote with its arrow, a pulse line over volume bars, a time-and-sales tape, a ranked board. Dark mode is the same paper on a graphite ground, not a second theme. The public customer pages (`/f` complaints in red, `/r` reviews in green), their QR cards and the `/db` viewer are outside this system and keep their own settled looks.\n\nDensity is a terminal's: many figures, very few words. Every user-facing word is Uzbek Cyrillic (business and product names stay as written: PULSE, Garmin, Primus, Londry), and the owner's standing order is to add no more text — numbers, arrows and lines carry the meaning. Colour is never decoration: green, amber and red mean good, late and needs-the-Director, and nothing else. Structure comes from rules and alignment; there are no shadows, no gradients and no tiles.\n\nRejected outright: the card-grid dashboard of equal tiles, rounded card soup, emoji.",
+    "keyCharacteristics": [
+      "White paper (graphite in dark mode), near-black ink, three line weights.",
+      "Noto Sans 400 and 700 only; tabular, lining figures everywhere.",
+      "State colour only: green good, amber late, red for what needs the Director.",
+      "Drawn stroke icons and drawn ▲/▼ marks, never glyphs or emoji.",
+      "Flat: no shadows, no gradients; regions are ruled, never boxed.",
+      "Uzbek Cyrillic, as few words as possible."
+    ],
+    "rules": [
+      {
+        "name": "The Red-Is-for-the-Director Rule",
+        "body": "Red marks only what needs the Director: a bad change, an absence, a missed report, a complaint. Never emphasis, branding or a heading.",
+        "section": "colors"
+      },
+      {
+        "name": "The Good-Not-Sign Rule",
+        "body": "The drawn ▲/▼ shows the sign; the colour shows whether it is good. Complaints going up are a red ▲. Zero or unknown is Pencil Grey, never green.",
+        "section": "colors"
+      },
+      {
+        "name": "The One-Paper Rule",
+        "body": "Dark mode re-points the same tokens to graphite; on screen, no hue, token or component exists in only one mode. Charts read their colours from the CSS custom properties at paint time and repaint when the scheme changes.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Every figure is tabular and lining (`tnum`, `lnum`), so tickers and columns hold still while values change. Thousands group with a space and decimals take a comma (ru-RU): 1,3 млрд.",
+        "section": "typography"
+      },
+      {
+        "name": "The Quiet Unit Rule",
+        "body": "A unit sits after its number at 13px 400 in Slate Ink (млрд, млн, минг, сўм, %), never at the figure's size or weight.",
+        "section": "typography"
+      },
+      {
+        "name": "The Two Weights Rule",
+        "body": "400 and 700 only; no italics, no second family. Hierarchy is size and weight.",
+        "section": "typography"
+      },
+      {
+        "name": "The Equal Phone Rule",
+        "body": "The phone is a first reader, not a fallback: every view works in one column at a 16px gutter with no horizontal page scroll, and every control there is at least 40px tall.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Paper Rule",
+        "body": "Nothing casts a shadow and nothing fades. An element that must sit above the page gets an edge (1px Strong Rule) or inverts to ink.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Three Weights Rule",
+        "body": "2px Press Ink under the top bar and a sheet's head (the masthead rule); 1px Strong Rule under a section head and around controls; 1px Hairline between rows, tickers and gridlines. No fourth weight.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "**Do** write every user-facing word in Uzbek Cyrillic; keep business and product names as written (PULSE, Garmin, Primus, Londry).",
+      "**Do** keep text to the minimum: a label is one or two words, and numbers, arrows and lines carry the rest.",
+      "**Do** show missing data as \"—\" in Pencil Grey, and step over a missing day in a line — never draw it as zero.",
+      "**Do** set every figure tabular and lining, with its unit at 13px 400 in Slate Ink.",
+      "**Do** bound regions with the three rule weights: 2px Press Ink for the masthead, 1px Strong Rule under a section head, 1px Hairline between rows.",
+      "**Do** draw icons as 24-unit strokes in `currentColor`, and draw ▲/▼ as filled triangles.",
+      "**Do** give every screen token a graphite value and read chart colours from the CSS custom properties, repainting when the colour scheme changes.",
+      "**Do** turn every animation and transition off under `prefers-reduced-motion`."
+    ],
+    "donts": [
+      "**Don't** build a grid of equal cards or boxed KPI tiles; tickers sit on hairlines.",
+      "**Don't** use shadows, gradients or blur; the chart's fill is one flat wash.",
+      "**Don't** use green, amber or red for decoration, branding, headings or emphasis.",
+      "**Don't** colour a delta by its sign alone: complaints rising are red, and flat or unknown is Pencil Grey.",
+      "**Don't** use emoji or font glyphs (⚠, ✓, ▲ characters) as icons.",
+      "**Don't** add a second typeface, a third weight or italics, or load fonts from a third-party host.",
+      "**Don't** box or round sections, the tape, the board or a sheet; a filled Ledger Band panel (6–8px corners) is only for a single callout inside a report.",
+      "**Don't** add explanatory captions, helper copy or tooltips of prose."
+    ]
+  }
+}
