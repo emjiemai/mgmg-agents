@@ -7,7 +7,9 @@ like the daily brief." People down the side, the month's days across:
   * red — asked and not sent by 22:00 (the minus point, ``report_close.py``);
   * amber — asked today and still open (before 22:00);
   * grey — not asked: a weekend for someone who doesn't work it, a day off
-    (/dam), reports switched off, or before the person joined;
+    (/dam), reports switched off, or before the person joined; and a day off
+    in the person's own week (/xodimlar → Ду…Як, 2026-10-22: Garmin сотув
+    days off showed red) unless they sent a report anyway;
   * blank — days still to come.
 
 The Director gets it with /hisobotlar (OPS Manager Bot); it is drawn from
@@ -22,7 +24,7 @@ from typing import Any
 
 from integrations.common.timeutil import now_local
 from integrations.org_bot import names
-from integrations.org_bot.kpi import NO_REPORT_ROLES
+from integrations.org_bot.kpi import NO_REPORT_ROLES, works_on
 from integrations.org_bot.roles import ROLE_LABELS
 from integrations.org_bot.task_tracker import MONTHS_UZ
 
@@ -53,14 +55,16 @@ def month_days(start: date) -> list[date]:
     return [start + timedelta(days=i) for i in range((nxt - start).days)]
 
 
-def cell(row: dict[str, Any] | None, day: date, now: datetime) -> str:
-    """One square: sent / missed / open / none / future."""
+def cell(row: dict[str, Any] | None, day: date, now: datetime, works: bool = True) -> str:
+    """One square: sent / missed / open / none / future. ``works``: the person works that day."""
     if day > now.date():
         return "future"
     if row is None:
         return "none"
     if row.get("status") == "submitted":
         return "sent"
+    if not works:  # their day off: never a miss
+        return "none"
     if day == now.date() and now.hour < REPORT_CLOSE_HOUR:
         return "open"
     return "missed"
@@ -73,8 +77,8 @@ def build(start: date, now: datetime, employees: list[dict[str, Any]], rows: lis
     people = []
     for emp in sorted((e for e in employees if e.get("role") not in NO_REPORT_ROLES),
                       key=lambda e: (ROLE_LABELS.get(e.get("role") or "", ""), names.person_name(e))):
-        cells = [cell(by_key.get((str(emp["id"]), d)), d, now) for d in days]
-        mine = [by_key[(str(emp["id"]), d)] for d in days if (str(emp["id"]), d) in by_key]
+        cells = [cell(by_key.get((str(emp["id"]), d)), d, now, works_on(emp, d)) for d in days]
+        mine = [by_key[(str(emp["id"]), d)] for d in days if (str(emp["id"]), d) in by_key and works_on(emp, d)]
         people.append(Person(
             name=names.person_name(emp), role=ROLE_LABELS.get(emp.get("role") or "", emp.get("role") or ""),
             cells=cells, sent=cells.count("sent"), missed=cells.count("missed"),

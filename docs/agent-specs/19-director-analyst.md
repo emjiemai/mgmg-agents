@@ -114,3 +114,9 @@ model: `OPS_MANAGER_BOT_MODEL` / `OPS_MANAGER_BOT_FALLBACK_MODELS`.
   HTTP codes or method notes.
 - Gateway (`sap-gateway/src/complete.js`, to be copied to the gateway computer): customers' `CreateDate`,
   service calls' `TechnicianName` / `AssigneeName`.
+
+## 2026-10-22 — one person's report
+
+`employee_report` (systems: garmin — so the Director and the Garmin manager): one person's report row(s) for a
+day or up to 14 days — sent or not, «[чатдан тузилди]», the text (voice / video already as text) — and up to 10
+of its files, which the bot sends after the answer. The Garmin manager finds only his team (garmin_sotuv).

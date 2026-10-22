@@ -28,7 +28,7 @@ CAPTION_MAX = 1000  # Telegram allows 1024
 
 KINDS = {
     "photo": "расм", "video": "видео", "document": "файл", "audio": "аудио", "voice": "овозли хабар",
-    "animation": "анимация",
+    "animation": "анимация", "video_note": "видео хабар",
 }
 PURPOSES = {"r": "report", "d": "director", "x": "cancelled"}
 
@@ -63,8 +63,8 @@ def director_caption(name: str, role_label: str, purpose: str, caption: str | No
 def sent_text(purpose: str, delivered: bool) -> str:
     if not delivered:
         return casual("директорга етказиб бўлмади, бир оздан кейин қайта юборинг")
-    if purpose == "report":
-        return casual("раҳмат каттакон, ҳисоботингиз қабул қилинди ва директорга юборилди, чарчаманг")
+    if purpose == "report":  # kept with the report; the Director / manager gets it when he asks (2026-10-22)
+        return casual("раҳмат каттакон, ҳисоботингизга қўшилди, чарчаманг")
     return casual("директорга юборилди, раҳмат")
 
 

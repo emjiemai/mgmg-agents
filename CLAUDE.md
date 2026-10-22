@@ -123,9 +123,14 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **OPS Manager Bot is for work only** (2026-10-02): **no text messages between
   employees and the Director (either way) through the bot** — the relay is
   deleted. **Files are the exception**: a photo/video/file is asked "what is
-  it for?" (бугунги ҳисобот / директорга / бекор) and forwarded to the Director
-  as it is — the AI never reads files. **Reports are never guessed** (any typed
-  message while it's owed is confirmed); **/hisobot** changes/deletes today's
+  it for?" (бугунги ҳисобот / директорга / бекор); «директорга» is forwarded as it is, unread. **Report files
+  (2026-10-22, `report_media.py`):** a voice / video marked «бугунги ҳисобот» is turned into report text by the
+  AI (the person is shown it); a photo / document is kept unread; report files wait with the report and go to
+  whoever asks for that person's report (`analyst.employee_report`: the Director anyone's, the Garmin manager his
+  team's) — no longer pushed at once. **Reports aren't guessed during the day** (any typed message while it's
+  owed is confirmed), **but at 22:00** an owed report is put together from the person's own unconfirmed messages
+  of the day (held text, files, work-AI messages — `report_close.build_from_chat`, «[чатдан тузилди]», no minus;
+  the owner: "human error"); **/hisobot** changes/deletes today's
   report only. A message with «?» in the report window goes to the AI, never into the report (2026-10-17). Daily reports can be switched off per person (📝, 2026-10-06:
   never asked, never counted as missed). Employees' messages about their work go to the **work AI**
   (`docs/agent-specs/15-ai-chat.md`): it knows their role, own open tasks and

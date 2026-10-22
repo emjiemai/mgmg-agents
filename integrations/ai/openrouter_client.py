@@ -98,8 +98,10 @@ class OpenRouterClient:
         *,
         model_override: str | None = None,
         fallback_override: str | None = None,
+        timeout: float = 60.0,
     ) -> None:
         self.agent = agent
+        self._timeout = timeout  # a video for the report takes longer than a text (2026-10-22)
         self.run_id = run_id
         self._client: httpx.AsyncClient | None = None
         self.provider = PROVIDER
@@ -122,7 +124,7 @@ class OpenRouterClient:
             raise OpenRouterError("OpenRouter is not configured — fill OPENROUTER_API_KEY")
 
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0),
+            timeout=httpx.Timeout(self._timeout),
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
@@ -407,6 +409,27 @@ class OpenRouterClient:
             {"role": "user", "content": [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]},
         ])
         return self._parse_json(message.get("content") or "")
+
+    async def media_text(self, system: str, text: str, data: bytes, kind: str, fmt: str) -> str:
+        """Listen to an audio or watch a video and answer in text (2026-10-22: voice and video reports).
+
+        ``kind`` "audio": an ``input_audio`` part, base64, ``fmt`` = ogg / mp3 / wav / m4a…;
+        ``kind`` "video": a ``video_url`` part with a base64 ``data:`` URL, ``fmt`` = its MIME type.
+        The Gemini models in the chain take both (OpenRouter input modalities checked 2026-10-22).
+
+        Raises:
+            OpenRouterError: if every model failed.
+        """
+        import base64
+
+        encoded = base64.b64encode(data).decode("ascii")
+        part = ({"type": "input_audio", "input_audio": {"data": encoded, "format": fmt}} if kind == "audio"
+                else {"type": "video_url", "video_url": {"url": f"data:{fmt};base64,{encoded}"}})
+        message = await self.chat([
+            {"role": "system", "content": system},
+            {"role": "user", "content": [{"type": "text", "text": text}, part]},
+        ])
+        return (message.get("content") or "").strip()
 
     def _parse_json(self, text: str) -> dict:
         """A reply as JSON, a fenced ```json block stripped first."""

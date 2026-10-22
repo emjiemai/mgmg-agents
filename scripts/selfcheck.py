@@ -2306,8 +2306,10 @@ def test_files_reports_cheer_off() -> None:
         replies.append((text, reply_markup))
         return [1]
 
-    async def create_file(user, message_id, kind, caption):
-        state["file"] = {"id": "f1", "message_id": message_id, "caption": caption, "resolved": False}
+    async def create_file(user, message_id, kind, caption, file=None):
+        state["file"] = {"id": "f1", "message_id": message_id, "caption": caption, "resolved": False, "kind": kind,
+                         "file_id": (file or {}).get("file_id"), "file_size": (file or {}).get("size"),
+                         "mime": (file or {}).get("mime")}
         return state["file"]
 
     async def resolve_file(file_id, user, purpose):
@@ -2320,9 +2322,15 @@ def test_files_reports_cheer_off() -> None:
     async def report_for_day(user, day):
         return state["report"]
 
-    async def attach(user, day, caption):
-        state["attached"] = caption
+    async def attach(user, day, caption, placeholder=None):
+        state["attached"] = placeholder
         return state["report"]
+
+    async def report_line(report_id, placeholder, line):
+        state["line"] = (placeholder, line)
+
+    async def file_as_text(held, run_id):
+        return "бугун 3 та мижоз билан учрашдим"
 
     async def directors(role):
         return [director]
@@ -2359,8 +2367,11 @@ def test_files_reports_cheer_off() -> None:
                        ("report_for_day", report_for_day), ("attach_media_to_report", attach),
                        ("active_employees_by_role", directors), ("get_employee_by_telegram_id", get_by_tg),
                        ("set_employee_file_sent", none), ("start_report_edit", start_edit),
-                       ("report_being_edited", being_edited), ("replace_report", replace), ("delete_report", delete)):
+                       ("report_being_edited", being_edited), ("replace_report", replace), ("delete_report", delete),
+                       ("link_file_to_report", none), ("set_file_text", none), ("add_report_line", report_line)):
         patch(store, name, fake)
+    patch(ops_manager, "_file_text", file_as_text)
+    patch(ops_manager, "log_action", none)
     patch(ops_manager, "TelegramBot", FakeBot)
     patch(ops_manager, "_reply", fake_reply)
     patch(ops_manager, "_answer", none)
@@ -2380,9 +2391,19 @@ def test_files_reports_cheer_off() -> None:
                    and "Алишер Каримов" in copies[-1][1]["caption"] and "сизга юборди" in copies[-1][1]["caption"])
         check("a second tap does nothing", tap("fp:f1:d"), "file_already_resolved")
 
+        copies.clear()
         asyncio.run(ops_manager._handle_employee_message(worker, {**photo, "message_id": 43}, uuid.uuid4()))
-        check("'бугунги ҳисобот' adds it to today's report and forwards it", tap("fp:f1:r"), "file_report")
-        check_true("...marked as the report", state["attached"] == "омбор" and "бугунги ҳисоботи" in copies[-1][1]["caption"])
+        check("'бугунги ҳисобот' adds it to today's report", tap("fp:f1:r"), "file_report")
+        check_true("...kept with the report («[расм] омбор»), not pushed to the Director, never read by the AI (22.10)",
+                   state["attached"] == "[расм] омбор" and copies == [] and state.get("line") is None)
+        voice = {"message_id": 45, "voice": {"file_id": "v1", "mime_type": "audio/ogg", "file_size": 30000}}
+        asyncio.run(ops_manager._handle_employee_message(worker, voice, uuid.uuid4()))
+        replies.clear()
+        check("a voice message as the report", tap("fp:f1:r"), "file_report")
+        check("...becomes the report's text in place of «[овозли хабар]»", state.get("line"),
+              ("[овозли хабар]", "[овозли хабар] бугун 3 та мижоз билан учрашдим"))
+        check_true("...and the person is shown it, to fix with /hisobot",
+                   any("бугун 3 та мижоз" in r[0] and "/hisobot" in r[0] for r in replies))
         copies.clear()
         asyncio.run(ops_manager._handle_employee_message(worker, {**photo, "message_id": 44}, uuid.uuid4()))
         check("'бекор' sends nothing", (tap("fp:f1:x"), copies), ("file_cancelled", []))
@@ -4379,6 +4400,224 @@ def test_analyst_speed_and_style() -> None:
                "assignee's names", 'C."CreateDate"' in js and '"TechnicianName"' in js and '"AssigneeName"' in js)
 
 
+def test_report_media_and_auto() -> None:
+    """22.10.2026: voice / video reports as text, photos kept and sent on request, days off grey, the report
+    built from the day's messages when the button was forgotten."""
+    print("report files, days off, reports from the day's messages (22.10.2026)")
+    import asyncio
+    import inspect
+    from datetime import timezone
+
+    from integrations.ai import openrouter_client as orc
+    from integrations.org_bot import analyst, ops_manager, report_calendar, report_close, report_media, store
+    from integrations.telegram import bot as tbot
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    async def none(*args, **kwargs):
+        return None
+
+    # ---- what a file is
+    check("a photo: its largest size", report_media.file_of({"photo": [{"file_id": "s", "file_size": 10},
+                                                                       {"file_id": "L", "file_size": 900}]}),
+          {"kind": "photo", "file_id": "L", "mime": "image/jpeg", "size": 900})
+    check("a voice note is OGG, a round video MP4",
+          (report_media.file_of({"voice": {"file_id": "v"}})["mime"], report_media.file_of({"video_note": {"file_id": "n"}})["mime"]),
+          ("audio/ogg", "video/mp4"))
+    check("audio formats for the AI", [report_media.audio_format(m) for m in ("audio/ogg", "audio/mpeg", "audio/mp4", None)],
+          ["ogg", "mp3", "m4a", "ogg"])
+    check("the report's place for a file, and its line once it's text",
+          (report_media.placeholder("photo", " омбор "), report_media.report_line("voice", "уч  та мижоз"),
+           report_media.report_line("video", "-")),
+          ("[расм] омбор", "[овозли хабар] уч та мижоз", "[видео: матнга айлантириб бўлмади]"))
+    check("read by the AI: voice up to 20 MB, video up to 18 MB, never a photo or a document",
+          [report_media.readable(k, n) for k, n in (("voice", 19_000_000), ("video", 19_000_000), ("video", 5_000_000),
+                                                    ("photo", 10), ("document", 10))], [True, False, True, False, False])
+    check_true("the prompts: write what was said / shown, add nothing, «-» when nothing",
+               "Add nothing" in report_media.LISTEN_PROMPT and "no guesses" in report_media.WATCH_PROMPT
+               and report_media.LISTEN_PROMPT.endswith("-") and report_media.WATCH_PROMPT.endswith("-"))
+
+    # ---- audio and video reach the AI as OpenRouter's own parts
+    sent: list = []
+
+    async def fake_chat(self, messages, tools=None):
+        sent.append(messages)
+        return {"role": "assistant", "content": " матн "}
+
+    patch(orc.OpenRouterClient, "chat", fake_chat)
+    try:
+        client = orc.OpenRouterClient()
+        a = asyncio.run(client.media_text("s", "t", b"OggS", "audio", "ogg"))
+        asyncio.run(client.media_text("s", "t", b"mp4", "video", "video/mp4"))
+    finally:
+        restore()
+    audio_part, video_part = sent[0][1]["content"][1], sent[1][1]["content"][1]
+    check_true("audio as input_audio (base64, format), video as a base64 data: URL",
+               a == "матн" and audio_part == {"type": "input_audio", "input_audio": {"data": "T2dnUw==", "format": "ogg"}}
+               and video_part["type"] == "video_url" and video_part["video_url"]["url"].startswith("data:video/mp4;base64,"))
+    check_true("a longer wait for a video (180 s), the usual 60 s otherwise",
+               orc.OpenRouterClient()._timeout == 60.0 and "timeout=180.0" in inspect.getsource(report_media.to_text))
+
+    # ---- a kept file is sent again by its file_id
+    calls: list = []
+
+    async def fake_call(self, method, payload, **kwargs):
+        calls.append((method, payload))
+        return {"message_id": 5}
+
+    patch(tbot.TelegramBot, "_call", fake_call)
+    try:
+        b = tbot.TelegramBot(bot_token="t")
+        asyncio.run(b.send_media("voice", "V1", "9", "<b>Абдурашид</b>", reply_to=3))
+        asyncio.run(b.send_media("video_note", "N1", "9", "x"))
+    finally:
+        restore()
+    check_true("by its own method, with the caption, as a reply; a round video without a caption",
+               calls[0][0] == "sendVoice" and calls[0][1]["voice"] == "V1" and calls[0][1]["reply_parameters"]["message_id"] == 3
+               and calls[1][0] == "sendVideoNote" and "caption" not in calls[1][1])
+
+    # ---- days off are grey, not red
+    wed = date(2026, 10, 21)  # a Wednesday
+    now = datetime(2026, 10, 22, 12, 0)
+    abdurashid = {"id": "e1", "role": "garmin_sotuv", "full_name": "Хожиев Абдурашид", "work_days": "1101111"}
+    missed_wed = {"employee_id": "e1", "report_date": wed, "status": "asked", "penalty_points": 1}
+    view = report_calendar.build(date(2026, 10, 1), now, [abdurashid], [missed_wed])
+    person = view["people"][0]
+    check("Абдурашид's Wednesday off: grey, no miss, no minus (22.10)",
+          (person.cells[wed.day - 1], person.missed, person.minus), ("none", 0, 0))
+    check("a report sent on a day off still counts", report_calendar.cell({"status": "submitted"}, wed, now, False), "sent")
+    check_true("the old reds removed once (asks on days off, unsent), marked so it never runs again",
+               "isodow" in inspect.getsource(store.delete_missed_on_days_off)
+               and "status = 'asked'" in inspect.getsource(store.delete_missed_on_days_off)
+               and "CLEANUP_ACTION" in inspect.getsource(report_close.clear_days_off_once)
+               and "clear_days_off_once" in load_source("integrations/api/app.py"))
+    ran: list = []
+
+    async def removed():
+        ran.append(1)
+        return 4
+
+    for marker, expect in ((None, 4), ({"x": 1}, 0)):
+        async def done(*args, _m=marker, **kwargs):
+            return _m
+        patch(report_close, "fetch_one", done)
+        patch(store, "delete_missed_on_days_off", removed)
+        patch(report_close, "log_action", none)
+        try:
+            check(f"cleanup {'runs once' if marker is None else 'never again'}", asyncio.run(report_close.clear_days_off_once()), expect)
+        finally:
+            restore()
+
+    # ---- the button forgotten: the report from the day's messages
+    at = datetime(2026, 10, 22, 13, 5, tzinfo=timezone.utc)
+    chat = {"held": [{"id": "h1", "text": "Хилтонга 2 та машина ўрнатдик", "created_at": at}],
+            "ai": [{"text": "нарх қанча?", "created_at": at}],
+            "files": [{"id": "f1", "kind": "photo", "caption": "ўрнатилди", "created_at": at, "file_id": "P", "file_size": 9}]}
+    lines = report_close.chat_lines(chat, {})
+    check_true("everything unconfirmed, in time order, marked where it came from",
+               len(lines) == 3 and "[unconfirmed message] Хилтонга 2 та машина" in lines[0] and "[file] [расм] ўрнатилди" in "".join(lines))
+    marked, attached, told = [], [], []
+
+    async def owed(day):
+        return [{"id": "r9", "telegram_user_id": 7, "full_name": "Алишер Каримов", "address_form": "ака"}]
+
+    async def day_chat(user, day):
+        return chat
+
+    async def compose(lines_, run_id):
+        return "• Хилтонга 2 та машина ўрнатдим"
+
+    async def mark(report_id, content):
+        marked.append(content)
+        return {"id": report_id}
+
+    async def attach(ids, report_id):
+        attached.extend(ids)
+
+    class Bot:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, **kwargs):
+            told.append(text)
+
+    for obj, name, value in ((store, "owed_reports", owed), (store, "day_chat", day_chat), (report_close, "_compose", compose),
+                             (store, "mark_auto_report", mark), (store, "attach_held_files", attach),
+                             (store, "set_file_text", none), (report_close, "TelegramBot", Bot), (report_close, "log_action", none)):
+        patch(obj, name, value)
+    try:
+        built = asyncio.run(report_close.build_from_chat(date(2026, 10, 22)))
+    finally:
+        restore()
+    check("built from the day's messages: sent, marked, its files kept with it", (built, marked, attached),
+          (1, ["[чатдан тузилди] • Хилтонга 2 та машина ўрнатдим"], ["f1"]))
+    check_true("...and the person is told politely, with the text", told and "тугмасини босмаган экансиз" in told[0]
+               and "Хилтонга" in told[0] and friendly_problems(told[0].split("\n")[0], ("Алишер",)) == [])
+    check_true("only their own facts — questions or chatter alone are no report",
+               "nothing added or guessed" in report_close.COMPOSE_PROMPT and "NOT a report" in report_close.COMPOSE_PROMPT)
+    close_src = inspect.getsource(report_close.close_day)
+    check_true("22:00: first the reports from the day's messages, then the misses",
+               close_src.index("build_from_chat") < close_src.index("expire_held_messages") < close_src.index("close_missed_reports"))
+
+    # ---- one person's report, with its files, to whoever may see it
+    people = [{"id": "e1", "telegram_user_id": 11, "role": "garmin_sotuv", "full_name": "Хожиев Абдурашид", "display_name": "k"},
+              {"id": "e2", "telegram_user_id": 12, "role": "b2b_sotuv", "full_name": "Зунунов Абдукарим", "display_name": "z"}]
+
+    async def actives():
+        return people
+
+    async def rows(query, params=None, timeout="10s"):
+        return [{"id": "r1", "report_date": date(2026, 10, 22), "status": "submitted", "content": "[расм] витрина",
+                 "submitted_at": at, "auto_built": False, "penalty_points": 0}]
+
+    async def files(user, ids):
+        return [{"id": "f1", "kind": "photo", "file_id": "P1", "for_report": "r1", "telegram_user_id": 11, "message_id": 4,
+                 "created_at": at, "caption": "витрина", "text": None}]
+
+    patch(store, "list_active_employees", actives)
+    patch(analyst, "fetch_read_only", rows)
+    patch(store, "report_files", files)
+    try:
+        queued: list = []
+        analyst._media.set(queued)
+        analyst._report_roles.set(None)
+        boss = asyncio.run(analyst.employee_report({"name": "abdurashid", "date": "2026-10-22"}))
+        analyst._report_roles.set(("garmin_sotuv",))
+        manager = asyncio.run(analyst.employee_report({"name": "Абдукарим"}))
+    finally:
+        analyst._media.set(None)
+        analyst._report_roles.set(None)
+        restore()
+    check_true("the Director asks for one person: only that row, and its files go after the answer",
+               "Хожиев Абдурашид" in boss and "SENT" in boss and "files: 1 (photo)" in boss and [q["file_id"] for q in queued] == ["P1"]
+               and queued[0]["who"] == "Хожиев Абдурашид")
+    check_true("the Garmin manager: only his team (a B2B person isn't found)", manager.startswith("No employee") or "No in this" in manager)
+    check_true("the Director and the Garmin manager get the files after the answer, by file_id or copied",
+               "_send_media(director_id, run_id, result.media, reply_to)" in inspect.getsource(ops_manager._answer_question)
+               and "_send_media(telegram_user_id, run_id, result.media, reply_to)" in load_source("integrations/org_bot/ops_manager.py")
+               and "send_media" in inspect.getsource(ops_manager._send_media) and "copyMessage" in inspect.getsource(ops_manager._send_media))
+    check_true("the analyst is told: one person's report → employee_report", "ONE person's report" in analyst.ANALYST_SYSTEM_PROMPT)
+    schema = load_source("database/schema.sql")
+    check_true("schema: files keep their file_id, report and text; reports the auto_built mark",
+               all(x in schema for x in ("ADD COLUMN IF NOT EXISTS file_id TEXT", "ADD COLUMN IF NOT EXISTS report_id UUID",
+                                          "ADD COLUMN IF NOT EXISTS text TEXT", "ADD COLUMN IF NOT EXISTS auto_built BOOLEAN")))
+
+
 def test_garmin_competitors() -> None:
     """19.10.2026: who else sells Garmin in Uzbekistan (OLX, Google) against our garmin.com.uz prices — offline."""
     print("Garmin competitors (19.10.2026)")
@@ -4782,8 +5021,8 @@ def test_garmin_manager() -> None:
     text, keyboard = data_access.director_notice(gm, "admin1")
     check_true("the Boss is told (no buttons: changing the role closes it)", "ролига кўра" in text and keyboard is None)
     tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(ok_gm))]
-    check("its tools: Garmin's SAP only, Billz, Garmin records — no general SAP, 1C, attendance or the Boss's records",
-          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data"])
+    check("its tools: Garmin's SAP only, Billz, Garmin records, his team's report with files (22.10) — no general SAP, 1C, attendance or the Boss's records",
+          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data", "employee_report"])
     prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(ok_gm))
     check_true("its prompt keeps it on Garmin", "THIS PERSON RUNS GARMIN" in prompt and "garmin_sap" in prompt)
     check_true("the work AI gives it the public Garmin catalog too", "Garmin catalog" in ai_chat.system_prompt(gm, "ctx"))
@@ -7991,6 +8230,7 @@ def main() -> int:
         test_old_stock_and_live_views,
         test_garmin_competitors,
         test_analyst_speed_and_style,
+        test_report_media_and_auto,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

@@ -1427,6 +1427,16 @@ async def reports_between_rows(start: date, end: date) -> list[dict[str, Any]]:
     )
 
 
+async def delete_missed_on_days_off() -> int:
+    """Unsent report asks that fall on the person's day off in their own week (``work_days``) — removed with
+    their minus points (2026-10-22, once: asked before the Garmin сотув weeks were set, they showed red)."""
+    return await execute(
+        """DELETE FROM daily_reports d USING employees e
+           WHERE e.id = d.employee_id AND e.work_days IS NOT NULL AND d.status = 'asked'
+             AND substring(e.work_days FROM extract(isodow FROM d.report_date)::int FOR 1) = '0'"""
+    )
+
+
 async def close_missed_reports(report_date: date, points: int) -> list[dict[str, Any]]:
     """22:00: every ask of that day still unanswered gets its minus points — once (2026-10-15).
 
@@ -2421,11 +2431,97 @@ async def ai_questions_today(telegram_user_id: int) -> int:
 # -------------------------------------------- employees' files, today's report
 
 
-async def create_employee_file(telegram_user_id: int, message_id: int, kind: str, caption: str | None) -> dict[str, Any] | None:
-    """Hold a file an employee sent until they say what it's for."""
+async def create_employee_file(telegram_user_id: int, message_id: int, kind: str, caption: str | None,
+                               file: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Hold a file an employee sent until they say what it's for; ``file`` = report_media.file_of (its
+    Telegram file_id, type and size — kept so the bot can send it again, 2026-10-22)."""
+    file = file or {}
     return await fetch_one(
-        "INSERT INTO employee_files (telegram_user_id, message_id, kind, caption) VALUES (%s, %s, %s, %s) RETURNING *",
-        (telegram_user_id, message_id, kind, caption),
+        """INSERT INTO employee_files (telegram_user_id, message_id, kind, caption, file_id, mime, file_size)
+           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+        (telegram_user_id, message_id, kind, caption, file.get("file_id"), file.get("mime"), file.get("size")),
+    )
+
+
+async def link_file_to_report(file_row_id: str, report_id: str) -> None:
+    await execute("UPDATE employee_files SET report_id = %s WHERE id = %s", (report_id, file_row_id))
+
+
+async def set_file_text(file_row_id: str, text: str) -> None:
+    await execute("UPDATE employee_files SET text = %s WHERE id = %s", (text, file_row_id))
+
+
+async def add_report_line(report_id: str, placeholder: str, line: str) -> None:
+    """A voice / video turned into text takes its «[овозли хабар]» place in the report, or is added to it."""
+    await execute(
+        """UPDATE daily_reports SET content = CASE
+               WHEN content IS NULL OR content = '' THEN %(line)s
+               WHEN position(%(ph)s IN content) > 0 THEN overlay(content PLACING %(line)s FROM position(%(ph)s IN content)
+                                                                 FOR length(%(ph)s))
+               ELSE content || E'\n' || %(line)s END
+           WHERE id = %(id)s""",
+        {"id": report_id, "ph": placeholder, "line": line},
+    )
+
+
+async def day_chat(telegram_user_id: int, day: date) -> dict[str, list[dict[str, Any]]]:
+    """What a person sent the bot that day but never confirmed as the report (2026-10-22): typed messages
+    left on «бу бугунги ҳисоботингизми?», files whose purpose wasn't chosen, and what they wrote to the work AI."""
+    bounds = {"u": telegram_user_id, "d": day}
+    local_day = "(created_at AT TIME ZONE 'Asia/Tashkent')::date = %(d)s"
+    held = await fetch_all(
+        f"""SELECT id, message_text AS text, created_at FROM pending_relays
+            WHERE employee_telegram_user_id = %(u)s AND {local_day}
+              AND (outcome IS NULL OR outcome = 'expired') ORDER BY created_at""", bounds)
+    files = await fetch_all(
+        f"""SELECT * FROM employee_files WHERE telegram_user_id = %(u)s AND {local_day} AND purpose IS NULL
+            ORDER BY created_at""", bounds)
+    ai = await fetch_all(
+        f"""SELECT content AS text, created_at FROM ai_chat_turns
+            WHERE telegram_user_id = %(u)s AND role = 'employee' AND {local_day} ORDER BY created_at""", bounds)
+    return {"held": held, "files": files, "ai": ai}
+
+
+async def mark_auto_report(report_id: str, content: str) -> dict[str, Any] | None:
+    """The report the bot put together from the day's messages: sent, no minus, marked ``auto_built``."""
+    return await fetch_one(
+        """UPDATE daily_reports SET status = 'submitted', submitted_at = now(), content = %s, auto_built = true
+           WHERE id = %s AND status = 'asked' RETURNING *""",
+        (content, report_id),
+    )
+
+
+async def attach_held_files(file_row_ids: list[str], report_id: str) -> None:
+    if file_row_ids:
+        await execute("""UPDATE employee_files SET purpose = 'report', resolved_at = now(), report_id = %s
+                         WHERE id = ANY(%s::uuid[]) AND purpose IS NULL""", (report_id, file_row_ids))
+
+
+async def owed_reports(day: date) -> list[dict[str, Any]]:
+    """The day's asks still unanswered, of people who still owe reports (as close_missed_reports picks them)."""
+    return await fetch_all(
+        """SELECT r.*, e.full_name, e.display_name, e.address_form, e.role AS employee_role
+           FROM daily_reports r JOIN employees e ON e.id = r.employee_id
+           WHERE e.status = 'active' AND NOT e.reports_off
+             AND e.role NOT IN ('operatsion_direktor', 'garmin_manager')  -- kpi.NO_REPORT_ROLES
+             AND r.report_date = %s AND r.status = 'asked' AND r.penalized_at IS NULL""",
+        (day,),
+    )
+
+
+async def report_files(telegram_user_id: int, report_ids: list[str]) -> list[dict[str, Any]]:
+    """The files of these reports (oldest first); older report files, before report_id was kept, by day."""
+    if not report_ids:
+        return []
+    return await fetch_all(
+        """SELECT f.*, coalesce(f.report_id, r.id) AS for_report FROM employee_files f
+           LEFT JOIN daily_reports r ON r.id = ANY(%(ids)s::uuid[]) AND f.report_id IS NULL
+                AND r.telegram_user_id = f.telegram_user_id
+                AND r.report_date = (f.created_at AT TIME ZONE 'Asia/Tashkent')::date
+           WHERE f.telegram_user_id = %(u)s AND f.purpose = 'report'
+             AND (f.report_id = ANY(%(ids)s::uuid[]) OR r.id IS NOT NULL)
+           ORDER BY f.created_at""",
+        {"u": telegram_user_id, "ids": report_ids},
     )
 
 
@@ -2452,7 +2548,8 @@ async def report_for_day(telegram_user_id: int, report_date: date) -> dict[str, 
     )
 
 
-async def attach_media_to_report(telegram_user_id: int, report_date: date, caption: str | None) -> dict[str, Any] | None:
+async def attach_media_to_report(telegram_user_id: int, report_date: date, caption: str | None,
+                                 placeholder: str | None = None) -> dict[str, Any] | None:
     """A file sent as today's report: submits the report if it's still owed, else counts the file.
 
     None when no report was asked today (nothing to attach it to).
@@ -2463,11 +2560,12 @@ async def attach_media_to_report(telegram_user_id: int, report_date: date, capti
         SET media_count = media_count + 1,
             status = 'submitted',
             submitted_at = COALESCE(submitted_at, now()),
-            content = CASE WHEN status = 'asked' THEN %s ELSE content END
-        WHERE telegram_user_id = %s AND report_date = %s
+            content = CASE WHEN status = 'asked' THEN %(text)s
+                           ELSE coalesce(content, '') || E'\n' || %(text)s END
+        WHERE telegram_user_id = %(u)s AND report_date = %(d)s
         RETURNING *
         """,
-        ((caption or "").strip() or "📎 файл", telegram_user_id, report_date),
+        {"text": placeholder or (caption or "").strip() or "[файл]", "u": telegram_user_id, "d": report_date},
     )
 
 

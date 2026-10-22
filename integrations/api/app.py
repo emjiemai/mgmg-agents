@@ -110,6 +110,10 @@ async def _report_close_loop() -> None:
     """Every 5 minutes: from 22:00, close the day's unanswered report asks — minus KPI points, once (report_close.py)."""
     from integrations.org_bot import report_close
 
+    try:  # once, at the first start after 2026-10-22: red cells on Garmin сотув days off
+        await report_close.clear_days_off_once()
+    except Exception as exc:  # noqa: BLE001 — tried again at the next start
+        log.error("Day-off cleanup failed: {}", type(exc).__name__)
     while True:
         await asyncio.sleep(300)
         try:

@@ -37,6 +37,13 @@ SEVERITY_EMOJI: dict[str, str] = {
 }
 
 
+# A kept file sent again by its file_id: the Bot API method and its field, per kind of file.
+MEDIA_METHODS: dict[str, tuple[str, str]] = {
+    "photo": ("sendPhoto", "photo"), "video": ("sendVideo", "video"), "voice": ("sendVoice", "voice"),
+    "audio": ("sendAudio", "audio"), "document": ("sendDocument", "document"),
+    "animation": ("sendAnimation", "animation"), "video_note": ("sendVideoNote", "video_note"),
+}
+
 class TelegramError(RuntimeError):
     """Raised when the Telegram Bot API rejects a request."""
 
@@ -329,6 +336,19 @@ class TelegramBot:
         if response.status_code != 200 or len(response.content) > max_bytes:
             raise TelegramError(f"Telegram file download failed: HTTP {response.status_code}")
         return response.content
+
+    async def send_media(self, kind: str, file_id: str, chat_id: str, caption: str | None = None,
+                         reply_to: int | None = None) -> list[int]:
+        """Send again a file the bot was sent (by its Telegram file_id): a report's photo, video, voice…
+        (2026-10-22 — kept in the database, sent when someone asks for that report)."""
+        method, field = MEDIA_METHODS.get(kind, ("sendDocument", "document"))
+        payload: dict[str, Any] = {"chat_id": chat_id, field: file_id}
+        if caption and kind != "video_note":  # a round video takes no caption
+            payload.update(caption=caption[:1024], parse_mode="HTML")
+        if reply_to:
+            payload["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+        result = await self._call(method, payload, mode="notify", target_ref=str(chat_id))
+        return [result["message_id"]] if isinstance(result, dict) and result.get("message_id") else []
 
     # -------------------------------------------------------------- callbacks
 

@@ -1205,3 +1205,16 @@ CREATE TABLE IF NOT EXISTS garmin_competitor_shops (
     checked_at    TIMESTAMPTZ,                        -- their pages read
     searched_at   TIMESTAMPTZ                         -- Google asked for their Instagram
 );
+
+-- Files as the daily report (2026-10-22, the owner): a voice / video becomes report text (report_media.py);
+-- a photo / document is kept and sent from here when someone asks for that report. file_id = Telegram's
+-- (the OPS Manager bot can send it again); report_id = the report it belongs to; text = the voice / video as text.
+ALTER TABLE employee_files ADD COLUMN IF NOT EXISTS file_id TEXT;
+ALTER TABLE employee_files ADD COLUMN IF NOT EXISTS mime TEXT;
+ALTER TABLE employee_files ADD COLUMN IF NOT EXISTS file_size BIGINT;
+ALTER TABLE employee_files ADD COLUMN IF NOT EXISTS report_id UUID REFERENCES daily_reports(id) ON DELETE SET NULL;
+ALTER TABLE employee_files ADD COLUMN IF NOT EXISTS text TEXT;
+CREATE INDEX IF NOT EXISTS idx_employee_files_report ON employee_files (report_id) WHERE report_id IS NOT NULL;
+-- A report the bot put together at 22:00 from what the person sent that day but never confirmed as the report
+-- (the button forgotten — human error, the owner 2026-10-22): counted as sent, no minus, marked.
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS auto_built BOOLEAN NOT NULL DEFAULT false;

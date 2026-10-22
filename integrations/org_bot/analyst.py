@@ -198,6 +198,13 @@ TOOLS: list[dict] = [
         "90 days; display dummies left out. garmin_only = the Garmin warehouses only.",
         {"garmin_only": {"type": "boolean", "description": "only the Garmin warehouses (default false = all)"},
          "idle_90d": {"type": "boolean", "description": "on hand but not sold in 90 days, any age (default false)"}}),
+    _fn("employee_report", "ONE employee's daily report(s): what they wrote (voice and video already turned into "
+        "text; «[чатдан тузилди]» = put together by the bot from their unconfirmed messages), when, or that it "
+        "wasn't sent — and their report's photos / videos / voice / files, which the bot sends right after your "
+        "answer (say so in one line; never describe a photo). Use it for «Абдурашиднинг ҳисоботи», «X нима "
+        "ёзди?». Default: today; or a date / a period up to 14 days.",
+        {"name": {"type": "string", "description": "part of the person's name, as the asker wrote it"},
+         "date": _DATE, "date_from": _DATE, "date_to": _DATE}, ("name",)),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
@@ -219,6 +226,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "garmin_data": {"garmin"},
     "billz_sap_check": {"billz", "sap"},
     "old_stock": {"sap"},
+    "employee_report": {"garmin"},  # the Director; the Garmin manager for his team (data_access.ROLE_SCOPES)
     "attendance": None,
     "company_data": None,
 }
@@ -276,6 +284,10 @@ if asked to change data, say plainly that you can only look things up.
   ask for just the fields you need (fields=[…]).
 - «Омборда бор, лекин сотилмаган»: old_stock idle_90d=true (any age); «бир
   йилдан ошган»: old_stock.
+- ONE person's report («Абдурашиднинг ҳисоботи», «Рустам кеча нима ёзди?»):
+  employee_report — only that person's row, and the bot sends their report's
+  photos / videos / voice after your answer. Everyone's reports: the calendar
+  or company_data xodimlar_kpi.
 - Asked to compare supplier debt, or for an Excel / file / table of it: call
   supplier_debt_compare with excel=true. The bot attaches the .xlsx to your
   answer itself — say in one line that the full table is in the file; never
@@ -348,7 +360,8 @@ Focus on the Garmin business: its shops (billz_sales), its SAP figures
 (garmin_sap — the Garmin warehouses only; the other businesses' SAP data is
 not in this person's access), its bot leads and complaints (garmin_data).
 The daily reports of HIS TEAM (the Garmin сотув people) ARE in his access:
-garmin_data source "reports" — what each wrote, when, who didn't send one.
+garmin_data source "reports" — what each wrote, when, who didn't send one;
+one person's report with its photos / videos / voice: employee_report.
 Anyone else's reports, attendance and KPI stay the Director's only.
 """
     if lang == "ru":
@@ -367,6 +380,8 @@ class Answer:
     tools: list[str] = field(default_factory=list)
     rounds: int = 0
     files: list[tuple[bytes, str]] = field(default_factory=list)  # (content, filename) sent after the text
+    # A report's own files (employee_files rows: photo, video, voice…) sent after the text, as they were (2026-10-22)
+    media: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Files a tool made during one answer (the workbook), picked up by ``answer``.
@@ -376,6 +391,11 @@ FILE_WORDS = re.compile(r"солиштир|solishtir|сравн|excel|эксел
 _wants_file: ContextVar[bool] = ContextVar("analyst_wants_file", default=False)
 # The asker's language: their file comes first (2026-10-10: the accountant reads Russian).
 _lang: ContextVar[str] = ContextVar("analyst_lang", default="uz")
+# The report files an answer will send, and whose reports this asker may see (None = the Director, everyone).
+_media: ContextVar[list[dict[str, Any]] | None] = ContextVar("analyst_media", default=None)
+_report_roles: ContextVar[tuple[str, ...] | None] = ContextVar("analyst_report_roles", default=None)
+MEDIA_PER_ANSWER = 10
+REPORT_DAYS_MAX = 14
 
 
 def _today() -> date:
@@ -980,6 +1000,74 @@ async def company_data(args: dict[str, Any]) -> str:
     return await ops_manager._fetch_agent_data(source)
 
 
+def _name_key(text: str | None) -> str:
+    from integrations.garmin.competitors import normalize
+
+    return normalize(text).replace("ў", "у").replace("ғ", "г").replace("қ", "к").replace("ҳ", "х")
+
+
+def find_people(employees: list[dict[str, Any]], wanted: str) -> list[dict[str, Any]]:
+    """Employees whose name holds every word asked («Абдурашид», «Хожиев Абдурашид»), Latin or Cyrillic alike."""
+    from integrations.org_bot import names
+    from integrations.common.translit import latin_to_cyrillic as to_cyrillic
+
+    words = [w for w in _name_key(to_cyrillic(wanted)).split() if len(w) >= 3]
+    if not words:
+        return []
+    found = []
+    for e in employees:
+        hay = _name_key(" ".join(str(x or "") for x in (names.person_name(e), e.get("full_name"), e.get("display_name"))))
+        hay = f"{hay} {_name_key(to_cyrillic(hay))}"
+        if all(w in hay for w in words):
+            found.append(e)
+    return found
+
+
+async def employee_report(args: dict[str, Any]) -> str:
+    """One person's report rows and their files (2026-10-22, the owner: "when a report is asked from a specific
+    employee, only that row is sent, with their files")."""
+    from integrations.org_bot import names, store
+
+    allowed_roles = _report_roles.get()
+    people = [e for e in await store.list_active_employees() if allowed_roles is None or e.get("role") in allowed_roles]
+    found = find_people(people, str(args.get("name") or ""))
+    if not found:
+        whose = "in this person's team" if allowed_roles is not None else "active"
+        return f"No {whose} employee matches {args.get('name')!r}. Say so; ask for the name as it is registered."
+    if len(found) > 1:
+        return ("Several people match — ask which one: " + "; ".join(names.person_name(e) for e in found[:8]) + ".")
+    person = found[0]
+    if args.get("date_from") or args.get("date_to"):
+        start, end = period(args, default_days=REPORT_DAYS_MAX)
+        start = max(start, end - timedelta(days=REPORT_DAYS_MAX - 1))
+    else:
+        start = end = parse_day(args.get("date")) or _today()
+    rows = await fetch_read_only(
+        "SELECT * FROM daily_reports WHERE employee_id = %(e)s AND report_date BETWEEN %(a)s AND %(b)s ORDER BY report_date",
+        {"e": person["id"], "a": start, "b": end})
+    files = await store.report_files(person["telegram_user_id"], [str(r["id"]) for r in rows])
+    media = _media.get()
+    if media is not None:
+        room = MEDIA_PER_ANSWER - len(media)
+        media.extend({**f, "who": names.person_name(person)} for f in files[:max(0, room)])
+    lines = [f"Daily report of {names.person_name(person)} ({person.get('role')}), {start}"
+             + (f" to {end}" if end != start else "") + ":"]
+    if not rows:
+        lines.append("No report was asked for that day (a day off, reports switched off, or not yet 16:00).")
+    for r in rows:
+        when = f"sent {to_local(r['submitted_at']):%H:%M}" if r.get("submitted_at") else ""
+        state = ("SENT " + when if r["status"] == "submitted" else
+                 f"NOT sent (−{r['penalty_points']} KPI)" if r.get("penalty_points") else "not sent yet (open until 22:00)")
+        mine = [f for f in files if str(f.get("for_report")) == str(r["id"])]
+        kinds = ", ".join(sorted({f["kind"] for f in mine}))
+        lines.append(f"- {r['report_date']} | {state}" + (" | put together by the bot from their messages" if r.get("auto_built") else "")
+                     + (f" | files: {len(mine)} ({kinds}) — sent after your answer" if mine else "")
+                     + (f" | «{' '.join((r.get('content') or '').split())[:1200]}»" if r.get("content") else ""))
+    if len(files) > MEDIA_PER_ANSWER:
+        lines.append(f"Only the first {MEDIA_PER_ANSWER} of {len(files)} files are sent — ask for one day for the rest.")
+    return "\n".join(lines)
+
+
 async def old_stock_tool(args: dict[str, Any]) -> str:
     """Old stock (2026-10-20: the Director asked «Бир йилдан ошган товарлар қанча?» and got "not available")."""
     from integrations.org_bot import old_stock
@@ -1022,6 +1110,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "garmin_data": garmin_data,
     "billz_sap_check": billz_sap_check,
     "old_stock": old_stock_tool,
+    "employee_report": employee_report,
     "company_data": company_data,
 }
 
@@ -1098,6 +1187,10 @@ async def answer(
     result = Answer(text="")
     _files.set(result.files)
     _kind_cache.set({})
+    _media.set(result.media)
+    # Reports: the Director anyone's; the Garmin manager his team's (report_calendar.TEAM_OF); nobody else's.
+    from integrations.org_bot.report_calendar import TEAM_OF
+    _report_roles.set(None if employee is None else TEAM_OF.get(employee.get("role") or "", ()))
     _wants_file.set(bool(FILE_WORDS.search(question)))
     _lang.set(lang)
     async with OpenRouterClient(

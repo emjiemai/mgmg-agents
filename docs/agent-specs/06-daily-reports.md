@@ -238,3 +238,24 @@ weekend switches, as before.
 
 The Garmin manager's **/hisobotlar** (his ☰ menu) is the same calendar for his
 team only (`report_calendar.TEAM_OF`).
+
+## Files as the report, the report from the day's messages, days off (2026-10-22, the owner)
+
+- **Files** (`integrations/org_bot/report_media.py`): a file marked «бугунги ҳисобот» stays with the report
+  (`employee_files.report_id`, its Telegram `file_id`). A **voice / audio** becomes text (speech to text) and a
+  **video / round video** a 1–3 sentence description of the work and what is said — by the AI (OpenRouter,
+  Gemini audio / video input), in the background; the line «[овозли хабар] …» takes its place in the report
+  and the person is shown it (fix with /hisobot). A **photo / document** is kept unread: «[расм] caption».
+  Over 20 MB (18 MB video) or unreadable: «[видео: матнга айлантириб бўлмади]», the file still kept.
+- Report files are **no longer forwarded to the Director at once**: whoever asks for one person's report gets
+  that row and its files (`analyst.employee_report` → `ops_manager._send_media`, by `file_id`, else copied from
+  the chat) — the Director anyone's, the Garmin manager his team's. «Директорга юбориш» files still go at once.
+- **The button forgotten** (`report_close.build_from_chat`, at 22:00 before the misses): what the person sent
+  that day but never confirmed — text left on «бу бугунги ҳисоботингизми?», files without a purpose (voice /
+  video read as text), their messages to the work AI — is given to the AI, which writes the report from their
+  own facts only, or says there is none (questions, chatter, plans alone aren't one). Saved as sent with
+  «[чатдан тузилди]», `auto_built`, no minus; the person is told with the text. Nothing there → missed as before.
+- **Days off are grey** (`report_calendar.cell`): a day off in the person's own week (/xodimlar Ду…Як) is never
+  a miss in the calendar or its minus count, unless they sent a report anyway. Once, at the first start after
+  this change, unsent asks on days off were removed with their minus points (`report_close.clear_days_off_once`,
+  marked `dayoff_misses_cleared` in agent_actions).

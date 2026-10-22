@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheques, old_stock, report_calendar, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheques, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -275,7 +275,7 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
     if prefix == "dax":
         return await _handle_data_access_close(rest, callback, run_id)
     if prefix == "fp":
-        return await _handle_file_purpose(rest, callback, run_id)
+        return await _handle_file_purpose(rest, callback, run_id, background)
     if prefix == "chq":
         return await _handle_cheque_button(rest, callback, run_id)
     if prefix in ("rpe", "rpd", "rpdy", "rpn"):
@@ -973,6 +973,7 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
                          payload={"systems": sorted(scope), "tools": result.tools, "rounds": result.rounds})
         await _answer_reply(telegram_user_id, run_id, answer, reply_to)
         await _send_files(telegram_user_id, run_id, result.files, reply_to)
+        await _send_media(telegram_user_id, run_id, result.media, reply_to)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("Data question failed for {}: {}", telegram_user_id, type(exc).__name__)
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="failure",
@@ -1328,7 +1329,8 @@ async def _ask_report_or_ai(employee: dict[str, Any], text: str, run_id: uuid.UU
 async def _ask_file_purpose(employee: dict[str, Any], message: dict[str, Any], kind: str, run_id: uuid.UUID) -> str:
     """Hold a file and ask what it's for; "today's report" only when a report was asked today."""
     telegram_user_id = employee["telegram_user_id"]
-    held = await store.create_employee_file(telegram_user_id, message["message_id"], kind, message.get("caption"))
+    held = await store.create_employee_file(telegram_user_id, message["message_id"], kind, message.get("caption"),
+                                            report_media.file_of(message))
     report = await store.report_for_day(telegram_user_id, today_local())
     await _reply(
         telegram_user_id, run_id, report_tools.ask_purpose_text(kind),
@@ -1337,8 +1339,10 @@ async def _ask_file_purpose(employee: dict[str, Any], message: dict[str, Any], k
     return "file_purpose_asked"
 
 
-async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
-    """Today's report / to the Director → forward the file as it is; cancel → nothing."""
+async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid.UUID,
+                               background: BackgroundTasks | None = None) -> str:
+    """Today's report → kept with the report (a voice / video becomes its text, 2026-10-22); to the Director →
+    forwarded as it is, unread; cancel → nothing."""
     query_id = callback.get("id", "")
     file_id, _, letter = rest.rpartition(":")
     purpose = report_tools.PURPOSES.get(letter)
@@ -1363,9 +1367,23 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
     employee = await store.get_employee_by_telegram_id(clicker_id)
     if employee is None or employee["status"] != "active":
         return "unknown_employee"
-    if purpose == "report" and await store.attach_media_to_report(clicker_id, today_local(), held.get("caption")) is None:
-        await settle(report_tools.no_report_today_text())
-        return "file_no_report"
+    if purpose == "report":
+        # Kept with the report, sent to whoever asks for it (2026-10-22) — no longer pushed to the Director at once.
+        placeholder = report_media.placeholder(held["kind"], held.get("caption"))
+        report = await store.attach_media_to_report(clicker_id, today_local(), held.get("caption"), placeholder)
+        if report is None:
+            await settle(report_tools.no_report_today_text())
+            return "file_no_report"
+        await store.link_file_to_report(str(held["id"]), str(report["id"]))
+        await settle(report_tools.sent_text("report", True))
+        if held.get("file_id") and report_media.readable(held["kind"], int(held.get("file_size") or 0)) \
+                and held["kind"] in (*report_media.LISTEN_KINDS, *report_media.WATCH_KINDS):
+            job = (_file_to_report_text, held, str(report["id"]), placeholder, clicker_id, run_id)
+            if background is not None:
+                background.add_task(*job)
+            else:
+                await _file_to_report_text(*job[1:])
+        return "file_report"
 
     caption = report_tools.director_caption(
         names.person_name(employee), ROLE_LABELS.get(employee["role"], employee["role"]), purpose, held.get("caption")
@@ -1388,6 +1406,33 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
     await store.set_employee_file_sent(file_id, delivered)
     await settle(report_tools.sent_text(purpose, delivered > 0))
     return f"file_{purpose}"
+
+
+async def _file_text(held: dict[str, Any], run_id: uuid.UUID) -> str:
+    """A held voice / video as text (report_media); raises when it can't be downloaded or read."""
+    async with TelegramBot(
+        agent=report_media.AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        data = await bot.download_file(held["file_id"], max_bytes=report_media.MAX_AUDIO_BYTES)
+    return await report_media.to_text(held["kind"], data, held.get("mime"), run_id)
+
+
+async def _file_to_report_text(held: dict[str, Any], report_id: str, placeholder: str, telegram_user_id: int,
+                               run_id: uuid.UUID) -> None:
+    """In the background: the voice / video as text, put into the report, and the person shown it (2026-10-22)."""
+    try:
+        line = report_media.report_line(held["kind"], await _file_text(held, run_id))
+    except Exception as exc:  # noqa: BLE001 — the file stays with the report; only its text is missing
+        log.warning("Report file not read as text: {}", type(exc).__name__)
+        line = report_media.report_line(held["kind"], "")
+    await store.set_file_text(str(held["id"]), line)
+    await store.add_report_line(report_id, placeholder, line)
+    await log_action(agent=report_media.AGENT, action="report_file_text", target_system="openrouter", status="success",
+                     run_id=run_id, mode="read", payload={"kind": held["kind"], "chars": len(line)})
+    try:
+        await _reply(telegram_user_id, run_id, report_media.done_text(held["kind"], line))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def _show_today_report(employee: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -2364,6 +2409,7 @@ async def _answer_question(
                 )
                 await _reply_and_log(director_id, run_id, sanitize_model_html(result.text), reply_to)
                 await _send_files(director_id, run_id, result.files, reply_to)
+                await _send_media(director_id, run_id, result.media, reply_to)
                 return
             log.warning("Analyst returned nothing, answering from {} alone", agent_slug)
     await _answer_from_agent(director_id, agent_slug, question, run_id, history, reply_to=reply_to)
@@ -2386,6 +2432,28 @@ async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[byt
             except Exception as exc:  # noqa: BLE001 — the text answer already went
                 log.error("Sending {} to the Director failed: {}", filename, type(exc).__name__)
                 await bot.send_message("Файлни юбориб бўлмади — бироздан кейин яна сўранг.", chat_id=str(director_id))
+
+
+async def _send_media(chat_id: int, run_id: uuid.UUID, media: list[dict[str, Any]], reply_to: int | None = None) -> None:
+    """A report's own files (photo, video, voice…), after the answer, as they were sent (2026-10-22): by the
+    kept Telegram file_id, else copied from the employee's chat."""
+    if not media:
+        return
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for f in media:
+            caption = report_media.media_caption(f.get("who"), f.get("created_at"), f.get("text") or f.get("caption"))
+            try:
+                if f.get("file_id"):
+                    await bot.send_media(f["kind"], f["file_id"], str(chat_id), caption, reply_to)
+                else:
+                    await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                        "copyMessage", {"chat_id": str(chat_id), "from_chat_id": str(f["telegram_user_id"]),
+                                        "message_id": f["message_id"], "caption": caption, "parse_mode": "HTML"},
+                        mode="notify", target_ref=str(chat_id))
+            except Exception as exc:  # noqa: BLE001 — the next file still goes
+                log.error("A report file could not be sent: {}", type(exc).__name__)
 
 
 async def _answer_from_agent(
