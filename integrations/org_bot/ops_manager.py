@@ -814,6 +814,8 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     # /eski: goods a year or more in the warehouse, every warehouse (old_stock.py, 2026-10-17).
     if (message.get("text") or "").strip().lower() in old_stock.COMMANDS:
         return await old_stock.send(telegram_user_id, None, run_id)
+    if (message.get("text") or "").strip().lower() in PULSE_COMMANDS:  # the live dashboard (2026-10-22)
+        return await _send_pulse_link(telegram_user_id, run_id)
     # /hisobot too — the Director sends no report of his own (2026-10-17).
     if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
         return await _send_report_calendar(telegram_user_id, run_id)
@@ -1579,6 +1581,22 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
 # -------------------------------------------------------------- employee updates
 
 
+PULSE_COMMANDS = ("/pulse", "/пулс")
+
+
+async def _send_pulse_link(telegram_user_id: int, run_id: uuid.UUID) -> str:
+    """/pulse: a button that opens PULSE (integrations/api/pulse_page.py) — signed, for this person, short-lived."""
+    from integrations.pulse import access
+
+    if not settings.public_url:
+        await _reply(telegram_user_id, run_id, "PULSE манзили созланмаган.")
+        return "pulse_no_url"
+    keyboard = {"inline_keyboard": [[{"text": "PULSE", "url": access.link(telegram_user_id)}]]}
+    await _reply(telegram_user_id, run_id, f"PULSE · ҳавола {access.LINK_MINUTES} дақиқа ишлайди", keyboard)
+    await log_action(agent=AGENT, action="pulse_link", target_system="telegram", status="success", run_id=run_id, mode="notify")
+    return "pulse_link"
+
+
 async def _send_competitors(telegram_user_id: int, run_id: uuid.UUID) -> None:
     """/raqobat: the competitor check; a failure is told, not raised (it runs in the background)."""
     try:
@@ -1623,6 +1641,8 @@ async def _handle_employee_message(
         return "ignored"
     if text.lower() in report_tools.REPORT_COMMANDS:
         return await _show_today_report(employee, run_id)
+    if employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS:  # his team's dashboard (2026-10-22)
+        return await _send_pulse_link(telegram_user_id, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in old_stock.COMMANDS:  # his warehouses' old stock
         return await old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in competitors.COMMANDS:  # who else sells Garmin (19.10)

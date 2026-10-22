@@ -3870,7 +3870,7 @@ def test_command_menus() -> None:
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
-                   *ops_manager.competitors.COMMANDS}
+                   *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
@@ -4253,9 +4253,9 @@ def test_own_week_and_team_calendar() -> None:
     cb = inspect.getsource(kpi_flow.handle_callback)
     check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
                and 'prefix == "kr" and not director' in cb)
-    check_true("his menu: team calendar, KPI, goals, results, old stock, competitors — no /hisobot, /ruxsat or /ism",
+    check_true("his menu: team calendar, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, /ruxsat or /ism",
                [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "eski", "raqobat",
-                                                         "bekor"])
+                                                         "pulse", "bekor"])
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
@@ -4793,6 +4793,188 @@ def test_explanations_and_start_times() -> None:
     check_true("schema: explanations (one per person, kind, day), attendance_starts, files' «explanation» purpose",
                "CREATE TABLE IF NOT EXISTS explanations" in schema and "uq_explanation UNIQUE (employee_id, kind, asked_for)" in schema
                and "CREATE TABLE IF NOT EXISTS attendance_starts" in schema and "'explanation'));" in schema)
+
+
+def test_pulse() -> None:
+    """22.10.2026, the Boss: PULSE — the company and every person's work as live charts, private, read-only."""
+    print("PULSE dashboard (22.10.2026)")
+    import asyncio
+    import inspect
+    import uuid
+    from datetime import timezone
+
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from integrations.api import app as api_app
+    from integrations.api import pulse_page
+    from integrations.common.config import settings
+    from integrations.org_bot import ops_manager
+    from integrations.pulse import access, data
+    from integrations.pulse import score as sc
+    from integrations.telegram import menus
+    from integrations.verifix import attendance as att
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    # ---- the score
+    check("attendance: on time 1, a little late 0.6, very late 0.3, absent 0, a day off / excused / эркин not counted",
+          [sc.attendance_value(s, m) for s, m in (("on_time", 0), ("late", 20), ("late", 90), ("absent", 0), ("off", 0),
+                                                  ("excused", 0), ("flexible", 0))], [1.0, 0.6, 0.3, 0.0, None, None, None])
+    now = datetime(2026, 10, 22, 15, 0)
+    d0, d1 = date(2026, 10, 21), date(2026, 10, 22)
+    check("report: sent 1, put together from the chat 0.7, missed 0, still open today not counted",
+          [sc.report_value(r, d, now) for r, d in (({"status": "submitted"}, d0), ({"status": "submitted", "auto_built": True}, d0),
+                                                  ({"status": "asked"}, d0), ({"status": "asked"}, d1), (None, d0))],
+          [1.0, 0.7, 0.0, None, None])
+    tasks = [{"status": "done", "due_date": d0, "completed_at": datetime(2026, 10, 21, 12, 0), "created_at": datetime(2026, 10, 20)},
+             {"status": "done", "due_date": date(2026, 10, 20), "completed_at": datetime(2026, 10, 21, 9, 0), "created_at": datetime(2026, 10, 19)},
+             {"status": "started", "due_date": date(2026, 10, 19), "completed_at": None, "created_at": datetime(2026, 10, 18)},
+             {"status": "cancelled", "due_date": d0, "completed_at": None, "created_at": datetime(2026, 10, 18)}]
+    check("tasks in play on 21.10: done on time 1, done late 0.5, overdue still open 0, cancelled out → 0.5",
+          sc.task_value(tasks, d0), 0.5)
+    check("the day's score: only the parts that apply, weighted 40 / 30 / 30",
+          (sc.day_score({"attendance": 1.0, "report": 0.0, "tasks": None}), sc.day_score({"attendance": None, "report": None, "tasks": None}),
+           sc.day_score({"attendance": 0.6, "report": 1.0, "tasks": 0.5})), (57, None, 69))
+    check("▲▼ in points; sales in %", (sc.delta(72.0, 68.5), sc.delta(130.0, 100.0, pct=True), sc.delta(None, 3.0)), (3.5, 30.0, None))
+
+    # ---- the period, assembled
+    staff = [data.Person("a", 1, "Ширин Умматова", "garmin_sotuv", "Garmin сотув", "garmin", "v1"),
+             data.Person("b", 2, "Абдукарим Зунунов", "b2b_sotuv", "B2B сотув", "primus", "v2")]
+
+    def rec(vid, day, status, late=0, arrived=None):
+        r = att.DayRecord(employee_id=vid, name="x", job="", day=day, working=True, arrived=arrived)
+        r.status, r.late_minutes = status, late
+        return r
+
+    recs = [rec("v1", d1, "on_time", arrived=datetime(2026, 10, 22, 8, 57)), rec("v2", d1, "late", 41, datetime(2026, 10, 22, 9, 41)),
+            rec("v1", d0, "on_time"), rec("v2", d0, "absent")]
+    dbrows = {"reports": [{"pid": "a", "report_date": d0, "status": "submitted", "auto_built": False},
+                          {"pid": "b", "report_date": d0, "status": "asked", "auto_built": False}],
+              "tasks": [{**tasks[0], "pid": "a", "id": "t1", "code": "T-1", "task_summary": "x"}],
+              "complaints": [{"created_at": datetime(2026, 10, 22, 6, 0, tzinfo=timezone.utc), "ticket_status": "open", "place": "garmin"}]}
+    o = data.assemble(staff, dbrows, recs, {d0: 5_000_000.0, d1: 7_000_000.0}, None, 7, now)
+    check("the index: the company line (everyone's average) and SAP sales as volume",
+          (o["index"]["series"][-2]["v"], o["index"]["volume"][-1]["v"]), (50.0, 7000000))
+    check("six tickers; a source not read is «—», never 0",
+          ([t["key"] for t in o["tickers"]], next(t for t in o["tickers"] if t["key"] == "shop")["value"]),
+          (["sales", "shop", "tasks", "reports", "attendance", "complaints"], None))
+    check("the board: best first, today's arrival state", [(p["name"], p["today"]) for p in o["people"]],
+          [("Ширин Умматова", "on_time"), ("Абдукарим Зунунов", "late")])
+    check("sectors: one per business present", [s["label"] for s in o["sectors"]], ["Garmin", "Primus"])
+    check_true("complaints: open now, red when they rise", next(t for t in o["tickers"] if t["key"] == "complaints")["value"] == 1
+               and next(t for t in o["tickers"] if t["key"] == "complaints")["invert"])
+
+    # ---- the tape and one person's day
+    events = [{"at": datetime(2026, 10, 22, 10, 12, tzinfo=timezone.utc), "event": "accepted", "code": "T-1", "pid": "a"},
+              {"at": datetime(2026, 10, 22, 4, 0, tzinfo=timezone.utc), "event": "created", "code": "T-9", "pid": "zz"}]
+    tape_rows = data.tape_items(staff, recs, events, [{"pid": "a", "submitted_at": datetime(2026, 10, 22, 11, 0, tzinfo=timezone.utc)}],
+                                [], dbrows["complaints"], d1)
+    check_true("a complaint's place by the business's name, never the raw key",
+               next(r for r in tape_rows if r["kind"] == "complaint")["detail"] == "Garmin")
+    check("the tape: newest first, only this scope's people, complaints too",
+          [(r["t"], r["label"]) for r in tape_rows],
+          [("16:00", "Ҳисобот"), ("15:12", "Бошлади"), ("11:00", "Шикоят келди"), ("09:41", "Келди"), ("08:57", "Келди")])
+    day = data.timeline(d1, recs[1], [{"at": datetime(2026, 10, 22, 10, 12, tzinfo=timezone.utc), "event": "closed", "code": "T-1",
+                                        "task_summary": "Hilton"}], {"status": "asked"}, [])
+    check("one person's day: arrival (late), task steps, the missing report last",
+          [(i["t"], i["label"], i["detail"]) for i in day], [("09:41", "Келди", "+41 дақ"), ("15:12", "Қабул қилинди", "T-1 Hilton"), ("", "Ҳисобот йўқ", "")])
+
+    # ---- who may open it
+    patch(settings, "ops_manager_bot_webhook_secret", SecretStr("s3cret"))
+    patch(settings, "public_base_url", "https://example.test")
+    try:
+        link = access.link_token(77)
+        check("a link token works once signed, for its kind only, not after it expires, not when changed",
+              (access.verify(link, "link"), access.verify(link, "session"), access.verify(link, "link", now=10**12),
+               access.verify(link[:-2] + "xx", "link")), (77, None, None, None))
+        check_true("the link is the service's own address", access.link(77).startswith("https://example.test/pulse/enter?t="))
+        roles = {77: "operatsion_direktor", 78: "garmin_manager", 79: "it"}
+
+        async def who(query, params=None):
+            role = roles.get(params[0])
+            return {"role": role} if role else None
+
+        async def fake_overview(days, scope):
+            return {"days": days, "scope": scope}
+
+        patch(pulse_page, "fetch_one", who)
+        patch(data, "overview", fake_overview)
+        client = TestClient(api_app.app)
+        check("no session: the page says the link expired; the API says 401",
+              (client.get("/pulse").status_code, client.get("/pulse/api/overview").status_code), (403, 401))
+        entered = client.get(f"/pulse/enter?t={access.link_token(77)}", follow_redirects=False)
+        cookie = entered.headers.get("set-cookie", "")
+        check_true("the link opens a session: cookie HttpOnly, Secure, only for /pulse; the token leaves the address",
+                   entered.status_code == 303 and entered.headers["location"] == "/pulse" and "HttpOnly" in cookie
+                   and "Secure" in cookie and "Path=/pulse" in cookie)
+        boss = TestClient(api_app.app, base_url="https://testserver")
+        boss.cookies.set(access.COOKIE, access.session_token(77), path="/pulse")
+        manager = TestClient(api_app.app, base_url="https://testserver")
+        manager.cookies.set(access.COOKIE, access.session_token(78), path="/pulse")
+        it = TestClient(api_app.app, base_url="https://testserver")
+        it.cookies.set(access.COOKIE, access.session_token(79), path="/pulse")
+        check("the Director sees everyone, the Garmin manager his team, IT nothing",
+              (boss.get("/pulse/api/overview?days=7").json(), manager.get("/pulse/api/overview").json()["scope"],
+               it.get("/pulse/api/overview").status_code),
+              ({"days": 7, "scope": None}, ["garmin_sotuv"], 401))
+        page = boss.get("/pulse")
+        csp = page.headers.get("content-security-policy", "")
+        check_true("the page: no outside scripts, no framing, nothing cached",
+                   page.status_code == 200 and "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
+                   and page.headers.get("cache-control") == "no-store" and "http://" not in page.text and "https://" not in page.text)
+        check("only the page's own files are served", (boss.get("/pulse/static/pulse.js").status_code,
+                                                      boss.get("/pulse/static/../app.py").status_code,
+                                                      boss.get("/pulse/static/lightweight-charts.4.2.0.js").status_code), (200, 404, 200))
+    finally:
+        restore()
+    lib = load_source("integrations/api/static/lightweight-charts.4.2.0.js")
+    check_true("TradingView Lightweight Charts 4.2.0, vendored with its Apache-2.0 licence",
+               "Lightweight Charts™ v4.2.0" in lib[:400] and "Apache License" in load_source("integrations/api/static/lightweight-charts.LICENSE.txt"))
+    js = load_source("integrations/api/static/pulse.js")
+    check_true("the page puts data in as text, never as HTML", ".innerHTML" not in js and "textContent" in js)
+    check_true("review fixes: one score per person (the board's), a legend that follows the crosshair, the dot says "
+               "what it means, pressed buttons not tabs, a flat wash",
+               "row && row.score !== null ? row.score" in js and "subscribeCrosshairMove" in js and "Кечикди" in js
+               and 'role="tab"' not in load_source("integrations/api/static/pulse.html") and 'bottomColor: "rgba(0,0,0,0)"' not in js)
+    html = load_source("integrations/api/static/pulse.html")
+    check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE"}) == []
+               and "<script>" not in html)
+
+    # ---- the bot: /pulse for the Director and the Garmin manager only
+    check_true("/pulse in the Director's and the Garmin manager's ☰ menus, not the employees'",
+               "pulse" in [c for c, _ in menus.DIRECTOR] and "pulse" in [c for c, _ in menus.GARMIN_MANAGER]
+               and "pulse" not in [c for c, _ in menus.EMPLOYEE])
+    sent: list = []
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
+        sent.append((text, reply_markup))
+        return [1]
+
+    async def none(*a, **k):
+        return None
+
+    patch(ops_manager, "_reply", fake_reply)
+    patch(ops_manager, "log_action", none)
+    patch(settings, "ops_manager_bot_webhook_secret", SecretStr("s3cret"))
+    patch(settings, "public_base_url", "https://example.test")
+    try:
+        asyncio.run(ops_manager._send_pulse_link(77, uuid.uuid4()))
+    finally:
+        restore()
+    check_true("the bot answers with a button to that person's own link",
+               sent and sent[0][1]["inline_keyboard"][0][0]["url"].startswith("https://example.test/pulse/enter?t="))
+    src = inspect.getsource(ops_manager._handle_employee_message)
+    check_true("employees: only the Garmin manager's /pulse is answered", 'employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS' in src)
 
 
 def test_garmin_competitors() -> None:
@@ -8437,6 +8619,7 @@ def main() -> int:
         test_analyst_speed_and_style,
         test_report_media_and_auto,
         test_explanations_and_start_times,
+        test_pulse,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

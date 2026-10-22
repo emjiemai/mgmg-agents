@@ -12,3 +12,7 @@ n8n/files/
 .DS_Store
 .idea/
 .vscode/
+
+# impeccable design skill: review captures and decision-page answers stay local (2026-10-22)
+.impeccable/review/
+.impeccable/questions/

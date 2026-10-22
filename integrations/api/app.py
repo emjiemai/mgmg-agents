@@ -14,6 +14,7 @@ Endpoints:
     GET  /db, /db/{table}                             read-only database viewer (db_viewer.py)
     GET  /f, /f/{place}, POST /f                      client complaints page behind the QR code (feedback_page.py)
     GET  /r, /r/garmin, /r/go/{branch}                Google review pages, their own QR codes (review_page.py)
+    GET  /pulse, /pulse/api/*                         PULSE, the Boss's live dashboard (pulse_page.py)
     GET  /backup/{secret}                             backup status for the office script's -Check
     POST /backup/{secret}                             make an encrypted backup, answer its manifest (integrations/backup/)
     GET  /backup/{secret}/{file_id}                   fetch that encrypted file, once
@@ -43,7 +44,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
 from integrations.ai.openrouter_client import describe_openrouter_key
-from integrations.api import db_viewer, feedback_page, review_page
+from integrations.api import db_viewer, feedback_page, pulse_page, review_page
 from integrations.backup import dump as backup_dump
 from integrations.common.config import settings
 from integrations.common.db import close_pool, fetch_one, log_action
@@ -67,6 +68,7 @@ app = FastAPI(
 app.include_router(db_viewer.router)
 app.include_router(feedback_page.router)
 app.include_router(review_page.router)
+app.include_router(pulse_page.router)
 
 
 @app.on_event("shutdown")

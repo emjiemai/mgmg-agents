@@ -93,3 +93,5 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 **Garmin competitors (2026-10-19):** Thursdays 08:00, the Garmin manager — who else sells Garmin in Uzbekistan (OLX, Google) and for how much against garmin.com.uz (`26-garmin-competitors.md`), /raqobat. Since 2026-10-20 with each shop's name, phones, Instagram, Telegram, site (what the shop publishes; private persons never).
 
 **Explanations (2026-10-22):** 08:00 after the brief — absent yesterday (Verifix) or report not sent → asked why; answers to the Director as cards (`27-explanations.md`). /grafik 🕘 own start times.
+
+**PULSE (2026-10-22):** the Boss's live dashboard at /pulse (OPS Manager Bot /pulse link): index over sales, tickers, today's tape, people ranked, one person's day (`28-pulse.md`).

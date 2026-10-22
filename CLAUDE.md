@@ -160,6 +160,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   `docs/agent-specs/08-task-tracker.md`): code T-YYYY-MM-NNNN, states sent/started/blocked/review/done/
   cancelled, ✅ needs proof → the assigner accepts or returns; ⛔ with reason; `task_events` history.
   Proof and blocker text reach the assigner (task data — the one exception to the no-relay rule).
+- **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
+  tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
+  Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).
 - **Explanations** (2026-10-22, the Boss, `explanations.py`, spec 27): 08:00 after the brief — absent yesterday in
   Verifix (with the days in a row) or report not sent → asked why; the answer goes to the Director (+ the Garmin
   manager for his team) as a card — the second exception to the no-relay rule. **/grafik 🕘** = a person's own
