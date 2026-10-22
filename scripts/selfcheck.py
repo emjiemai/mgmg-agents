@@ -4618,6 +4618,183 @@ def test_report_media_and_auto() -> None:
                                           "ADD COLUMN IF NOT EXISTS text TEXT", "ADD COLUMN IF NOT EXISTS auto_built BOOLEAN")))
 
 
+def test_explanations_and_start_times() -> None:
+    """22.10.2026, the Boss: «AI сўрасин, тушунтириш хати ёзиб беришсин»; some people start at 10:00."""
+    print("explanations, own start times (22.10.2026)")
+    import asyncio
+    import uuid
+    from datetime import time as dtime
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import explanations as ex
+    from integrations.org_bot import ops_manager, report_tools, store
+    from integrations.verifix import attendance as att
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    # ---- own start time: late from 10:00, not Verifix's 09:00
+    row = {"employee_id": 9, "employee_name": "Galimov Rushan", "days": [
+        {"date": "21.10.2026", "day_kind": "W", "begin_time": "21.10.2026 09:00:00", "end_time": "21.10.2026 18:00:00",
+         "input_time": "21.10.2026 10:41:00", "facts": []}]}
+    usual = att.records([row], {}, grace=5)[0]
+    own = att.records([row], {}, grace=5, starts={"9": dtime(10, 0)})[0]
+    check("Галимов at 10:41: 101 min late on Verifix's 09:00, 41 on his own 10:00",
+          (usual.status, usual.late_minutes, own.status, own.late_minutes), ("late", 101, "late", 41))
+    check("...and on time when he starts at 11:00", att.records([row], {}, grace=5, starts={"9": dtime(11, 0)})[0].status, "on_time")
+    check_true("the 08:00 brief and the bot's answers use them", "starts=await start_times()" in load_source("integrations/verifix/attendance.py"))
+
+    # ---- who was absent, how many days in a row
+    def rec(pid, day, status, working=True, name="Зунунов Абдукарим Абдирахманович"):
+        r = att.DayRecord(employee_id=pid, name=name, job="", day=day, working=working)
+        r.status = status
+        return r
+
+    y = date(2026, 10, 21)
+    recs = [rec("1", date(2026, 10, 17), "on_time"), rec("1", date(2026, 10, 18), "off", working=False),
+            rec("1", date(2026, 10, 19), "absent"), rec("1", date(2026, 10, 20), "absent"), rec("1", y, "absent"),
+            rec("2", date(2026, 10, 20), "absent", name="Собитов Абдулбосит"), rec("2", y, "on_time", name="Собитов Абдулбосит"),
+            rec("3", y, "flexible", name="Умаров Шухрат")]
+    streaks = ex.absent_streaks(recs, y)
+    check("absent yesterday: the working days in a row (a day off doesn't break it); not absent yesterday / эркин график: no ask",
+          {k: v[1] for k, v in streaks.items()}, {"1": [date(2026, 10, 19), date(2026, 10, 20), y]})
+    staff = [{"id": "e1", "full_name": "Абдукарим Зунунов", "telegram_user_id": 11, "role": "b2b_sotuv"},
+             {"id": "e2", "full_name": "Abdulbosit Sobitov", "telegram_user_id": 12, "role": "it"},
+             {"id": "e3", "full_name": "Абдукарим Зунунов", "telegram_user_id": 13, "role": "b2b_sotuv"}]
+    check("Verifix name ↔ the bot's (any order, Latin or Cyrillic); two alike → nobody guessed",
+          (ex.match_employee("Собитов Абдулбосит Мухаммад угли", staff)["id"],
+           ex.match_employee("Зунунов Абдукарим Абдирахманович", staff), ex.match_employee("Нажотова Зайнабхон", staff)),
+          ("e2", None, None))
+
+    # ---- the questions: polite, one line, the days named
+    one = ex.ask_text("absent", "Абдукарим ака", [y])
+    three = ex.ask_text("absent", "Абдукарим ака", [date(2026, 10, 19), date(2026, 10, 20), y])
+    report = ex.ask_text("report", "Ширин опа", [y])
+    for text in (one, three, report):
+        check(f"friendly: {text[:30]}…", friendly_problems(text, ("Абдукарим ака", "Ширин опа", "Verifix")), [])
+    check_true("absent: yesterday's date, «if you did come, say so»; several days: how many and which",
+               "21.10" in one and "келган бўлсангиз ҳам" in one and "охирги 3 иш куни (19.10, 20.10, 21.10)" in three
+               and "ҳисоботингиз келмади" in report)
+    card = ex.card("Абдукарим Зунунов", "B2B сотув", "absent", [date(2026, 10, 20), y], "касал эдим <врач>")
+    check_true("the Director's card: who, which days, the words as written (escaped)",
+               "Тушунтириш хати" in card and "20.10, 21.10 (2 иш куни)" in card and "&lt;врач&gt;" in card)
+    summ = ex.summary(y, [{"name": "А", "kind": "absent", "answered_at": 1}, {"name": "Б", "kind": "report", "answered_at": None}])
+    check_true("the next morning: asked / wrote / didn't, by name", "Сўралди: 2 · ёзди: 1 · ёзмади: 1" in summ and "Б (ҳисобот)" in summ)
+    check("nobody asked: no summary", ex.summary(y, []), None)
+    check("a command or a question («?») is never the explanation",
+          [ex.is_explanation(t) for t in ("касал эдим", "/hisobot", "нарх қанча?", "")], [True, False, False, False])
+
+    # ---- the morning: who is asked (the report ask isn't doubled for the absent)
+    agent = load_agent("explanations")
+
+    async def load(begin, end, run_id, agent_name, now=None):
+        return recs
+
+    async def missed(day):
+        return [{"id": "e1", "full_name": "Абдукарим Зунунов", "telegram_user_id": 11, "role": "b2b_sotuv"},
+                {"id": "e4", "full_name": "Ширин Умматова", "telegram_user_id": 14, "role": "garmin_sotuv"}]
+
+    from integrations.common.config import settings
+    from integrations.verifix import attendance as attendance_mod
+    patch(attendance_mod, "load", load)
+    patch(store, "missed_reports_of", missed)
+    patch(type(settings), "verifix_configured", property(lambda self: True))
+    try:
+        people = [staff[0], staff[1], {"id": "e4", "full_name": "Ширин Умматова", "telegram_user_id": 14, "role": "garmin_sotuv"}]
+        asks, unmatched = asyncio.run(agent.collect(y, people, uuid.uuid4()))
+    finally:
+        restore()
+    check("absent → one ask with the days; a missed report → its own ask; absent + no report → one ask",
+          sorted((a[0]["id"], a[1], len(a[2])) for a in asks), [("e1", "absent", 3), ("e4", "report", 1)])
+    check_true("08:00, after the brief", load_source("scripts/run_morning_agents.py").index("agents/explanations")
+               > load_source("scripts/run_morning_agents.py").index("ceo-daily-brief"))
+
+    # ---- the answer: reply or plain message → the Director (and the Garmin manager for his team)
+    employee = {"id": "e4", "telegram_user_id": 14, "role": "garmin_sotuv", "full_name": "Ширин Умматова", "address_form": "опа"}
+    waiting = [{"id": "x1", "kind": "report", "days": [y], "prompt_message_id": 500}]
+    sent, answered, replies, owed = [], [], [], {"row": None}
+    verdict = {"answer": True}
+
+    async def open_(user, hours=36):
+        return [] if answered else waiting
+
+    async def answer(ids, text):
+        answered.append((ids, text))
+        return [{**waiting[0], "answer": text}]
+
+    async def by_role(role):
+        return {"operatsion_direktor": [{"telegram_user_id": 1}], "garmin_manager": [{"telegram_user_id": 2}]}.get(role, [])
+
+    async def report_for_day(user, day):
+        return owed["row"]
+
+    async def answers_ask(ask, text, run_id):
+        return verdict["answer"]
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
+        replies.append((text, reply_to))
+        return [1]
+
+    async def none(*a, **k):
+        return None
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, **k):
+            sent.append((chat_id, text))
+            return [9]
+
+    for obj, name, value in ((store, "open_explanations", open_), (store, "answer_explanations", answer),
+                             (store, "active_employees_by_role", by_role), (store, "report_for_day", report_for_day),
+                             (store, "set_explanation_delivered", none), (ops_manager, "_answers_ask", answers_ask),
+                             (ops_manager, "_reply", fake_reply), (ops_manager, "TelegramBot", Bot), (ops_manager, "log_action", none)):
+        patch(obj, name, value)
+    try:
+        owed["row"] = {"status": "asked"}
+        check("a plain message while today's report is owed is the report's, not the explanation",
+              asyncio.run(ops_manager._take_explanation(employee, "бугун 5 та сотув", None, uuid.uuid4())), None)
+        check("...but a reply to the ask always is",
+              asyncio.run(ops_manager._take_explanation(employee, "интернет йўқ эди", 500, uuid.uuid4(), 77)), "explanation_taken")
+        check_true("...to the Director and the Garmin manager (his team), and she is thanked under her message",
+                   {c for c, _ in sent} == {"1", "2"} and "интернет йўқ эди" in sent[0][1] and replies[-1][1] == 77)
+        answered.clear()
+        sent.clear()
+        owed["row"] = None
+        verdict["answer"] = False
+        check("a plain message the AI says isn't an answer goes on (to the AI chat)",
+              asyncio.run(ops_manager._take_explanation(employee, "янги нархлар рўйхати керак", None, uuid.uuid4())), None)
+        verdict["answer"] = True
+        check("a plain message that answers it is taken",
+              asyncio.run(ops_manager._take_explanation(employee, "болам касал эди", None, uuid.uuid4())), "explanation_taken")
+        check("a B2B person's goes to the Director only", ops_manager.explanation_managers("b2b_sotuv"), [])
+    finally:
+        restore()
+    keyboard = report_tools.purpose_keyboard("f1", True, explanation=True)
+    check_true("a file (a sick note, a voice) can be sent as the explanation while one is asked",
+               "fp:f1:e" in str(keyboard) and report_tools.PURPOSES["e"] == "explanation"
+               and "fp:f1:e" not in str(report_tools.purpose_keyboard("f1", True)))
+    schema = load_source("database/schema.sql")
+    check_true("schema: explanations (one per person, kind, day), attendance_starts, files' «explanation» purpose",
+               "CREATE TABLE IF NOT EXISTS explanations" in schema and "uq_explanation UNIQUE (employee_id, kind, asked_for)" in schema
+               and "CREATE TABLE IF NOT EXISTS attendance_starts" in schema and "'explanation'));" in schema)
+
+
 def test_garmin_competitors() -> None:
     """19.10.2026: who else sells Garmin in Uzbekistan (OLX, Google) against our garmin.com.uz prices — offline."""
     print("Garmin competitors (19.10.2026)")
@@ -6434,11 +6611,20 @@ def test_flexible_schedule() -> None:
     people = {"7": "Исоқов Улуғбек", "8": "Умаров Шухрат", "9": "Галимов Рушан"}
     view, keyboard = admin.flexible_view(people, {"7"})
     buttons = [b for row in keyboard["inline_keyboard"] for b in row]
-    check("one button per person, by name, marked ✅",
-          [b["text"] for b in buttons], ["⬜ Галимов Рушан", "✅ Исоқов Улуғбек", "⬜ Умаров Шухрат"])
+    check("one name button per person, marked ✅ (and its 🕘 start time beside it)",
+          [b["text"] for b in buttons if b["callback_data"].startswith("flex:")],
+          ["⬜ Галимов Рушан", "✅ Исоқов Улуғбек", "⬜ Умаров Шухрат"])
     check_true("button data fits Telegram's 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in buttons))
     check_true("the screen says what the mark does, in Uzbek Cyrillic",
-               "1 / 3" in view and "кечикди" in view and latin_words(view) == [])
+               "1 / 3" in view and "кечикди" in view and latin_words(view, allow={"Verifix"}) == [])
+    # a person's own start time (2026-10-22: "some employees come at 10 a.m.")
+    _view, with_start = admin.flexible_view(people, set(), {"9": "10:00"})
+    check("🕘 shows each person's own start time, else Verifix's",
+          [b["text"] for row in with_start["inline_keyboard"] for b in row if b["callback_data"].startswith("fstart:")],
+          ["🕘 10:00", "🕘 Verifix", "🕘 Verifix"])
+    check("a tap goes Verifix → 08:00 → 09:00 → 10:00 → 11:00 → Verifix",
+          [admin.next_start(x) for x in (None, "08:00", "09:00", "10:00", "11:00", "07:15")],
+          ["08:00", "09:00", "10:00", "11:00", None, None])
     check("names read back from the keyboard", admin.people_on_keyboard(keyboard), people)
 
     marks = {"7"}
@@ -6464,11 +6650,25 @@ def test_flexible_schedule() -> None:
     async def no_log(**kwargs):
         return None
 
+    starts_set: dict = {}
+
+    async def start_times():
+        return dict(starts_set)
+
+    async def set_start(verifix_id, name, start, set_by):
+        if start is None:
+            starts_set.pop(verifix_id, None)
+        else:
+            starts_set[verifix_id] = start
+
     saved = [(store, "toggle_flexible_schedule", store.toggle_flexible_schedule),
              (store, "flexible_schedule_ids", store.flexible_schedule_ids),
+             (store, "attendance_start_times", store.attendance_start_times),
+             (store, "set_attendance_start", store.set_attendance_start),
              (admin, "_edit", admin._edit), (admin, "_answer", admin._answer), (admin, "log_action", admin.log_action),
              (settings, "admin_bot_admin_user_id", settings.admin_bot_admin_user_id)]
     store.toggle_flexible_schedule, store.flexible_schedule_ids = toggle, current
+    store.attendance_start_times, store.set_attendance_start = start_times, set_start
     admin._edit, admin._answer, admin.log_action, settings.admin_bot_admin_user_id = fake_edit, fake_answer, no_log, 0
     try:
         tap = {"id": "q", "data": "flex:8", "from": {"id": 1}, "message": {"reply_markup": keyboard}}
@@ -6479,6 +6679,11 @@ def test_flexible_schedule() -> None:
         stale = {**tap, "data": "flex:99"}
         check("someone not on the list: open /grafik again",
               asyncio.run(admin.handle_admin_callback(stale, uuid.uuid4())), "unrecognized")
+        clock = {**tap, "data": "fstart:9"}
+        for _ in range(3):
+            asyncio.run(admin.handle_admin_callback(clock, uuid.uuid4()))
+        check_true("three taps on 🕘: Галимов Рушан starts at 10:00, and the list shows it",
+                   str(starts_set.get("9")) == "10:00:00" and "🕘 10:00" in str(edits[-1]) and toasts[-1] == "Галимов Рушан — 10:00")
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
@@ -8231,6 +8436,7 @@ def main() -> int:
         test_garmin_competitors,
         test_analyst_speed_and_style,
         test_report_media_and_auto,
+        test_explanations_and_start_times,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

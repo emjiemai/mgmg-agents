@@ -30,7 +30,7 @@ KINDS = {
     "photo": "расм", "video": "видео", "document": "файл", "audio": "аудио", "voice": "овозли хабар",
     "animation": "анимация", "video_note": "видео хабар",
 }
-PURPOSES = {"r": "report", "d": "director", "x": "cancelled"}
+PURPOSES = {"r": "report", "d": "director", "x": "cancelled", "e": "explanation"}
 
 
 def file_kind(message: dict[str, Any]) -> str | None:
@@ -38,11 +38,14 @@ def file_kind(message: dict[str, Any]) -> str | None:
     return next((kind for kind in KINDS if message.get(kind)), None)
 
 
-def purpose_keyboard(file_id: str, report_today: bool) -> dict[str, Any]:
-    """What the file is for: today's report (only when one is asked today), the Director, or nothing."""
+def purpose_keyboard(file_id: str, report_today: bool, explanation: bool = False) -> dict[str, Any]:
+    """What the file is for: today's report (only when one is asked today), the explanation asked this
+    morning (only while one waits, 2026-10-22), the Director, or nothing."""
     first = []
     if report_today:
         first.append({"text": "бугунги ҳисобот", "callback_data": f"fp:{file_id}:r"})
+    if explanation:
+        first.append({"text": "тушунтириш", "callback_data": f"fp:{file_id}:e"})
     first.append({"text": "директорга юбориш", "callback_data": f"fp:{file_id}:d"})
     return {"inline_keyboard": [first, [{"text": "бекор қилиш", "callback_data": f"fp:{file_id}:x"}]]}
 
@@ -63,6 +66,8 @@ def director_caption(name: str, role_label: str, purpose: str, caption: str | No
 def sent_text(purpose: str, delivered: bool) -> str:
     if not delivered:
         return casual("директорга етказиб бўлмади, бир оздан кейин қайта юборинг")
+    if purpose == "explanation":
+        return casual("раҳмат, тушунтиришингиз раҳбариятга етказилмоқда")
     if purpose == "report":  # kept with the report; the Director / manager gets it when he asks (2026-10-22)
         return casual("раҳмат каттакон, ҳисоботингизга қўшилди, чарчаманг")
     return casual("директорга юборилди, раҳмат")

@@ -19,6 +19,9 @@ The rules, stated so nobody has to guess what a number means:
     business trip or a day off for that day; an hourly leave excuses coming
     late. Which fact is which is read from the company's own time-kind
     names (time_kind$list), so a renamed kind still lands right.
+  * **Own start time** (2026-10-22) = a person the admin gave a start time in
+    Admin Bot /grafik (e.g. 10:00): late is counted from it, not from
+    Verifix's schedule start.
   * **Эркин график** (2026-10-03) = people the admin marked in Admin Bot
     /grafik: they come when work needs them or the Director calls, so they
     are never late or absent — the brief only counts them, and the
@@ -29,7 +32,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
 
 from integrations.common.config import settings
@@ -119,7 +122,7 @@ def _minutes(later: datetime, earlier: datetime) -> int:
 
 def records(
     rows: Iterable[dict[str, Any]], kinds: dict[str, str], *, grace: int, now: datetime | None = None,
-    flexible: set[str] | frozenset[str] = frozenset(),
+    flexible: set[str] | frozenset[str] = frozenset(), starts: dict[str, time] | None = None,
 ) -> list[DayRecord]:
     """Turn timesheet rows into per-day records with a status.
 
@@ -130,7 +133,9 @@ def records(
         now: Tashkent wall time (naive) when looking at a day still in
             progress; None for finished days.
         flexible: Verifix ids of the people on "эркин график".
+        starts: Verifix id -> the person's own start time (Admin Bot /grafik), used instead of the schedule's.
     """
+    starts = starts or {}
     out: list[DayRecord] = []
     for row in rows:
         name = name_to_cyrillic(str(row.get("employee_name") or "")) or f"#{row.get('employee_id')}"
@@ -155,6 +160,9 @@ def records(
                 },
                 flexible=str(row.get("employee_id")) in flexible,
             )
+            own = starts.get(rec.employee_id)
+            if own is not None and rec.working:
+                rec.begin = datetime.combine(rec.day, own)
             _judge(rec, grace, now)
             out.append(rec)
     return out
@@ -371,7 +379,19 @@ async def load(begin: date, end: date, run_id: uuid.UUID | str | None, agent: st
     async with VerifixClient(agent=agent, run_id=run_id) as client:
         kinds = classify_kinds(await client.time_kinds())
         rows = await client.timesheet(begin, end)
-    return records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now, flexible=await flexible_ids())
+    return records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now, flexible=await flexible_ids(),
+                   starts=await start_times())
+
+
+async def start_times() -> dict[str, time]:
+    """Verifix id -> the person's own start time (Admin Bot /grafik); empty if it can't be read."""
+    try:
+        from integrations.org_bot import store
+
+        return await store.attendance_start_times()
+    except Exception as exc:  # noqa: BLE001 — without them Verifix's own start is used, as before
+        log.warning("Could not read the start times: {}", type(exc).__name__)
+        return {}
 
 
 async def flexible_ids() -> set[str]:

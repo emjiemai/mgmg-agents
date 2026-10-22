@@ -63,6 +63,8 @@ TECHNICAL_TABLES = frozenset({
     "employee_changes",     # name / role / settings changes, by whom
     "days_off",
     "attendance_flexible",  # Verifix ids marked "эркин график" (ids only)
+    "attendance_starts",    # people's own start times (/grafik, 2026-10-22)
+    "explanations",         # «why weren't you at work / no report» asks and answers (2026-10-22)
     "announcements",
     # the bot's own records (2026-10-17)
     "employees", "tasks", "task_events", "task_updates", "task_drafts", "pending_dispatches",

@@ -692,24 +692,46 @@ async def _show_days_off(run_id: uuid.UUID) -> str:
     return "days_off_shown"
 
 
-def flexible_view(people: dict[str, str], flexible: set[str]) -> tuple[str, dict[str, Any]]:
-    """/grafik: everyone Verifix knows, a tap marks or unmarks "эркин график".
+# A person's own start time on /grafik (2026-10-22): a tap goes to the next; "Verifix" = the schedule's own start.
+START_CHOICES: tuple[str | None, ...] = (None, "08:00", "09:00", "10:00", "11:00")
+
+
+def next_start(current: str | None) -> str | None:
+    """The start time after ``current`` in START_CHOICES (a time not in the list goes back to Verifix's)."""
+    if current not in START_CHOICES:
+        return None
+    return START_CHOICES[(START_CHOICES.index(current) + 1) % len(START_CHOICES)]
+
+
+def flexible_view(people: dict[str, str], flexible: set[str],
+                  starts: dict[str, str] | None = None) -> tuple[str, dict[str, Any]]:
+    """/grafik: everyone Verifix knows — a tap on the name marks or unmarks "эркин график", a tap on 🕘 sets
+    the person's own start time (2026-10-22).
 
     Args:
         people: Verifix id -> name (Cyrillic).
         flexible: The ids marked now.
+        starts: Verifix id -> "HH:MM", the ones with their own start time.
     """
+    starts = starts or {}
     marked = sum(1 for pid in people if pid in flexible)
     text = (
-        "🕘 <b>Эркин график</b>\n"
-        "Белгиланганлар брифингда «кечикди» ёки «келмади» деб чиқмайди — фақат сони кўрсатилади.\n"
-        f"<i>Белгиланган: {marked} / {len(people)}. Исмни босинг — белги қўйилади ёки олинади.</i>"
+        "🕘 <b>Эркин график ва келиш вақти</b>\n"
+        "Эркин графикдагилар брифингда «кечикди» ёки «келмади» деб чиқмайди — фақат сони кўрсатилади.\n"
+        "🕘 — шахсий келиш вақти (масалан 10:00): кечикиш шу вақтдан ҳисобланади; «Verifix» — Verifix графиги.\n"
+        f"<i>Эркин график: {marked} / {len(people)}. Исмни босинг — белги; 🕘 ни босинг — "
+        "Verifix → 08:00 → 09:00 → 10:00 → 11:00.</i>"
     )
     rows = [
-        [{"text": f"{'✅' if pid in flexible else '⬜'} {name}", "callback_data": f"flex:{pid}"}]
+        [{"text": f"{'✅' if pid in flexible else '⬜'} {name}", "callback_data": f"flex:{pid}"},
+         {"text": f"🕘 {starts.get(pid) or 'Verifix'}", "callback_data": f"fstart:{pid}"}]
         for pid, name in sorted(people.items(), key=lambda kv: kv[1])
     ]
     return text, {"inline_keyboard": rows}
+
+
+async def _starts_text() -> dict[str, str]:
+    return {pid: t.strftime("%H:%M") for pid, t in (await store.attendance_start_times()).items()}
 
 
 def people_on_keyboard(keyboard: dict[str, Any] | None) -> dict[str, str]:
@@ -752,7 +774,7 @@ async def _show_flexible(run_id: uuid.UUID) -> str:
         if not people:
             await bot.send_message("🕘 Verifix'да сўнгги 30 кунда ҳеч ким йўқ.")
             return "flexible_empty"
-        text, keyboard = flexible_view(people, await store.flexible_schedule_ids())
+        text, keyboard = flexible_view(people, await store.flexible_schedule_ids(), await _starts_text())
         await bot.send_message(text, reply_markup=keyboard)
     return "flexible_shown"
 
@@ -770,10 +792,31 @@ async def _toggle_flexible(
         agent=AGENT, action="flexible_set" if now_flexible else "flexible_cleared", target_system="postgres",
         status="success", run_id=run_id, target_ref=verifix_id, mode="write", payload={"by": decided_by, "name": name},
     )
-    text, keyboard = flexible_view(people, await store.flexible_schedule_ids())
+    text, keyboard = flexible_view(people, await store.flexible_schedule_ids(), await _starts_text())
     await _edit(callback, text, keyboard, run_id)
     await _answer(query_id, f"{name} — {'эркин график' if now_flexible else 'одатдаги график'}")
     return "flexible_set" if now_flexible else "flexible_cleared"
+
+
+async def _cycle_start(
+    verifix_id: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID
+) -> str:
+    """🕘 on /grafik: the person's own start time goes to the next choice (2026-10-22)."""
+    from datetime import time as dtime
+
+    people = people_on_keyboard((callback.get("message") or {}).get("reply_markup"))
+    if verifix_id not in people:
+        await _answer(query_id, "Рўйхат эскирган — /grafik ни қайта очинг")
+        return "unrecognized"
+    name = people[verifix_id]
+    chosen = next_start((await _starts_text()).get(verifix_id))
+    await store.set_attendance_start(verifix_id, name, dtime.fromisoformat(chosen) if chosen else None, decided_by)
+    await log_action(agent=AGENT, action="start_time_set", target_system="postgres", status="success", run_id=run_id,
+                     target_ref=verifix_id, mode="write", payload={"by": decided_by, "start": chosen or "verifix"})
+    text, keyboard = flexible_view(people, await store.flexible_schedule_ids(), await _starts_text())
+    await _edit(callback, text, keyboard, run_id)
+    await _answer(query_id, f"{name} — {chosen or 'Verifix графиги'}")
+    return "start_time_set"
 
 
 async def _toggle_day_off(target: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1154,6 +1197,9 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action == "flex":
         return await _toggle_flexible(target_id, query_id, decided_by, callback, run_id)
+
+    if action == "fstart":
+        return await _cycle_start(target_id, query_id, decided_by, callback, run_id)
 
     if action in ("ann", "annx"):
         return await _send_announcement(target_id, action == "ann", query_id, callback, run_id)

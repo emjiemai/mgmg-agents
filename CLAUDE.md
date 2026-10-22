@@ -160,6 +160,10 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   `docs/agent-specs/08-task-tracker.md`): code T-YYYY-MM-NNNN, states sent/started/blocked/review/done/
   cancelled, ✅ needs proof → the assigner accepts or returns; ⛔ with reason; `task_events` history.
   Proof and blocker text reach the assigner (task data — the one exception to the no-relay rule).
+- **Explanations** (2026-10-22, the Boss, `explanations.py`, spec 27): 08:00 after the brief — absent yesterday in
+  Verifix (with the days in a row) or report not sent → asked why; the answer goes to the Director (+ the Garmin
+  manager for his team) as a card — the second exception to the no-relay rule. **/grafik 🕘** = a person's own
+  start time (late counted from it).
   Next from the spec: positions + deputies, route table, escalation; then Day 2 complaint tickets.
 - **Removal is a clean end; re-registration a fresh start** (2026-10-14): `store.revoke_employee` deletes the work-AI
   memory, closes held messages/files, cancels open tasks, clears data access; `create_employee` on a revoked row

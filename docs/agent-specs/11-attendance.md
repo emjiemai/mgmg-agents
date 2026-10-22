@@ -129,3 +129,7 @@ support, 2026-09-28).
   Verifix's names; a report-vs-attendance comparison needs that link.
 - A late-arrival alert during the day (e.g. at 09:30) — easy to add on the
   same data if the Director wants it.
+
+## Own start time (2026-10-22)
+
+Admin Bot /grafik → 🕘 beside a name: Verifix → 08:00 → 09:00 → 10:00 → 11:00. With a time set, late is counted from it instead of Verifix's schedule start (`attendance_starts`, `records(starts=…)`). Absences are asked about every morning — spec 27.

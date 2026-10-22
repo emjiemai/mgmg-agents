@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheques, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheques, explanations, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -1332,9 +1332,10 @@ async def _ask_file_purpose(employee: dict[str, Any], message: dict[str, Any], k
     held = await store.create_employee_file(telegram_user_id, message["message_id"], kind, message.get("caption"),
                                             report_media.file_of(message))
     report = await store.report_for_day(telegram_user_id, today_local())
+    waiting = await _waiting_explanations(telegram_user_id)
     await _reply(
         telegram_user_id, run_id, report_tools.ask_purpose_text(kind),
-        report_tools.purpose_keyboard(str(held["id"]), report is not None),
+        report_tools.purpose_keyboard(str(held["id"]), report is not None, explanation=bool(waiting)),
     )
     return "file_purpose_asked"
 
@@ -1367,6 +1368,14 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
     employee = await store.get_employee_by_telegram_id(clicker_id)
     if employee is None or employee["status"] != "active":
         return "unknown_employee"
+    if purpose == "explanation":  # a sick note, a voice — the answer to this morning's ask (2026-10-22)
+        await settle(report_tools.sent_text("explanation", True))
+        job = (_file_explanation, employee, held, run_id)
+        if background is not None:
+            background.add_task(*job)
+        else:
+            await _file_explanation(*job[1:])
+        return "file_explanation"
     if purpose == "report":
         # Kept with the report, sent to whoever asks for it (2026-10-22) — no longer pushed to the Director at once.
         placeholder = report_media.placeholder(held["kind"], held.get("caption"))
@@ -1433,6 +1442,21 @@ async def _file_to_report_text(held: dict[str, Any], report_id: str, placeholder
         await _reply(telegram_user_id, run_id, report_media.done_text(held["kind"], line))
     except Exception:  # noqa: BLE001
         pass
+
+
+async def _file_explanation(employee: dict[str, Any], held: dict[str, Any], run_id: uuid.UUID) -> None:
+    """A file sent as the explanation: a voice / video as text, else its caption; delivered with the file."""
+    text = report_media.placeholder(held["kind"], held.get("caption"))
+    if held.get("file_id") and held["kind"] in (*report_media.LISTEN_KINDS, *report_media.WATCH_KINDS) \
+            and report_media.readable(held["kind"], int(held.get("file_size") or 0)):
+        try:
+            text = report_media.report_line(held["kind"], await _file_text(held, run_id))
+        except Exception as exc:  # noqa: BLE001 — the file itself still goes
+            log.warning("Explanation file not read as text: {}", type(exc).__name__)
+    try:
+        await _take_explanation(employee, text, None, run_id, held=held)
+    except Exception as exc:  # noqa: BLE001 — a background failure is logged, not raised
+        log.error("File explanation failed: {}", type(exc).__name__)
 
 
 async def _show_today_report(employee: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1623,6 +1647,9 @@ async def _handle_employee_message(
         return "ignored"  # an unknown command: not a question
 
     reply_to = message.get("reply_to_message") or {}
+    taken = await _take_explanation(employee, text, reply_to.get("message_id"), run_id, message.get("message_id"))
+    if taken is not None:  # the answer to this morning's «why weren't you at work / no report?» (2026-10-22)
+        return taken
     outcome = await _try_daily_report(employee, text, reply_to.get("message_id"), run_id)
     if outcome is not None:
         return outcome
@@ -1636,6 +1663,89 @@ async def _handle_employee_message(
     if task is None and (reply_to.get("from") or {}).get("is_bot"):
         quoted = (reply_to.get("text") or reply_to.get("caption") or "").strip() or None
     return await _route_to_ai(employee, text, task, run_id, background, message.get("message_id"), quoted)
+
+
+EXPLANATION_CHECK = """The work bot asked an employee: «{ask}». Then they wrote the message below. Is it an \
+answer to that — a reason, an excuse, an apology, or a claim that they did come / did send it? A work \
+question or a report about today's work is not. JSON only: {{"answer": true}} or {{"answer": false}}."""
+
+
+async def _answers_ask(ask: str, text: str, run_id: uuid.UUID) -> bool:
+    """Whether a plain message answers the morning's ask (the AI decides; if it can't, yes)."""
+    try:
+        async with OpenRouterClient(agent=AGENT, run_id=run_id, model_override=settings.ops_manager_bot_model,
+                                    fallback_override=settings.ops_manager_bot_fallback_models) as ai:
+            verdict = await ai.complete_json(EXPLANATION_CHECK.format(ask=ask), text)
+        return bool(verdict.get("answer", True)) if isinstance(verdict, dict) else True
+    except Exception:  # noqa: BLE001 — a missed explanation is worse than a misplaced one
+        return True
+
+
+async def _waiting_explanations(telegram_user_id: int) -> list[dict[str, Any]]:
+    """This person's unanswered asks; none if they can't be read — the message then goes on as before."""
+    try:
+        return await store.open_explanations(telegram_user_id, explanations.OPEN_HOURS)
+    except Exception as exc:  # noqa: BLE001 — a new nicety must never stop reports and questions
+        log.warning("Open explanations not read: {}", type(exc).__name__)
+        return []
+
+
+def explanation_managers(role: str | None) -> list[str]:
+    """Who gets a person's explanation besides the Director: the manager of their team (report_calendar.TEAM_OF)."""
+    return [manager for manager, team in report_calendar.TEAM_OF.items() if role in team]
+
+
+async def _take_explanation(employee: dict[str, Any], text: str, replied: int | None, run_id: uuid.UUID,
+                            message_id: int | None = None, held: dict[str, Any] | None = None) -> str | None:
+    """The answer to this morning's ask (explanations.py), or None when the message is something else.
+
+    A reply to the ask always is; a plain message is when it isn't a command or a question («?»), no
+    report is owed right now (then it's the report's), and the AI agrees it answers the ask. ``held`` —
+    a file the person sent with «тушунтириш» — always is.
+    """
+    telegram_user_id = employee["telegram_user_id"]
+    waiting = await _waiting_explanations(telegram_user_id)
+    if not waiting:
+        return None
+    if held is None and not (replied and any(w.get("prompt_message_id") == replied for w in waiting)):
+        if not explanations.is_explanation(text):
+            return None
+        owed = await store.report_for_day(telegram_user_id, today_local())
+        if owed is not None and owed.get("status") == "asked":
+            return None
+        ask = explanations.ask_text(waiting[0]["kind"], names.call_name(employee), list(waiting[0]["days"]))
+        if not await _answers_ask(_plain(ask), text, run_id):
+            return None
+    rows = await store.answer_explanations([str(w["id"]) for w in waiting], text)
+    if not rows:
+        return None
+    person, role = names.person_name(employee), ROLE_LABELS.get(employee.get("role") or "", employee.get("role") or "")
+    roles = [DIRECTOR_ROLE, *explanation_managers(employee.get("role"))]
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+    ) as bot:
+        for row in rows:
+            card = explanations.card(person, role, row["kind"], list(row["days"]), text)
+            delivered = 0
+            for who in roles:
+                for boss in await store.active_employees_by_role(who):
+                    try:
+                        if held is not None:  # the file itself, the explanation as its caption
+                            await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                                "copyMessage", {"chat_id": str(boss["telegram_user_id"]), "from_chat_id": str(telegram_user_id),
+                                                "message_id": held["message_id"], "caption": card[:1024], "parse_mode": "HTML"},
+                                mode="notify", target_ref=str(boss["telegram_user_id"]))
+                        else:
+                            await bot.send_message(card, chat_id=str(boss["telegram_user_id"]))
+                        delivered += 1
+                    except Exception as exc:  # noqa: BLE001 — the next one still gets it
+                        log.error("Explanation not delivered: {}", type(exc).__name__)
+            await store.set_explanation_delivered(str(row["id"]), delivered)
+            held = None if delivered else held  # the file once is enough
+    await log_action(agent=AGENT, action="explanation_received", target_system="telegram", status="success",
+                     run_id=run_id, mode="notify", payload={"asks": len(rows)})
+    await _reply(telegram_user_id, run_id, explanations.thanks_text(), reply_to=message_id)
+    return "explanation_taken"
 
 
 def _plain(text: str | None) -> str:

@@ -2184,6 +2184,24 @@ async def flexible_schedule_ids() -> set[str]:
     return {r["verifix_id"] for r in await fetch_all("SELECT verifix_id FROM attendance_flexible")}
 
 
+async def attendance_start_times() -> dict[str, Any]:
+    """Verifix id -> the person's own start time (a ``datetime.time``), Admin Bot /grafik (2026-10-22)."""
+    return {r["verifix_id"]: r["start_time"] for r in await fetch_all("SELECT verifix_id, start_time FROM attendance_starts")}
+
+
+async def set_attendance_start(verifix_id: str, name: str, start: Any, set_by: str) -> None:
+    """A person's own start time, or None to go back to Verifix's schedule."""
+    if start is None:
+        await execute("DELETE FROM attendance_starts WHERE verifix_id = %s", (verifix_id,))
+        return
+    await execute(
+        """INSERT INTO attendance_starts (verifix_id, name, start_time, set_by) VALUES (%s, %s, %s, %s)
+           ON CONFLICT (verifix_id) DO UPDATE SET start_time = EXCLUDED.start_time, name = EXCLUDED.name,
+               set_by = EXCLUDED.set_by, set_at = now()""",
+        (verifix_id, name, start, set_by),
+    )
+
+
 async def toggle_flexible_schedule(verifix_id: str, name: str, set_by: str) -> bool:
     """Mark someone as on "эркин график", or take the mark off. Returns True if now marked."""
     removed = await fetch_one(
@@ -2671,4 +2689,61 @@ async def resolve_cheque(cheque_id: str, status: str, sent_count: int = 0) -> di
         RETURNING *
         """,
         (status, sent_count, cheque_id),
+    )
+
+
+# ---------------------------------------------------------------- explanations (2026-10-22, the Boss)
+
+
+async def create_explanation(employee: dict[str, Any], kind: str, asked_for: date, days: list[date]) -> dict[str, Any] | None:
+    """One ask per person, kind and day: the new row, or None when it was already asked."""
+    return await fetch_one(
+        """INSERT INTO explanations (employee_id, telegram_user_id, kind, asked_for, days)
+           VALUES (%s, %s, %s, %s, %s) ON CONFLICT (employee_id, kind, asked_for) DO NOTHING RETURNING *""",
+        (employee["id"], employee["telegram_user_id"], kind, asked_for, days),
+    )
+
+
+async def set_explanation_prompt(explanation_id: str, message_id: int | None) -> None:
+    await execute("UPDATE explanations SET prompt_message_id = %s WHERE id = %s", (message_id, explanation_id))
+
+
+async def open_explanations(telegram_user_id: int, hours: int = 36) -> list[dict[str, Any]]:
+    """This person's asks still waiting for an answer, newest first."""
+    return await fetch_all(
+        """SELECT * FROM explanations WHERE telegram_user_id = %s AND answered_at IS NULL AND prompt_message_id IS NOT NULL
+             AND asked_at > now() - make_interval(hours => %s) ORDER BY asked_at DESC""",
+        (telegram_user_id, hours),
+    )
+
+
+async def answer_explanations(ids: list[str], answer: str) -> list[dict[str, Any]]:
+    """The answer for these asks (one message can answer «absent» and «report» at once), once."""
+    return await fetch_all(
+        """UPDATE explanations SET answer = %s, answered_at = now() WHERE id = ANY(%s::uuid[]) AND answered_at IS NULL
+           RETURNING *""",
+        (answer, ids),
+    )
+
+
+async def set_explanation_delivered(explanation_id: str, count: int) -> None:
+    await execute("UPDATE explanations SET delivered = %s WHERE id = %s", (count, explanation_id))
+
+
+async def explanations_for(day: date) -> list[dict[str, Any]]:
+    """The asks about ``day``, with the person's name and role — for the next morning's summary."""
+    return await fetch_all(
+        """SELECT x.*, coalesce(nullif(e.full_name, ''), e.display_name) AS name, e.role
+           FROM explanations x JOIN employees e ON e.id = x.employee_id
+           WHERE x.asked_for = %s AND x.prompt_message_id IS NOT NULL ORDER BY name""",
+        (day,),
+    )
+
+
+async def missed_reports_of(day: date) -> list[dict[str, Any]]:
+    """The reports of ``day`` that never came (closed at 22:00 as missed)."""
+    return await fetch_all(
+        """SELECT r.employee_id, e.* FROM daily_reports r JOIN employees e ON e.id = r.employee_id
+           WHERE r.report_date = %s AND r.status = 'asked' AND e.status = 'active'""",
+        (day,),
     )

@@ -1218,3 +1218,35 @@ CREATE INDEX IF NOT EXISTS idx_employee_files_report ON employee_files (report_i
 -- A report the bot put together at 22:00 from what the person sent that day but never confirmed as the report
 -- (the button forgotten — human error, the owner 2026-10-22): counted as sent, no minus, marked.
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS auto_built BOOLEAN NOT NULL DEFAULT false;
+
+-- A person's own start time (2026-10-22, the owner: "some employees come at 10 a.m."): Admin Bot /grafik,
+-- by Verifix id. "Late" is counted from this time instead of Verifix's schedule start.
+CREATE TABLE IF NOT EXISTS attendance_starts (
+    verifix_id  TEXT         PRIMARY KEY,
+    name        TEXT         NOT NULL,
+    start_time  TIME         NOT NULL,
+    set_by      TEXT,
+    set_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- Explanations (2026-10-22, the Boss: «AI сўрасин, тушунтириш хати ёзиб беришсин»): each morning the bot asks
+-- whoever Verifix shows absent yesterday (with the days in a row) or whose report didn't come; the answer goes
+-- to the Boss (and the Garmin manager for his team) as a card. One ask per person, kind and day.
+CREATE TABLE IF NOT EXISTS explanations (
+    id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id        UUID         NOT NULL REFERENCES employees(id),
+    telegram_user_id   BIGINT       NOT NULL,
+    kind               TEXT         NOT NULL CHECK (kind IN ('absent', 'report')),
+    asked_for          DATE         NOT NULL,          -- the day it is about (yesterday at the ask)
+    days               DATE[]       NOT NULL,          -- every day it covers (absent several days in a row)
+    prompt_message_id  BIGINT,
+    asked_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    answer             TEXT,
+    answered_at        TIMESTAMPTZ,
+    delivered          INTEGER      NOT NULL DEFAULT 0,
+    CONSTRAINT uq_explanation UNIQUE (employee_id, kind, asked_for)
+);
+CREATE INDEX IF NOT EXISTS idx_explanations_open ON explanations (telegram_user_id, asked_at DESC) WHERE answered_at IS NULL;
+ALTER TABLE employee_files DROP CONSTRAINT IF EXISTS employee_files_purpose_check;
+ALTER TABLE employee_files ADD CONSTRAINT employee_files_purpose_check
+    CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation'));  -- explanation: 2026-10-22
