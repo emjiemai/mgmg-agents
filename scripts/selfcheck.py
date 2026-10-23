@@ -4935,6 +4935,12 @@ def test_pulse() -> None:
         check("only the page's own files are served", (boss.get("/pulse/static/pulse.js").status_code,
                                                       boss.get("/pulse/static/../app.py").status_code,
                                                       boss.get("/pulse/static/lightweight-charts.4.2.0.js").status_code), (200, 404, 200))
+        lib_res = boss.get("/pulse/static/lightweight-charts.4.2.0.js", headers={"Accept-Encoding": "gzip"})
+        font_res = boss.get("/pulse/static/NotoSans-Regular.woff2")
+        check_true("the library comes gzipped and kept a year; the fonts too",
+                   lib_res.headers.get("content-encoding") == "gzip" and "immutable" in lib_res.headers.get("cache-control", "")
+                   and font_res.status_code == 200 and font_res.headers.get("content-type") == "font/woff2"
+                   and "immutable" in font_res.headers.get("cache-control", ""))
     finally:
         restore()
     lib = load_source("integrations/api/static/lightweight-charts.4.2.0.js")
@@ -4952,6 +4958,58 @@ def test_pulse() -> None:
     html = load_source("integrations/api/static/pulse.html")
     check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE"}) == []
                and "<script>" not in html)
+
+    # ---- speed (2026-10-23): a kept answer at once, an old one rebuilt behind it; one Verifix read shared
+    builds: list = []
+
+    async def speed() -> tuple:
+        box: dict = {}
+
+        async def build():
+            builds.append(1)
+            await asyncio.sleep(0)
+            return len(builds)
+
+        first = await data._cached(box, "k", 60, build)
+        again = await data._cached(box, "k", 60, build)
+        box["k"] = (box["k"][0] - 120, box["k"][1])  # aged out
+        stale = await data._cached(box, "k", 60, build)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        fresh = await data._cached(box, "k", 60, build)
+        return first, again, stale, fresh, len(builds)
+
+    check("the first ask waits; then the kept answer at once; an old one is answered at once and rebuilt behind it",
+          asyncio.run(speed()), (1, 1, 1, 2, 2))
+    loads: list = []
+
+    async def fake_load(begin, end, run_id, agent, now=None):
+        loads.append((begin, end))
+        return [att.DayRecord(employee_id="v1", name="Ширин Умматова", job="", day=begin + timedelta(days=i), working=True,
+                              status="on_time") for i in range((end - begin).days + 1)]
+
+    patch(att, "load", fake_load)
+    data._sources.clear()
+    try:
+        wide = asyncio.run(data._attendance(date(2026, 9, 1), date(2026, 10, 22), uuid.uuid4(), 600))
+        one = asyncio.run(data._attendance(date(2026, 10, 22), date(2026, 10, 22), uuid.uuid4(), 600))
+        month = asyncio.run(data._attendance(date(2026, 9, 23), date(2026, 10, 22), uuid.uuid4(), 600))
+    finally:
+        restore()
+        data._sources.clear()
+    check("Verifix read once for the 60 days; today's tape and a person's month cut from it",
+          (len(loads), len(wide), [r.day for r in one], len(month)), (1, 52, [date(2026, 10, 22)], 30))
+    builds_src = inspect.getsource(data._build_overview)
+    check_true("the sources are read at the same time", "asyncio.gather(" in builds_src
+               and "asyncio.gather(" in inspect.getsource(data._build_tape) and "asyncio.gather(" in inspect.getsource(data.person))
+    app_src = load_source("integrations/api/app.py")
+    check_true("gzip on; PULSE kept warm for the Director and the Garmin manager's team",
+               "GZipMiddleware" in app_src and "pulse_data.keep_warm(" in app_src)
+    css = load_source("integrations/api/static/pulse.css")
+    fonts = [Path("integrations/api/static") / f"NotoSans-{w}.woff2" for w in ("Regular", "Bold")]
+    check_true("fonts: Latin + Cyrillic WOFF2 subsets (< 60 KB each, ў қ ғ ҳ kept), never the 500 KB TTFs",
+               all(f.exists() and f.stat().st_size < 60_000 for f in fonts) and ".ttf" not in css and ".woff2" in css
+               and "woff2" in load_source("integrations/reports/fonts/LICENSE.md"))
 
     # ---- the bot: /pulse for the Director and the Garmin manager only
     check_true("/pulse in the Director's and the Garmin manager's ☰ menus, not the employees'",

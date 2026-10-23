@@ -4,6 +4,18 @@
 
   const state = { days: 30, sector: "all", overview: null, tapeSeen: new Set(), person: null, personDay: null };
   const $ = (id) => document.getElementById(id);
+  const COLORS = ["--accent", "--accent-2", "--accent-3", "--accent", "--accent-2", "--accent-4"];
+
+  // the theme: what the viewer chose (kept in this browser), else the device's
+  function setTheme(name) {
+    document.documentElement.dataset.theme = name;
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.content = name;
+    document.querySelectorAll("[data-theme-toggle]").forEach((b) => b.setAttribute("aria-pressed", String(name === "light")));
+  }
+  let kept = null;
+  try { kept = localStorage.getItem("pulse-theme"); } catch (e) { /* private window */ }
+  setTheme(kept || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
   const NS = "http://www.w3.org/2000/svg";
   const TAPE_EVERY = 60 * 1000;
   const OVERVIEW_EVERY = 5 * 60 * 1000;
@@ -59,12 +71,16 @@
     const nums = pts.map(([, v]) => v);
     const lo = Math.min(...nums), hi = Math.max(...nums), span = hi - lo || 1, step = w / Math.max(1, values.length - 1);
     const y = (v) => h - 3 - ((v - lo) / span) * (h - 6);
-    let line = "", lastX = 0, lastY = 0;
-    pts.forEach(([i, v], k) => {
-      const X = (i * step).toFixed(1), Y = y(v).toFixed(1);
-      line += `${k ? "L" : "M"}${X},${Y}`;
-      lastX = X; lastY = Y;
-    });
+    // a smooth curve through the points (Catmull-Rom as cubic Béziers)
+    const xy = pts.map(([i, v]) => [i * step, y(v)]);
+    let line = `M${xy[0][0].toFixed(1)},${xy[0][1].toFixed(1)}`;
+    for (let k = 0; k < xy.length - 1; k++) {
+      const p0 = xy[k - 1] || xy[k], p1 = xy[k], p2 = xy[k + 1], p3 = xy[k + 2] || p2;
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      line += `C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    const lastX = xy[xy.length - 1][0].toFixed(1), lastY = xy[xy.length - 1][1].toFixed(1);
     const firstX = (pts[0][0] * step).toFixed(1);
     const area = `${line}L${lastX},${h}L${firstX},${h}Z`;
     s.appendChild(svgEl("path", { class: "a", d: area }));
@@ -111,8 +127,9 @@
   function renderTickers(tickers) {
     const box = $("tickers");
     box.textContent = "";
-    tickers.forEach((t) => {
+    tickers.forEach((t, i) => {
       const item = el("article", "ticker");
+      item.style.setProperty("--c", `var(${COLORS[i % COLORS.length]})`);
       item.appendChild(el("span", "label", t.label));
       const value = el("span", "value");
       if (t.value === null || t.value === undefined) {
@@ -124,11 +141,11 @@
         if (unit) value.appendChild(el("small", null, unit));
       }
       item.appendChild(value);
-      const d = el("span");
+      const foot = el("div", "foot"), d = el("span");
       delta(d, t.delta, { invert: t.invert, pct: t.unit === "som" });
-      d.classList.add("delta");
-      item.appendChild(d);
-      item.appendChild(spark(t.spark || [], 120, 26));
+      foot.appendChild(d);
+      foot.appendChild(spark(t.spark || [], 84, 30));
+      item.appendChild(foot);
       box.appendChild(item);
     });
   }
@@ -147,11 +164,11 @@
   let chart = null, area = null, bars = null;
   function chartOptions() {
     return {
-      layout: { background: { type: "solid", color: css("--ground") }, textColor: css("--ink-3"), fontFamily: "Noto Sans, system-ui, sans-serif", fontSize: 12 },
+      layout: { background: { type: "solid", color: css("--card") }, textColor: css("--ink-3"), fontFamily: "Noto Sans, system-ui, sans-serif", fontSize: 12 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--rule") } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.34 } },
       timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true, lockVisibleTimeRangeOnResize: true },
-      crosshair: { mode: 1, vertLine: { color: css("--ink-3"), labelBackgroundColor: css("--ink") }, horzLine: { color: css("--ink-3"), labelBackgroundColor: css("--ink") } },
+      crosshair: { mode: 1, vertLine: { color: css("--ink-3"), labelBackgroundColor: css("--card-2") }, horzLine: { color: css("--ink-3"), labelBackgroundColor: css("--card-2") } },
       handleScroll: false, handleScale: false,
       localization: { locale: "ru-RU", dateFormat: "dd.MM.yyyy" },
     };
@@ -161,7 +178,7 @@
     chart = LightweightCharts.createChart($("chart"), { ...chartOptions(), autoSize: true });
     bars = chart.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "custom", formatter: (v) => som(v).join(" ") }, lastValueVisible: false, priceLineVisible: false });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-    area = chart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "price", precision: 0, minMove: 1 } });
+    area = chart.addAreaSeries({ lineWidth: 3, lineType: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerRadius: 5, priceFormat: { type: "price", precision: 0, minMove: 1 } });
     chart.subscribeCrosshairMove((param) => legend(param.time ? param : null));
     paintChart();
   }
@@ -180,14 +197,14 @@
   function paintChart() {
     if (!chart) return;
     chart.applyOptions(chartOptions());
-    area.applyOptions({ lineColor: css("--line"), topColor: css("--area"), bottomColor: css("--area"), crosshairMarkerBackgroundColor: css("--line") });
+    area.applyOptions({ lineColor: css("--accent"), topColor: css("--area-top"), bottomColor: css("--area-bottom"), crosshairMarkerBackgroundColor: css("--card"), crosshairMarkerBorderColor: css("--accent") });
     if (state.overview) setChartData(state.overview);
   }
   function setChartData(o) {
     if (!chart) return;
     area.setData(o.index.series.map((p) => (p.v === null ? { time: p.d } : { time: p.d, value: p.v })));
     const last = o.index.volume.length - 1;
-    bars.setData(o.index.volume.map((p, i) => (p.v === null || p.v === undefined ? { time: p.d } : { time: p.d, value: p.v, color: i === last ? css("--ink-3") : css("--bars") })));
+    bars.setData(o.index.volume.map((p, i) => (p.v === null || p.v === undefined ? { time: p.d } : { time: p.d, value: p.v, color: i === last ? css("--bars-last") : css("--bars") })));
     chart.timeScale().fitContent();
     legend(null);
   }
@@ -203,25 +220,57 @@
     const list = $("tape");
     const first = state.tapeSeen.size === 0;
     list.textContent = "";
-    if (!items.length) { list.appendChild(el("li", "empty", "Ҳали ҳаракат йўқ")); return; }
+    if (!items.length) { list.appendChild(el("li", "empty", "Ҳали ҳаракат йўқ")); $("today-count").textContent = "0"; return; }
     items.forEach((it) => {
       const key = `${it.t}|${it.pid}|${it.label}|${it.detail}`;
       const li = el("li");
       if (!first && !state.tapeSeen.has(key)) li.classList.add("fresh");
       state.tapeSeen.add(key);
-      li.appendChild(el("span", "t", it.t));
-      li.appendChild(icon(it.kind));
+      const badge = el("span", "badge");
+      badge.appendChild(icon(it.kind));
+      li.appendChild(badge);
       const what = el("span", "what");
       if (it.pid) {
         const who = el("button", "who", it.who);
         who.type = "button";
         who.addEventListener("click", () => openPerson(it.pid));
         what.appendChild(who);
-        what.appendChild(document.createTextNode(" "));
       }
-      what.appendChild(el("span", "act", it.label));
-      if (it.detail) { what.appendChild(document.createTextNode(" ")); what.appendChild(el("span", "det", it.detail)); }
+      const act = el("span", "act", it.label);
+      if (it.detail) { act.appendChild(document.createTextNode(" · ")); act.appendChild(el("span", "det", it.detail)); }
+      what.appendChild(act);
       li.appendChild(what);
+      li.appendChild(el("span", "t", it.t));
+      list.appendChild(li);
+    });
+    $("today-count").textContent = fmtInt.format(items.length);
+  }
+
+  // a person's initials on a colour of their own
+  function avatar(name, id) {
+    const words = String(name || "").trim().split(/\s+/);
+    const a = el("span", "avatar", ((words[0] || "")[0] || "") + ((words[1] || "")[0] || ""));
+    let h = 0;
+    for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    a.style.setProperty("--c", `var(${["--accent", "--accent-2", "--accent-3", "--accent-4"][h % 4]})`);
+    return a;
+  }
+
+  // ---- businesses: each one's score as a bar -----------------------------------------------------------------
+  function renderMix(o) {
+    const list = $("mix");
+    list.textContent = "";
+    const colors = { garmin: "--accent", primus: "--accent-2", londry: "--accent-3", office: "--accent-4" };
+    if (!o.sectors.length) { list.appendChild(el("li", "empty", "—")); return; }
+    o.sectors.forEach((s) => {
+      const li = el("li");
+      li.style.setProperty("--c", `var(${colors[s.key] || "--accent"})`);
+      li.appendChild(el("span", "name", s.label));
+      li.appendChild(el("span", "pct", s.score === null ? "—" : `${fmtInt.format(s.score)}%`));
+      const track = el("span", "track"), fill = el("span", "fill");
+      fill.style.width = `${Math.max(0, Math.min(100, s.score || 0))}%`;
+      track.appendChild(fill);
+      li.appendChild(track);
       list.appendChild(li);
     });
   }
@@ -256,11 +305,12 @@
       tr.appendChild(el("td", "n", String(i + 1)));
       const who = el("td"), cell = el("div", "person-cell");
       const state_ = p.today === "on_time" || p.today === "present" ? "in" : p.today === "late" ? "late" : p.today === "absent" ? "absent" : "";
+      const av = avatar(p.name, p.id);
       const dot = el("span", `dot ${state_}`);
       const said = { in: "Келди", late: "Кечикди", absent: "Келмади" }[state_];
-      if (said) { dot.title = said; cell.appendChild(el("span", "sr", said)); }
-      dot.setAttribute("aria-hidden", "true");
-      cell.appendChild(dot);
+      if (said) { av.title = said; cell.appendChild(el("span", "sr", said)); }
+      av.appendChild(dot);
+      cell.appendChild(av);
       const btn = el("button");
       btn.type = "button";
       btn.appendChild(el("span", "name", p.name));
@@ -270,7 +320,7 @@
       who.appendChild(cell);
       tr.appendChild(who);
       const sp = el("td", "spark-cell");
-      sp.appendChild(spark(p.spark, 120, 26));
+      sp.appendChild(spark(p.spark, 150, 30));
       tr.appendChild(sp);
       tr.appendChild(el("td", `num score${p.score === null ? " none" : ""}`, p.score === null ? "—" : fmtInt.format(p.score)));
       const dc = el("td", "num"), d = el("span");
@@ -303,6 +353,9 @@
   }
   function renderPerson(p) {
     $("p-name").textContent = p.name;
+    const big = avatar(p.name, p.id);
+    $("p-avatar").textContent = big.textContent;
+    $("p-avatar").style.setProperty("--c", big.style.getPropertyValue("--c"));
     $("p-role").textContent = p.role;
     // the board's own score for the period (one number per person everywhere); the line's average only without it
     const row = state.overview && state.overview.people.find((x) => x.id === p.id);
@@ -313,15 +366,15 @@
     if (!pChart && window.LightweightCharts) {
       pChart = LightweightCharts.createChart($("p-chart"), { ...chartOptions(), autoSize: true });
       pChart.applyOptions({ rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.08 } } });
-      pArea = pChart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, priceFormat: { type: "price", precision: 0, minMove: 1 } });
+      pArea = pChart.addAreaSeries({ lineWidth: 3, lineType: 2, priceLineVisible: false, priceFormat: { type: "price", precision: 0, minMove: 1 } });
       pChart.subscribeClick((param) => { if (param.time && state.person) openPerson(state.person, param.time); });
       pChart.subscribeCrosshairMove((param) => parts(param && param.time ? param.time : state.personDay));
     }
     if (pChart) {
       pChart.applyOptions(chartOptions());
-      pArea.applyOptions({ lineColor: css("--line"), topColor: css("--area"), bottomColor: css("--area") });
+      pArea.applyOptions({ lineColor: css("--accent"), topColor: css("--area-top"), bottomColor: css("--area-bottom") });
       pArea.setData(p.line.map((x) => (x.v === null ? { time: x.d } : { time: x.d, value: x.v })));
-      pArea.setMarkers([{ time: p.day, position: "aboveBar", color: css("--ink"), shape: "circle", size: 0.6 }]);
+      pArea.setMarkers([{ time: p.day, position: "aboveBar", color: css("--accent"), shape: "circle", size: 0.7 }]);
       pChart.timeScale().fitContent();
     }
     state.personDay = p.day;
@@ -340,7 +393,9 @@
     p.timeline.forEach((it) => {
       const li = el("li");
       li.appendChild(el("span", "t", it.t || "—"));
-      li.appendChild(icon(it.kind));
+      const badge = el("span", "badge");
+      badge.appendChild(icon(it.kind));
+      li.appendChild(badge);
       const what = el("span");
       what.appendChild(el("span", "label", it.label));
       if (it.detail) what.appendChild(el("span", "det", it.detail));
@@ -380,6 +435,7 @@
       renderIndex(o);
       if (state.sector !== "all" && !o.sectors.some((s) => s.key === state.sector)) state.sector = "all";
       renderSectors(o);
+      renderMix(o);
       renderBoard(o);
       notice(null);
     } catch (e) {
@@ -403,15 +459,29 @@
   });
   $("person-close").addEventListener("click", closePerson);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("person").hidden) closePerson(); });
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  function repaint() {
     paintChart();
-    if (state.overview) { renderTickers(state.overview.tickers); renderBoard(state.overview); }
+    if (state.overview) { renderTickers(state.overview.tickers); renderMix(state.overview); renderBoard(state.overview); }
     if (state.person) openPerson(state.person, state.personDay);
+  }
+  document.querySelectorAll("[data-theme-toggle]").forEach((b) => b.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    setTheme(next);
+    try { localStorage.setItem("pulse-theme", next); } catch (e) { /* the choice just isn't kept */ }
+    repaint();
+  }));
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
+    let kept = null;
+    try { kept = localStorage.getItem("pulse-theme"); } catch (err) { /* none */ }
+    if (!kept) { setTheme(e.matches ? "light" : "dark"); repaint(); }
   });
 
   skeleton();
   loadOverview();
   loadTape();
+  document.querySelectorAll(".rail-link[href]").forEach((a) => a.addEventListener("click", () => {
+    document.querySelectorAll(".rail-link").forEach((x) => x.classList.toggle("on", x === a));
+  }));
   setInterval(loadTape, TAPE_EVERY);
   setInterval(loadOverview, OVERVIEW_EVERY);
 })();

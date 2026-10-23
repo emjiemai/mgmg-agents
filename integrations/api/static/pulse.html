@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <meta name="robots" content="noindex, nofollow">
 <title>PULSE</title>
 <link rel="stylesheet" href="/pulse/static/pulse.css">
@@ -11,48 +11,68 @@
 <script src="/pulse/static/pulse.js" defer></script>
 </head>
 <body>
-<header class="bar">
-  <h1 class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 13h4l2.5-6 4 11 3-8 1.5 3H22"/></svg>PULSE</h1>
-  <p class="asof" id="asof"></p>
-  <div class="range" role="group" aria-label="Давр">
-    <button type="button" data-days="7" aria-pressed="false">7 кун</button>
-    <button type="button" data-days="30" aria-pressed="true">30 кун</button>
-    <button type="button" data-days="90" aria-pressed="false">90 кун</button>
-  </div>
-</header>
+<nav class="rail" aria-label="Бўлимлар">
+  <span class="rail-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 13h4l2.5-6 4 11 3-8 1.5 3H22"/></svg></span>
+  <a class="rail-link" href="#market" aria-label="Индекс"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 16l4-5 4 3 6-8"/></svg></a>
+  <a class="rail-link" href="#board-card" aria-label="Ходимлар"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.6c2 .7 3.2 2.5 3.6 5.4"/></svg></a>
+  <a class="rail-link" href="#tape-card" aria-label="Бугун"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></a>
+  <button class="rail-link theme" type="button" data-theme-toggle aria-label="Тема"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="moon" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><g class="sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button>
+</nav>
 
-<main class="screen" id="screen" aria-busy="true">
-  <section class="tickers" id="tickers" aria-label="Кўрсаткичлар"></section>
-
-  <section class="market" aria-labelledby="index-title">
-    <div class="quote">
-      <h2 class="symbol" id="index-title">Индекс</h2>
-      <p class="price"><span class="value" id="index-value">—</span><span class="delta" id="index-delta"></span></p>
-      <p class="legend" aria-hidden="true"><span class="when" id="hover-day"></span><span class="key key-line"></span>Индекс<b id="hover-index"></b><span class="key key-bars"></span>Сотув<b id="hover-sales"></b></p>
+<div class="app">
+  <header class="top">
+    <div class="title">
+      <h1>PULSE</h1>
+      <p class="asof" id="asof"></p>
     </div>
-    <div class="chart" id="chart"></div>
-  </section>
-
-  <aside class="tape" aria-labelledby="tape-title">
-    <div class="tape-head"><h2 id="tape-title">Бугун</h2><span class="live" aria-hidden="true"></span></div>
-    <ol class="tape-list" id="tape"></ol>
-  </aside>
-
-  <section class="board" aria-labelledby="board-title">
-    <div class="board-head">
-      <h2 id="board-title">Ходимлар</h2>
-      <div class="sectors" id="sectors" role="group" aria-label="Бизнес"></div>
+    <div class="range" role="group" aria-label="Давр">
+      <button type="button" data-days="7" aria-pressed="false">7 кун</button>
+      <button type="button" data-days="30" aria-pressed="true">30 кун</button>
+      <button type="button" data-days="90" aria-pressed="false">90 кун</button>
     </div>
-    <table class="rows">
-      <thead><tr><th class="n" scope="col">#</th><th scope="col">Ходим</th><th class="spark-col" scope="col">Давр</th><th class="num" scope="col">Балл</th><th class="num" scope="col">Ўзгариш</th></tr></thead>
-      <tbody id="board"></tbody>
-    </table>
-  </section>
-</main>
+    <button class="icon-btn theme top-theme" type="button" data-theme-toggle aria-label="Тема"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="moon" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><g class="sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button>
+  </header>
+
+  <main class="screen" id="screen" aria-busy="true">
+    <section class="tickers" id="tickers" aria-label="Кўрсаткичлар"></section>
+
+    <section class="card market" id="market" aria-labelledby="index-title">
+      <div class="card-head">
+        <h2 id="index-title">Индекс</h2>
+        <p class="price"><span class="value" id="index-value">—</span><span class="delta" id="index-delta"></span></p>
+        <p class="legend" aria-hidden="true"><span class="when" id="hover-day"></span><span class="key key-line"></span>Индекс<b id="hover-index"></b><span class="key key-bars"></span>Сотув<b id="hover-sales"></b></p>
+      </div>
+      <div class="chart" id="chart"></div>
+    </section>
+
+    <section class="card mix" aria-labelledby="mix-title">
+      <h2 id="mix-title">Бизнеслар</h2>
+      <ul class="bars" id="mix"></ul>
+      <p class="big"><span class="big-n" id="today-count">—</span><span class="big-l">Бугун ҳаракат</span></p>
+    </section>
+
+    <section class="card board" id="board-card" aria-labelledby="board-title">
+      <div class="card-head">
+        <h2 id="board-title">Ходимлар</h2>
+        <div class="sectors" id="sectors" role="group" aria-label="Бизнес"></div>
+      </div>
+      <table class="rows">
+        <thead><tr><th class="n" scope="col">#</th><th scope="col">Ходим</th><th class="spark-col" scope="col">Давр</th><th class="num" scope="col">Балл</th><th class="num" scope="col">Ўзгариш</th></tr></thead>
+        <tbody id="board"></tbody>
+      </table>
+    </section>
+
+    <aside class="card tape" id="tape-card" aria-labelledby="tape-title">
+      <div class="card-head"><h2 id="tape-title">Бугун</h2><span class="live" aria-hidden="true"></span></div>
+      <ol class="tape-list" id="tape"></ol>
+    </aside>
+  </main>
+</div>
 
 <aside class="person" id="person" hidden aria-labelledby="p-name">
   <div class="person-head">
     <button class="icon-btn" type="button" id="person-close" aria-label="Ёпиш"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <span class="avatar big-avatar" id="p-avatar" aria-hidden="true"></span>
     <div class="who">
       <h2 id="p-name"></h2>
       <p id="p-role"></p>

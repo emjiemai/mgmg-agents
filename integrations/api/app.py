@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
@@ -52,6 +53,8 @@ from integrations.common.logging_setup import setup_logging
 from integrations.garmin import leads as garmin_leads
 from integrations.org_bot import admin as org_admin
 from integrations.org_bot import ops_manager as org_ops_manager
+from integrations.org_bot import report_calendar
+from integrations.pulse import data as pulse_data
 from integrations.sap import push_handler as sap_push_handler
 from integrations.telegram.bot import ack_soon
 
@@ -69,6 +72,7 @@ app.include_router(db_viewer.router)
 app.include_router(feedback_page.router)
 app.include_router(review_page.router)
 app.include_router(pulse_page.router)
+app.add_middleware(GZipMiddleware, minimum_size=1024)  # PULSE's chart library and data: ~4× smaller (2026-10-23)
 
 
 @app.on_event("shutdown")
@@ -141,6 +145,8 @@ async def _startup() -> None:
     app.state.complaint_loop = asyncio.create_task(_complaint_status_loop())
     app.state.report_close_loop = asyncio.create_task(_report_close_loop())
     app.state.menus = asyncio.create_task(_set_menus())
+    # PULSE ready before the Boss / the Garmin manager opens it: everyone, and the Garmin manager's team.
+    app.state.pulse_warm = asyncio.create_task(pulse_data.keep_warm([None, report_calendar.TEAM_OF["garmin_manager"]]))
 
 
 @app.get("/health")

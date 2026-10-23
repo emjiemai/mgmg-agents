@@ -4,10 +4,15 @@ Read-only. Sources: the bot's own tables (tasks and their events, daily reports,
 complaints), Verifix attendance (live), BILLZ shop sales (live), SAP sales (the latest push). A source
 that can't be read leaves its part empty — never a guessed zero. Built for a period of 7, 30 or 90 days,
 with the period before it for the ▲▼; kept ``CACHE_SECONDS`` per scope.
+
+Speed (2026-10-23): the sources are read at the same time; Verifix and BILLZ are read once and shared by
+the scopes, one person's panel and the tape; a kept answer is given at once while an old one is rebuilt in
+the background; ``keep_warm`` rebuilds the usual views in working hours, so the page never waits on them.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections import defaultdict
@@ -29,6 +34,8 @@ NOT_SCORED = ("operatsion_direktor", "garmin_manager")  # the Boss and the Garmi
 BUSINESS = {"garmin_sotuv": "garmin", "b2b_sotuv": "primus", "londry": "londry"}  # everyone else: the office
 BUSINESS_LABELS = {"garmin": "Garmin", "primus": "Primus", "londry": "Londry", "office": "Офис"}
 _cache: dict[tuple[int, tuple[str, ...] | None], tuple[float, dict[str, Any]]] = {}
+_sources: dict[tuple[str, date, date], tuple[float, Any]] = {}  # raw Verifix / BILLZ reads, shared by every view
+_building: dict[tuple[int, Any], asyncio.Task] = {}
 
 
 @dataclass
@@ -69,7 +76,34 @@ async def people(roles: tuple[str, ...] | None) -> list[Person]:
     return out
 
 
-async def _verifix(start: date, end: date, staff: list[Person], run_id: uuid.UUID) -> list[Any] | None:
+def _kept(source: str, start: date, end: date, max_age: float) -> list[Any] | None:
+    """A fresh raw read of ``source`` that covers ``start``..``end``, cut to it; None when there is none."""
+    for (name, s, e), (at, rows) in list(_sources.items()):
+        if name == source and s <= start and end <= e and time.monotonic() - at < max_age:
+            return [r for r in rows if start <= r[0] <= end]
+    return None
+
+
+def _keep(source: str, start: date, end: date, rows: list[Any]) -> None:
+    _sources[(source, start, end)] = (time.monotonic(), rows)
+    if len(_sources) > 12:
+        _sources.pop(next(iter(_sources)))
+
+
+async def _attendance(start: date, end: date, run_id: uuid.UUID, max_age: float) -> list[Any]:
+    """Verifix's judged days, from a shared read when one is fresh enough (raises when Verifix can't be read)."""
+    kept = _kept("verifix", start, end, max_age)
+    if kept is not None:
+        return [r for _, r in kept]
+    from integrations.verifix import attendance
+
+    recs = await attendance.load(start, end, run_id, AGENT, now=now_local().replace(tzinfo=None))
+    _keep("verifix", start, end, [(r.day, r) for r in recs])
+    return recs
+
+
+async def _verifix(start: date, end: date, staff: list[Person], run_id: uuid.UUID,
+                   max_age: float = CACHE_SECONDS) -> list[Any] | None:
     """Verifix days of the period, each tied to a person (by name); None when Verifix can't be read."""
     from integrations.common.config import settings
     from integrations.org_bot import explanations
@@ -77,9 +111,7 @@ async def _verifix(start: date, end: date, staff: list[Person], run_id: uuid.UUI
     if not settings.verifix_configured:
         return None
     try:
-        from integrations.verifix import attendance
-
-        recs = await attendance.load(start, end, run_id, AGENT, now=now_local().replace(tzinfo=None))
+        recs = await _attendance(start, end, run_id, max_age)
     except Exception as exc:  # noqa: BLE001 — attendance stays empty, the rest still shows
         log.warning("Verifix not read: {}", type(exc).__name__)
         return None
@@ -135,20 +167,26 @@ async def _billz(start: date, end: date, run_id: uuid.UUID) -> dict[date, float]
 
     if not settings.billz_configured:
         return None
-    try:
-        from integrations.billz.client import BillzClient
-
-        async with BillzClient(agent=AGENT, run_id=run_id) as client:
-            rows = await client.shop_days(start, end)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Billz not read: {}", type(exc).__name__)
-        return None
-    out: dict[date, float] = defaultdict(float)
-    for r in rows:
+    kept = _kept("billz", start, end, CACHE_SECONDS)
+    if kept is None:
         try:
-            out[date.fromisoformat(str(r.get("date") or "")[:10])] += float(r.get("net_gross_sales") or 0)
-        except (TypeError, ValueError):
-            continue
+            from integrations.billz.client import BillzClient
+
+            async with BillzClient(agent=AGENT, run_id=run_id) as client:
+                rows = await client.shop_days(start, end)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Billz not read: {}", type(exc).__name__)
+            return None
+        kept = []
+        for r in rows:
+            try:
+                kept.append((date.fromisoformat(str(r.get("date") or "")[:10]), float(r.get("net_gross_sales") or 0)))
+            except (TypeError, ValueError):
+                continue
+        _keep("billz", start, end, kept)
+    out: dict[date, float] = defaultdict(float)
+    for day, amount in kept:
+        out[day] += amount
     return dict(out)
 
 
@@ -304,26 +342,73 @@ def assemble(staff: list[Person], data: dict[str, list[dict[str, Any]]], recs: l
     }
 
 
-async def overview(days: int, roles: tuple[str, ...] | None) -> dict[str, Any]:
-    """The page's data for a period and a scope (None = everyone), from the cache when fresh."""
-    days = days if days in RANGES else 30
-    key = (days, roles)
-    hit = _cache.get(key)
-    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+async def _cached(cache: dict[Any, tuple[float, Any]], key: Any, ttl: float, build: Any) -> Any:
+    """A kept answer at once; an old one is rebuilt in the background (one build per key at a time).
+
+    Only the very first ask of a key waits for its build.
+    """
+    hit = cache.get(key)
+    if hit and time.monotonic() - hit[0] < ttl:
         return hit[1]
+    slot = (id(cache), key)
+    task = _building.get(slot)
+    if task is None:
+        async def run() -> Any:
+            result = await build()
+            cache[key] = (time.monotonic(), result)
+            if len(cache) > 12:
+                cache.pop(next(iter(cache)))
+            return result
+
+        task = asyncio.create_task(run())
+        _building[slot] = task
+
+        def done(t: asyncio.Task) -> None:
+            _building.pop(slot, None)
+            if not t.cancelled() and t.exception() is not None and hit:
+                log.warning("PULSE rebuild failed: {}", type(t.exception()).__name__)
+
+        task.add_done_callback(done)
+    if hit:
+        return hit[1]
+    return await asyncio.shield(task)
+
+
+async def _build_overview(days: int, roles: tuple[str, ...] | None) -> dict[str, Any]:
     now = now_local()
     start = now.date() - timedelta(days=2 * days - 1)
     run_id = uuid.uuid4()
     staff = await people(roles)
-    data = await _db(start, now.date(), [p.id for p in staff], roles is not None)
-    recs = await _verifix(start, now.date(), staff, run_id)
-    sap = await _sap_sales(start, now.date(), roles is not None)
-    billz = await _billz(start, now.date(), run_id)
-    result = assemble(staff, data, recs, sap, billz, days, now)
-    _cache[key] = (time.monotonic(), result)
-    if len(_cache) > 12:
-        _cache.pop(next(iter(_cache)))
-    return result
+    data, recs, sap, billz = await asyncio.gather(
+        _db(start, now.date(), [p.id for p in staff], roles is not None),
+        _verifix(start, now.date(), staff, run_id),
+        _sap_sales(start, now.date(), roles is not None),
+        _billz(start, now.date(), run_id))
+    return assemble(staff, data, recs, sap, billz, days, now)
+
+
+async def overview(days: int, roles: tuple[str, ...] | None) -> dict[str, Any]:
+    """The page's data for a period and a scope (None = everyone), from the cache when kept."""
+    days = days if days in RANGES else 30
+    return await _cached(_cache, (days, roles), CACHE_SECONDS, lambda: _build_overview(days, roles))
+
+
+WARM_HOURS = range(8, 21)  # Tashkent time: the views are kept ready while people work
+
+
+async def keep_warm(scopes: list[tuple[str, ...] | None]) -> None:
+    """Rebuild the 30-day view and the tape of each scope before they age out, in working hours (background loop)."""
+    first = True
+    while True:
+        if first or now_local().hour in WARM_HOURS:
+            for roles in scopes:
+                try:
+                    await overview(30, roles)
+                    await tape(roles)
+                except Exception as exc:  # noqa: BLE001 — the next round tries again
+                    log.warning("PULSE warm-up failed: {}", type(exc).__name__)
+        first = False
+        await asyncio.sleep(CACHE_SECONDS - 60)
 
 
 # ---- one person ---------------------------------------------------------------------------------------------
@@ -371,9 +456,17 @@ async def person(person_id: str, days: int, day: date | None, roles: tuple[str, 
     now = now_local()
     start = now.date() - timedelta(days=days - 1)
     day = day if day and start <= day <= now.date() else now.date()
-    data = await _db(start, now.date(), [me.id], False)
-    recs = await _verifix(start, now.date(), [me], uuid.uuid4()) or []
-    att = {r.day: r for r in recs}
+    data, recs, events, explanations_ = await asyncio.gather(
+        _db(start, now.date(), [me.id], False),
+        _verifix(start, now.date(), [me], uuid.uuid4()),
+        fetch_all(
+            """SELECT e.at, e.event, t.code, t.task_summary FROM task_events e JOIN tasks t ON t.id = e.task_id
+               WHERE t.assigned_employee_id::text = %s AND (e.at AT TIME ZONE 'Asia/Tashkent')::date = %s ORDER BY e.at""",
+            (me.id, day)),
+        fetch_all(
+            "SELECT answered_at FROM explanations WHERE employee_id::text = %s AND (answered_at AT TIME ZONE 'Asia/Tashkent')::date = %s",
+            (me.id, day)))
+    att = {r.day: r for r in recs or []}
     reports = {r["report_date"]: r for r in data["reports"]}
     line = []
     for d in _days(start, now.date()):
@@ -383,13 +476,6 @@ async def person(person_id: str, days: int, day: date | None, roles: tuple[str, 
                  "tasks": sc.task_value(data["tasks"], d, _local_day)}
         line.append({"d": d.isoformat(), "v": sc.day_score(parts),
                      "parts": {k: None if v is None else round(100 * v) for k, v in parts.items()}})
-    events = await fetch_all(
-        """SELECT e.at, e.event, t.code, t.task_summary FROM task_events e JOIN tasks t ON t.id = e.task_id
-           WHERE t.assigned_employee_id::text = %s AND (e.at AT TIME ZONE 'Asia/Tashkent')::date = %s ORDER BY e.at""",
-        (me.id, day))
-    explanations_ = await fetch_all(
-        "SELECT answered_at FROM explanations WHERE employee_id::text = %s AND (answered_at AT TIME ZONE 'Asia/Tashkent')::date = %s",
-        (me.id, day))
     return {"id": me.id, "name": me.name, "role": me.role_label, "business": me.business, "line": line,
             "day": day.isoformat(), "timeline": timeline(day, att.get(day), events, reports.get(day), explanations_)}
 
@@ -443,29 +529,29 @@ def tape_items(staff: list[Person], recs: list[Any] | None, events: list[dict[st
     return rows[:TAPE_MAX]
 
 
-async def tape(roles: tuple[str, ...] | None) -> list[dict[str, Any]]:
-    hit = _tape_cache.get(roles)
-    if hit and time.monotonic() - hit[0] < TAPE_SECONDS:
-        return hit[1]
+async def _build_tape(roles: tuple[str, ...] | None) -> list[dict[str, Any]]:
     today = now_local().date()
     staff = await people(roles)
     ids = [p.id for p in staff]
-    recs = await _verifix(today, today, staff, uuid.uuid4())
-    events = await fetch_all(
-        """SELECT e.at, e.event, t.code, t.assigned_employee_id::text AS pid FROM task_events e JOIN tasks t ON t.id = e.task_id
-           WHERE t.assigned_employee_id::text = ANY(%s) AND (e.at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (ids, today))
-    reports = await fetch_all(
-        """SELECT employee_id::text AS pid, submitted_at FROM daily_reports
-           WHERE employee_id::text = ANY(%s) AND (submitted_at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (ids, today))
-    answers = await fetch_all(
-        """SELECT employee_id::text AS pid, answered_at FROM explanations
-           WHERE employee_id::text = ANY(%s) AND (answered_at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (ids, today))
-    complaints = await fetch_all(
-        """SELECT created_at, resolved_at, place FROM client_feedback WHERE kind = 'complaint'
-           AND ((created_at AT TIME ZONE 'Asia/Tashkent')::date = %s OR (resolved_at AT TIME ZONE 'Asia/Tashkent')::date = %s)""",
-        (today, today))
+    recs, events, reports, answers, complaints = await asyncio.gather(
+        _verifix(today, today, staff, uuid.uuid4(), max_age=TAPE_SECONDS),
+        fetch_all(
+            """SELECT e.at, e.event, t.code, t.assigned_employee_id::text AS pid FROM task_events e JOIN tasks t ON t.id = e.task_id
+               WHERE t.assigned_employee_id::text = ANY(%s) AND (e.at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (ids, today)),
+        fetch_all(
+            """SELECT employee_id::text AS pid, submitted_at FROM daily_reports
+               WHERE employee_id::text = ANY(%s) AND (submitted_at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (ids, today)),
+        fetch_all(
+            """SELECT employee_id::text AS pid, answered_at FROM explanations
+               WHERE employee_id::text = ANY(%s) AND (answered_at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (ids, today)),
+        fetch_all(
+            """SELECT created_at, resolved_at, place FROM client_feedback WHERE kind = 'complaint'
+               AND ((created_at AT TIME ZONE 'Asia/Tashkent')::date = %s OR (resolved_at AT TIME ZONE 'Asia/Tashkent')::date = %s)""",
+            (today, today)))
     if roles is not None:
         complaints = [c for c in complaints if c.get("place") == "garmin"]
-    result = tape_items(staff, recs, events, reports, answers, complaints, today)
-    _tape_cache[roles] = (time.monotonic(), result)
-    return result
+    return tape_items(staff, recs, events, reports, answers, complaints, today)
+
+
+async def tape(roles: tuple[str, ...] | None) -> list[dict[str, Any]]:
+    return await _cached(_tape_cache, roles, TAPE_SECONDS, lambda: _build_tape(roles))

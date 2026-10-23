@@ -28,20 +28,21 @@ log = setup_logging("pulse")
 router = APIRouter(prefix="/pulse", include_in_schema=False)
 
 STATIC = Path(__file__).parent / "static"
-FONTS = Path(__file__).resolve().parents[1] / "reports" / "fonts"
 FILES = {
     "pulse.css": (STATIC / "pulse.css", "text/css"),
     "pulse.js": (STATIC / "pulse.js", "text/javascript"),
     "lightweight-charts.4.2.0.js": (STATIC / "lightweight-charts.4.2.0.js", "text/javascript"),
-    "NotoSans-Regular.ttf": (FONTS / "NotoSans-Regular.ttf", "font/ttf"),
-    "NotoSans-Bold.ttf": (FONTS / "NotoSans-Bold.ttf", "font/ttf"),
+    # Latin + Cyrillic subsets of the reports' Noto Sans (integrations/reports/fonts/LICENSE.md): 87 KB, not 1 MB.
+    "NotoSans-Regular.woff2": (STATIC / "NotoSans-Regular.woff2", "font/woff2"),
+    "NotoSans-Bold.woff2": (STATIC / "NotoSans-Bold.woff2", "font/woff2"),
 }
 HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": ("default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
+    # style 'unsafe-inline': the chart library sets inline styles on its own elements (2026-10-23); scripts stay 'self'.
+    "Content-Security-Policy": ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; "
                                 "img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
                                 "form-action 'none'"),
 }
@@ -134,8 +135,8 @@ async def static(name: str) -> Response:
     if name not in FILES:
         return Response(status_code=404, headers=HEADERS)
     path, media = FILES[name]
-    # The library and fonts carry their version in the name: kept a day. The page's own files: checked every time
+    # The library and fonts never change under their name: kept a year. The page's own files: checked every time
     # (ETag), so a deploy is seen at once.
-    keep = name.startswith("lightweight-charts.") or name.endswith(".ttf")
-    headers = {**HEADERS, "Cache-Control": "private, max-age=86400" if keep else "no-cache"}
+    keep = name.startswith("lightweight-charts.") or name.endswith(".woff2")
+    headers = {**HEADERS, "Cache-Control": "private, max-age=31536000, immutable" if keep else "no-cache"}
     return FileResponse(path, media_type=media, headers=headers)

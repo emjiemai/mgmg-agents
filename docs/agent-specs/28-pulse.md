@@ -21,6 +21,10 @@ nothing cached by the browser.
 
 ## The page
 
+**Look (2026-10-23, the owner's reference):** a navy analytics dashboard in two themes, dark and white (☀/☾ in
+the left rail, remembered per device): rounded cards, curved index line over a gradient, purple sales bars,
+«Бизнеслар» progress bars, avatars. Tokens and layout: DESIGN.md «PULSE screen».
+
 - **Top:** PULSE · the time · 7 / 30 / 90 кун.
 - **Six tickers:** Сотув (SAP invoices − credit notes, so'm, by document date), Дўкон (Billz shops), Топшириқ (due
   tasks done on time, %), Ҳисобот (daily reports sent, %), Давомат (on time, %), Шикоят (open now; ▲ is bad) —
@@ -44,6 +48,19 @@ absent 0; day off / excused / эркин график not counted), **report 30*
 0; still open today not counted), **tasks 30** (in play that day: done on time 1, done late 0.5, due and not done
 0). The Director and the Garmin manager themselves aren't scored. Computed live, cached 10 minutes (the tape 2).
 
+## Speed (2026-10-23 — the owner: "loading is so slow")
+
+- **Data:** the sources (the bot's tables, Verifix, SAP, Billz) are read at the same time (`asyncio.gather`).
+  Verifix and Billz are read once per range and shared (`data._sources`): today's tape and a person's month are cut
+  from the overview's 60-day Verifix read instead of a new login each time. A kept answer is given at once; an
+  aged one is answered at once and rebuilt in the background (`data._cached`, one build per key). Only the very
+  first ask after a deploy waits.
+- **Kept warm:** `data.keep_warm` (started with the API) builds the 30-day view and the tape for the Director and
+  the Garmin manager's team at start and every 9 minutes from 08:00 to 21:00 (Tashkent).
+- **Files:** gzip on every response over 1 KB (the 164 KB chart library goes out ~50 KB); fonts are Latin +
+  Cyrillic WOFF2 subsets of Noto Sans (87 KB instead of 1 MB of TTF); the library and fonts are kept by the
+  browser a year (`immutable`), pulse.css / pulse.js revalidate by ETag.
+
 ## What it measures, what it doesn't
 
 Only what passes through the company's own systems (the bot's tables, Verifix, Billz, SAP). No screens,
@@ -53,4 +70,5 @@ keystrokes, location or private chats. Read-only.
 
 `scripts/selfcheck.py`, `test_pulse`: the score parts and weights, the period (index, tickers, board, sectors),
 the tape and a person's day, the tokens, who may open what, the CSP, the served files, the vendored library,
-text-only rendering, the /pulse command and menus.
+text-only rendering, the /pulse command and menus; speed — a kept answer at once and rebuilt behind it, one
+Verifix read shared, sources read at the same time, gzip, WOFF2 fonts kept a year.

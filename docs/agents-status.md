@@ -94,6 +94,7 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 
 **Explanations (2026-10-22):** 08:00 after the brief — absent yesterday (Verifix) or report not sent → asked why; answers to the Director as cards (`27-explanations.md`). /grafik 🕘 own start times.
 
-**PULSE (2026-10-22):** the Boss's live dashboard at /pulse (OPS Manager Bot /pulse link): index over sales, tickers, today's tape, people ranked, one person's day (`28-pulse.md`).
+**PULSE (2026-10-22):** the Boss's live dashboard at /pulse (OPS Manager Bot /pulse link): index over sales, tickers, today's tape, people ranked, one person's day (`28-pulse.md`). 2026-10-23: new navy look, dark + white themes; loads fast (parallel reads,
+shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 
 **Report bonus (2026-10-22):** 08:00, Garmin сотув — yesterday's report sent → +1 KPI, missed → politely none (spec 06).

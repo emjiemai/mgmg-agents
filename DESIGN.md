@@ -1,6 +1,6 @@
 ---
 name: MGMG Command Center
-description: The morning brief's paper, read like an exchange — ink on white, hairline rules, state colour only; the same system on graphite in dark mode.
+description: The morning brief's paper, read like an exchange — ink on white, hairline rules, state colour only; the same system on graphite in dark mode. PULSE has its own analytics look since 2026-10-23 (see "PULSE screen").
 colors:
   ink: "#15171c"
   ok: "#1d6b46"
@@ -179,7 +179,7 @@ components:
 
 **Creative North Star: "The Paper Exchange"**
 
-The morning brief's paper, read like an exchange. Every surface made for the Director and his managers — the 08:00 brief picture, the A4 report PDFs (`integrations/reports/templates/`) and the PULSE screen (`integrations/api/static/pulse.*`) — is near-black ink on a white page, divided by hairline rules, set in one sans with tabular figures. PULSE carries that paper onto a screen and borrows a trading terminal's grammar: a quote with its arrow, a pulse line over volume bars, a time-and-sales tape, a ranked board. Dark mode is the same paper on a graphite ground, not a second theme. The public customer pages (`/f` complaints in red, `/r` reviews in green), their QR cards and the `/db` viewer are outside this system and keep their own settled looks.
+The morning brief's paper, read like an exchange. The surfaces made for the Director and his managers — the 08:00 brief picture and the A4 report PDFs (`integrations/reports/templates/`) — are near-black ink on a white page, divided by hairline rules, set in one sans with tabular figures. PULSE carries that paper onto a screen and borrows a trading terminal's grammar: a quote with its arrow, a pulse line over volume bars, a time-and-sales tape, a ranked board. Dark mode is the same paper on a graphite ground, not a second theme. The public customer pages (`/f` complaints in red, `/r` reviews in green), their QR cards and the `/db` viewer are outside this system and keep their own settled looks.
 
 Density is a terminal's: many figures, very few words. Every user-facing word is Uzbek Cyrillic (business and product names stay as written: PULSE, Garmin, Primus, Londry), and the owner's standing order is to add no more text — numbers, arrows and lines carry the meaning. Colour is never decoration: green, amber and red mean good, late and needs-the-Director, and nothing else. Structure comes from rules and alignment; there are no shadows, no gradients and no tiles.
 
@@ -192,6 +192,28 @@ Rejected outright: the card-grid dashboard of equal tiles, rounded card soup, em
 - Drawn stroke icons and drawn ▲/▼ marks, never glyphs or emoji.
 - Flat: no shadows, no gradients; regions are ruled, never boxed.
 - Uzbek Cyrillic, as few words as possible.
+
+## PULSE screen (2026-10-23 — its own look)
+
+The owner rejected the paper look for PULSE and gave a reference: a navy analytics dashboard. **PULSE now
+follows this section; everything else in this file is for the brief picture and the report PDFs.** The words,
+icons, delta and missing-data rules below still hold on PULSE.
+
+- **Two themes, the viewer's choice:** dark navy (default when the device is dark) and cool white; the ☀/☾ button
+  in the left rail (top bar on phones) switches and remembers it (`localStorage` `pulse-theme`). Tokens are CSS
+  custom properties at the top of `pulse.css`; the charts read them and repaint on a switch.
+- **Dark:** ground #0c1424, rail #121c30, cards #18233a / #212e48, ink #f1f5fb / #c3ccdb / #8794ab, rule #26334d.
+  **White:** ground #f2f5fa, cards #ffffff with a soft two-layer shadow, ink #0f1a2e / #34425a / #64738b.
+- **Data colours:** cyan (#5ccbe6 / #0b96bf) the index line, purple (#8f83e0 / #6f61cc) the sales bars, teal and
+  amber for the other businesses; up green (#2ccf8a / #12a061), down red (#f2546d / #df2f4f) — still by the
+  Good-Not-Sign Rule.
+- **Shape:** a 76px icon rail on the left (hidden on phones); rounded 16px cards on a 12-column grid — six ticker
+  cards (value, ▲▼ %, smooth sparkline), the index card (8 columns: curved line over a cyan gradient, purple
+  volume bars) beside «Бизнеслар» (4: one progress bar per business, today's action count big), the board (8)
+  beside the tape (4). Avatars are initials on a colour from the person's id.
+- **Speed:** fonts are Latin + Cyrillic WOFF2 subsets (87 KB, not 1 MB of TTF); the chart library and fonts are
+  cached a year, the page's own files revalidate by ETag; everything is gzipped; the data is served from a kept
+  copy and rebuilt behind it (spec 28 §Speed).
 
 ## Colors
 
