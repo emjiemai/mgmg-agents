@@ -67,6 +67,13 @@ async def ask_everyone(run_id: uuid.UUID) -> int:
         e for e in await store.list_active_employees()
         if kpi.asked_for_reports(e) and kpi.works_on(e, day) and not e.get("reports_off")
     ]
+    # A day the Director / Garmin manager excused (/sababli, 2026-10-23): not asked.
+    try:
+        excused = {r["id"] for r in await store.excused_between(day, day)}
+    except Exception as exc:  # noqa: BLE001 — without the marks everyone is asked, as before
+        log.warning("Excused days not read: {}", type(exc).__name__)
+        excused = set()
+    employees = [e for e in employees if str(e["id"]) not in excused]
     if not employees:
         log.warning("No active employees to ask (besides the Director)")
         return 0

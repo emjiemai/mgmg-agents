@@ -173,6 +173,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   manager for his team) as a card — the second exception to the no-relay rule. **/grafik 🕘** = a person's own
   start time (late counted from it).
   Next from the spec: positions + deputies, route table, escalation; then Day 2 complaint tickets.
+- **Excused days + late reports** (2026-10-23, the Boss, spec 29): ⬜ Сабабли on the explanation card and **/sababli**
+  (Director: anyone; Garmin manager: his team) → the day is grey (Verifix excused, unsent ask + minus removed, ↩ undoes).
+  The morning «no report» ask has 📝 send yesterday's report → ✅ / ❌ by the Director / Garmin manager; approved = green.
 - **Removal is a clean end; re-registration a fresh start** (2026-10-14): `store.revoke_employee` deletes the work-AI
   memory, closes held messages/files, cancels open tasks, clears data access; `create_employee` on a revoked row
   clears the name (asked again), duties, settings and language. One person's AI questions are answered one at

@@ -3870,7 +3870,7 @@ def test_command_menus() -> None:
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
-                   *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS}
+                   *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
@@ -4253,8 +4253,8 @@ def test_own_week_and_team_calendar() -> None:
     cb = inspect.getsource(kpi_flow.handle_callback)
     check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
                and 'prefix == "kr" and not director' in cb)
-    check_true("his menu: team calendar, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, /ruxsat or /ism",
-               [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "kpi", "maqsad", "maqsadlar", "natija", "eski", "raqobat",
+    check_true("his menu: team calendar, excused days, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, "
+               "/ruxsat or /ism", [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "eski", "raqobat",
                                                          "pulse", "bekor"])
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
@@ -5052,6 +5052,247 @@ def test_pulse() -> None:
                sent and sent[0][1]["inline_keyboard"][0][0]["url"].startswith("https://example.test/pulse/enter?t="))
     src = inspect.getsource(ops_manager._handle_employee_message)
     check_true("employees: only the Garmin manager's /pulse is answered", 'employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS' in src)
+
+
+def test_excused_and_late_reports() -> None:
+    """23.10.2026, the Boss: a day with a reason turns grey (Director / Garmin manager); a missed report sent the
+    next day goes for approval — approved, it turns green."""
+    print("excused days and late reports (23.10.2026)")
+    import asyncio
+    import inspect
+    import uuid
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import excused, explanations, late_report, ops_manager, report_calendar, store
+    from integrations.telegram import menus
+    from integrations.verifix import attendance as att
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    # ---- who may: the Director anyone scored; the Garmin manager his team; nobody else
+    boss, manager, it = {"role": "operatsion_direktor"}, {"role": "garmin_manager"}, {"role": "it"}
+    shirin, b2b, gm = {"role": "garmin_sotuv"}, {"role": "b2b_sotuv"}, {"role": "garmin_manager"}
+    check("may excuse: Director ✓✓, Garmin manager ✓✗, IT ✗, never the managers themselves",
+          [excused.may_excuse(v, p) for v, p in ((boss, shirin), (boss, b2b), (manager, shirin), (manager, b2b), (it, shirin),
+                                                 (boss, gm))], [True, True, True, False, False, False])
+
+    # ---- Verifix: an excused absent / late day becomes «excused»; a day that came on time stays
+    def rec(vid, name, day, status, late=0):
+        return att.DayRecord(employee_id=vid, name=name, job="", day=day, working=True, status=status, late_minutes=late)
+
+    d22, d21 = date(2026, 10, 22), date(2026, 10, 21)
+    recs = [rec("v1", "Умматова Ширин Бахтиёровна", d22, "absent"), rec("v1", "Умматова Ширин Бахтиёровна", d21, "absent"),
+            rec("v2", "Зунунов Абдукарим", d22, "late", 40), rec("v3", "Алиева Нодира", d22, "on_time")]
+    rows = [{"id": "e1", "day": d22, "full_name": "Ширин Умматова", "display_name": "Ширин"},
+            {"id": "e2", "day": d22, "full_name": "Абдукарим Зунунов", "display_name": None},
+            {"id": "e3", "day": d22, "full_name": "Нодира Алиева", "display_name": None}]
+    out = att.excuse(recs, rows)
+    check("22.10 absent → excused (21.10 stays absent), late → excused with no minutes, on time stays",
+          [(r.status, r.late_minutes) for r in out], [("excused", 0), ("absent", 0), ("excused", 0), ("on_time", 0)])
+    check_true("…and it reads «раҳбар рухсати билан»; load() applies it", out[0].excuse == "раҳбар рухсати билан"
+               and "excuse(recs, await excused_days(recs))" in inspect.getsource(att.load))
+
+    # ---- the store: only an unsent ask is taken out (kept for ↩); a late report approved = sent, minus off, once
+    sql = inspect.getsource(store.excuse_day)
+    check_true("excusing takes out only an unsent ask, and keeps it for ↩",
+               "status = 'asked'" in sql and "report_row" in sql and "INSERT INTO daily_reports" in inspect.getsource(store.unexcuse_day))
+    sql = inspect.getsource(store.decide_late_report)
+    check_true("approved: status submitted, its content, minus 0; declined stays asked; the first decision wins",
+               "status = 'submitted'" in sql and "penalty_points = 0" in sql and "content = late_content" in sql
+               and sql.count("late_decision IS NULL") == 2)
+    schema = load_source("database/schema.sql")
+    check_true("schema: excused_days and the late-report columns", "CREATE TABLE IF NOT EXISTS excused_days" in schema
+               and "ADD COLUMN IF NOT EXISTS late_content" in schema and "ADD COLUMN IF NOT EXISTS late_decision" in schema)
+
+    # ---- /sababli's day buttons
+    person = {"id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "role": "garmin_sotuv", "full_name": "Ширин Умматова"}
+    text, kb = excused.days_view(person, {d22}, date(2026, 10, 23))
+    days = [b for row in kb["inline_keyboard"][:-1] for b in row]
+    check_true("two weeks back and two ahead (28 days), 22.10 marked ⬜, every button fits Telegram's 64 bytes",
+               len(days) == 28 and any(b["text"] == "⬜ Па 22.10" for b in days) and "Сабабли: 22.10" in text
+               and all(len(b["callback_data"].encode()) <= 64 for row in kb["inline_keyboard"] for b in row))
+    check("the explanation card's button and its undo", (excused.card_keyboard("x", False)["inline_keyboard"][0][0]["callback_data"],
+                                                        excused.card_keyboard("x", True)["inline_keyboard"][0][0]["callback_data"]),
+          ("exc:x", "exu:x"))
+
+    # ---- the flows, with a fake bot and store
+    sent: list = []
+
+    class FakeBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **k):
+            sent.append(("send", chat_id, text, reply_markup))
+            return [1]
+
+        async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
+            sent.append(("edit", chat_id, text, reply_markup))
+
+        async def _answer_callback(self, qid, text):
+            sent.append(("answer", qid, text, None))
+
+        async def _call(self, method, payload, **k):
+            sent.append((method, payload.get("chat_id"), "", payload.get("reply_markup")))
+
+    people = {"m": {"id": "m", "telegram_user_id": 78, "role": "garmin_manager", "status": "active", "full_name": "Мурод Умаров"},
+              "e1": {"id": "e1", "telegram_user_id": 11, "role": "garmin_sotuv", "status": "active", "full_name": "Ширин Умматова"},
+              "b1": {"id": "b1", "telegram_user_id": 12, "role": "b2b_sotuv", "status": "active", "full_name": "Абдукарим Зунунов"},
+              "d": {"id": "d", "telegram_user_id": 77, "role": "operatsion_direktor", "status": "active", "full_name": "Бош"}}
+    by_tg = {p["telegram_user_id"]: p for p in people.values()}
+    excused_set: set = set()
+    calls: list = []
+
+    async def get_by_tg(tg):
+        return by_tg.get(tg)
+
+    async def get_emp(eid):
+        return people.get(eid)
+
+    async def excuse_day(eid, day, by, reason=None):
+        calls.append(("excuse", eid, day))
+        if (eid, day) in excused_set:
+            return False
+        excused_set.add((eid, day))
+        return True
+
+    async def unexcuse_day(eid, day):
+        calls.append(("unexcuse", eid, day))
+        return bool(excused_set.discard((eid, day)) or True)
+
+    async def days_of(eid, a, b):
+        return {d for e, d in excused_set if e == eid}
+
+    async def by_role(role):
+        return [p for p in people.values() if p["role"] == role]
+
+    async def explanation(xid):
+        return {"id": xid, "employee_id": "e1", "days": [d21, d22], "answer": "туғилган кун"}
+
+    async def nothing(*a, **k):
+        return None
+
+    import integrations.org_bot.excused as ex_mod
+    import integrations.org_bot.late_report as lr_mod
+
+    for mod in (ex_mod, lr_mod):
+        patch(mod, "TelegramBot", FakeBot)
+        patch(mod, "log_action", nothing)
+        patch(mod, "today_local", lambda: date(2026, 10, 23))
+    patch(store, "get_employee_by_telegram_id", get_by_tg)
+    patch(store, "get_employee", get_emp)
+    patch(store, "excuse_day", excuse_day)
+    patch(store, "unexcuse_day", unexcuse_day)
+    patch(store, "excused_days_of", days_of)
+    patch(store, "active_employees_by_role", by_role)
+    patch(store, "get_explanation", explanation)
+    cb = lambda data, who: {"id": "q", "data": data, "from": {"id": who}, "message": {"chat": {"id": who}, "message_id": 5}}  # noqa: E731
+    try:
+        r1 = asyncio.run(excused.handle_callback("exd", "e1:20261022", cb("exd:e1:20261022", 78), uuid.uuid4()))
+        told = [x for x in sent if x[0] == "send" and x[1] == "77"]
+        r2 = asyncio.run(excused.handle_callback("exd", "b1:20261022", cb("exd:b1:20261022", 78), uuid.uuid4()))
+        r3 = asyncio.run(excused.handle_callback("exd", "e1:20260901", cb("exd:e1:20260901", 78), uuid.uuid4()))
+        r4 = asyncio.run(excused.handle_callback("exc", "x1", cb("exc:x1", 77), uuid.uuid4()))
+        swapped = [x for x in sent if x[0] == "editMessageReplyMarkup"]
+        r5 = asyncio.run(excused.handle_callback("exd", "e1:20261022", cb("exd:e1:20261022", 11), uuid.uuid4()))
+    finally:
+        pass
+    check("the Garmin manager excuses his person's day; not a B2B person's, not a day out of the window; the Director's "
+          "card button excuses the card's days; an employee can't", (r1, r2, r3, r4, r5),
+          ("excused_set", "excused_unauthorized", "excused_unauthorized", "excused_set", "excused_unauthorized"))
+    check_true("the Director is told when the Garmin manager sets one; the card's button turns into ↩",
+               bool(told) and "22.10 сабабли деб белгилади" in told[0][2]
+               and swapped and swapped[-1][3]["inline_keyboard"][0][0]["callback_data"] == "exu:x1"
+               and ("excuse", "e1", d21) in calls)
+
+    # ---- the late report: the tap, the text, the card, the decision
+    sent.clear()
+    state: dict = {}
+
+    async def await_late(tg, day):
+        state["awaiting"] = (tg, day)
+        return {"id": "r1"} if day == d22 else None
+
+    async def awaiting(tg, hours):
+        return {"id": "r1"} if state.get("awaiting") else None
+
+    async def save(rid, content):
+        state["content"] = content
+        return {"id": "r1", "report_date": d22, "late_sent_at": None}
+
+    async def open_asks(eid, day):
+        return [{"id": "x9"}]
+
+    async def answer(ids, text):
+        state["answered"] = (ids, text)
+        return []
+
+    async def get_report(rid):
+        return {"id": rid, "employee_id": "e1", "report_date": d22}
+
+    decided: list = []
+
+    async def decide(rid, approve, by):
+        if decided:
+            return None
+        decided.append(approve)
+        return {"id": rid, "report_date": d22, "late_sent_at": None, "late_content": state.get("content")}
+
+    patch(store, "await_late_report", await_late)
+    patch(store, "late_report_awaiting", awaiting)
+    patch(store, "save_late_report", save)
+    patch(store, "open_report_explanations", open_asks)
+    patch(store, "answer_explanations", answer)
+    patch(store, "get_report", get_report)
+    patch(store, "decide_late_report", decide)
+    try:
+        t1 = asyncio.run(late_report.handle_callback("lrs", "20261022", cb("lrs:20261022", 11), uuid.uuid4()))
+        t0 = asyncio.run(late_report.handle_callback("lrs", "20261020", cb("lrs:20261020", 11), uuid.uuid4()))
+        t2 = asyncio.run(late_report.take_message(people["e1"], {"text": "мижоз билан учрашдим, 2 та сотув"}, uuid.uuid4()))
+        cards = [x for x in sent if x[0] == "send" and x[3] and "lrok:r1" in str(x[3])]
+        t3 = asyncio.run(late_report.handle_callback("lrok", "r1", cb("lrok:r1", 12), uuid.uuid4()))
+        t4 = asyncio.run(late_report.handle_callback("lrok", "r1", cb("lrok:r1", 78), uuid.uuid4()))
+        t5 = asyncio.run(late_report.handle_callback("lrno", "r1", cb("lrno:r1", 77), uuid.uuid4()))
+    finally:
+        restore()
+    check("tap (yesterday only) → text → to the Director and the Garmin manager → another employee can't decide → "
+          "the Garmin manager approves → a second decision is refused", (t1, t0, t2, t3, t4, t5),
+          ("late_report_asked", "late_closed", "late_report_sent", "late_unauthorized", "late_report_approved",
+           "late_already_decided"))
+    check_true("the card goes to both deciders with ✅ / ❌; the morning ask is answered by it; the person is told",
+               sorted(x[1] for x in cards) == ["77", "78"] and "Кечиккан ҳисобот" in cards[0][2]
+               and state["answered"] == (["x9"], "[кечиккан ҳисобот юборилди]")
+               and any(x[1] == "11" and "тасдиқланди" in x[2] for x in sent))
+    for text in (late_report.prompt_text(d22), late_report.sent_text(), late_report.decided_text(d22, True),
+                 late_report.decided_text(d22, False), explanations.ask_text("report", "Ширин", [d22])):
+        check(f"friendly: {text[:30]}…", friendly_problems(text, ("Ширин",)), [])
+
+    # ---- the wiring
+    src = inspect.getsource(ops_manager)
+    check_true("the bot routes both flows' buttons and /sababli, takes the late report's text, and puts ⬜ on every card",
+               "excused.handle_callback(" in src and "late_report.handle_callback(" in src and "excused.handle_message(" in src
+               and "late_report.take_message(" in src and "excused.card_keyboard(" in src and '"reply_markup": buttons' in src)
+    check_true("the morning «no report» ask carries the send-now button; no report is asked on an excused day",
+               "late_report.ask_button(yesterday) if kind == \"report\"" in inspect.getsource(load_agent("explanations").run)
+               and "excused_between(day, day)" in load_source("agents/daily-reports/agent.py"))
+    check_true("/sababli in the Director's and the Garmin manager's menus", "sababli" in [c for c, _ in menus.DIRECTOR]
+               and "sababli" in [c for c, _ in menus.GARMIN_MANAGER] and "sababli" not in [c for c, _ in menus.EMPLOYEE])
+    check_true("the calendar shows a removed ask as grey", report_calendar.cell(None, d22, datetime(2026, 10, 23, 9), True) == "none")
 
 
 def test_report_bonus() -> None:
@@ -8734,6 +8975,7 @@ def main() -> int:
         test_explanations_and_start_times,
         test_pulse,
         test_report_bonus,
+        test_excused_and_late_reports,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

@@ -1255,3 +1255,26 @@ ALTER TABLE employee_files ADD CONSTRAINT employee_files_purpose_check
 -- themselves gets +REPORT_BONUS_POINTS (1) KPI; a missed one is told politely no point was given. bonus_at = told, once.
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS bonus_points INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS bonus_at TIMESTAMPTZ;
+
+-- Excused days (2026-10-23, the Boss): the Director (anyone) or the Garmin manager (his team) marks a person's day
+-- as having a good reason — the explanation card's ⬜ button or /sababli. The day turns grey: Verifix's absent / late
+-- becomes excused, an unsent report's row is taken out (its minus with it; kept in `report_row` so ↩ puts it back).
+CREATE TABLE IF NOT EXISTS excused_days (
+    employee_id  UUID         NOT NULL REFERENCES employees(id),
+    day          DATE         NOT NULL,
+    reason       TEXT,
+    set_by       BIGINT       NOT NULL,
+    set_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    report_row   JSONB,
+    PRIMARY KEY (employee_id, day)
+);
+
+-- Late reports (2026-10-23, the Boss): a report not sent by 22:00 can be sent the next day from the morning ask's
+-- button; it goes to the Director / the Garmin manager (his team) to approve — approved, the day turns green (its minus
+-- removed); declined, it stays red. No report bonus for it.
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_awaiting_at TIMESTAMPTZ;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_content TEXT;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_sent_at TIMESTAMPTZ;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_decision TEXT;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_decided_by BIGINT;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_decided_at TIMESTAMPTZ;

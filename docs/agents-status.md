@@ -98,3 +98,5 @@ Update this file and the tracker (`ЭМЖИЕМ_AI_Агентлар_Трекер
 shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 
 **Report bonus (2026-10-22):** 08:00, Garmin сотув — yesterday's report sent → +1 KPI, missed → politely none (spec 06).
+
+**Excused days and late reports (2026-10-23):** ⬜ Сабабли on explanation cards and /sababli turn a day grey; a missed report sent the next day goes to the Director / Garmin manager — approved, green (`29-excused-and-late-reports.md`).

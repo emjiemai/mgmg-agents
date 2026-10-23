@@ -38,6 +38,11 @@ It goes as a card to the Director, and to the Garmin manager for his team (`repo
 is thanked under their message. This is the one more exception to "no messages between employees and
 the Director through the bot" (the Boss asked for these letters), like a task's proof.
 
+## Excused, late report (2026-10-23, spec 29)
+
+The card carries **⬜ Сабабли** (the Director; the Garmin manager for his team): the card's days turn grey. The
+«report didn't come» ask carries **📝 Кечаги ҳисоботни юбориш**: the report then goes for ✅ / ❌ — approved = green.
+
 ## Own start time
 
 Admin Bot **/grafik**: beside each name, **🕘** — a tap goes Verifix → 08:00 → 09:00 → 10:00 → 11:00 →

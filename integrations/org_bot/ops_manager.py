@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheques, explanations, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, ai_chat, cheques, excused, explanations, late_report, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -286,6 +286,15 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         # A button on an old 15:00 lead question: the hand-out was stopped by
         # the Director on 2026-10-07 — nothing is recorded, the buttons go.
         return await _handle_stopped_lead_button(callback, run_id)
+
+    # Excused days: the explanation card's ⬜ / ↩ and /sababli (excused.py, 2026-10-23).
+    excused_outcome = await excused.handle_callback(prefix, rest, callback, run_id)
+    if excused_outcome is not None:
+        return excused_outcome
+    # Late reports: «send yesterday's report» and the deciders' ✅ / ❌ (late_report.py, 2026-10-23).
+    late_outcome = await late_report.handle_callback(prefix, rest, callback, run_id)
+    if late_outcome is not None:
+        return late_outcome
 
     # KPI: goals, results, the Director's 1–5 ratings (kpi_flow.py).
     kpi_outcome = await kpi_flow.handle_callback(prefix, rest, callback, run_id)
@@ -806,6 +815,11 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
     kpi_outcome = await kpi_flow.handle_message(employee, message, run_id)
     if kpi_outcome is not None:
         return kpi_outcome
+
+    # /sababli — the Director (everyone) and the Garmin manager (his team) excuse a day (excused.py, 2026-10-23).
+    excused_outcome = await excused.handle_message(employee, message, run_id)
+    if excused_outcome is not None:
+        return excused_outcome
 
     if employee["role"] != DIRECTOR_ROLE:
         return await _handle_employee_message(employee, message, run_id, background)
@@ -1631,6 +1645,10 @@ async def _handle_employee_message(
         # A Reply to another message (the 16:00 report ask) is that, not this task's proof.
         if awaiting is not None and (not replied or replied == awaiting.get("telegram_message_id")):
             return await _consume_task_input(employee, awaiting, message, run_id)
+    # After «📝 Кечаги ҳисоботни юбориш» the next text is yesterday's report, for approval (late_report.py).
+    late = await late_report.take_message(employee, message, run_id)
+    if late is not None:
+        return late
     # A photo, video or file: ask what it's for — it goes to the Director as
     # it is, never to the AI (report_tools.py).
     kind = report_tools.file_kind(message)
@@ -1746,6 +1764,7 @@ async def _take_explanation(employee: dict[str, Any], text: str, replied: int | 
     ) as bot:
         for row in rows:
             card = explanations.card(person, role, row["kind"], list(row["days"]), text)
+            buttons = excused.card_keyboard(str(row["id"]), False)  # ⬜ Сабабли: the days turn grey (2026-10-23)
             delivered = 0
             for who in roles:
                 for boss in await store.active_employees_by_role(who):
@@ -1753,10 +1772,11 @@ async def _take_explanation(employee: dict[str, Any], text: str, replied: int | 
                         if held is not None:  # the file itself, the explanation as its caption
                             await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
                                 "copyMessage", {"chat_id": str(boss["telegram_user_id"]), "from_chat_id": str(telegram_user_id),
-                                                "message_id": held["message_id"], "caption": card[:1024], "parse_mode": "HTML"},
+                                                "message_id": held["message_id"], "caption": card[:1024], "parse_mode": "HTML",
+                                                "reply_markup": buttons},
                                 mode="notify", target_ref=str(boss["telegram_user_id"]))
                         else:
-                            await bot.send_message(card, chat_id=str(boss["telegram_user_id"]))
+                            await bot.send_message(card, chat_id=str(boss["telegram_user_id"]), reply_markup=buttons)
                         delivered += 1
                     except Exception as exc:  # noqa: BLE001 — the next one still gets it
                         log.error("Explanation not delivered: {}", type(exc).__name__)

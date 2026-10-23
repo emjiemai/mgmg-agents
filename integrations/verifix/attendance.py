@@ -51,6 +51,7 @@ EXCUSES = {
     "trip": "хизмат сафари",
     "day_off": "жавоб олган",
     "hourly_off": "соатбай жавоб",
+    "by_manager": "раҳбар рухсати билан",  # an excused day the Director / Garmin manager set (2026-10-23)
 }
 FULL_DAY_EXCUSES = ("sick", "vacation", "unpaid", "trip", "day_off")
 
@@ -379,8 +380,45 @@ async def load(begin: date, end: date, run_id: uuid.UUID | str | None, agent: st
     async with VerifixClient(agent=agent, run_id=run_id) as client:
         kinds = classify_kinds(await client.time_kinds())
         rows = await client.timesheet(begin, end)
-    return records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now, flexible=await flexible_ids(),
+    recs = records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now, flexible=await flexible_ids(),
                    starts=await start_times())
+    return excuse(recs, await excused_days(recs))
+
+
+async def excused_days(recs: list[DayRecord]) -> list[dict[str, Any]]:
+    """The days the Director / Garmin manager excused in this range (excused_days); empty if they can't be read."""
+    if not recs:
+        return []
+    try:
+        from integrations.org_bot import store
+
+        return await store.excused_between(min(r.day for r in recs), max(r.day for r in recs))
+    except Exception as exc:  # noqa: BLE001 — without them the day is judged as before
+        log.warning("Could not read the excused days: {}", type(exc).__name__)
+        return []
+
+
+def excuse(recs: list[DayRecord], rows: list[dict[str, Any]]) -> list[DayRecord]:
+    """An absent / late / not-yet day a manager excused becomes «excused» (grey, never counted against them).
+
+    ``rows``: the bot's people with their excused days; a Verifix person is tied to one by name.
+    """
+    if not rows:
+        return recs
+    from integrations.org_bot.explanations import match_employee  # local: keeps this module light
+
+    people = list({r["id"]: r for r in rows}.values())
+    days = {(r["id"], r["day"]) for r in rows}
+    tie: dict[str, str | None] = {}
+    for rec in recs:
+        if rec.status not in ("absent", "late", "not_yet"):
+            continue
+        if rec.employee_id not in tie:
+            hit = match_employee(rec.name, people)
+            tie[rec.employee_id] = hit["id"] if hit else None
+        if tie[rec.employee_id] and (tie[rec.employee_id], rec.day) in days:
+            rec.status, rec.excuse, rec.late_minutes = "excused", EXCUSES["by_manager"], 0
+    return recs
 
 
 async def start_times() -> dict[str, time]:

@@ -26,7 +26,7 @@ from integrations.common.config import settings  # noqa: E402
 from integrations.common.db import close_pool, log_action  # noqa: E402
 from integrations.common.logging_setup import setup_logging  # noqa: E402
 from integrations.common.timeutil import today_local  # noqa: E402
-from integrations.org_bot import explanations, names, store  # noqa: E402
+from integrations.org_bot import explanations, late_report, names, store  # noqa: E402
 from integrations.org_bot.report_calendar import TEAM_OF  # noqa: E402
 from integrations.org_bot.roles import DIRECTOR_ROLE  # noqa: E402
 from integrations.telegram.bot import TelegramBot  # noqa: E402
@@ -99,8 +99,10 @@ async def run(dry_run: bool = False) -> int:
                 if row is None:  # already asked
                     continue
                 try:
+                    # a missed report can still be sent now, for approval (late_report.py, 2026-10-23)
                     ids = await bot.send_message(explanations.ask_text(kind, names.call_name(person), days),
-                                                 chat_id=str(person["telegram_user_id"]))
+                                                 chat_id=str(person["telegram_user_id"]),
+                                                 reply_markup=late_report.ask_button(yesterday) if kind == "report" else None)
                     await store.set_explanation_prompt(str(row["id"]), ids[0] if ids else None)
                     asked += 1
                 except Exception as exc:  # noqa: BLE001 — the next person is still asked
