@@ -34,6 +34,8 @@ the left rail, remembered per device): rounded cards, curved index line over a g
 - **Сотув (кунлик савдо):** SAP invoices − credit notes per day, in so'm, on its own chart with a visible so'm scale
   (2026-10-23 — the owner found one chart with two meanings confusing). Both charts share one crosshair: a day
   under the finger on one is shown on the other; each legend shows that day's number.
+- **No TradingView logo on the charts** (2026-10-23, the owner: `attributionLogo: false`); the credit the library
+  asks for instead is a small «TradingView графиклари» link at the page's foot (new tab, `noreferrer`).
 - **The «Бизнеслар» card was removed** (2026-10-23, the owner); the businesses stay as the board's filter.
 - **Бугун (the tape):** today's actions, newest first — arrivals (late in amber), leaving, task steps, reports,
   explanations, complaints in and resolved. Refreshes every minute; a name opens that person. A line under the

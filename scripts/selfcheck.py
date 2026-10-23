@@ -4931,7 +4931,8 @@ def test_pulse() -> None:
         csp = page.headers.get("content-security-policy", "")
         check_true("the page: no outside scripts, no framing, nothing cached",
                    page.status_code == 200 and "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
-                   and page.headers.get("cache-control") == "no-store" and "http://" not in page.text and "https://" not in page.text)
+                   and page.headers.get("cache-control") == "no-store" and "http://" not in page.text
+                   and page.text.count("https://") == page.text.count('href="https://www.tradingview.com/"') == 1)
         check("only the page's own files are served", (boss.get("/pulse/static/pulse.js").status_code,
                                                       boss.get("/pulse/static/../app.py").status_code,
                                                       boss.get("/pulse/static/lightweight-charts.4.2.0.js").status_code), (200, 404, 200))
@@ -4956,7 +4957,7 @@ def test_pulse() -> None:
                "following the crosshair", 'PARTS = [["attendance", "in"' in js and "pChart.subscribeCrosshairMove" in js
                and 'id="p-parts"' in load_source("integrations/api/static/pulse.html"))
     html = load_source("integrations/api/static/pulse.html")
-    check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE"}) == []
+    check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE", "TradingView"}) == []
                and "<script>" not in html)
 
     # ---- 2026-10-23 (the owner): index and sales on two charts, explained; no businesses card; the tape's key; motion
@@ -4964,6 +4965,8 @@ def test_pulse() -> None:
                'id="chart"' in html and 'id="sales-chart"' in html and "(компаниянинг кунлик балли)" in html
                and "Давомат 40 + ҳисобот 30 + топшириқ 30" in html and 'id="mix"' not in html and "Бизнеслар" not in html
                and "renderMix" not in js and "setCrosshairPosition(" in js)
+    check_true("no TradingView logo on the charts; the credit link its licence asks for instead, without a referrer",
+               "attributionLogo: false" in js and 'rel="noopener noreferrer"' in html and "графиклари</footer>" in html)
     check_true("the tape explains its marks: a key behind ⓘ, every mark titled",
                'id="tape-key"' in html and 'aria-controls="tape-key"' in html and "badge.title = KEY[" in js
                and all(f"{k}:" in js.split("const KEY = {")[1].split("};")[0] for k in ("in", "late", "out", "task", "report", "complaint")))

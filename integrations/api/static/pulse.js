@@ -215,7 +215,8 @@
   let chart = null, area = null, salesChart = null, bars = null, syncing = false;
   function chartOptions() {
     return {
-      layout: { background: { type: "solid", color: css("--card") }, textColor: css("--ink-3"), fontFamily: "Noto Sans, system-ui, sans-serif", fontSize: 12 },
+      // no logo on the charts (the owner, 2026-10-23); the library's required credit is the link at the page's foot
+      layout: { background: { type: "solid", color: css("--card") }, textColor: css("--ink-3"), fontFamily: "Noto Sans, system-ui, sans-serif", fontSize: 12, attributionLogo: false },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--rule") } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.08 } },
       timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true, lockVisibleTimeRangeOnResize: true },
