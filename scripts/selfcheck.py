@@ -4959,6 +4959,19 @@ def test_pulse() -> None:
     check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE"}) == []
                and "<script>" not in html)
 
+    # ---- 2026-10-23 (the owner): index and sales on two charts, explained; no businesses card; the tape's key; motion
+    check_true("two charts: the index (its meaning in brackets, the score's parts) and daily sales; the businesses card gone",
+               'id="chart"' in html and 'id="sales-chart"' in html and "(компаниянинг кунлик балли)" in html
+               and "Давомат 40 + ҳисобот 30 + топшириқ 30" in html and 'id="mix"' not in html and "Бизнеслар" not in html
+               and "renderMix" not in js and "setCrosshairPosition(" in js)
+    check_true("the tape explains its marks: a key behind ⓘ, every mark titled",
+               'id="tape-key"' in html and 'aria-controls="tape-key"' in html and "badge.title = KEY[" in js
+               and all(f"{k}:" in js.split("const KEY = {")[1].split("};")[0] for k in ("in", "late", "out", "task", "report", "complaint")))
+    check_true("motion: lines rise left to right, numbers count up, cards and rows rise in — and all of it off for reduced motion",
+               "function put(" in js and "autoscaleInfoProvider" in js and "function count(" in js
+               and "prefers-reduced-motion: reduce" in js and "@keyframes rise" in load_source("integrations/api/static/pulse.css")
+               and "prefers-reduced-motion: reduce" in load_source("integrations/api/static/pulse.css"))
+
     # ---- speed (2026-10-23): a kept answer at once, an old one rebuilt behind it; one Verifix read shared
     builds: list = []
 

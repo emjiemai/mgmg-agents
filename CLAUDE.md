@@ -166,6 +166,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).
   **Look 2026-10-23** (the owner's reference): navy analytics dashboard, dark + white themes (DESIGN.md «PULSE screen»).
+  Index and sales on two charts (explained in brackets), no «Бизнеслар» card, tape icon key (ⓘ), entry animations.
   **Speed:** sources read in parallel, Verifix/Billz read shared, kept copy served then rebuilt, warm 08–21, gzip, WOFF2.
 - **Explanations** (2026-10-22, the Boss, `explanations.py`, spec 27): 08:00 after the brief — absent yesterday in
   Verifix (with the days in a row) or report not sent → asked why; the answer goes to the Director (+ the Garmin

@@ -2,7 +2,8 @@
 (function () {
   "use strict";
 
-  const state = { days: 30, sector: "all", overview: null, tapeSeen: new Set(), person: null, personDay: null };
+  // anim: the next render moves (on entry and on a new period); a refresh every few minutes doesn't
+  const state = { days: 30, sector: "all", overview: null, tapeSeen: new Set(), person: null, personDay: null, anim: true };
   const $ = (id) => document.getElementById(id);
   const COLORS = ["--accent", "--accent-2", "--accent-3", "--accent", "--accent-2", "--accent-4"];
 
@@ -46,6 +47,60 @@
   }
   function pct(v) { return v === null || v === undefined ? ["—", ""] : [fmt1.format(v), "%"]; }
 
+  // ---- motion -----------------------------------------------------------------------------------------------
+  const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const runs = new Map();
+  // a series rises from its floor, left to right like a wave; without motion (or on a refresh) it is just set
+  function put(series, points, floor, anim) {
+    cancelAnimationFrame(runs.get(series));
+    runs.delete(series);
+    if (!anim || calm.matches || !points.some((p) => p.value !== undefined)) { series.setData(points); return; }
+    const t0 = performance.now(), n = points.length, ms = 1300;
+    const frame = (now) => {
+      const t = Math.min(1, (now - t0) / ms);
+      series.setData(points.map((p, i) => {
+        if (p.value === undefined) return p;
+        const local = Math.max(0, Math.min(1, (t - (i / n) * 0.45) / 0.55));
+        return { ...p, value: floor + (p.value - floor) * ease(local) };
+      }));
+      if (t < 1) runs.set(series, requestAnimationFrame(frame)); else runs.delete(series);
+    };
+    runs.set(series, requestAnimationFrame(frame));
+  }
+  // the scale fixed to the final values, so it doesn't jump while the line rises
+  function holdScale(series, points, lo) {
+    const vals = points.filter((p) => p.value !== undefined).map((p) => p.value);
+    if (!vals.length) { series.applyOptions({ autoscaleInfoProvider: undefined }); return null; }
+    const min = lo !== undefined ? lo : Math.min(...vals), max = Math.max(...vals);
+    const pad = max === min ? 1 : 0;
+    series.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: min - pad, maxValue: max + pad } }) });
+    return { min: min - pad, max: max + pad };
+  }
+  // a number counts up to its value
+  function count(to, show, anim) {
+    if (!anim || calm.matches || to === null || to === undefined) { show(to); return; }
+    const t0 = performance.now(), ms = 1000;
+    const frame = (now) => {
+      const t = Math.min(1, (now - t0) / ms);
+      show(t < 1 ? to * ease(t) : to);
+      if (t < 1) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+  // a figure with its unit (сўм shortened, %, a count), counted up
+  function figure(node, v, unit, anim) {
+    node.textContent = "";
+    if (v === null || v === undefined) { node.textContent = "—"; return; }
+    const [, u] = unit === "som" ? som(v) : unit === "pct" ? pct(v) : ["", ""];
+    const div = u === "млрд" ? 1e9 : u === "млн" ? 1e6 : u === "минг" ? 1e3 : 1;
+    const text = document.createTextNode("");
+    node.appendChild(text);
+    if (u) node.appendChild(el("small", null, u));
+    const f = unit === "som" && div < 1e6 ? fmtInt : unit === "count" ? fmtInt : fmt1;
+    count(v, (x) => { text.nodeValue = f.format(unit === "count" ? Math.round(x) : x / div); }, anim);
+  }
+
   // ▲ / ▼ as drawn marks, coloured by whether the change is good (inverted for complaints)
   function delta(node, value, opts) {
     node.textContent = "";
@@ -64,9 +119,10 @@
 
   // a sparkline: the line through the days that have a value (a day without one is stepped over), a faint
   // wash under it, the last point marked
-  function spark(values, w, h) {
-    const s = svgEl("svg", { class: "spark", viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": "true" });
+  function spark(values, w, h, i) {
+    const s = svgEl("svg", { class: state.anim && !calm.matches ? "spark draw" : "spark", viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": "true" });
     const pts = values.map((v, i) => [i, v]).filter(([, v]) => v !== null && v !== undefined);
+    if (i !== undefined) s.style.setProperty("--i", i);
     if (pts.length < 2) return s;
     const nums = pts.map(([, v]) => v);
     const lo = Math.min(...nums), hi = Math.max(...nums), span = hi - lo || 1, step = w / Math.max(1, values.length - 1);
@@ -128,23 +184,18 @@
     const box = $("tickers");
     box.textContent = "";
     tickers.forEach((t, i) => {
-      const item = el("article", "ticker");
+      const item = el("article", state.anim ? "ticker rise" : "ticker");
       item.style.setProperty("--c", `var(${COLORS[i % COLORS.length]})`);
+      item.style.setProperty("--i", i);
       item.appendChild(el("span", "label", t.label));
       const value = el("span", "value");
-      if (t.value === null || t.value === undefined) {
-        item.classList.add("off");
-        value.textContent = "—";
-      } else {
-        const [n, unit] = t.unit === "som" ? som(t.value) : t.unit === "pct" ? pct(t.value) : [fmtInt.format(t.value), ""];
-        value.textContent = n;
-        if (unit) value.appendChild(el("small", null, unit));
-      }
+      if (t.value === null || t.value === undefined) item.classList.add("off");
+      figure(value, t.value, t.unit, state.anim);
       item.appendChild(value);
       const foot = el("div", "foot"), d = el("span");
       delta(d, t.delta, { invert: t.invert, pct: t.unit === "som" });
       foot.appendChild(d);
-      foot.appendChild(spark(t.spark || [], 84, 30));
+      foot.appendChild(spark(t.spark || [], 84, 30, i));
       item.appendChild(foot);
       box.appendChild(item);
     });
@@ -160,13 +211,13 @@
     }
   }
 
-  // ---- the index chart --------------------------------------------------------------------------------------
-  let chart = null, area = null, bars = null;
+  // ---- the index chart and the sales chart (two charts, one crosshair) --------------------------------------
+  let chart = null, area = null, salesChart = null, bars = null, syncing = false;
   function chartOptions() {
     return {
       layout: { background: { type: "solid", color: css("--card") }, textColor: css("--ink-3"), fontFamily: "Noto Sans, system-ui, sans-serif", fontSize: 12 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--rule") } },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.34 } },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.08 } },
       timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true, lockVisibleTimeRangeOnResize: true },
       crosshair: { mode: 1, vertLine: { color: css("--ink-3"), labelBackgroundColor: css("--card-2") }, horzLine: { color: css("--ink-3"), labelBackgroundColor: css("--card-2") } },
       handleScroll: false, handleScale: false,
@@ -176,43 +227,67 @@
   function ensureChart() {
     if (chart || !window.LightweightCharts) return;
     chart = LightweightCharts.createChart($("chart"), { ...chartOptions(), autoSize: true });
-    bars = chart.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "custom", formatter: (v) => som(v).join(" ") }, lastValueVisible: false, priceLineVisible: false });
-    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-    area = chart.addAreaSeries({ lineWidth: 3, lineType: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerRadius: 5, priceFormat: { type: "price", precision: 0, minMove: 1 } });
-    chart.subscribeCrosshairMove((param) => legend(param.time ? param : null));
+    // lastPriceAnimation: the last day's point breathes — the line is live
+    area = chart.addAreaSeries({ lineWidth: 3, lineType: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerRadius: 5, lastPriceAnimation: 1, priceFormat: { type: "price", precision: 0, minMove: 1 } });
+    salesChart = LightweightCharts.createChart($("sales-chart"), { ...chartOptions(), autoSize: true });
+    bars = salesChart.addHistogramSeries({ priceFormat: { type: "custom", minMove: 1, formatter: (v) => som(v)[0] + " " + som(v)[1] }, lastValueVisible: false, priceLineVisible: false });
+    salesChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+    // the same day under the finger on both charts
+    const follow = (from, to, series, values) => (param) => {
+      legend(param && param.time ? param.time : null);
+      if (syncing) return;
+      syncing = true;
+      if (param && param.time) {
+        const v = values().find((p) => p.d === param.time);
+        if (v && v.v !== null && v.v !== undefined) to.setCrosshairPosition(v.v, param.time, series); else to.clearCrosshairPosition();
+      } else to.clearCrosshairPosition();
+      syncing = false;
+    };
+    chart.subscribeCrosshairMove(follow(chart, salesChart, bars, () => (state.overview ? state.overview.index.volume : [])));
+    salesChart.subscribeCrosshairMove(follow(salesChart, chart, area, () => (state.overview ? state.overview.index.series : [])));
     paintChart();
   }
-  // the legend follows the crosshair: that day's index and sales; at rest, the last day's
-  function legend(param) {
+  // the legends follow the crosshair: that day's score and sales; at rest, the last day's
+  function legend(time) {
     const o = state.overview;
     if (!o) return;
-    const at = param && param.time ? o.index.series.findIndex((p) => p.d === param.time) : o.index.series.length - 1;
+    const at = time ? o.index.series.findIndex((p) => p.d === time) : o.index.series.length - 1;
     if (at < 0) return;
     const p = o.index.series[at], v = o.index.volume[at];
-    const [y, m, d] = p.d.split("-");
+    const [, m, d] = p.d.split("-");
     $("hover-day").textContent = `${d}.${m}`;
+    $("hover-sales-day").textContent = `${d}.${m}`;
     $("hover-index").textContent = p.v === null ? "—" : fmtInt.format(p.v);
     $("hover-sales").textContent = v && v.v !== null && v.v !== undefined ? som(v.v).join(" ") : "—";
   }
   function paintChart() {
     if (!chart) return;
     chart.applyOptions(chartOptions());
+    salesChart.applyOptions(chartOptions());
     area.applyOptions({ lineColor: css("--accent"), topColor: css("--area-top"), bottomColor: css("--area-bottom"), crosshairMarkerBackgroundColor: css("--card"), crosshairMarkerBorderColor: css("--accent") });
-    if (state.overview) setChartData(state.overview);
+    if (state.overview) setChartData(state.overview, false);
   }
-  function setChartData(o) {
+  function setChartData(o, anim) {
     if (!chart) return;
-    area.setData(o.index.series.map((p) => (p.v === null ? { time: p.d } : { time: p.d, value: p.v })));
+    const line = o.index.series.map((p) => (p.v === null ? { time: p.d } : { time: p.d, value: p.v }));
+    const range = holdScale(area, line);
+    put(area, line, range ? range.min - (range.max - range.min) * 0.12 : 0, anim);
     const last = o.index.volume.length - 1;
-    bars.setData(o.index.volume.map((p, i) => (p.v === null || p.v === undefined ? { time: p.d } : { time: p.d, value: p.v, color: i === last ? css("--bars-last") : css("--bars") })));
+    const vol = o.index.volume.map((p, i) => (p.v === null || p.v === undefined ? { time: p.d } : { time: p.d, value: p.v, color: i === last ? css("--sales-last") : css("--sales") }));
+    holdScale(bars, vol, 0);
+    put(bars, vol, 0, anim);
     chart.timeScale().fitContent();
+    salesChart.timeScale().fitContent();
     legend(null);
   }
   function renderIndex(o) {
-    $("index-value").textContent = o.index.value === null ? "—" : fmtInt.format(o.index.value);
+    figure($("index-value"), o.index.value, "count", state.anim);
     delta($("index-delta"), o.index.delta);
+    const sales = o.tickers.find((t) => t.key === "sales") || {};
+    figure($("sales-value"), sales.value, "som", state.anim);
+    delta($("sales-delta"), sales.delta, { pct: true });
     ensureChart();
-    setChartData(o);
+    setChartData(o, state.anim);
   }
 
   // ---- the tape ---------------------------------------------------------------------------------------------
@@ -220,13 +295,15 @@
     const list = $("tape");
     const first = state.tapeSeen.size === 0;
     list.textContent = "";
-    if (!items.length) { list.appendChild(el("li", "empty", "Ҳали ҳаракат йўқ")); $("today-count").textContent = "0"; return; }
-    items.forEach((it) => {
+    if (!items.length) { list.appendChild(el("li", "empty", "Ҳали ҳаракат йўқ")); return; }
+    items.forEach((it, i) => {
       const key = `${it.t}|${it.pid}|${it.label}|${it.detail}`;
       const li = el("li");
       if (!first && !state.tapeSeen.has(key)) li.classList.add("fresh");
+      if (first && !calm.matches) { li.classList.add("rise"); li.style.setProperty("--i", i); }
       state.tapeSeen.add(key);
       const badge = el("span", "badge");
+      badge.title = KEY[it.kind] || it.label;
       badge.appendChild(icon(it.kind));
       li.appendChild(badge);
       const what = el("span", "what");
@@ -243,7 +320,28 @@
       li.appendChild(el("span", "t", it.t));
       list.appendChild(li);
     });
-    $("today-count").textContent = fmtInt.format(items.length);
+  }
+  // what each mark on the tape means (the ⓘ button opens it; open or closed is kept in this browser)
+  const KEY = { in: "Келди", late: "Кечикди", out: "Кетди", task: "Топшириқ", report: "Ҳисобот",
+                explain: "Сабабини ёзди", complaint: "Шикоят келди", resolved: "Шикоят ҳал бўлди" };
+  function renderKey() {
+    const box = $("tape-key");
+    Object.entries(KEY).forEach(([kind, said]) => {
+      const li = el("li"), badge = el("span", "badge");
+      badge.appendChild(icon(kind));
+      li.appendChild(badge);
+      li.appendChild(el("span", null, said));
+      box.appendChild(li);
+    });
+    const show = (open) => { box.hidden = !open; $("key-toggle").setAttribute("aria-expanded", String(open)); };
+    let open = true;
+    try { open = localStorage.getItem("pulse-key") !== "closed"; } catch (e) { /* first visit: open */ }
+    show(open);
+    $("key-toggle").addEventListener("click", () => {
+      const now = box.hidden;
+      show(now);
+      try { localStorage.setItem("pulse-key", now ? "open" : "closed"); } catch (e) { /* not kept */ }
+    });
   }
 
   // a person's initials on a colour of their own
@@ -254,25 +352,6 @@
     for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     a.style.setProperty("--c", `var(${["--accent", "--accent-2", "--accent-3", "--accent-4"][h % 4]})`);
     return a;
-  }
-
-  // ---- businesses: each one's score as a bar -----------------------------------------------------------------
-  function renderMix(o) {
-    const list = $("mix");
-    list.textContent = "";
-    const colors = { garmin: "--accent", primus: "--accent-2", londry: "--accent-3", office: "--accent-4" };
-    if (!o.sectors.length) { list.appendChild(el("li", "empty", "—")); return; }
-    o.sectors.forEach((s) => {
-      const li = el("li");
-      li.style.setProperty("--c", `var(${colors[s.key] || "--accent"})`);
-      li.appendChild(el("span", "name", s.label));
-      li.appendChild(el("span", "pct", s.score === null ? "—" : `${fmtInt.format(s.score)}%`));
-      const track = el("span", "track"), fill = el("span", "fill");
-      fill.style.width = `${Math.max(0, Math.min(100, s.score || 0))}%`;
-      track.appendChild(fill);
-      li.appendChild(track);
-      list.appendChild(li);
-    });
   }
 
   // ---- the board --------------------------------------------------------------------------------------------
@@ -301,7 +380,8 @@
       return;
     }
     people.forEach((p, i) => {
-      const tr = el("tr");
+      const tr = el("tr", state.anim ? "rise" : "");
+      tr.style.setProperty("--i", i);
       tr.appendChild(el("td", "n", String(i + 1)));
       const who = el("td"), cell = el("div", "person-cell");
       const state_ = p.today === "on_time" || p.today === "present" ? "in" : p.today === "late" ? "late" : p.today === "absent" ? "absent" : "";
@@ -320,9 +400,11 @@
       who.appendChild(cell);
       tr.appendChild(who);
       const sp = el("td", "spark-cell");
-      sp.appendChild(spark(p.spark, 150, 30));
+      sp.appendChild(spark(p.spark, 150, 30, i));
       tr.appendChild(sp);
-      tr.appendChild(el("td", `num score${p.score === null ? " none" : ""}`, p.score === null ? "—" : fmtInt.format(p.score)));
+      const sc = el("td", `num score${p.score === null ? " none" : ""}`);
+      figure(sc, p.score, "count", state.anim);
+      tr.appendChild(sc);
       const dc = el("td", "num"), d = el("span");
       delta(d, p.delta);
       dc.appendChild(d);
@@ -337,10 +419,11 @@
   async function openPerson(id, day) {
     const panel = $("person");
     if (panel.hidden) opener = document.activeElement;
+    const fresh = panel.hidden || state.person !== id;
     state.person = id;
     try {
       const p = await api(`/pulse/api/person/${encodeURIComponent(id)}?days=${state.days}` + (day ? `&day=${day}` : ""));
-      renderPerson(p);
+      renderPerson(p, fresh);
       if (panel.hidden) { panel.hidden = false; $("person-close").focus(); }
     } catch (e) {
       if (e.message !== "expired") notice("Юклаб бўлмади", () => openPerson(id, day));
@@ -351,7 +434,7 @@
     state.person = null;
     if (opener && opener.focus) opener.focus();
   }
-  function renderPerson(p) {
+  function renderPerson(p, fresh) {
     $("p-name").textContent = p.name;
     const big = avatar(p.name, p.id);
     $("p-avatar").textContent = big.textContent;
@@ -361,7 +444,7 @@
     const row = state.overview && state.overview.people.find((x) => x.id === p.id);
     const vals = p.line.map((x) => x.v).filter((v) => v !== null);
     const avg = row && row.score !== null ? row.score : vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
-    $("p-score").textContent = avg === null ? "—" : fmtInt.format(avg);
+    figure($("p-score"), avg, "count", fresh);
     delta($("p-delta"), row ? row.delta : null);
     if (!pChart && window.LightweightCharts) {
       pChart = LightweightCharts.createChart($("p-chart"), { ...chartOptions(), autoSize: true });
@@ -373,7 +456,9 @@
     if (pChart) {
       pChart.applyOptions(chartOptions());
       pArea.applyOptions({ lineColor: css("--accent"), topColor: css("--area-top"), bottomColor: css("--area-bottom") });
-      pArea.setData(p.line.map((x) => (x.v === null ? { time: x.d } : { time: x.d, value: x.v })));
+      const line = p.line.map((x) => (x.v === null ? { time: x.d } : { time: x.d, value: x.v }));
+      const range = holdScale(pArea, line);
+      put(pArea, line, range ? range.min - (range.max - range.min) * 0.12 : 0, fresh);
       pArea.setMarkers([{ time: p.day, position: "aboveBar", color: css("--accent"), shape: "circle", size: 0.7 }]);
       pChart.timeScale().fitContent();
     }
@@ -435,8 +520,8 @@
       renderIndex(o);
       if (state.sector !== "all" && !o.sectors.some((s) => s.key === state.sector)) state.sector = "all";
       renderSectors(o);
-      renderMix(o);
       renderBoard(o);
+      state.anim = false;
       notice(null);
     } catch (e) {
       if (e.message !== "expired") notice("Юклаб бўлмади", loadOverview);
@@ -451,6 +536,7 @@
   document.querySelectorAll(".range button").forEach((b) => {
     b.addEventListener("click", () => {
       state.days = Number(b.dataset.days);
+      state.anim = true;
       document.querySelectorAll(".range button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       skeleton();
       loadOverview();
@@ -461,7 +547,7 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("person").hidden) closePerson(); });
   function repaint() {
     paintChart();
-    if (state.overview) { renderTickers(state.overview.tickers); renderMix(state.overview); renderBoard(state.overview); }
+    if (state.overview) { renderTickers(state.overview.tickers); renderBoard(state.overview); }
     if (state.person) openPerson(state.person, state.personDay);
   }
   document.querySelectorAll("[data-theme-toggle]").forEach((b) => b.addEventListener("click", () => {
@@ -477,6 +563,7 @@
   });
 
   skeleton();
+  renderKey();
   loadOverview();
   loadTape();
   document.querySelectorAll(".rail-link[href]").forEach((a) => a.addEventListener("click", () => {

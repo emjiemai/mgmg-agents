@@ -38,17 +38,26 @@
 
     <section class="card market" id="market" aria-labelledby="index-title">
       <div class="card-head">
-        <h2 id="index-title">Индекс</h2>
+        <div class="head-text">
+          <h2 id="index-title">Индекс <span class="h-sub">(компаниянинг кунлик балли)</span></h2>
+          <p class="hint">Давомат 40 + ҳисобот 30 + топшириқ 30 = 100</p>
+        </div>
         <p class="price"><span class="value" id="index-value">—</span><span class="delta" id="index-delta"></span></p>
-        <p class="legend" aria-hidden="true"><span class="when" id="hover-day"></span><span class="key key-line"></span>Индекс<b id="hover-index"></b><span class="key key-bars"></span>Сотув<b id="hover-sales"></b></p>
       </div>
+      <p class="legend" aria-hidden="true"><span class="when" id="hover-day"></span><span class="key key-line"></span>Балл<b id="hover-index"></b></p>
       <div class="chart" id="chart"></div>
     </section>
 
-    <section class="card mix" aria-labelledby="mix-title">
-      <h2 id="mix-title">Бизнеслар</h2>
-      <ul class="bars" id="mix"></ul>
-      <p class="big"><span class="big-n" id="today-count">—</span><span class="big-l">Бугун ҳаракат</span></p>
+    <section class="card sales" id="sales-card" aria-labelledby="sales-title">
+      <div class="card-head">
+        <div class="head-text">
+          <h2 id="sales-title">Сотув <span class="h-sub">(кунлик савдо)</span></h2>
+          <p class="hint">Фактуралар − қайтаришлар, сўмда</p>
+        </div>
+        <p class="price"><span class="value" id="sales-value">—</span><span class="delta" id="sales-delta"></span></p>
+      </div>
+      <p class="legend" aria-hidden="true"><span class="when" id="hover-sales-day"></span><span class="key key-bars"></span>Сўм<b id="hover-sales"></b></p>
+      <div class="chart" id="sales-chart"></div>
     </section>
 
     <section class="card board" id="board-card" aria-labelledby="board-title">
@@ -63,7 +72,15 @@
     </section>
 
     <aside class="card tape" id="tape-card" aria-labelledby="tape-title">
-      <div class="card-head"><h2 id="tape-title">Бугун</h2><span class="live" aria-hidden="true"></span></div>
+      <div class="card-head">
+        <div class="head-text">
+          <h2 id="tape-title">Бугун <span class="h-sub">(ходимларнинг ҳаракатлари)</span></h2>
+          <p class="hint">Янгиси тепада, ҳар дақиқада янгиланади</p>
+        </div>
+        <span class="live" aria-hidden="true"></span>
+        <button class="icon-btn key-btn" type="button" id="key-toggle" aria-expanded="false" aria-controls="tape-key" aria-label="Белгилар"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg></button>
+      </div>
+      <ul class="tape-key" id="tape-key" hidden></ul>
       <ol class="tape-list" id="tape"></ol>
     </aside>
   </main>

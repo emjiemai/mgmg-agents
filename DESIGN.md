@@ -208,9 +208,14 @@ icons, delta and missing-data rules below still hold on PULSE.
   amber for the other businesses; up green (#2ccf8a / #12a061), down red (#f2546d / #df2f4f) — still by the
   Good-Not-Sign Rule.
 - **Shape:** a 76px icon rail on the left (hidden on phones); rounded 16px cards on a 12-column grid — six ticker
-  cards (value, ▲▼ %, smooth sparkline), the index card (8 columns: curved line over a cyan gradient, purple
-  volume bars) beside «Бизнеслар» (4: one progress bar per business, today's action count big), the board (8)
-  beside the tape (4). Avatars are initials on a colour from the person's id.
+  cards (value, ▲▼ %, smooth sparkline), the index card (8 columns: curved cyan line over a gradient) beside the
+  sales card (4: purple daily bars on their own so'm scale; one crosshair across both), the board (8) beside the
+  tape (4). Avatars are initials on a colour from the person's id. («Бизнеслар» removed 2026-10-23.)
+- **Words allowed here (the owner, 2026-10-23):** a card title may carry its meaning in brackets in 13px ink-3
+  («Индекс (компаниянинг кунлик балли)») and one hint line under it; the tape's marks have a key behind ⓘ.
+- **Motion:** cards rise in (640ms, staggered), lines rise from their floor left to right (1.3s, ease-out cubic,
+  scale held at the final values), bars grow, figures count up (1s), sparklines draw (clip reveal), rows follow
+  45ms apart; the last index point breathes. Only on entry and on a new period; none under reduced motion.
 - **Speed:** fonts are Latin + Cyrillic WOFF2 subsets (87 KB, not 1 MB of TTF); the chart library and fonts are
   cached a year, the page's own files revalidate by ETag; everything is gzipped; the data is served from a kept
   copy and rebuilt behind it (spec 28 §Speed).

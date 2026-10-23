@@ -29,10 +29,21 @@ the left rail, remembered per device): rounded cards, curved index line over a g
 - **Six tickers:** Сотув (SAP invoices − credit notes, so'm, by document date), Дўкон (Billz shops), Топшириқ (due
   tasks done on time, %), Ҳисобот (daily reports sent, %), Давомат (on time, %), Шикоят (open now; ▲ is bad) —
   each with ▲▼ against the period before and a sparkline.
-- **Индекс:** the company line (everyone's daily score averaged) over SAP sales bars; the legend follows the
-  crosshair (that day's index and sales, numbers only).
+- **Индекс (компаниянинг кунлик балли):** the company line — everyone's daily score averaged, 0–100; the line under
+  the title says what makes it up (давомат 40 + ҳисобот 30 + топшириқ 30). Its own chart since 2026-10-23.
+- **Сотув (кунлик савдо):** SAP invoices − credit notes per day, in so'm, on its own chart with a visible so'm scale
+  (2026-10-23 — the owner found one chart with two meanings confusing). Both charts share one crosshair: a day
+  under the finger on one is shown on the other; each legend shows that day's number.
+- **The «Бизнеслар» card was removed** (2026-10-23, the owner); the businesses stay as the board's filter.
 - **Бугун (the tape):** today's actions, newest first — arrivals (late in amber), leaving, task steps, reports,
-  explanations, complaints in and resolved. Refreshes every minute; a name opens that person.
+  explanations, complaints in and resolved. Refreshes every minute; a name opens that person. A line under the
+  title explains it; the ⓘ button opens a key of the marks (Келди, Кечикди, Кетди, Топшириқ, Ҳисобот, Сабабини
+  ёзди, Шикоят келди, Шикоят ҳал бўлди) — open on the first visit, open/closed kept per browser; every mark also
+  has its meaning as a hover title.
+- **Motion (2026-10-23):** on entry and on a new period the cards rise in, the index and person lines rise from
+  the bottom left to right, the sales bars grow, numbers count up, sparklines draw, board and tape rows follow
+  one by one; the last index point breathes (live). The scale is fixed to the final values so nothing jumps. A
+  refresh every few minutes doesn't move anything; `prefers-reduced-motion` turns it all off.
 - **Ходимлар:** everyone ranked by their period score, today's arrival dot, sparkline, ▲▼; Ҳамма / Garmin /
   Primus / Londry / Офис filter.
 - **One person** (a panel; a sheet on a phone): their score line (tap a day), the day's three parts as numbers by
