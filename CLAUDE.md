@@ -176,6 +176,16 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **Excused days + late reports** (2026-10-23, the Boss, spec 29): ⬜ Сабабли on the explanation card and **/sababli**
   (Director: anyone; Garmin manager: his team) → the day is grey (Verifix excused, unsent ask + minus removed, ↩ undoes).
   The morning «no report» ask has 📝 send yesterday's report → ✅ / ❌ by the Director / Garmin manager; approved = green.
+- **One morning message per employee** (2026-10-24, the owner, spec 30): report-bonus, explanations and task-tracker
+  --morning leave notes (`morning_notes`); `agents/morning-notes` sends each person ONE message, at most one question
+  last (a missed report's «no point» inside it). Replies are read as reason / the late report itself / other; the work
+  AI gets `agenda.pending` (what the bot waits for from that person).
+- **Verifix days without data** (2026-10-24, spec 11): ≤ 20 % arrivals of ≥ 4 judged, or IT's ⛔ on Admin `/verifix`
+  (counts only) → status `no_data`: never absent/late, no «why?» ask (open ones withdrawn with an apology), the
+  Director told. **An excused day keeps its report row as status `excused`** (nothing deleted); every report count
+  leaves `excused` out.
+- **Admin report sheet** (2026-10-24): `/xodimlar` → 📊 the month's days, tap ⬜ → 🟩 → 🟥 (−1) → ⬜ excused; the
+  Director gets one summary (✅ Тайёр, or 22:00); `report_cell_edits`. The employee isn't messaged.
 - **Removal is a clean end; re-registration a fresh start** (2026-10-14): `store.revoke_employee` deletes the work-AI
   memory, closes held messages/files, cancels open tasks, clears data access; `create_employee` on a revoked row
   clears the name (asked again), duties, settings and language. One person's AI questions are answered one at

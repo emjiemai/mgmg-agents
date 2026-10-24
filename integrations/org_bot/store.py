@@ -751,7 +751,7 @@ async def reports_between(start: date, end: date) -> list[dict[str, Any]]:
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
-        WHERE r.report_date BETWEEN %s AND %s
+        WHERE r.report_date BETWEEN %s AND %s AND r.status <> 'excused'
         ORDER BY r.report_date, e.display_name
         """,
         (start, end),
@@ -1405,7 +1405,7 @@ async def team_reports(role: str, since: date) -> list[dict[str, Any]]:
         SELECT r.report_date, r.status, r.content, r.submitted_at, r.penalty_points,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS name
         FROM daily_reports r JOIN employees e ON e.id = r.employee_id
-        WHERE e.role = %s AND e.status = 'active' AND r.report_date >= %s
+        WHERE e.role = %s AND e.status = 'active' AND r.report_date >= %s AND r.status <> 'excused'
         ORDER BY r.report_date DESC, name
         """,
         (role, since),
@@ -1422,7 +1422,8 @@ async def run_fix(sql: str) -> int:
 async def reports_between_rows(start: date, end: date) -> list[dict[str, Any]]:
     """Every daily-report ask in ``[start, end]`` (the report calendar, 2026-10-17)."""
     return await fetch_all(
-        "SELECT employee_id, report_date, status, penalty_points FROM daily_reports WHERE report_date BETWEEN %s AND %s",
+        """SELECT employee_id, report_date, status, penalty_points FROM daily_reports
+           WHERE report_date BETWEEN %s AND %s AND status <> 'excused'""",
         (start, end),
     )
 
@@ -1437,7 +1438,7 @@ async def settle_report_bonus(day: date, roles: list[str], points: int) -> list[
                                        bonus_at = now()
             FROM employees e
             WHERE e.id = r.employee_id AND e.status = 'active' AND NOT e.reports_off AND e.role = ANY(%(roles)s)
-              AND r.report_date = %(d)s AND r.bonus_at IS NULL
+              AND r.report_date = %(d)s AND r.bonus_at IS NULL AND r.status <> 'excused'
             RETURNING r.id, r.employee_id, r.telegram_user_id, r.report_date, r.status, r.auto_built, r.bonus_points,
                       e.full_name, e.display_name, e.address_form
         )
@@ -1929,6 +1930,7 @@ async def report_results_before(day: date) -> list[dict[str, Any]]:
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = (SELECT max(report_date) FROM daily_reports WHERE report_date < %s)
+          AND r.status <> 'excused'
         ORDER BY e.display_name
         """,
         (day,),
@@ -1950,7 +1952,7 @@ async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
                r.submitted_at, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
-        WHERE r.report_date >= %s::date - %s::int
+        WHERE r.report_date >= %s::date - %s::int AND r.status <> 'excused'
         ORDER BY r.report_date DESC, e.display_name
         """,
         # Tashkent's date, not the database's: in UTC the day turns over five
@@ -2105,7 +2107,7 @@ async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any
         # Only the role the person holds now (2026-10-17: a role change is a clean start).
         """SELECT r.employee_id, r.report_date, r.status, r.submitted_at, r.penalty_points, r.bonus_points, e.display_name
            FROM daily_reports r JOIN employees e ON e.id = r.employee_id
-           WHERE r.report_date BETWEEN %s AND %s AND r.role = e.role""",
+           WHERE r.report_date BETWEEN %s AND %s AND r.role = e.role AND r.status <> 'excused'""",
         (start, end),
     )
     tasks = await fetch_all(
@@ -2602,8 +2604,8 @@ async def attach_media_to_report(telegram_user_id: int, report_date: date, capti
         SET media_count = media_count + 1,
             status = 'submitted',
             submitted_at = COALESCE(submitted_at, now()),
-            content = CASE WHEN status = 'asked' THEN %(text)s
-                           ELSE coalesce(content, '') || E'\n' || %(text)s END
+            content = CASE WHEN status IN ('asked', 'excused') OR coalesce(content, '') = '' THEN %(text)s
+                           ELSE content || E'\n' || %(text)s END
         WHERE telegram_user_id = %(u)s AND report_date = %(d)s
         RETURNING *
         """,
@@ -2776,22 +2778,28 @@ async def missed_reports_of(day: date) -> list[dict[str, Any]]:
 # ---- excused days (2026-10-23, the Boss: "set grey when they have a reason") ----------------------------------
 
 async def excuse_day(employee_id: str, day: date, set_by: int, reason: str | None = None) -> bool:
-    """Mark a person's day as having a good reason; an unsent report ask that day is taken out with its minus
-    (kept in ``report_row`` for ↩). False when the day was already excused."""
+    """Mark a person's day as having a good reason. An unsent report ask that day turns ``excused`` (2026-10-24:
+    kept, not deleted — its minus goes, the text stays); the minus it had is kept in ``report_row`` for ↩.
+    False when the day was already excused."""
     if await fetch_one("SELECT 1 AS x FROM excused_days WHERE employee_id = %s AND day = %s", (employee_id, day)):
         return False
     row = await fetch_one(
-        """DELETE FROM daily_reports WHERE employee_id = %s AND report_date = %s AND status = 'asked'
-           RETURNING telegram_user_id, role, prompt_message_id, asked_at, reminded_at, penalty_points""", (employee_id, day))
+        """WITH old AS (SELECT id, penalty_points FROM daily_reports
+                        WHERE employee_id = %s AND report_date = %s AND status = 'asked' FOR UPDATE)
+           UPDATE daily_reports d SET status = 'excused', penalty_points = 0 FROM old WHERE d.id = old.id
+           RETURNING old.penalty_points AS penalty_points""", (employee_id, day))
+    kept = {"kept": True, "penalty_points": int(row["penalty_points"] or 0)} if row else None
     await execute(
         """INSERT INTO excused_days (employee_id, day, reason, set_by, report_row) VALUES (%s, %s, %s, %s, %s)
            ON CONFLICT (employee_id, day) DO NOTHING""",
-        (employee_id, day, (reason or "")[:500] or None, set_by, json.dumps(row, default=str) if row else None))
+        (employee_id, day, (reason or "")[:500] or None, set_by, json.dumps(kept) if kept else None))
     return True
 
 
 async def unexcuse_day(employee_id: str, day: date) -> bool:
-    """Take the mark off; a report ask it took out comes back as it was (minus included). False when not excused."""
+    """Take the mark off: the day's ask is owed / missed again as it was (minus included). False when not excused.
+
+    Days excused on 23.10.2026 had their ask taken out; ``report_row`` holds it and it is put back."""
     gone = await fetch_one("DELETE FROM excused_days WHERE employee_id = %s AND day = %s RETURNING report_row",
                            (employee_id, day))
     if gone is None:
@@ -2799,7 +2807,12 @@ async def unexcuse_day(employee_id: str, day: date) -> bool:
     row = gone.get("report_row")
     if isinstance(row, str):
         row = json.loads(row)
-    if row:
+    row = row or {}
+    await execute(
+        """UPDATE daily_reports SET status = 'asked', penalty_points = %s
+           WHERE employee_id = %s AND report_date = %s AND status = 'excused'""",
+        (int(row.get("penalty_points") or 0), employee_id, day))
+    if row and not row.get("kept"):  # a 23.10 mark: the ask was deleted then
         await execute(
             """INSERT INTO daily_reports (report_date, employee_id, telegram_user_id, role, prompt_message_id, asked_at,
                                           reminded_at, penalty_points)
@@ -2870,3 +2883,119 @@ async def open_report_explanations(employee_id: str, day: date) -> list[dict[str
     return await fetch_all(
         """SELECT id::text FROM explanations WHERE employee_id = %s AND kind = 'report' AND asked_for = %s
              AND answered_at IS NULL""", (employee_id, day))
+
+
+# ---- Verifix days without data (2026-10-24, the owner: "Verifix didn't work — employees blamed the bot") ------
+
+async def verifix_bad_days(start: date, end: date) -> set[date]:
+    """Days IT marked on Admin Bot /verifix as «Verifix ишламади»: nobody is judged absent or late on them."""
+    rows = await fetch_all("SELECT day FROM verifix_bad_days WHERE day BETWEEN %s AND %s", (start, end))
+    return {r["day"] for r in rows}
+
+
+async def toggle_verifix_bad_day(day: date, set_by: str) -> bool:
+    """Mark the day as one Verifix didn't record, or take the mark off. True when now marked."""
+    if await fetch_one("DELETE FROM verifix_bad_days WHERE day = %s RETURNING day", (day,)):
+        return False
+    await execute("INSERT INTO verifix_bad_days (day, set_by) VALUES (%s, %s) ON CONFLICT (day) DO NOTHING",
+                  (day, set_by))
+    return True
+
+
+async def withdraw_absent_asks(day: date) -> list[dict[str, Any]]:
+    """The unanswered «why weren't you at work?» asks that cover a day Verifix didn't record: closed, with the
+    people to apologise to."""
+    return await fetch_all(
+        """UPDATE explanations x SET answer = '[Verifix ишламади — савол бекор қилинди]', answered_at = now()
+           FROM employees e
+           WHERE e.id = x.employee_id AND x.kind = 'absent' AND %s = ANY(x.days) AND x.answered_at IS NULL
+           RETURNING x.id, x.telegram_user_id, e.full_name, e.display_name, e.address_form""", (day,))
+
+
+# ---- the admin's report sheet (2026-10-24, the owner: "edit reports … grey, red or green as Admin") -------------
+
+async def report_day_rows(employee_id: str, start: date, end: date) -> list[dict[str, Any]]:
+    """One person's report rows of the range, every status (the sheet shows them all)."""
+    return await fetch_all(
+        "SELECT * FROM daily_reports WHERE employee_id = %s AND report_date BETWEEN %s AND %s",
+        (employee_id, start, end))
+
+
+async def set_report_sent(employee: dict[str, Any], day: date, note: str) -> None:
+    """The day's report counts as sent (green): an existing row keeps its text; a missing one gets ``note``."""
+    await execute(
+        """INSERT INTO daily_reports (report_date, employee_id, telegram_user_id, role, status, content, submitted_at)
+           VALUES (%s, %s, %s, %s, 'submitted', %s, now())
+           ON CONFLICT (report_date, employee_id) DO UPDATE
+           SET status = 'submitted', penalty_points = 0, submitted_at = coalesce(daily_reports.submitted_at, now()),
+               content = coalesce(nullif(daily_reports.content, ''), EXCLUDED.content)""",
+        (day, str(employee["id"]), employee["telegram_user_id"], employee["role"], note))
+
+
+async def set_report_missed(employee: dict[str, Any], day: date, points: int, closed: bool) -> None:
+    """The day's report counts as not sent (red): ``points`` minus once the day is closed (22:00), else still owed."""
+    await execute(
+        """INSERT INTO daily_reports (report_date, employee_id, telegram_user_id, role, status, penalty_points,
+                                      penalized_at)
+           VALUES (%(d)s, %(e)s, %(u)s, %(r)s, 'asked', %(p)s, CASE WHEN %(c)s THEN now() END)
+           ON CONFLICT (report_date, employee_id) DO UPDATE
+           SET status = 'asked', auto_built = false, penalty_points = %(p)s,
+               penalized_at = CASE WHEN %(c)s THEN coalesce(daily_reports.penalized_at, now()) END""",
+        {"d": day, "e": str(employee["id"]), "u": employee["telegram_user_id"], "r": employee["role"],
+         "p": points if closed else 0, "c": closed})
+
+
+async def record_cell_edit(employee_id: str, day: date, before: str, after: str, set_by: str) -> None:
+    await execute(
+        "INSERT INTO report_cell_edits (employee_id, day, before, after, set_by) VALUES (%s, %s, %s, %s, %s)",
+        (employee_id, day, before, after, set_by))
+
+
+async def untold_cell_edits() -> list[dict[str, Any]]:
+    """The admin's changes the Director hasn't been told about yet, with the person's name, oldest first."""
+    return await fetch_all(
+        """SELECT c.*, e.full_name, e.display_name FROM report_cell_edits c JOIN employees e ON e.id = c.employee_id
+           WHERE c.told_at IS NULL ORDER BY c.set_at""")
+
+
+async def mark_cell_edits_told(ids: list[str]) -> None:
+    if ids:
+        await execute("UPDATE report_cell_edits SET told_at = now() WHERE id = ANY(%s::uuid[])", (ids,))
+
+
+# ---- one morning message per employee (2026-10-24, the owner: "it might ask multiple questions at once") -------
+
+async def add_morning_note(employee: dict[str, Any], day: date, kind: str, detail: dict[str, Any]) -> None:
+    """What an 08:00 agent wants to tell (or ask) this person — sent together by agents/morning-notes."""
+    await execute(
+        """INSERT INTO morning_notes (day, employee_id, telegram_user_id, kind, detail) VALUES (%s, %s, %s, %s, %s)""",
+        (day, str(employee.get("employee_id") or employee["id"]), employee["telegram_user_id"], kind,
+         json.dumps(detail, default=str, ensure_ascii=False)))
+
+
+async def claim_morning_notes(day: date, older_than_minutes: int = 0) -> list[dict[str, Any]]:
+    """The day's unsent notes, claimed at once (no one else sends them), with each person's name fields."""
+    return await fetch_all(
+        """WITH claimed AS (
+               UPDATE morning_notes SET sent_at = now()
+               WHERE day = %s AND sent_at IS NULL AND created_at <= now() - make_interval(mins => %s)
+               RETURNING *)
+           SELECT c.*, e.full_name, e.display_name, e.address_form, e.status AS employee_status
+           FROM claimed c JOIN employees e ON e.id = c.employee_id ORDER BY c.created_at""",
+        (day, older_than_minutes))
+
+
+async def set_morning_notes_message(ids: list[str], message_id: int) -> None:
+    """The message the notes went out in (a note claimed but never sent keeps message_id NULL — counted, not retried)."""
+    if ids:
+        await execute("UPDATE morning_notes SET message_id = %s WHERE id = ANY(%s::uuid[])", (message_id, ids))
+
+
+async def unanswered_explanation_ids(ids: list[str]) -> set[str]:
+    """Of these asks, the ones still waiting — a question withdrawn (Verifix's fault) before the morning message
+    went out isn't asked in it."""
+    if not ids:
+        return set()
+    rows = await fetch_all(
+        "SELECT id::text FROM explanations WHERE id = ANY(%s::uuid[]) AND answered_at IS NULL", (ids,))
+    return {r["id"] for r in rows}

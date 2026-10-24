@@ -59,7 +59,7 @@ def cell(row: dict[str, Any] | None, day: date, now: datetime, works: bool = Tru
     """One square: sent / missed / open / none / future. ``works``: the person works that day."""
     if day > now.date():
         return "future"
-    if row is None:
+    if row is None or row.get("status") == "excused":  # an excused day (2026-10-23/24) is grey
         return "none"
     if row.get("status") == "submitted":
         return "sent"

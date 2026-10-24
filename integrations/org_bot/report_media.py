@@ -28,6 +28,7 @@ from integrations.common.logging_setup import setup_logging
 AGENT = "report-media"
 log = setup_logging(AGENT)
 
+CAPTION_MAX = 1024
 LISTEN_KINDS = ("voice", "audio")
 WATCH_KINDS = ("video", "video_note")
 # Telegram lets a bot download files up to 20 MB; a video is sent to the AI inline (base64), so a little less.
@@ -128,5 +129,10 @@ def media_caption(who: str | None, at: Any, text: str | None) -> str:
     from integrations.telegram.bot import escape
 
     head = " · ".join(x for x in (who or "", f"{to_local(at):%d.%m %H:%M}" if at else "") if x)
-    body = escape(" ".join((text or "").split())[:800])
-    return f"<b>{escape(head)}</b>" + (f"\n{body}" if body else "")
+    plain = " ".join((text or "").split())[:800]
+    out = f"<b>{escape(head)}</b>" + (f"\n{escape(plain)}" if plain else "")
+    # Telegram's 1024-character caption: cut the text, never the HTML (an escaped «&» could break it, 2026-10-24)
+    while len(out) > CAPTION_MAX and plain:
+        plain = plain[:-100]
+        out = f"<b>{escape(head)}</b>" + (f"\n{escape(plain)}…" if plain else "")
+    return out

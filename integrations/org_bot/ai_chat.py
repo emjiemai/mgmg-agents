@@ -102,9 +102,10 @@ Telegram HTML only.
 
 
 def work_context(
-    employee: dict[str, Any], tasks: list[dict[str, Any]], today: date
+    employee: dict[str, Any], tasks: list[dict[str, Any]], today: date, waiting: list[str] | None = None
 ) -> str:
-    """What the AI may know about this person: their duties and open tasks.
+    """What the AI may know about this person: their duties, open tasks, and what the bot waits for from them
+    (agenda.py, 2026-10-24 — so «what do I have to do?» gets a true answer).
 
     (Their open leads were here until the Director stopped the lead hand-out, 2026-10-07.)
     """
@@ -120,6 +121,12 @@ def work_context(
             lines.append(f"- {_plain(t.get('task_summary'))} ({status}{due_text})")
     else:
         lines.append("Their open tasks: none.")
+    if waiting:
+        lines.append("What the bot is waiting for from them now (if they ask what to do, tell them exactly this; "
+                     "ask for nothing else, and never say these are done):")
+        lines += waiting
+    elif waiting is not None:
+        lines.append("What the bot is waiting for from them now: nothing (no open question, no report owed).")
     return "\n".join(lines)
 
 

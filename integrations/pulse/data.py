@@ -193,7 +193,8 @@ async def _billz(start: date, end: date, run_id: uuid.UUID) -> dict[date, float]
 async def _db(start: date, end: date, ids: list[str], garmin_only: bool) -> dict[str, list[dict[str, Any]]]:
     reports = await fetch_all(
         """SELECT employee_id::text AS pid, report_date, status, auto_built, submitted_at, penalty_points
-           FROM daily_reports WHERE report_date BETWEEN %s AND %s AND employee_id::text = ANY(%s)""", (start, end, ids))
+           FROM daily_reports WHERE report_date BETWEEN %s AND %s AND employee_id::text = ANY(%s)
+             AND status <> 'excused'""", (start, end, ids))
     tasks = await fetch_all(
         """SELECT id::text, code, task_summary, assigned_employee_id::text AS pid, status, due_date, created_at, completed_at
            FROM tasks WHERE assigned_employee_id::text = ANY(%s)
@@ -387,13 +388,14 @@ async def _build_overview(days: int, roles: tuple[str, ...] | None) -> dict[str,
     return assemble(staff, data, recs, sap, billz, days, now)
 
 
-async def overview(days: int, roles: tuple[str, ...] | None) -> dict[str, Any]:
+async def overview(days: int, roles: tuple[str, ...] | None, ttl: float = CACHE_SECONDS) -> dict[str, Any]:
     """The page's data for a period and a scope (None = everyone), from the cache when kept."""
     days = days if days in RANGES else 30
-    return await _cached(_cache, (days, roles), CACHE_SECONDS, lambda: _build_overview(days, roles))
+    return await _cached(_cache, (days, roles), ttl, lambda: _build_overview(days, roles))
 
 
 WARM_HOURS = range(8, 21)  # Tashkent time: the views are kept ready while people work
+WARM_EVERY = CACHE_SECONDS - 60  # seconds between rounds
 
 
 async def keep_warm(scopes: list[tuple[str, ...] | None]) -> None:
@@ -403,12 +405,14 @@ async def keep_warm(scopes: list[tuple[str, ...] | None]) -> None:
         if first or now_local().hour in WARM_HOURS:
             for roles in scopes:
                 try:
-                    await overview(30, roles)
+                    # Older than this round's sleep → rebuilt now (2026-10-24: with the page's own 10 minutes the
+                    # copy was only rebuilt every other round, up to ~18 minutes old).
+                    await overview(30, roles, ttl=WARM_EVERY - 60)
                     await tape(roles)
                 except Exception as exc:  # noqa: BLE001 — the next round tries again
                     log.warning("PULSE warm-up failed: {}", type(exc).__name__)
         first = False
-        await asyncio.sleep(CACHE_SECONDS - 60)
+        await asyncio.sleep(WARM_EVERY)
 
 
 # ---- one person ---------------------------------------------------------------------------------------------

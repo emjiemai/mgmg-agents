@@ -159,7 +159,7 @@ async def _attendance(employees: list[dict[str, Any]], start: date, end: date) -
     for eid, vid in matched.items():
         days = [r for r in recs if r.employee_id == vid and r.working and r.status != "before_start"]
         result[eid] = kpi_score.Attendance(
-            working=sum(1 for r in days if r.status != "excused"),
+            working=sum(1 for r in days if r.status not in ("excused", "no_data")),  # no data: not judged (24.10)
             late=sum(1 for r in days if r.status == "late"),
             absent=sum(1 for r in days if r.status == "absent"),
         )

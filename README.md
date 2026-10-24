@@ -113,12 +113,12 @@ Every link the system uses (pages, webhooks, services): `docs/links.md`.
 
 | Command | Does |
 | ------- | ---- |
-| `/xodimlar` | Employees: name, role, ака/опа, weekend work, AI on/off, cheer on/off, daily reports on/off, **AI language (ўзбекча / русча)**, **data access SAP / 1C / Billz** (Бухгалтерия and Молия only — the Director is told each time and can close it), remove. The Garmin менежер's data comes with the role (the Boss is told). Removing someone ends everything of theirs; registering again starts fresh |
+| `/xodimlar` | Employees: name, role, ака/опа, weekend work, AI on/off, cheer on/off, daily reports on/off, **AI language (ўзбекча / русча)**, **data access SAP / 1C / Billz** (Бухгалтерия and Молия only — the Director is told each time and can close it), remove. The Garmin менежер's data comes with the role (the Boss is told). Removing someone ends everything of theirs; registering again starts fresh. **📊 Ҳисобот варағи (ой)** (2026-10-24): the person's month as a calendar — tap a day: ⬜ → 🟩 sent → 🟥 not sent (−1 point) → ⬜ excused (report and Verifix not counted); a future day: ⬜ excused in advance. ✅ Тайёр sends the Director one summary of the changes (anything left open reaches him at 22:00); the employee isn't messaged |
 | `/ismlar` | Ask everyone without a typed name for it |
 | `/dam` | Mark days off (no asks, reminders, cheer or leads that day) |
 | `/elon <text>` | Announce to every employee (preview, then confirm); `/elon` alone = a "technical error" notice |
 | `/grafik` | Who is on "эркин график" (never shown as late/absent) |
-| `/verifix`, `/billz`, `/1c` | Is that system connected and readable — status and counts only, no figures (the Director's order of 07.10.2026) |
+| `/verifix`, `/billz`, `/1c` | Is that system connected and readable — status and counts only, no figures (the Director's order of 07.10.2026). `/verifix` also lists the last 7 days' arrival marks (how many of how many — never who) with a button per day: **⛔ = the terminals didn't record that day** → nobody is absent or late that day, the «why weren't you at work?» questions about it are withdrawn with an apology, the Director is told; tap again to undo. A day with almost no marks (≤ 20 % of ≥ 4 people) is treated so on its own |
 | `/texnik` | IT's technical report now: connections, SAP push, brief delivered, errors, DB, security (also every morning) |
 | `/sifat` | Data quality check now (SAP feeds, missing columns, unnamed people…) |
 | `/qr` | The two printable complaint QR cards |
@@ -145,6 +145,14 @@ in the future or over 90 days old, not in so'm, the same cheque already sent)
 → the bot asks him: 📨 Шундай юбориш · 📋 Бу чек эмас (→ the people list) ·
 ❌ Бекор, or he sends a clearer photo. A photo that isn't a cheque goes the
 old way (the people list). Off: `CHEQUE_READER_ENABLED=false`.
+
+**The morning message** (2026-10-24) — each employee gets at most ONE message
+from the bot at 08:00: yesterday's report point (Garmin сотув), tasks due today
+/ tomorrow or just overdue, and at most one question, last — why they weren't
+at work (Verifix) or why yesterday's report didn't come (with **📝 Кечаги
+ҳисоботни юбориш**). Their answer is understood as the reason, the missing
+report itself (→ the Director / manager approve it) or something else (→ the
+work AI, which knows what the bot is waiting for from that person).
 
 **OPS Manager Bot commands** — Director: `/maqsad`, `/maqsadlar`, `/kpi`,
 `/baho`; employees: `/hisobot` (change or delete today's report), `/kpi`,
@@ -318,6 +326,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-24 | **Admin report sheet, Verifix days, one morning message, review fixes** (the owner). **📊 Ҳисобот варағи** on the `/xodimlar` card: the month's days as buttons — tap ⬜ → 🟩 → 🟥 → ⬜ (sent / not sent −1 / excused); the Director gets one summary on ✅ Тайёр (or at 22:00). **Verifix didn't record:** `/verifix` lists the last 7 days (counts only) — ⛔ a day and nobody is absent/late that day, the wrong «why weren't you at work?» questions are withdrawn with an apology, the Director is told; a day with almost no arrival marks is taken as «no data» on its own and the brief says so (it used to ask everyone why they hadn't come). **One morning message per employee:** the report point, task reminders and the one question come together (the missed-report «no point» used to come twice, plus a message per task); the bot knows what it waits for from each person (the work AI is told) and tells a reason from a typed late report from something else. **Fixes from the review of 22–23.10:** Verifix down stopped the morning questions entirely; a voice sent as yesterday's late report went into today's; the 12-hour late-report window could take today's report (now 3 h, and a reply to the 16:00 ask never counts); an excused day deleted the report row (now status «excused», nothing lost); the Garmin shop staff's `/xodimlar` card had lost ака/опа, AI, 📝 and language since 17.10; past unsent reports read «open until 22:00» to the analyst; PULSE's warm-up skipped every other round; a long file caption could break. Specs 11, 27, 29, 30. |
 | 2026-10-23 | **Excused days and late reports** (the Boss). **Grey with a reason:** the explanation card now has **⬜ Сабабли** — the person's days on it turn grey (not absent, not late, no missed report, the minus taken off; ↩ undoes). **/sababli** (the Director: anyone; the Garmin manager: his team) — pick a person, tap days two weeks back or ahead (e.g. a day off asked in advance). **Late report:** the morning «report didn't come» ask has **📝 Кечаги ҳисоботни юбориш**; the text goes to the Director and the Garmin manager with ✅ / ❌ — approved, the day turns **green** and the minus goes; declined, it stays red. Spec 29. For Ширин Умматова's 22.10: /sababli → Ширин Умматова → «Па 22.10». |
 | 2026-10-23 | **PULSE: no TradingView logo on the charts** (the owner). The library's licence asks for a credit when its logo is hidden, so a small «TradingView графиклари» link sits at the page's foot (opens in a new tab, no referrer). Spec 28. |
 | 2026-10-23 | **PULSE: two charts, explanations, motion** (the owner). The index and sales are now **two charts**: «Индекс (компаниянинг кунлик балли)» with the line «Давомат 40 + ҳисобот 30 + топшириқ 30 = 100», and «Сотув (кунлик савдо)» with its own so'm scale; hovering a day shows it on both. The «Бизнеслар» card is gone. «Бугун» explains itself: a line under the title and an ⓘ key of the marks (Келди, Кечикди, Кетди, Топшириқ, Ҳисобот…). **Animation:** on opening, cards rise in, the lines rise from the bottom left to right, bars grow, numbers count up, rows follow one by one; the last point breathes; off for people who turn motion off. Spec 28. |

@@ -1278,3 +1278,48 @@ ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_sent_at TIMESTAMPTZ;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_decision TEXT;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_decided_by BIGINT;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS late_decided_at TIMESTAMPTZ;
+
+-- 2026-10-24 (the owner): an excused day keeps its report row — status 'excused' (grey, never counted, its minus 0)
+-- instead of the row being taken out, so nothing is lost and the admin's report sheet can turn a day green / red /
+-- grey and back. Every list and count of reports leaves 'excused' rows out.
+ALTER TABLE daily_reports DROP CONSTRAINT IF EXISTS daily_reports_status_check;
+ALTER TABLE daily_reports ADD CONSTRAINT daily_reports_status_check CHECK (status IN ('asked', 'submitted', 'excused'));
+
+-- Days Verifix didn't record (2026-10-24, the owner: "Verifix didn't work, employees blamed the bot"): IT marks the
+-- day on Admin Bot /verifix — nobody is judged absent or late that day, the «why weren't you at work?» asks about it
+-- are withdrawn with an apology, the Director is told. A day with almost no arrivals is treated so on its own.
+CREATE TABLE IF NOT EXISTS verifix_bad_days (
+    day     DATE         PRIMARY KEY,
+    set_by  TEXT         NOT NULL,
+    set_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- The admin's report sheet (2026-10-24, Admin Bot /xodimlar → 📊): every day the admin turned green / red / grey,
+-- for the Director's summary (told once: told_at).
+CREATE TABLE IF NOT EXISTS report_cell_edits (
+    id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id  UUID         NOT NULL REFERENCES employees(id),
+    day          DATE         NOT NULL,
+    before       TEXT         NOT NULL,
+    after        TEXT         NOT NULL,
+    set_by       TEXT         NOT NULL,
+    set_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    told_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_report_cell_edits_untold ON report_cell_edits (set_at) WHERE told_at IS NULL;
+
+-- One morning message per employee (2026-10-24, the owner: "it might ask multiple questions at once"): the 08:00
+-- agents (report bonus, explanations, task reminders) leave notes here; agents/morning-notes sends each person one
+-- message — short lines, at most one question last.
+CREATE TABLE IF NOT EXISTS morning_notes (
+    id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    day               DATE         NOT NULL,
+    employee_id       UUID         NOT NULL REFERENCES employees(id),
+    telegram_user_id  BIGINT       NOT NULL,
+    kind              TEXT         NOT NULL CHECK (kind IN ('bonus', 'task', 'ask')),
+    detail            JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    sent_at           TIMESTAMPTZ,
+    message_id        BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_morning_notes_unsent ON morning_notes (day) WHERE sent_at IS NULL;

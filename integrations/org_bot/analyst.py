@@ -402,6 +402,10 @@ def _today() -> date:
     return today_local()
 
 
+def _now() -> datetime:
+    return now_local()
+
+
 def parse_day(value: Any, default: date | None = None) -> date | None:
     """'2026-10-07' (or its first 10 characters) as a date; ``default`` if it isn't one."""
     try:
@@ -1023,6 +1027,24 @@ def find_people(employees: list[dict[str, Any]], wanted: str) -> list[dict[str, 
     return found
 
 
+def report_state(r: dict[str, Any], now: datetime) -> str:
+    """One report row's state in words for the AI (2026-10-24: a past unsent day read "open until 22:00"; an
+    excused day and a late report had no words at all)."""
+    when = f" {to_local(r['submitted_at']):%d.%m %H:%M}" if r.get("submitted_at") else ""
+    if r["status"] == "excused":
+        return "EXCUSED (a day with a reason, set by the Director / manager / admin) — not counted"
+    if r["status"] == "submitted":
+        late = " (a LATE report, approved)" if r.get("late_decision") == "approved" else ""
+        return f"SENT{when}{late}"
+    if r.get("late_content") and not r.get("late_decision"):
+        return "NOT sent on time; a late report was sent the next day and waits for approval"
+    declined = "; a late report was declined" if r.get("late_decision") == "declined" else ""
+    if r["report_date"] < now.date() or now.hour >= 22:
+        minus = f" (−{r['penalty_points']} KPI)" if r.get("penalty_points") else ""
+        return f"NOT sent{minus}{declined}"
+    return "not sent yet (open until 22:00)"
+
+
 async def employee_report(args: dict[str, Any]) -> str:
     """One person's report rows and their files (2026-10-22, the owner: "when a report is asked from a specific
     employee, only that row is sent, with their files")."""
@@ -1055,9 +1077,7 @@ async def employee_report(args: dict[str, Any]) -> str:
     if not rows:
         lines.append("No report was asked for that day (a day off, reports switched off, or not yet 16:00).")
     for r in rows:
-        when = f"sent {to_local(r['submitted_at']):%H:%M}" if r.get("submitted_at") else ""
-        state = ("SENT " + when if r["status"] == "submitted" else
-                 f"NOT sent (−{r['penalty_points']} KPI)" if r.get("penalty_points") else "not sent yet (open until 22:00)")
+        state = report_state(r, _now())
         mine = [f for f in files if str(f.get("for_report")) == str(r["id"])]
         kinds = ", ".join(sorted({f["kind"] for f in mine}))
         lines.append(f"- {r['report_date']} | {state}" + (" | put together by the bot from their messages" if r.get("auto_built") else "")

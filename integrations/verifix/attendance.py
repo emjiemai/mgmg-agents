@@ -26,6 +26,11 @@ The rules, stated so nobody has to guess what a number means:
     /grafik: they come when work needs them or the Director calls, so they
     are never late or absent — the brief only counts them, and the
     Director's questions still see when they came.
+  * **No data** (2026-10-24, the owner: "Verifix didn't work — employees
+    blamed the bot") = a day the terminals didn't record: IT marked it on
+    Admin Bot /verifix, or a finished working day where at most 20 % of at
+    least 4 people judged have any arrival. Nobody is absent or late that
+    day (status ``no_data``); the brief says the data is missing.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ from typing import Any, Iterable
 
 from integrations.common.config import settings
 from integrations.common.logging_setup import setup_logging
-from integrations.common.timeutil import fmt_date
+from integrations.common.timeutil import fmt_date, today_local
 from integrations.common.translit import name_to_cyrillic
 from integrations.telegram.bot import escape
 
@@ -110,7 +115,7 @@ class DayRecord:
     arrived: datetime | None = None
     left: datetime | None = None
     categories: set[str] = field(default_factory=set)
-    status: str = "off"  # off | on_time | present | late | absent | not_yet | before_start | excused | flexible
+    status: str = "off"  # off | on_time | present | late | absent | not_yet | before_start | excused | flexible | no_data
     late_minutes: int = 0
     early_minutes: int = 0
     excuse: str | None = None
@@ -225,6 +230,7 @@ class DaySummary:
     absent: list[DayRecord] = field(default_factory=list)
     not_yet: list[DayRecord] = field(default_factory=list)
     excused: list[DayRecord] = field(default_factory=list)
+    no_data: list[DayRecord] = field(default_factory=list)  # Verifix didn't record them that day (2026-10-24)
     arrived: int = 0
     flexible: int = 0  # on "эркин график" with a working day — counted, never judged
     flexible_came: int = 0
@@ -239,6 +245,9 @@ def summarize(recs: Iterable[DayRecord], day: date) -> DaySummary:
         if rec.status == "flexible":
             summary.flexible += 1
             summary.flexible_came += rec.arrived is not None
+            continue
+        if rec.status == "no_data":
+            summary.no_data.append(rec)
             continue
         summary.scheduled += 1
         if rec.arrived is not None:
@@ -259,11 +268,13 @@ def render_day(summary: DaySummary, max_lines: int = 5) -> str | None:
     """The brief's attendance block, or None when nobody had a working day."""
     label = fmt_date(summary.day)
     flexible = f" · эркин графикда {summary.flexible} киши" if summary.flexible else ""
+    no_data = (f"⚪ <b>Давомат ({label}):</b> Verifix {len(summary.no_data)} кишининг келишини ёзмаган (қурилма "
+               "ишламаган) — улар келмади ёки кечикди деб ҳисобланмади\n") if summary.no_data else ""
     if summary.scheduled == 0:
         if not summary.flexible:
-            return None
-        return (f"🕘 <b>Давомат ({label}):</b> фақат эркин графикдагилар — {summary.flexible} киши, "
-                f"{summary.flexible_came} таси келди\n")
+            return no_data or None
+        return no_data + (f"🕘 <b>Давомат ({label}):</b> фақат эркин графикдагилар — {summary.flexible} киши, "
+                          f"{summary.flexible_came} таси келди\n")
     missing = summary.absent + summary.not_yet
     parts = []
     if summary.late:
@@ -275,7 +286,8 @@ def render_day(summary: DaySummary, max_lines: int = 5) -> str | None:
     if summary.excused:
         parts.append(f"{len(summary.excused)} киши сабабли")
     if not (summary.late or missing or summary.excused):
-        return f"🟢 <b>Давомат ({label}):</b> ҳамма ўз вақтида келди — {summary.scheduled} киши{flexible}\n"
+        everyone = "Verifix ёзганларнинг ҳаммаси" if summary.no_data else "ҳамма"  # not «everyone» when some weren't recorded
+        return no_data + f"🟢 <b>Давомат ({label}):</b> {everyone} ўз вақтида келди — {summary.scheduled} киши{flexible}\n"
 
     emoji = "🔴" if missing else "🟡" if summary.late else "🟢"
     if not (summary.late or missing):
@@ -290,7 +302,7 @@ def render_day(summary: DaySummary, max_lines: int = 5) -> str | None:
     lines += [f"   • {entry}" for entry in entries[:max_lines]]
     if len(entries) > max_lines:
         lines.append(f"   <i>+яна {len(entries) - max_lines} та</i>")
-    return "\n".join(lines) + "\n"
+    return no_data + "\n".join(lines) + "\n"
 
 
 def describe(recs: list[DayRecord], today: date, now: datetime) -> str:
@@ -314,6 +326,8 @@ def describe(recs: list[DayRecord], today: date, now: datetime) -> str:
             f"Late: {_names(s.late, True) or 'nobody'}. "
             f"{'Not arrived yet' if day == today else 'Absent'}: {_names(s.not_yet + s.absent) or 'nobody'}. "
             f"Excused: {', '.join(f'{r.name} ({r.excuse})' for r in s.excused) or 'nobody'}."
+            + (f" NO DATA — Verifix didn't record these (the terminal wasn't working; never call them absent or "
+               f"late): {_names(s.no_data)}." if s.no_data else "")
         )
         flex = [r for r in recs if r.day == day and r.status == "flexible"]
         if flex:
@@ -341,11 +355,14 @@ def describe(recs: list[DayRecord], today: date, now: datetime) -> str:
             late = [r for r in days if r.status == "late"]
             absent = [r for r in days if r.status == "absent"]
             excused = [r for r in days if r.status == "excused"]
+            unknown = [r for r in days if r.status == "no_data"]
             early = [r for r in days if r.early_minutes]
             parts = [f"{len(days)} working day(s)", f"late {len(late)}x ({sum(r.late_minutes for r in late)} min total)"]
             parts.append(f"absent {len(absent)}x" + (f" ({', '.join(str(r.day) for r in absent)})" if absent else ""))
             if excused:
                 parts.append("excused: " + ", ".join(f"{r.day} {r.excuse}" for r in excused))
+            if unknown:
+                parts.append("no Verifix data (not judged): " + ", ".join(str(r.day) for r in unknown))
             if early:
                 parts.append(f"left early {len(early)}x")
             job = f" ({days[0].job})" if days[0].job else ""
@@ -382,7 +399,58 @@ async def load(begin: date, end: date, run_id: uuid.UUID | str | None, agent: st
         rows = await client.timesheet(begin, end)
     recs = records(rows, kinds, grace=settings.verifix_late_grace_minutes, now=now, flexible=await flexible_ids(),
                    starts=await start_times())
-    return excuse(recs, await excused_days(recs))
+    recs = excuse(recs, await excused_days(recs))
+    bad = broken_days(recs, now.date() if now else today_local())
+    if bad:
+        log.warning("Verifix: {} day(s) with almost no arrivals — treated as no data", len(bad))
+    return mark_no_data(recs, bad | await marked_bad_days(recs))
+
+
+# A day the terminals didn't record (2026-10-24): at most this share of at least this many people judged arrived.
+BAD_DAY_MIN_JUDGED = 4
+BAD_DAY_MAX_ARRIVED = 0.2
+NO_DATA = "Verifix маълумоти йўқ"
+
+
+def day_stats(recs: list[DayRecord]) -> dict[date, tuple[int, int]]:
+    """Per day: (people judged, of them with an arrival) — counts only, for Admin Bot /verifix (no names)."""
+    out: dict[date, tuple[int, int]] = {}
+    for rec in recs:
+        if rec.working and rec.status not in ("off", "flexible", "excused", "before_start"):
+            judged, came = out.get(rec.day, (0, 0))
+            out[rec.day] = (judged + 1, came + (rec.arrived is not None))
+    return out
+
+
+def broken_days(recs: list[DayRecord], today: date) -> set[date]:
+    """Finished working days on which (almost) nobody judged has an arrival: the device, not the people."""
+    by_day: dict[date, list[DayRecord]] = {}
+    for rec in recs:
+        if rec.day < today and rec.working and rec.status not in ("off", "flexible", "excused", "before_start"):
+            by_day.setdefault(rec.day, []).append(rec)
+    return {d for d, day in by_day.items() if len(day) >= BAD_DAY_MIN_JUDGED
+            and sum(1 for r in day if r.arrived is not None) <= BAD_DAY_MAX_ARRIVED * len(day)}
+
+
+def mark_no_data(recs: list[DayRecord], days: set[date]) -> list[DayRecord]:
+    """On those days nobody is absent, late or «not yet»: they are «no data» (never judged, never asked why)."""
+    for rec in recs:
+        if rec.day in days and rec.status in ("absent", "late", "not_yet"):
+            rec.status, rec.excuse, rec.late_minutes = "no_data", NO_DATA, 0
+    return recs
+
+
+async def marked_bad_days(recs: list[DayRecord]) -> set[date]:
+    """The days IT marked «Verifix ишламади» on Admin Bot /verifix; none if they can't be read."""
+    if not recs:
+        return set()
+    try:
+        from integrations.org_bot import store
+
+        return await store.verifix_bad_days(min(r.day for r in recs), max(r.day for r in recs))
+    except Exception as exc:  # noqa: BLE001 — without the marks the day is judged as before
+        log.warning("Could not read the Verifix bad days: {}", type(exc).__name__)
+        return set()
 
 
 async def excused_days(recs: list[DayRecord]) -> list[dict[str, Any]]:

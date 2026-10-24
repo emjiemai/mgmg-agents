@@ -5,6 +5,10 @@ of yesterday didn't come why — politely, once (``integrations/org_bot/explanat
 answer reaches the Director as a card (ops_manager). First it tells the Director who answered the
 asks of the day before and who didn't.
 
+2026-10-24: the ask isn't sent from here — it is a note for agents/morning-notes, which sends each person
+one morning message with at most one question (the bonus line and task reminders merged in). Verifix
+down no longer stops the report asks; a day Verifix didn't record asks nobody (attendance «no data»).
+
 Run:
     python agents/explanations/agent.py            # ask and summarise
     python agents/explanations/agent.py --dry-run  # print the counts, send nothing
@@ -26,7 +30,7 @@ from integrations.common.config import settings  # noqa: E402
 from integrations.common.db import close_pool, log_action  # noqa: E402
 from integrations.common.logging_setup import setup_logging  # noqa: E402
 from integrations.common.timeutil import today_local  # noqa: E402
-from integrations.org_bot import explanations, late_report, names, store  # noqa: E402
+from integrations.org_bot import explanations, store  # noqa: E402
 from integrations.org_bot.report_calendar import TEAM_OF  # noqa: E402
 from integrations.org_bot.roles import DIRECTOR_ROLE  # noqa: E402
 from integrations.telegram.bot import TelegramBot  # noqa: E402
@@ -43,7 +47,11 @@ async def collect(yesterday, employees, run_id) -> tuple[list[tuple[dict, str, l
     if settings.verifix_configured:
         from integrations.verifix import attendance
 
-        recs = await attendance.load(yesterday - timedelta(days=explanations.STREAK_DAYS), yesterday, run_id, AGENT)
+        try:
+            recs = await attendance.load(yesterday - timedelta(days=explanations.STREAK_DAYS), yesterday, run_id, AGENT)
+        except Exception as exc:  # noqa: BLE001 — 2026-10-24: Verifix down must not stop the report asks
+            log.warning("Verifix not read — no «absent» asks today: {}", type(exc).__name__)
+            recs = []
         for _pid, (name, days) in explanations.absent_streaks(recs, yesterday).items():
             person = explanations.match_employee(name, employees)
             if person is None:
@@ -94,19 +102,18 @@ async def run(dry_run: bool = False) -> int:
         async with TelegramBot(agent=AGENT, run_id=run_id,
                                bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()) as bot:
             await _summaries(bot, yesterday - timedelta(days=1))
-            for person, kind, days in asks:
-                row = await store.create_explanation(person, kind, yesterday, days)
-                if row is None:  # already asked
-                    continue
-                try:
-                    # a missed report can still be sent now, for approval (late_report.py, 2026-10-23)
-                    ids = await bot.send_message(explanations.ask_text(kind, names.call_name(person), days),
-                                                 chat_id=str(person["telegram_user_id"]),
-                                                 reply_markup=late_report.ask_button(yesterday) if kind == "report" else None)
-                    await store.set_explanation_prompt(str(row["id"]), ids[0] if ids else None)
-                    asked += 1
-                except Exception as exc:  # noqa: BLE001 — the next person is still asked
-                    log.error("Explanation ask not sent: {}", type(exc).__name__)
+        for person, kind, days in asks:
+            row = await store.create_explanation(person, kind, yesterday, days)
+            if row is None:  # already asked
+                continue
+            try:
+                # Asked in the person's one morning message (agents/morning-notes, 2026-10-24): the question last,
+                # with 📝 send yesterday's report for a report ask; that message's id becomes the prompt.
+                await store.add_morning_note(person, today, "ask", {
+                    "kind": kind, "days": [d.isoformat() for d in days], "ids": [str(row["id"])]})
+                asked += 1
+            except Exception as exc:  # noqa: BLE001 — the next person is still asked
+                log.error("Explanation ask not saved: {}", type(exc).__name__)
         await log_action(agent=AGENT, action="explanations_asked", target_system="telegram", status="success",
                          run_id=run_id, mode="notify", payload={"asked": asked, "unmatched": unmatched})
         return 0

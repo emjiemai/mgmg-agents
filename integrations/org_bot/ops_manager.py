@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, ai_chat, cheques, excused, explanations, late_report, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, agenda, ai_chat, cheques, excused, explanations, late_report, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -936,6 +936,7 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
             return
         history = await store.recent_ai_turns(telegram_user_id, AI_MEMORY_TURNS)
         tasks = await store.open_tasks_for_employee(telegram_user_id)
+        waiting = await agenda.pending(employee)  # what the bot waits for from them (2026-10-24)
         await store.log_ai_turn(telegram_user_id, "employee", text)
         async with OpenRouterClient(
             agent=ai_chat.AGENT,
@@ -944,7 +945,7 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
             raw = await ai.complete(
-                ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, today_local())),
+                ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, today_local(), waiting)),
                 ai_chat.user_prompt(history, with_quote(text, quoted), task),
             )
         answer = ai_chat.clean_answer(raw)
@@ -1646,7 +1647,7 @@ async def _handle_employee_message(
         if awaiting is not None and (not replied or replied == awaiting.get("telegram_message_id")):
             return await _consume_task_input(employee, awaiting, message, run_id)
     # After «📝 Кечаги ҳисоботни юбориш» the next text is yesterday's report, for approval (late_report.py).
-    late = await late_report.take_message(employee, message, run_id)
+    late = await late_report.take_message(employee, message, run_id, background)
     if late is not None:
         return late
     # A photo, video or file: ask what it's for — it goes to the Director as
@@ -1703,20 +1704,33 @@ async def _handle_employee_message(
     return await _route_to_ai(employee, text, task, run_id, background, message.get("message_id"), quoted)
 
 
-EXPLANATION_CHECK = """The work bot asked an employee: «{ask}». Then they wrote the message below. Is it an \
-answer to that — a reason, an excuse, an apology, or a claim that they did come / did send it? A work \
-question or a report about today's work is not. JSON only: {{"answer": true}} or {{"answer": false}}."""
+EXPLANATION_CHECK = """The work bot asked an employee this morning: «{ask}». Then they wrote the message below. \
+What is it?
+- "reason": an answer to that question — a reason, an excuse, an apology, or a claim that they did come / did send it;
+- "report": {report_rule}
+- "other": anything else — a question about their work, a task update, a greeting, chatter.
+JSON only: {{"kind": "reason"}}, {{"kind": "report"}} or {{"kind": "other"}}."""
+REPORT_RULE = ("the question is about yesterday's missing daily report and the message IS that report — what "
+               "they did at work yesterday (tasks, customers, places, numbers), not why it didn't come;")
+NO_REPORT_RULE = "never (this question isn't about a report);"
+ANSWER_KINDS = ("reason", "report", "other")
 
 
-async def _answers_ask(ask: str, text: str, run_id: uuid.UUID) -> bool:
-    """Whether a plain message answers the morning's ask (the AI decides; if it can't, yes)."""
+async def _classify_answer(ask: str, text: str, report_ask: bool, run_id: uuid.UUID) -> str:
+    """What a message to the morning question is: its reason, the missing report itself, or something else
+    (2026-10-24: a typed report became an explanation card; a reply about a task became the explanation).
+    The AI decides; if it can't, «reason» — a missed explanation is worse than a misplaced one."""
     try:
         async with OpenRouterClient(agent=AGENT, run_id=run_id, model_override=settings.ops_manager_bot_model,
                                     fallback_override=settings.ops_manager_bot_fallback_models) as ai:
-            verdict = await ai.complete_json(EXPLANATION_CHECK.format(ask=ask), text)
-        return bool(verdict.get("answer", True)) if isinstance(verdict, dict) else True
-    except Exception:  # noqa: BLE001 — a missed explanation is worse than a misplaced one
-        return True
+            verdict = await ai.complete_json(EXPLANATION_CHECK.format(
+                ask=ask, report_rule=REPORT_RULE if report_ask else NO_REPORT_RULE), text)
+        kind = str(verdict.get("kind") or "reason") if isinstance(verdict, dict) else "reason"
+    except Exception:  # noqa: BLE001
+        return "reason"
+    if kind == "report" and not report_ask:
+        return "reason"
+    return kind if kind in ANSWER_KINDS else "reason"
 
 
 async def _waiting_explanations(telegram_user_id: int) -> list[dict[str, Any]]:
@@ -1745,15 +1759,24 @@ async def _take_explanation(employee: dict[str, Any], text: str, replied: int | 
     waiting = await _waiting_explanations(telegram_user_id)
     if not waiting:
         return None
-    if held is None and not (replied and any(w.get("prompt_message_id") == replied for w in waiting)):
-        if not explanations.is_explanation(text):
-            return None
-        owed = await store.report_for_day(telegram_user_id, today_local())
-        if owed is not None and owed.get("status") == "asked":
-            return None
+    if held is None:
+        if not (replied and any(w.get("prompt_message_id") == replied for w in waiting)):
+            if not explanations.is_explanation(text):
+                return None
+            owed = await store.report_for_day(telegram_user_id, today_local())
+            if owed is not None and owed.get("status") == "asked":
+                return None
+        # A reply to the morning message too (2026-10-24): it may also list tasks, so a reply can be about one.
+        report_ask = next((w for w in waiting if w["kind"] == "report"), None)
         ask = explanations.ask_text(waiting[0]["kind"], names.call_name(employee), list(waiting[0]["days"]))
-        if not await _answers_ask(_plain(ask), text, run_id):
+        kind = await _classify_answer(_plain(ask), text, report_ask is not None, run_id)
+        if kind == "other":
             return None
+        if kind == "report" and report_ask is not None:  # the missing report itself, typed: for approval
+            day = report_ask.get("asked_for") or list(report_ask["days"])[-1]
+            taken = await late_report.take_typed(employee, day, text, run_id)
+            if taken is not None:
+                return taken
     rows = await store.answer_explanations([str(w["id"]) for w in waiting], text)
     if not rows:
         return None

@@ -57,7 +57,10 @@ unless reminded". A3 does the reminding.
 3. **08:00, Mon–Fri** (`--morning`): an open task due today or tomorrow gets
    **one** reminder. A task past its deadline: the employee is told once, and
    the Director gets **one** message listing every newly overdue task. A task
-   without a deadline is never nagged about.
+   without a deadline is never nagged about. Since 2026-10-24 the employee's
+   reminders are lines in their one morning message (spec 30) — «T-… «…»
+   топшириғининг муддати бугун» — not a message per task; the task card keeps
+   its buttons.
 4. **Friday 17:00** (`--weekly`): the Director's scorecard — tasks done on time
    (A3's И), daily reports sent and on time (A1's И, only when daily reports
    are on), and the week's written permissions. Totals plus only the problem

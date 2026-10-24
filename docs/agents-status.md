@@ -100,3 +100,7 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 **Report bonus (2026-10-22):** 08:00, Garmin сотув — yesterday's report sent → +1 KPI, missed → politely none (spec 06).
 
 **Excused days and late reports (2026-10-23):** ⬜ Сабабли on explanation cards and /sababli turn a day grey; a missed report sent the next day goes to the Director / Garmin manager — approved, green (`29-excused-and-late-reports.md`).
+
+**One morning message (2026-10-24):** `agents/morning-notes/` — the report bonus, the explanation question and task reminders come to each employee as ONE message, at most one question, last (`30-morning-message.md`); the work AI knows what the bot waits for from each person.
+
+**Verifix days without data + admin report sheet (2026-10-24):** a day the terminals didn't record is «no data» (automatic, or ⛔ on Admin `/verifix`) — nobody absent or late, wrong questions withdrawn with an apology (`11-attendance.md`); Admin `/xodimlar` → 📊 the month's report days, tap 🟩 / 🟥 / ⬜, the Director gets a summary (`29-excused-and-late-reports.md`).

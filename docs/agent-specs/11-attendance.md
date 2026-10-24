@@ -133,3 +133,21 @@ support, 2026-09-28).
 ## Own start time (2026-10-22)
 
 Admin Bot /grafik → 🕘 beside a name: Verifix → 08:00 → 09:00 → 10:00 → 11:00. With a time set, late is counted from it instead of Verifix's schedule start (`attendance_starts`, `records(starts=…)`). Absences are asked about every morning — spec 27.
+
+## Days Verifix didn't record (2026-10-24, the owner: "Verifix didn't work — employees blamed the bot")
+
+A day the terminals didn't record made everyone «absent»: the brief said so and the morning ask asked each of them
+why they hadn't come. Now `attendance.load` gives such a day **`no_data`** instead of absent / late / not yet
+(who did come stays as they came):
+
+- **automatically** — a finished working day on which at most 20 % of at least 4 people judged (working, not
+  «эркин график», not excused) have an arrival mark (`broken_days`);
+- **by IT** — Admin Bot `/verifix` lists the last 7 days, each «came / judged» — counts only, never who — with a
+  ⛔ / ✅ button (`verifix_bad_days`). ⛔: the «why weren't you at work?» questions about that day are withdrawn
+  with an apology, the Director is told (spec 27); ✅ again: judged as usual.
+
+`no_data` is never absent or late: the brief says «Verifix N кишининг келишини ёзмаган … ҳисобланмади» (the
+picture: «Verifix ёзмаган N киши — ҳисобланмади»), the KPI doesn't count the day, PULSE leaves it out, no
+explanation is asked, the analyst is told «no Verifix data (not judged)». IT's 08:00 technical report says when
+yesterday wasn't recorded (counts only). Order in `load`: the Director's / manager's excused days first, then
+no-data days.

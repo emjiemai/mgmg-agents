@@ -834,7 +834,7 @@ def view(data: BriefData) -> dict[str, Any]:
     # attendance (Verifix)
     if data.attendance_failed:
         blocks.append(_people_block("Давомат", "people", None, "", "warn", [], "Verifix'дан маълумот олиб бўлмади"))
-    elif data.attendance is not None and (data.attendance.scheduled or data.attendance.flexible):
+    elif data.attendance is not None and (data.attendance.scheduled or data.attendance.flexible or data.attendance.no_data):
         a = data.attendance
         rows = ([{"who": r.name, "what": "келмади", "alert": True} for r in a.absent]
                 + [{"who": r.name, "what": "ҳали келмади", "alert": True} for r in a.not_yet]
@@ -850,7 +850,9 @@ def view(data: BriefData) -> dict[str, Any]:
             f"ҳамма вақтида · {a.scheduled} киши" if a.scheduled else "")
         if a.flexible:
             summary = (summary + " · " if summary else "") + f"эркин графикда {a.flexible}"
-        tone = "alert" if (a.absent or a.not_yet) else "warn" if a.late else "ok"
+        if a.no_data:  # the terminal didn't record them (2026-10-24): not absent, not late — unknown
+            summary = (summary + " · " if summary else "") + f"Verifix ёзмаган {len(a.no_data)} киши — ҳисобланмади"
+        tone = "alert" if (a.absent or a.not_yet) else "warn" if (a.late or a.no_data) else "ok"
         blocks.append(_people_block("Давомат", "people", fmt_date(a.day), summary, tone, rows))
 
     return {"date": fmt_date(day), "when": when, "compass": compass(), "lead": lead,

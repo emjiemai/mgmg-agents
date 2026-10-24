@@ -266,6 +266,8 @@ def score_reports(rows: list[dict[str, Any]]) -> ReportScore:
     """Score a period's ``daily_reports`` rows (with ``display_name``)."""
     score = ReportScore()
     for row in rows:
+        if row.get("status") == "excused":  # a day with a reason isn't an ask (2026-10-24)
+            continue
         score.asked += 1
         if row.get("status") != "submitted":
             name = row.get("display_name") or "—"

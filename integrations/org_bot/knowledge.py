@@ -127,6 +127,13 @@ What this bot does for an employee (tell them when it helps):
 - The daily report is asked at 16:00 (reminder 17:00) unless the admin
   switched it off for them; they answer in the chat. /hisobot shows,
   changes or deletes TODAY'S report only.
+- Every morning at most ONE message from the bot: yesterday's report point
+  (Garmin сотув), tasks due, and at most one question — why they weren't at
+  work (Verifix) or why yesterday's report didn't come. They answer by simply
+  writing here. Yesterday's missing report can still be sent with
+  «📝 Кечаги ҳисоботни юбориш» under that message; the Director or their
+  manager approves it, then it counts as sent. A day Verifix didn't record
+  is never held against them.
 - KPI: /natija — their results for the month's goals; /kpi — their score.
 - A written permission (EMJ-SOP-ADM-01): /ruxsat, then the bot asks the
   details and sends it for a decision (the answer comes back here).

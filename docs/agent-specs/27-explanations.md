@@ -20,16 +20,25 @@ brief), `ops_manager._take_explanation`, tables `explanations`, `attendance_star
    кўринмади, сабабини ёзиб юборсангиз, тушунтириш хатингиз раҳбариятга етказилади, келган бўлсангиз ҳам
    шуни ёзинг, раҳмат» — «келган бўлсангиз ҳам» because Verifix can miss a face (the Boss: «аниқланг»).
 4. One ask per person, kind and day (`uq_explanation`). Never asked: the Director, the Garmin manager.
-   A day off (/dam) yesterday: nobody asked.
+   A day off (/dam) yesterday: nobody asked. A day Verifix didn't record («no data», spec 11): nobody asked
+   about it. Verifix unreachable: the report asks still go (2026-10-24 — the run used to crash).
+4a. **Sent in the one morning message** (2026-10-24, spec 30): the agent leaves a note; agents/morning-notes sends
+   each person one message — the bonus line and task reminders with it, this question last (a missed report's
+   «no point» said inside it). That message is the prompt a reply answers.
 5. First, the asks of the day before are summed up for the Director (everyone) and the Garmin manager
    (his team): «Сўралди: 4 · ёзди: 3 · ёзмади: 1 — Ёзмаганлар: …».
 
 ## The answer
 
-Open for 36 hours. It is the explanation when it is:
-- a **reply** to the ask — always;
-- a **plain message** — not a command, no «?», no report owed at that moment (then it's the report), and
-  the AI agrees it answers the ask (a work question isn't one; if the AI can't be reached, yes);
+Open for 36 hours. A **reply** to the morning message, or a **plain message** (not a command, no «?», no report
+owed at that moment — then it's the report), is read by the AI (2026-10-24, `ops_manager._classify_answer`):
+- **reason** — a reason, an excuse, an apology, «I did come / did send it» → the explanation (below);
+- **report** — for a «report didn't come» question: the message IS the missing report → the late report for
+  approval (spec 29), not an explanation card;
+- **other** — about something else (the morning message may list tasks too, so a reply can be about one) → on to
+  the report / the work AI. If the AI can't be reached: reason.
+
+It is also the explanation when it is:
 - a **file** with the «тушунтириш» button (shown while an ask waits): a voice / video as text
   (report_media), a photo (a sick note) as it is.
 
@@ -37,6 +46,13 @@ It goes as a card to the Director, and to the Garmin manager for his team (`repo
 «📝 Тушунтириш хати — name (role) · келмаган кунлар: … · «their words»», the file itself with it. The person
 is thanked under their message. This is the one more exception to "no messages between employees and
 the Director through the bot" (the Boss asked for these letters), like a task's proof.
+
+## Verifix didn't record (2026-10-24, spec 11)
+
+IT marks the day on Admin Bot `/verifix` (⛔): the unanswered «absent» asks covering it are closed
+(`store.withdraw_absent_asks`, answer «[Verifix ишламади — савол бекор қилинди]»), each person gets an apology
+(«кечирасиз, … жавоб бериш шарт эмас»), the Director is told; the next morning's summary doesn't count them as
+«ёзмади». A question withdrawn before the morning message went out isn't asked in it.
 
 ## Excused, late report (2026-10-23, spec 29)
 

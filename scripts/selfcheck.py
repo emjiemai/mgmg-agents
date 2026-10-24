@@ -4719,9 +4719,10 @@ def test_explanations_and_start_times() -> None:
 
     # ---- the answer: reply or plain message → the Director (and the Garmin manager for his team)
     employee = {"id": "e4", "telegram_user_id": 14, "role": "garmin_sotuv", "full_name": "Ширин Умматова", "address_form": "опа"}
-    waiting = [{"id": "x1", "kind": "report", "days": [y], "prompt_message_id": 500}]
+    waiting = [{"id": "x1", "kind": "report", "days": [y], "asked_for": y, "prompt_message_id": 500}]
     sent, answered, replies, owed = [], [], [], {"row": None}
-    verdict = {"answer": True}
+    verdict = {"kind": "reason"}
+    typed: list = []
 
     async def open_(user, hours=36):
         return [] if answered else waiting
@@ -4736,8 +4737,12 @@ def test_explanations_and_start_times() -> None:
     async def report_for_day(user, day):
         return owed["row"]
 
-    async def answers_ask(ask, text, run_id):
-        return verdict["answer"]
+    async def classify(ask, text, report_ask, run_id):
+        return verdict["kind"] if report_ask or verdict["kind"] != "report" else "reason"
+
+    async def take_typed(employee, day, text, run_id):
+        typed.append((day, text))
+        return "late_report_sent"
 
     async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((text, reply_to))
@@ -4762,24 +4767,31 @@ def test_explanations_and_start_times() -> None:
 
     for obj, name, value in ((store, "open_explanations", open_), (store, "answer_explanations", answer),
                              (store, "active_employees_by_role", by_role), (store, "report_for_day", report_for_day),
-                             (store, "set_explanation_delivered", none), (ops_manager, "_answers_ask", answers_ask),
+                             (store, "set_explanation_delivered", none), (ops_manager, "_classify_answer", classify),
+                             (ops_manager.late_report, "take_typed", take_typed),
                              (ops_manager, "_reply", fake_reply), (ops_manager, "TelegramBot", Bot), (ops_manager, "log_action", none)):
         patch(obj, name, value)
     try:
         owed["row"] = {"status": "asked"}
         check("a plain message while today's report is owed is the report's, not the explanation",
               asyncio.run(ops_manager._take_explanation(employee, "бугун 5 та сотув", None, uuid.uuid4())), None)
-        check("...but a reply to the ask always is",
+        check("...but a reply to the ask that gives the reason is",
               asyncio.run(ops_manager._take_explanation(employee, "интернет йўқ эди", 500, uuid.uuid4(), 77)), "explanation_taken")
         check_true("...to the Director and the Garmin manager (his team), and she is thanked under her message",
                    {c for c, _ in sent} == {"1", "2"} and "интернет йўқ эди" in sent[0][1] and replies[-1][1] == 77)
         answered.clear()
         sent.clear()
         owed["row"] = None
-        verdict["answer"] = False
+        verdict["kind"] = "other"
         check("a plain message the AI says isn't an answer goes on (to the AI chat)",
               asyncio.run(ops_manager._take_explanation(employee, "янги нархлар рўйхати керак", None, uuid.uuid4())), None)
-        verdict["answer"] = True
+        check("...a reply to the morning message about something else too (it may list tasks, 2026-10-24)",
+              asyncio.run(ops_manager._take_explanation(employee, "T-0012 ни бажардим", 500, uuid.uuid4())), None)
+        verdict["kind"] = "report"
+        check("the missing report typed as the answer (no tap) goes for approval as the late report, not as a card",
+              (asyncio.run(ops_manager._take_explanation(employee, "кеча 3 та мижоз, 2 та соат сотдим", 500, uuid.uuid4())),
+               typed[-1][0] if typed else None, answered), ("late_report_sent", y, []))
+        verdict["kind"] = "reason"
         check("a plain message that answers it is taken",
               asyncio.run(ops_manager._take_explanation(employee, "болам касал эди", None, uuid.uuid4())), "explanation_taken")
         check("a B2B person's goes to the Director only", ops_manager.explanation_managers("b2b_sotuv"), [])
@@ -5062,7 +5074,6 @@ def test_excused_and_late_reports() -> None:
     import inspect
     import uuid
 
-    from integrations.common.agent_loader import load_agent
     from integrations.org_bot import excused, explanations, late_report, ops_manager, report_calendar, store
     from integrations.telegram import menus
     from integrations.verifix import attendance as att
@@ -5287,12 +5298,414 @@ def test_excused_and_late_reports() -> None:
     check_true("the bot routes both flows' buttons and /sababli, takes the late report's text, and puts ⬜ on every card",
                "excused.handle_callback(" in src and "late_report.handle_callback(" in src and "excused.handle_message(" in src
                and "late_report.take_message(" in src and "excused.card_keyboard(" in src and '"reply_markup": buttons' in src)
-    check_true("the morning «no report» ask carries the send-now button; no report is asked on an excused day",
-               "late_report.ask_button(yesterday) if kind == \"report\"" in inspect.getsource(load_agent("explanations").run)
+    check_true("the morning «no report» question carries the send-now button; no report is asked on an excused day",
+               "late_report.ask_button(days[-1])" in load_source("integrations/org_bot/morning_notes.py")
                and "excused_between(day, day)" in load_source("agents/daily-reports/agent.py"))
     check_true("/sababli in the Director's and the Garmin manager's menus", "sababli" in [c for c, _ in menus.DIRECTOR]
                and "sababli" in [c for c, _ in menus.GARMIN_MANAGER] and "sababli" not in [c for c, _ in menus.EMPLOYEE])
     check_true("the calendar shows a removed ask as grey", report_calendar.cell(None, d22, datetime(2026, 10, 23, 9), True) == "none")
+
+
+def test_morning_verifix_and_admin_sheet() -> None:
+    """24.10.2026, the owner: one morning message per person (one question at most), Verifix days without data,
+    the admin's report sheet (green / red / grey), and the bugs the review of 22–23.10 found."""
+    print("morning message, Verifix no-data days, admin report sheet (24.10.2026)")
+    import asyncio
+    import inspect
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.org_bot import (admin, agenda, ai_chat, analyst, excused, explanations, kpi, late_report,
+                                      morning_notes, report_calendar, report_media, report_sheet, store, task_tracker)
+    from integrations.pulse import data as pulse_data
+    from integrations.pulse import score as pulse_score
+    from integrations.verifix import attendance as att
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    d23, d24 = date(2026, 10, 23), date(2026, 10, 24)
+
+    # ---- one morning message per person, at most one question (morning_notes.compose)
+    missed = {"kind": "bonus", "detail": {"report_date": "2026-10-23", "points": 0, "status": "asked", "per": 1}}
+    plus = {"kind": "bonus", "detail": {"report_date": "2026-10-23", "points": 1, "month": 5, "status": "submitted", "per": 1}}
+    ask_report = {"kind": "ask", "detail": {"kind": "report", "days": ["2026-10-23"], "ids": ["x1"]}}
+    ask_absent = {"kind": "ask", "detail": {"kind": "absent", "days": ["2026-10-23"], "ids": ["x2"]}}
+    task_due = {"kind": "task", "detail": {"code": "T-2026-10-0012", "summary": "Artel учун нарх юбориш",
+                                           "due": "2026-10-24", "today": "2026-10-24", "overdue": False}}
+    task_late = {"kind": "task", "detail": {"code": "T-2026-10-0009", "summary": "Склад рўйхати", "due": "2026-10-22",
+                                            "today": "2026-10-24", "overdue": True}}
+    text, keyboard, ids = morning_notes.compose("Ширин опа", [missed, ask_report])
+    check("a missed report: ONE message — «no point» said inside the question, never twice; 📝 under it",
+          (text.count("балл берилмади"), "\n" in text, "lrs:20261023" in str(keyboard), ids), (1, False, True, ["x1"]))
+    check("...in the friendly voice", friendly_problems(text, ("Ширин опа",)), [])
+    text, keyboard, ids = morning_notes.compose("Абдукарим ака", [ask_absent, plus, task_due, task_late])
+    lines = text.split("\n")
+    check_true("several things: a greeting, the facts as lines (the point first, then tasks — codes and names as "
+               "written), and the one question last, alone",
+               lines[0] == "Абдукарим ака, хайрли тонг" and lines[1].startswith("• кечаги, 23.10 ҳисоботингиз учун")
+               and "T-2026-10-0012 «Artel учун нарх юбориш» топшириғининг муддати бугун" in text
+               and "муддати ўтди (22.10), директорга хабар берилди" in text and "«Бажардим» тугмасини" in text
+               and lines[-1].startswith("Verifix бўйича кеча, 23.10") and text.count("?") == 0 and keyboard is None
+               and ids == ["x2"])
+    check("one fact alone: one polite line with the name, as before",
+          morning_notes.compose("Ширин опа", [plus])[0],
+          "Ширин опа, кечаги, 23.10 ҳисоботингиз учун раҳмат каттакон, KPI баллингизга +1 балл қўшилди, шу ойда жами +5 балл")
+    check_true("no emoji to employees, polite «сиз» in every line",
+               all(not __import__("integrations.org_bot.tone", fromlist=["x"])._EMOJI.search(t)
+                   for t in (morning_notes.compose("А", n)[0] for n in ([missed, ask_report], [ask_absent, plus, task_due])))
+               and all(__import__("integrations.org_bot.tone", fromlist=["x"]).is_polite(morning_notes.compose("А", n)[0])
+                       for n in ([missed, ask_report], [ask_absent, plus, task_due, task_late])))
+
+    # ---- the producers leave notes; one sender; the order of the 08:00 run
+
+    bonus_src, expl_src = load_source("agents/report-bonus/agent.py"), load_source("agents/explanations/agent.py")
+    tasks_src, runner = load_source("agents/task-tracker/agent.py"), load_source("scripts/run_morning_agents.py")
+    check_true("the bonus, the question and task reminders are notes now — none of them sends on its own",
+               'add_morning_note(row, today_local(), "bonus"' in bonus_src and "send_message" not in bonus_src
+               and 'add_morning_note(person, today, "ask"' in expl_src and "explanations.ask_text(" not in expl_src
+               and tasks_src.count('add_morning_note(_who(task), today, "task"') == 2
+               and "reminder_text(" not in tasks_src and "overdue_employee_text(" not in tasks_src)
+    order = [runner.index(a) for a in ("agents/report-bonus", "agents/explanations", "agents/task-tracker/agent.py --morning",
+                                       "agents/morning-notes")]
+    check_true("08:00: bonus → questions → task reminders → ONE message each (task-tracker --morning runs once)",
+               order == sorted(order) and runner.count("--morning") == 1)
+    check_true("Verifix down no longer stops the report questions (the 22.10 agent crashed on it)",
+               "except Exception as exc:  # noqa: BLE001 — 2026-10-24: Verifix down" in expl_src)
+    check_true("the API sends what the 08:00 job left (30 min) and the sheet's untold changes at 22:00",
+               "_morning_notes_left" in load_source("integrations/api/app.py")
+               and morning_notes.FLUSH_AFTER_MINUTES == 30)
+
+    claimed = [
+        {"id": "n1", "employee_id": "e1", "telegram_user_id": 11, "kind": "bonus", "detail": missed["detail"],
+         "full_name": "Ширин Умматова", "address_form": "opa", "employee_status": "active"},
+        {"id": "n2", "employee_id": "e1", "telegram_user_id": 11, "kind": "ask", "detail": ask_report["detail"],
+         "full_name": "Ширин Умматова", "address_form": "opa", "employee_status": "active"},
+        {"id": "n3", "employee_id": "e2", "telegram_user_id": 12, "kind": "task", "detail": task_due["detail"],
+         "full_name": "Абдукарим Зунунов", "address_form": "aka", "employee_status": "active"},
+        {"id": "n4", "employee_id": "e3", "telegram_user_id": 13, "kind": "bonus", "detail": plus["detail"],
+         "full_name": "Кетган Одам", "employee_status": "revoked"},
+    ]
+    outbox, prompts, marked = [], [], []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **k):
+            outbox.append((chat_id, text, reply_markup))
+            return [100 + len(outbox)]
+
+        async def _call(self, method, payload, **k):
+            outbox.append((method, payload.get("chat_id"), payload.get("reply_markup")))
+            return {}
+
+        async def _edit_message(self, chat_id=None, message_id=None, text="", reply_markup=None):
+            outbox.append(("edit", chat_id, text, reply_markup))
+
+        async def _answer_callback(self, qid, text):
+            outbox.append(("answer", qid, text, None))
+
+    async def claim(day, older=0):
+        return claimed
+
+    async def set_msg(ids, message_id):
+        marked.append((tuple(ids), message_id))
+
+    async def set_prompt(xid, mid):
+        prompts.append((xid, mid))
+
+    async def nothing(*a, **k):
+        return None
+
+    async def alive(ids):
+        return set(ids)
+
+    patch(store, "claim_morning_notes", claim)
+    patch(store, "unanswered_explanation_ids", alive)
+    patch(store, "set_morning_notes_message", set_msg)
+    patch(store, "set_explanation_prompt", set_prompt)
+    patch(morning_notes, "TelegramBot", Bot)
+    patch(morning_notes, "log_action", nothing)
+    patch(settings, "bots_frozen", False)
+    try:
+        counts = asyncio.run(morning_notes.send_day(d24, uuid.uuid4()))
+    finally:
+        restore()
+    check("each active person gets one message; someone removed gets none", (counts, len(outbox)),
+          ({"told": 2, "failed": 0, "skipped": 1}, 2))
+    check_true("the question's message is the one a reply answers (prompt = that message)",
+               prompts == [("x1", 101)] and (("n1", "n2"), 101) in marked and "lrs:20261023" in str(outbox[0][2]))
+
+    async def withdrawn(ids):
+        return set()
+
+    outbox.clear()
+    patch(store, "claim_morning_notes", claim)
+    patch(store, "unanswered_explanation_ids", withdrawn)
+    patch(store, "set_morning_notes_message", set_msg)
+    patch(store, "set_explanation_prompt", set_prompt)
+    patch(morning_notes, "TelegramBot", Bot)
+    patch(morning_notes, "log_action", nothing)
+    try:
+        asyncio.run(morning_notes.send_day(d24, uuid.uuid4()))
+    finally:
+        restore()
+    check_true("a question withdrawn before the message went out isn't asked in it (the point line stays)",
+               "балл берилмади" in outbox[0][1] and "сабабини" not in outbox[0][1] and outbox[0][2] is None)
+
+    # ---- what the bot waits for from one person: given to the work AI (agenda.py)
+    async def open_x(tg, hours=36):
+        return [{"kind": "report", "days": [d23]}]
+
+    async def late_wait(tg, hours):
+        return None
+
+    async def today_row(tg, day):
+        return {"status": "asked"}
+
+    patch(store, "open_explanations", open_x)
+    patch(store, "late_report_awaiting", late_wait)
+    patch(store, "report_for_day", today_row)
+    patch(agenda, "now_local", lambda: datetime(2026, 10, 24, 17, 0))
+    try:
+        waiting = asyncio.run(agenda.pending({"telegram_user_id": 11}))
+    finally:
+        restore()
+    context = ai_chat.work_context({"responsibilities": ""}, [], d24, waiting)
+    check_true("the work AI knows the open question (and the 📝 way), today's owed report, and to ask for nothing else",
+               "report of 23.10 never came" in context and "Кечаги ҳисоботни юбориш" in context
+               and "Today's daily report: asked at 16:00" in context and "ask for nothing else" in context
+               and "nothing (no open question" in ai_chat.work_context({}, [], d24, []))
+    check_true("…wired into the work AI's call", "ai_chat.work_context(employee, tasks, today_local(), waiting)"
+               in load_source("integrations/org_bot/ops_manager.py"))
+
+    # ---- Verifix days without data
+    def rec(vid, day, status, arrived=None):
+        return att.DayRecord(employee_id=vid, name=f"Ходим {vid}", job="", day=day, working=True, status=status,
+                             arrived=arrived)
+
+    t = datetime(2026, 10, 22, 9, 30)
+    dead = [rec(str(i), date(2026, 10, 22), "absent") for i in range(6)] + [rec("9", date(2026, 10, 22), "on_time", t)]
+    fine = [rec(str(i), date(2026, 10, 21), "on_time", t) for i in range(4)] + [rec("8", date(2026, 10, 21), "absent")]
+    check("a day with 1 of 7 arrivals is the terminal's fault; 4 of 5 is a normal day; today isn't judged yet",
+          (att.broken_days(dead + fine, d24), att.broken_days(dead, date(2026, 10, 22))), ({date(2026, 10, 22)}, set()))
+    marked_recs = att.mark_no_data(dead + fine, {date(2026, 10, 22)})
+    check("that day nobody is absent or late: «no data»; who did come stays; the other day is untouched",
+          sorted({(r.day.day, r.status) for r in marked_recs}), [(21, "absent"), (21, "on_time"), (22, "no_data"), (22, "on_time")])
+    summary = att.summarize(marked_recs, date(2026, 10, 22))
+    block = att.render_day(summary)
+    check_true("the brief says Verifix didn't record them — never «келмади»",
+               len(summary.no_data) == 6 and not summary.absent and "Verifix 6 кишининг келишини ёзмаган" in block
+               and "келмади ёки кечикди деб ҳисобланмади" in block and "6 киши келмади" not in block
+               and "Verifix ёзганларнинг ҳаммаси ўз вақтида келди — 1 киши" in block)
+    check("no «why weren't you at work?» for a no-data day", explanations.absent_streaks(marked_recs, date(2026, 10, 22)), {})
+    check("PULSE doesn't count it", pulse_score.attendance_value("no_data"), None)
+    check_true("KPI doesn't count it as a working day; IT's marks and the automatic ones both apply in load()",
+               '"excused", "no_data"' in load_source("integrations/org_bot/kpi_flow.py")
+               and "mark_no_data(recs, bad | await marked_bad_days(recs))" in inspect.getsource(att.load))
+    check("counts only for IT: per day judged / came", att.day_stats(dead), {date(2026, 10, 22): (7, 1)})
+    text, kb = admin.verifix_days_view({d24: (12, 9), d23: (12, 1)}, {d23}, d24, {d23})
+    check_true("/verifix days: counts, the automatic flag, a ⛔ / ✅ button per day — no names",
+               "9 / 12" in text and "1 / 12" in text and "жуда кам" in text and "Ходим" not in text
+               and "⛔ 23.10" in str(kb) and "✅ 24.10" in str(kb) and "vbad:2026-10-23" in str(kb))
+
+    sorry, told = [], []
+
+    async def toggle(day, by):
+        return True
+
+    async def withdraw(day):
+        return [{"telegram_user_id": 21, "full_name": "Ширин Умматова", "address_form": "opa"}]
+
+    async def bosses(role):
+        return [{"telegram_user_id": 1}] if role == "operatsion_direktor" else []
+
+    async def bad_days(a, b):
+        return {d23}
+
+    outbox.clear()
+    patch(store, "toggle_verifix_bad_day", toggle)
+    patch(store, "withdraw_absent_asks", withdraw)
+    patch(store, "active_employees_by_role", bosses)
+    patch(store, "verifix_bad_days", bad_days)
+    patch(admin, "TelegramBot", Bot)
+    patch(admin, "today_local", lambda: d24)
+    patch(admin, "log_action", nothing)
+    patch(admin, "_answer", nothing)
+    try:
+        outcome = asyncio.run(admin._toggle_verifix_day(
+            "2026-10-23", "q", "it", {"message": {"message_id": 5, "chat": {"id": 99}}}, uuid.uuid4()))
+    finally:
+        restore()
+    sorry = [x for x in outbox if x[0] == "21"]
+    told = [x for x in outbox if x[0] == "1"]
+    check_true("IT marks 23.10: the question about it is withdrawn with an apology, the Director is told, the buttons change",
+               outcome == "verifix_day_marked" and len(sorry) == 1 and "кечирасиз" in sorry[0][1]
+               and friendly_problems(sorry[0][1], ("Ширин опа", "Verifix")) == []
+               and told and "IT белгилади" in told[0][1] and "1 кишидан узр сўралди" in told[0][1]
+               and any(x[0] == "editMessageReplyMarkup" for x in outbox))
+    check_true("a withdrawn question isn't «didn't write» in the Director's summary",
+               explanations.summary(d23, [{"name": "А", "kind": "absent", "answered_at": datetime(2026, 10, 24),
+                                           "answer": "[Verifix ишламади — савол бекор қилинди]"}]) is None)
+    check_true("IT's 08:00 report says when the terminals didn't record (counts only)",
+               "attendance.broken_days(recs, today_local())" in load_source("integrations/org_bot/tech_report.py"))
+
+    # ---- an excused day keeps its report row: status 'excused' (nothing deleted), left out of every count
+    sql = inspect.getsource(store.excuse_day)
+    check_true("excusing turns the unsent ask 'excused' (its text kept, its minus 0) — no DELETE any more",
+               "SET status = 'excused', penalty_points = 0" in sql and "DELETE FROM daily_reports" not in sql
+               and "'kept': True" not in sql and '"kept": True' in sql)
+    sql = inspect.getsource(store.unexcuse_day)
+    check_true("↩ puts it back as it was; a 23.10 mark (the ask deleted then) is put back from its copy",
+               "SET status = 'asked', penalty_points = %s" in sql and 'not row.get("kept")' in sql)
+    for fn in (store.reports_between, store.recent_reports, store.team_reports, store.kpi_month_rows,
+               store.reports_between_rows, store.settle_report_bonus):
+        check_true(f"an excused day isn't an ask: {fn.__name__}", "status <> 'excused'" in inspect.getsource(fn))
+    check_true("…nor in PULSE, the calendar or the KPI score",
+               "status <> 'excused'" in inspect.getsource(pulse_data._db)
+               and report_calendar.cell({"status": "excused"}, d23, datetime(2026, 10, 24, 9)) == "none"
+               and pulse_score.report_value({"status": "excused"}, d23, datetime(2026, 10, 24, 9)) is None
+               and task_tracker.score_reports([{"status": "excused", "report_date": d23}]).asked == 0)
+    check_true("schema: 'excused' allowed; verifix_bad_days, report_cell_edits, morning_notes",
+               "CHECK (status IN ('asked', 'submitted', 'excused'))" in load_source("database/schema.sql")
+               and all(f"CREATE TABLE IF NOT EXISTS {t}" in load_source("database/schema.sql")
+                       for t in ("verifix_bad_days", "report_cell_edits", "morning_notes")))
+
+    # ---- the admin's report sheet
+    now = datetime(2026, 10, 24, 12, 0)
+    check("what a day shows", [report_sheet.state(r, x, d, now) for r, x, d in (
+        ({"status": "submitted"}, False, d23), ({"status": "asked"}, False, d23), ({"status": "asked"}, False, d24),
+        (None, True, d23), ({"status": "excused"}, False, d23), (None, False, d23), (None, False, date(2026, 10, 30)))],
+          ["sent", "missed", "open", "excused", "excused", "none", "future"])
+    check("the wheel: grey → green → red → grey (excused) → green",
+          [report_sheet.next_target(s) for s in ("none", "sent", "missed", "open", "excused")],
+          ["sent", "missed", "excused", "excused", "sent"])
+    emp = {"id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "telegram_user_id": 11, "role": "garmin_sotuv",
+           "full_name": "Ширин Умматова", "status": "active"}
+    text, kb = report_sheet.sheet_view(emp, d24, [{"report_date": d23, "status": "asked"},
+                                                  {"report_date": date(2026, 10, 22), "status": "submitted"}],
+                                       {date(2026, 10, 20)}, now)
+    buttons = [b for row in kb["inline_keyboard"] for b in row]
+    check_true("October as a calendar: weekday heads, 31 days, ◀ but no ▶ (this month), ✅ Тайёр, back to the card; "
+               "every button within Telegram's 64 bytes",
+               [b["text"] for b in kb["inline_keyboard"][0]] == list(report_calendar.WEEKDAYS)
+               and sum(1 for b in buttons if b["callback_data"].startswith("rsd:")) == 31
+               and "🟥23" in str(kb) and "🟩22" in str(kb) and "⬜20" in str(kb) and "🟨24" not in str(kb)
+               and "▶️" not in str(kb) and "rsok:" in str(kb) and f"emp:{emp['id']}" in str(kb)
+               and all(len(b["callback_data"].encode()) <= 64 for b in buttons)
+               and "🟩 1 · 🟥 1 · ⬜ сабабли 1" in text)
+    calls: list = []
+
+    async def rec_call(name):
+        async def f(*a, **k):
+            calls.append((name, a[1] if len(a) > 1 else None, a[2:] if len(a) > 2 else ()))
+            return True
+        return f
+
+    for name in ("excuse_day", "unexcuse_day", "set_report_sent", "set_report_missed"):
+        patch(store, name, asyncio.run(rec_call(name)))
+    try:
+        asyncio.run(report_sheet.apply(emp, d23, "sent", 7, now))
+        asyncio.run(report_sheet.apply(emp, d23, "missed", 7, now))
+        asyncio.run(report_sheet.apply(emp, d24, "missed", 7, now))
+        asyncio.run(report_sheet.apply(emp, d23, "excused", 7, now))
+    finally:
+        restore()
+    check("green: the mark off, sent; red: the minus on a closed day, none today before 22:00; grey: excused",
+          [(c[0], c[2][-2:] if c[0] == "set_report_missed" else ()) for c in calls],
+          [("unexcuse_day", ()), ("set_report_sent", ()), ("unexcuse_day", ()), ("set_report_missed", (1, True)),
+           ("unexcuse_day", ()), ("set_report_missed", (1, False)), ("excuse_day", ())])
+    check_true("…an open day's minus is 0 in the store (it closes at 22:00 as any other)",
+               '"p": points if closed else 0' in inspect.getsource(store.set_report_missed))
+    edits = [{"employee_id": "e1", "full_name": "Ширин Умматова", "day": d23, "before": "missed", "after": "excused"},
+             {"employee_id": "e1", "full_name": "Ширин Умматова", "day": d23, "before": "excused", "after": "sent"},
+             {"employee_id": "e1", "full_name": "Ширин Умматова", "day": date(2026, 10, 21), "before": "sent", "after": "missed"},
+             {"employee_id": "e1", "full_name": "Ширин Умматова", "day": date(2026, 10, 21), "before": "missed", "after": "excused"},
+             {"employee_id": "e1", "full_name": "Ширин Умматова", "day": date(2026, 10, 21), "before": "excused", "after": "sent"}]
+    summary = report_sheet.summary_text(edits)
+    check_true("the Director's summary: per person, first → last per day; a day turned all the way back isn't listed",
+               summary is not None and "Ширин Умматова: 23.10 🟥→🟩 юборилди" in summary and "21.10" not in summary)
+    check_true("the card: 📊 for people asked for reports — the Garmin shop staff included, with ака/опа, AI, 📝 "
+               "(missing on their card since 17.10)",
+               all(x in str(admin.employee_card({**emp, "display_name": "Ширин"})[1])
+                   for x in ("rsh:", "addr:", "aich:", "rpof:", "lng:", "wd0:"))
+               and "rsh:" not in str(admin.employee_card({**emp, "role": "operatsion_direktor", "display_name": "Б"})[1]))
+
+    # ---- late reports: no mistakes (the review of 23.10)
+    check("the wait after 📝 is 3 hours (12 swallowed the evening report)", late_report.AWAIT_HOURS, 3)
+
+    async def waiting_row(tg, hours):
+        return {"id": "r1", "report_date": d23}
+
+    async def today_ask(tg, day):
+        return {"prompt_message_id": 700, "reminder_message_id": 701, "status": "asked"}
+
+    delivered: list = []
+
+    async def deliver(employee, row_id, content, run_id, file_message_id=None):
+        delivered.append((row_id, content, file_message_id))
+        return "late_report_sent"
+
+    patch(store, "late_report_awaiting", waiting_row)
+    patch(store, "report_for_day", today_ask)
+    patch(late_report, "deliver", deliver)
+    patch(late_report, "_send", nothing)
+    try:
+        r_today = asyncio.run(late_report.take_message(emp, {"text": "бугун 4 та сотув", "reply_to_message": {"message_id": 700}}, uuid.uuid4()))
+        r_photo = asyncio.run(late_report.take_message(emp, {"message_id": 55, "caption": "кечаги ҳисобот",
+                                                             "photo": [{"file_id": "p1", "file_size": 10}]}, uuid.uuid4()))
+        jobs: list = []
+
+        class Background:
+            def add_task(self, *job):
+                jobs.append(job)
+
+        r_voice = asyncio.run(late_report.take_message(emp, {"message_id": 56, "voice": {"file_id": "v1", "file_size": 999,
+                                                                                         "mime_type": "audio/ogg"}},
+                                                       uuid.uuid4(), Background()))
+    finally:
+        restore()
+    check_true("a reply to today's 16:00 ask is today's report; a photo goes on as it is with its caption; a voice "
+               "is turned into text first (in the background)",
+               r_today is None and r_photo == "late_report_sent" and delivered[0] == ("r1", "[расм] кечаги ҳисобот", 55)
+               and r_voice == "late_report_reading" and jobs and jobs[0][0] is late_report._voice_to_late)
+    check("a report typed for any day but yesterday isn't a late report",
+          asyncio.run(late_report.take_typed(emp, date(2026, 10, 1), "…", uuid.uuid4())), None)
+
+    # ---- smaller fixes from the review
+    now = datetime(2026, 10, 24, 10, 0)
+    check("the analyst's words for a report day: excused, waiting for approval, a past unsent day, today still open",
+          [analyst.report_state(r, now) for r in (
+              {"status": "excused", "report_date": d23}, {"status": "asked", "report_date": d23, "late_content": "x"},
+              {"status": "asked", "report_date": date(2026, 10, 20), "penalty_points": 0},
+              {"status": "asked", "report_date": d24})],
+          ["EXCUSED (a day with a reason, set by the Director / manager / admin) — not counted",
+           "NOT sent on time; a late report was sent the next day and waits for approval", "NOT sent",
+           "not sent yet (open until 22:00)"])
+    caption = report_media.media_caption("Ширин Умматова", None, "&" * 900)
+    check_true("a file's caption never passes Telegram's 1024 (an escaped «&» cut in half broke the HTML)",
+               len(caption) <= 1024 and caption.endswith("…"))
+    check_true("PULSE's warm-up rebuilds every round (the page's own 10 minutes let it skip one)",
+               "ttl=WARM_EVERY - 60" in inspect.getsource(pulse_data.keep_warm))
+    check_true("the employees' guide tells the work AI about the one morning message and 📝",
+               "at most ONE message from the bot" in __import__("integrations.org_bot.knowledge", fromlist=["x"]).EMPLOYEE_BOT_GUIDE)
+    check_true("the excused flow and the sheet clear PULSE's copy at once", "_forget_pulse()" in inspect.getsource(admin)
+               and callable(excused._forget_pulse) and kpi.asked_for_reports(emp))
 
 
 def test_report_bonus() -> None:
@@ -8976,6 +9389,7 @@ def main() -> int:
         test_pulse,
         test_report_bonus,
         test_excused_and_late_reports,
+        test_morning_verifix_and_admin_sheet,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

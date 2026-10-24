@@ -126,6 +126,23 @@ async def _report_close_loop() -> None:
             await report_close.close_day()
         except Exception as exc:  # noqa: BLE001 — a missed round is retried in 5 minutes
             log.error("Report close failed: {}", type(exc).__name__)
+        try:
+            await _morning_notes_left()
+        except Exception as exc:  # noqa: BLE001 — tried again in 5 minutes
+            log.error("Morning notes flush failed: {}", type(exc).__name__)
+
+
+async def _morning_notes_left() -> None:
+    """The 08:00 job's notes still unsent half an hour on (the job died): sent from here (morning_notes.py, 2026-10-24).
+    The report sheet's changes the admin didn't close with ✅ Тайёр reach the Director at 22:00 the same way."""
+    from integrations.common.timeutil import now_local
+    from integrations.org_bot import morning_notes, report_sheet
+
+    now = now_local()
+    if now.hour in morning_notes.FLUSH_HOURS:
+        await morning_notes.send_day(now.date(), uuid.uuid4(), older_than_minutes=morning_notes.FLUSH_AFTER_MINUTES)
+    if now.hour >= 22:
+        await report_sheet.tell_director(uuid.uuid4())
 
 
 async def _set_menus() -> None:

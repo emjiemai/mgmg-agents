@@ -120,11 +120,21 @@ async def _billz() -> str:
 
 
 async def _verifix() -> str:
+    from integrations.common.timeutil import today_local
+    from integrations.verifix import attendance
     from integrations.verifix.client import VerifixClient
 
     async with VerifixClient(agent="tech-report") as client:
         await client.organisation()
-    return "жавоб берди"
+    # Did the terminals record yesterday? (2026-10-24: they didn't, and people were asked why they hadn't come.)
+    # Counts only, never who.
+    yesterday = today_local() - timedelta(days=1)
+    recs = await attendance.load(yesterday, yesterday, run_id=None, agent="tech-report")
+    judged, came = attendance.day_stats(recs).get(yesterday, (0, 0))
+    if yesterday in attendance.broken_days(recs, today_local()):
+        return (f"жавоб берди — ⚠️ кеча {judged} кишидан {came} тасининг келиши ёзилган: қурилма ишламаган кўринади, "
+                "давомат «маълумот йўқ» деб олинди (/verifix)")
+    return f"жавоб берди · кеча {came} / {judged} киши келиши ёзилган" if judged else "жавоб берди"
 
 
 async def _openrouter() -> str:

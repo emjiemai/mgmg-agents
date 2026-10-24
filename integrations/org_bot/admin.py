@@ -307,6 +307,85 @@ async def _send_qr(run_id: uuid.UUID) -> str:
     return "qr_sent"
 
 
+VERIFIX_DAYS = 7  # /verifix lists this many days, today first
+
+
+def verifix_days_keyboard(today: date, marked: set[date]) -> dict[str, Any]:
+    """A button per day: ⛔ = marked «Verifix ишламади» (tap to take it off), ✅ = judged as usual."""
+    days = [today - timedelta(days=i) for i in range(VERIFIX_DAYS)]
+    buttons = [{"text": f"{'⛔' if d in marked else '✅'} {d:%d.%m}", "callback_data": f"vbad:{d.isoformat()}"} for d in days]
+    return {"inline_keyboard": [buttons[i:i + 4] for i in range(0, len(buttons), 4)]}
+
+
+def verifix_days_view(stats: dict[date, tuple[int, int]], auto: set[date], today: date,
+                      marked: set[date]) -> tuple[str, dict[str, Any]]:
+    """/verifix's days (2026-10-24): per day how many of those judged have an arrival mark — counts only, never who."""
+    lines = ["🕘 <b>Verifix: кириш белгилари</b> (келганлар / иш куни бўлганлар — фақат сони)"]
+    for d in (today - timedelta(days=i) for i in range(VERIFIX_DAYS)):
+        judged, came = stats.get(d, (0, 0))
+        head = f"{d:%d.%m} {WEEKDAYS_UZ[d.weekday()][:2]}"
+        auto_note = " — ⚠️ жуда кам: «маълумот йўқ» деб олинди" if d in auto else ""
+        lines.append(f"{head}: {came} / {judged}{auto_note}" if judged else f"{head}: иш куни йўқ")
+    lines.append("\n<i>Қурилма ишламаган кунни ✅ → ⛔ қилинг: ўша кун ҳеч ким «келмади» ёки «кечикди» бўлмайди, «нега "
+                 "келмадингиз» деб хато сўралганлардан узр сўралади, Директорга хабар берилади. ⛔ ни яна босинг — қайтади.</i>")
+    return "\n".join(lines), verifix_days_keyboard(today, marked)
+
+
+async def _toggle_verifix_day(target: str, query_id: str, decided_by: str, callback: dict[str, Any],
+                              run_id: uuid.UUID) -> str:
+    """⛔ on /verifix's days: the day the terminals didn't record — or not (2026-10-24)."""
+    from integrations.org_bot import excused, names
+    from integrations.org_bot.tone import casual
+
+    try:
+        day = date.fromisoformat(target)
+    except ValueError:
+        await _answer(query_id, "Номаълум кун")
+        return "unrecognized"
+    today = today_local()
+    if not today - timedelta(days=VERIFIX_DAYS - 1) <= day <= today:
+        await _answer(query_id, "Рўйхат эскирган — /verifix ни қайта очинг")
+        return "unrecognized"
+    marked = await store.toggle_verifix_bad_day(day, decided_by)
+    sorry = 0
+    async with TelegramBot(agent=AGENT, run_id=run_id,
+                           bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()) as ops:
+        if marked:
+            for row in await store.withdraw_absent_asks(day):
+                name = escape(names.call_name(row))
+                try:
+                    await ops.send_message(casual(
+                        f"{name}, кечирасиз, {day:%d.%m} куни Verifix қурилмаси келишларни ёзмаган экан, шунинг учун "
+                        "«ишга келмадингиз» деган савол хато юборилди, жавоб бериш шарт эмас, раҳмат",
+                        keep=[name, "Verifix"]), chat_id=str(row["telegram_user_id"]))
+                    sorry += 1
+                except TelegramError as exc:
+                    log.error("Apology not sent: {}", type(exc).__name__)
+        note = (f"⛔ Verifix {day:%d.%m} куни келишларни ёзмаган (IT белгилади): ўша кун ҳеч ким «келмади» ёки «кечикди» "
+                "деб ҳисобланмайди" + (f"; «келмадингиз» деб хато сўралган {sorry} кишидан узр сўралди" if sorry else "")
+                if marked else f"✅ Verifix {day:%d.%m}: «ишламади» белгиси олиб ташланди — ўша кун давомати яна ҳисобланади")
+        for boss in await store.active_employees_by_role(DIRECTOR_ROLE):
+            try:
+                await ops.send_message(note, chat_id=str(boss["telegram_user_id"]))
+            except TelegramError as exc:
+                log.error("Director not told of a Verifix day: {}", type(exc).__name__)
+    excused._forget_pulse()  # noqa: SLF001
+    await log_action(agent=AGENT, action="verifix_day_marked" if marked else "verifix_day_cleared", target_system="postgres",
+                     status="success", run_id=run_id, mode="write",
+                     payload={"by": decided_by, "day": day.isoformat(), "apologised": sorry})
+    message = callback.get("message") or {}
+    if message.get("message_id") and (message.get("chat") or {}).get("id"):
+        async with TelegramBot(agent=AGENT, run_id=run_id,
+                               bot_token=settings.admin_bot_telegram_bot_token.get_secret_value()) as bot:
+            await bot._call("editMessageReplyMarkup", {  # noqa: SLF001 — only the buttons change
+                "chat_id": str(message["chat"]["id"]), "message_id": message["message_id"],
+                "reply_markup": verifix_days_keyboard(today, await store.verifix_bad_days(
+                    today - timedelta(days=VERIFIX_DAYS - 1), today))}, mode="write", target_ref=str(message["chat"]["id"]))
+    await _answer(query_id, f"{day:%d.%m} — {'Verifix ишламади' if marked else 'одатдагидек'}"
+                  + (f", {sorry} кишидан узр сўралди" if sorry else ""))
+    return "verifix_day_marked" if marked else "verifix_day_cleared"
+
+
 async def _check_verifix(run_id: uuid.UUID) -> str:
     """Admin Bot /verifix: can we read Verifix — today and the brief's yesterday (no names or times)."""
     from integrations.verifix import attendance
@@ -351,6 +430,17 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
             else:
                 text += "\nКечаги давомат (брифинг йўли) ўқилди ✅"
             text += "\n\n<i>Давомат тафсилотлари фақат Директорга кўринади.</i>"
+    days_view = None
+    if outcome in ("verifix_ok", "verifix_yesterday_failed"):
+        # The last days' arrival marks — counts only (2026-10-24): a day the terminals didn't record is marked here.
+        today = today_local()
+        try:
+            first = today - timedelta(days=VERIFIX_DAYS - 1)
+            recs = await attendance.load(first, today, run_id=run_id, agent=AGENT, now=now_local().replace(tzinfo=None))
+            days_view = verifix_days_view(attendance.day_stats(recs), attendance.broken_days(recs, today), today,
+                                          await store.verifix_bad_days(first, today))
+        except Exception as exc:  # noqa: BLE001 — the connection check above still goes
+            log.error("Verifix days not read: {}", type(exc).__name__)
     async with TelegramBot(
         agent=AGENT,
         run_id=run_id,
@@ -358,6 +448,8 @@ async def _check_verifix(run_id: uuid.UUID) -> str:
         default_chat_id=settings.admin_bot_telegram_chat_id,
     ) as bot:
         await bot.send_message(text)
+        if days_view is not None:
+            await bot.send_message(days_view[0], reply_markup=days_view[1])
     return outcome
 
 
@@ -575,6 +667,12 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
                 {"text": f"{'✅' if emp.get('works_sunday') else '☐'} Якшанба", "callback_data": f"wsun:{employee_id}"},
             ]
         )
+    # Everyone but the Director (2026-10-24: since 17.10 the Garmin shop staff's card showed only their week —
+    # these sat under the «elif» above by mistake).
+    if emp["role"] != DIRECTOR_ROLE:
+        # The month's report squares, green / red / grey by the admin (report_sheet.py, 2026-10-24).
+        if kpi.asked_for_reports(emp):
+            rows.append([{"text": "📊 Ҳисобот варағи (ой)", "callback_data": f"rsh:{employee_id}"}])
         # How friendly messages (report asks) address them; only the
         # admin sets ака/опа — it's never guessed from the name.
         rows.append([{"text": "🗣 Мурожаат: исм → ака → опа", "callback_data": f"addr:{employee_id}"}])
@@ -817,6 +915,65 @@ async def _cycle_start(
     await _edit(callback, text, keyboard, run_id)
     await _answer(query_id, f"{name} — {chosen or 'Verifix графиги'}")
     return "start_time_set"
+
+
+async def _report_sheet_action(
+    action: str, target: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID
+) -> str:
+    """📊 Ҳисобот варағи: open a month, move a day green / red / grey, finish (the Director told) — report_sheet.py."""
+    from datetime import datetime
+
+    from integrations.org_bot import excused, report_sheet
+
+    if action == "rsx":  # a weekday label or a padding square
+        await _answer(query_id, "")
+        return "noop"
+    employee_id, _, value = target.partition(":")
+    employee = await store.get_employee(employee_id)
+    if employee is None or employee["status"] != "active" or not kpi.asked_for_reports(employee):
+        await _answer(query_id, "Ходим топилмади")
+        return "not_found"
+    if action == "rsok":
+        told = await report_sheet.tell_director(run_id)
+        note = "📊 Ҳисобот варағи сақланди" + (" — ўзгаришлар Директорга маълум қилинди." if told else ".")
+        text, keyboard = employee_card(employee, note)
+        await _edit(callback, text, keyboard, run_id)
+        await _answer(query_id, "✅")
+        return "report_sheet_done"
+    now = now_local()
+    month, said = now.date(), ""
+    try:
+        if action == "rsm":
+            month = min(datetime.strptime(value, "%Y%m").date(), now.date())
+        elif action == "rsd":
+            day = datetime.strptime(value, "%Y%m%d").date()
+            rows = await store.report_day_rows(employee_id, day, day)
+            before = report_sheet.state(rows[0] if rows else None, bool(await store.excused_days_of(employee_id, day, day)),
+                                        day, now)
+            if day > now.date():
+                goal = "clear" if before == "excused" else "excused"
+            else:
+                goal = report_sheet.next_target(before)
+            await report_sheet.apply(employee, day, goal, int((callback.get("from") or {}).get("id") or 0), now)
+            rows = await store.report_day_rows(employee_id, day, day)
+            after = report_sheet.state(rows[0] if rows else None, bool(await store.excused_days_of(employee_id, day, day)),
+                                       day, now)
+            await store.record_cell_edit(employee_id, day, before, after, decided_by)
+            excused._forget_pulse()  # noqa: SLF001 — PULSE shows the change at once
+            await log_action(agent=AGENT, action="report_cell_set", target_system="postgres", status="success",
+                             run_id=run_id, target_ref=employee_id, mode="write",
+                             payload={"by": decided_by, "day": day.isoformat(), "from": before, "to": after})
+            month, said = day, f"{day:%d.%m} → {report_sheet.WORDS.get(after, after)}"
+    except ValueError:
+        await _answer(query_id, "Номаълум кун")
+        return "unrecognized"
+    days = report_sheet.month_days(report_sheet.month_start(month))
+    first, last = days[0], days[-1]
+    text, keyboard = report_sheet.sheet_view(employee, month, await store.report_day_rows(employee_id, first, last),
+                                             await store.excused_days_of(employee_id, first, last), now)
+    await _edit(callback, text, keyboard, run_id)
+    await _answer(query_id, said)
+    return "report_cell_set" if action == "rsd" else "report_sheet_shown"
 
 
 async def _toggle_day_off(target: str, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -1206,6 +1363,12 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action in EMPLOYEE_ACTIONS:
         return await _handle_employee_action(action, target_id, query_id, decided_by, callback, run_id)
+
+    if action in ("rsh", "rsm", "rsd", "rsok", "rsx"):  # 📊 the report sheet (report_sheet.py, 2026-10-24)
+        return await _report_sheet_action(action, target_id, query_id, decided_by, callback, run_id)
+
+    if action in ("vbad", "vbadx"):  # /verifix: a day the terminals didn't record (2026-10-24)
+        return await _toggle_verifix_day(target_id, query_id, decided_by, callback, run_id)
 
     if action in ("role_approve", "role_reject"):
         return await _handle_role_decision(target_id, action == "role_approve", query_id, decided_by, run_id)

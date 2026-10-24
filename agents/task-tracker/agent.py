@@ -68,6 +68,15 @@ def _bot(run_id: uuid.UUID) -> TelegramBot:
     )
 
 
+def _who(task: dict) -> dict:
+    return {"employee_id": task["assigned_employee_id"], "telegram_user_id": task["employee_telegram_user_id"]}
+
+
+def _task_detail(task: dict, today, overdue: bool) -> dict:
+    return {"code": task.get("code"), "summary": task.get("task_summary"), "due": task["due_date"].isoformat(),
+            "today": today.isoformat(), "overdue": overdue}
+
+
 async def morning(run_id: uuid.UUID) -> None:
     """Send due-soon reminders and overdue notices, each at most once per task."""
     today = today_local()
@@ -87,25 +96,23 @@ async def morning(run_id: uuid.UUID) -> None:
             log.info("[dry-run] overdue {}: {}", task["display_name"], task["task_summary"][:60])
         return
 
-    async with _bot(run_id) as bot:
-        for task in due_soon:
-            try:
-                await bot.send_message(
-                    task_tracker.reminder_text(task, today), chat_id=str(task["employee_telegram_user_id"])
-                )
-            except TelegramError as exc:
-                log.error("Could not remind {}: {}", task["display_name"], exc)
-                continue
-            await store.mark_task_reminded(str(task["id"]))
+    # The employee hears about it in their one morning message (agents/morning-notes, 2026-10-24) — a line each,
+    # not a message per task; the task card keeps its buttons.
+    for task in due_soon:
+        try:
+            await store.add_morning_note(_who(task), today, "task", _task_detail(task, today, overdue=False))
+        except Exception as exc:  # noqa: BLE001 — the next task still goes in
+            log.error("Task reminder note not saved: {}", type(exc).__name__)
+            continue
+        await store.mark_task_reminded(str(task["id"]))
 
+    async with _bot(run_id) as bot:
         by_director: dict[int, list[dict]] = defaultdict(list)
         for task in overdue:
             try:
-                await bot.send_message(
-                    task_tracker.overdue_employee_text(task), chat_id=str(task["employee_telegram_user_id"])
-                )
-            except TelegramError as exc:
-                log.warning("Could not tell {} their task is overdue: {}", task["display_name"], exc)
+                await store.add_morning_note(_who(task), today, "task", _task_detail(task, today, overdue=True))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Overdue note not saved: {}", type(exc).__name__)
             by_director[task["director_telegram_user_id"]].append(task)
 
         for director_id, tasks in by_director.items():

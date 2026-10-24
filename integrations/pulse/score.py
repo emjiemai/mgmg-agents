@@ -33,7 +33,7 @@ def attendance_value(status: str | None, late_minutes: int = 0) -> float | None:
 
 
 def report_value(row: dict[str, Any] | None, day: date, now: datetime) -> float | None:
-    if row is None:
+    if row is None or row.get("status") == "excused":  # a day with a reason isn't counted (2026-10-24)
         return None
     if row.get("status") == "submitted":
         return 0.7 if row.get("auto_built") else 1.0

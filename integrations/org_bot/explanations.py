@@ -27,6 +27,7 @@ from integrations.telegram.bot import escape
 
 NEVER_ASKED = ("operatsion_direktor", "garmin_manager")  # the Boss and the Garmin manager (kpi.NO_REPORT_ROLES)
 OPEN_HOURS = 36  # an ask still waits for its answer this long
+WITHDRAWN = "[Verifix ишламади"  # an «absent» ask closed because the terminals didn't record (store.withdraw_absent_asks)
 STREAK_DAYS = 14  # how far back a run of absent days is looked for
 
 
@@ -73,20 +74,24 @@ def _days(days: list[date]) -> str:
     return ", ".join(f"{d:%d.%m}" for d in days)
 
 
-def ask_text(kind: str, name: str, days: list[date]) -> str:
-    """The polite question (the friendly voice: one line, «сиз», no emoji)."""
+def ask_line(kind: str, days: list[date], no_point: bool = False) -> str:
+    """The question without the name (one line) — the morning message puts the name in front (morning_notes.py).
+    ``no_point``: a Garmin сотув person's missed report also costs the morning's +1 — said here, not twice."""
     if kind == "report":
-        text = (f"{escape(name)}, кечаги, {days[-1]:%d.%m} кунлик ҳисоботингиз келмади, сабабини қисқа ёзиб "
-                "юборсангиз, тушунтиришингиз раҳбариятга етказилади, ёки ҳисоботни пастдаги тугма орқали ҳозир "
-                "юборинг, раҳбарият тасдиқласа ҳисобот юборилган деб ҳисобланади, раҳмат")
-    elif len(days) == 1:
-        text = (f"{escape(name)}, Verifix бўйича кеча, {days[0]:%d.%m} куни ишга келганингиз кўринмади, сабабини ёзиб "
-                "юборсангиз, тушунтириш хатингиз раҳбариятга етказилади, келган бўлсангиз ҳам шуни ёзинг, раҳмат")
-    else:
-        text = (f"{escape(name)}, Verifix бўйича охирги {len(days)} иш куни ({_days(days)}) ишга келганингиз кўринмади, "
-                "сабабини ёзиб юборсангиз, тушунтириш хатингиз раҳбариятга етказилади, келган бўлсангиз ҳам шуни "
-                "ёзинг, раҳмат")
-    return casual(text, keep=[escape(name), "Verifix"])
+        point = ", шунинг учун бу сафар балл берилмади" if no_point else ""
+        return (f"кечаги, {days[-1]:%d.%m} кунлик ҳисоботингиз келмади{point}, сабабини қисқа ёзиб юборсангиз, "
+                "тушунтиришингиз раҳбариятга етказилади, ёки ҳисоботни пастдаги тугма орқали ҳозир юборинг, "
+                "раҳбарият тасдиқласа ҳисобот юборилган деб ҳисобланади, раҳмат")
+    if len(days) == 1:
+        return (f"Verifix бўйича кеча, {days[0]:%d.%m} куни ишга келганингиз кўринмади, сабабини ёзиб юборсангиз, "
+                "тушунтириш хатингиз раҳбариятга етказилади, келган бўлсангиз ҳам шуни ёзинг, раҳмат")
+    return (f"Verifix бўйича охирги {len(days)} иш куни ({_days(days)}) ишга келганингиз кўринмади, сабабини ёзиб "
+            "юборсангиз, тушунтириш хатингиз раҳбариятга етказилади, келган бўлсангиз ҳам шуни ёзинг, раҳмат")
+
+
+def ask_text(kind: str, name: str, days: list[date], no_point: bool = False) -> str:
+    """The polite question (the friendly voice: one line, «сиз», no emoji)."""
+    return casual(f"{escape(name)}, {ask_line(kind, days, no_point)}", keep=[escape(name), "Verifix"])
 
 
 def card(person: str, role: str, kind: str, days: list[date], answer: str) -> str:
@@ -103,6 +108,7 @@ def thanks_text() -> str:
 
 def summary(day: date, rows: list[dict[str, Any]]) -> str | None:
     """The next morning, for the Director: yesterday's asks — who wrote, who didn't. None when nobody was asked."""
+    rows = [r for r in rows if not str(r.get("answer") or "").startswith(WITHDRAWN)]  # Verifix's fault, not theirs
     if not rows:
         return None
     silent = [r for r in rows if not r.get("answered_at")]
