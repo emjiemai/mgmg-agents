@@ -134,6 +134,41 @@ def report_message_kind(replied_to_ask: bool, replied_to_task: bool, is_question
     return "ask"
 
 
+# 2026-10-26 (the owner): the AI decides whether a message is the report — asked only when it isn't sure; reports are
+# taken from 14:00 (early workers; not before 14:00 — "employees might lie"), the 16:00 ask and 17:00 reminder are
+# reminders; «ҳа» / «хоп» right after a held draft means «send it».
+REPORT_OPEN_HOUR = 14
+REPORT_MIN_CHARS = 12  # shorter than this is never a report («ок», «раҳмат»)
+HELD_CONFIRM_MINUTES = 30
+CONFIRM_WORDS = frozenset({"ха", "ҳа", "xa", "ha", "хоп", "хўп", "xop", "hop", "ок", "ok", "окей", "да", "тўғри", "тугри",
+                           "togri", "to'g'ri", "ҳа шундай", "ha shunaqa", "ха шундай", "юбор", "юборинг", "yubor"})
+REPORT_CHECK = """An employee of MGMG (Tashkent: Garmin shops, Primus laundry equipment, Londry laundries) wrote this \
+message to the work bot at {time}. Is it their DAILY WORK REPORT — what they did at work (tasks done, customers, places, \
+sales, numbers)? A question, a request for help, a greeting, thanks, chatter, a complaint or only a plan is not. \
+Answer "unsure" only when it could really be either. JSON only: {{"kind": "report"}}, {{"kind": "other"}} or \
+{{"kind": "unsure"}}."""
+
+
+def is_confirmation(text: str) -> bool:
+    """«Ҳа», «Хоп.», «ok!» — a short yes."""
+    return re.sub(r"[^\w' ]", "", (text or "").lower()).strip() in CONFIRM_WORDS
+
+
+async def _classify_report(text: str, run_id: uuid.UUID) -> str:
+    """«report», «other» or «unsure» — the AI decides; a short message is never a report; if the AI can't be
+    reached: unsure (the person is asked, nothing is guessed)."""
+    if len(" ".join(text.split())) < REPORT_MIN_CHARS:
+        return "other"
+    try:
+        async with OpenRouterClient(agent=AGENT, run_id=run_id, model_override=settings.ops_manager_bot_model,
+                                    fallback_override=settings.ops_manager_bot_fallback_models) as ai:
+            verdict = await ai.complete_json(REPORT_CHECK.format(time=f"{now_local():%H:%M}"), text)
+        kind = str(verdict.get("kind") or "unsure") if isinstance(verdict, dict) else "unsure"
+    except Exception:  # noqa: BLE001
+        return "unsure"
+    return kind if kind in ("report", "other", "unsure") else "unsure"
+
+
 def report_or_ai_keyboard(held_id: str) -> dict[str, Any]:
     """The one-tap choice for a message that could be the report or a question for the AI."""
     return {
@@ -871,15 +906,16 @@ def _person_lock(telegram_user_id: int) -> asyncio.Lock:
     return _PERSON_LOCKS[key]
 
 
-async def _answer_reply(telegram_user_id: int, run_id: uuid.UUID, text: str, reply_to: int | None) -> None:
+async def _answer_reply(telegram_user_id: int, run_id: uuid.UUID, text: str, reply_to: int | None,
+                        keyboard: dict[str, Any] | None = None) -> None:
     """An AI answer, shown as a reply to the question it answers (when its message id is known)."""
     if not reply_to:
-        await _reply(telegram_user_id, run_id, text)
+        await _reply(telegram_user_id, run_id, text, keyboard)
         return
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        await bot.send_message(text, chat_id=str(telegram_user_id), reply_to_message_id=reply_to)
+        await bot.send_message(text, chat_id=str(telegram_user_id), reply_to_message_id=reply_to, reply_markup=keyboard)
 
 
 async def _route_to_ai(
@@ -954,8 +990,15 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
                 ai_chat.user_prompt(history, with_quote(text, quoted), task),
             )
         answer = ai_chat.clean_answer(raw)
+        # Never «your report was accepted» from the AI; a report draft gets a button that really sends it (2026-10-26).
+        answer, _ = ai_chat.strip_false_claims(answer)
+        answer, draft = ai_chat.split_draft(answer)
+        keyboard = None
+        if draft and kpi.asked_for_reports(employee) and not employee.get("reports_off"):
+            held = await store.create_pending_relay(telegram_user_id, draft, None)
+            keyboard = {"inline_keyboard": [[{"text": "📝 Ҳисобот сифатида юбориш", "callback_data": f"asrep:{held['id']}"}]]}
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
-        await _answer_reply(telegram_user_id, run_id, answer, reply_to)
+        await _answer_reply(telegram_user_id, run_id, answer, reply_to, keyboard)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("AI chat failed for {}: {}", telegram_user_id, exc)
         try:
@@ -1224,6 +1267,14 @@ async def _try_daily_report(
         return None
     day = today_local()
     metrics_def = kpi.metrics_for_role(employee["role"])
+    # «Ҳа» / «хоп» right after a report draft or a «is this your report?» question = send it (2026-10-26: people
+    # answered «Ха» and the AI repeated the whole text back).
+    if is_confirmation(text):
+        held = await store.latest_open_relay(employee["telegram_user_id"], HELD_CONFIRM_MINUTES)
+        if held is not None and await store.resolve_pending_relay(str(held["id"]), employee["telegram_user_id"], "report"):
+            outcome, line = await _report_from_held(employee, held["message_text"], run_id)
+            await _reply(employee["telegram_user_id"], run_id, line)
+            return outcome
     pending = await store.pending_report(employee["telegram_user_id"], day)
 
     if pending is None:
@@ -1244,6 +1295,10 @@ async def _try_daily_report(
         # so instead of relaying a stale report to the Director.
         if reply_to_message_id:
             expired = await store.expired_report_for_prompt(employee["telegram_user_id"], reply_to_message_id)
+            if expired is not None and expired["report_date"] == day:  # today's, after 22:00: for approval (26.10)
+                taken = await late_report.take_typed(employee, day, text, run_id)
+                if taken is not None:
+                    return taken
             if expired is not None:
                 await _reply(
                     employee["telegram_user_id"],
@@ -1266,6 +1321,10 @@ async def _try_daily_report(
                 if fresh:
                     await store.merge_report_metrics(str(submitted["id"]), fresh)
                     log.info("Merged late numbers {} into {}'s report", fresh, employee["display_name"])
+        # No ask open now (before 16:00, after 22:00, a day the person isn't asked): a report is still a report
+        # (2026-10-26 — they were going to the AI and lost).
+        if not employee.get("reports_off") and not asks_something(text):
+            return await _report_outside_ask(employee, text, run_id)
         return None
 
     # No one has to reply to anything (2026-09-25): a reply to the 16:00 ask
@@ -1285,15 +1344,75 @@ async def _try_daily_report(
     kind = report_message_kind(replied_to_ask, replied_to_task, asks_something(text))
     if kind in ("task_question", "question"):
         return None
-    if kind == "ask":
-        return await _ask_report_or_ai(employee, text, run_id)
+    if kind == "ask":  # the AI decides (2026-10-26); asked only when it isn't sure
+        decided = await _classify_report(text, run_id)
+        if decided == "other":
+            return None
+        if decided == "unsure":
+            return await _ask_report_or_ai(employee, text, run_id)
     # None means Telegram delivered this same report twice and the first copy
     # already saved it — stop here rather than offer the copy to the Director.
     return await _save_daily_report(employee, pending, text, run_id) or "daily_report_duplicate"
 
 
+async def _report_outside_ask(employee: dict[str, Any], text: str, run_id: uuid.UUID) -> str | None:
+    """A message while no report ask is open: if the AI says it is the report — from 14:00 it is saved (the row
+    opened now); after 22:00 today's closed ask takes it as a late report for approval; before 14:00 the person is
+    told (yesterday's missed one goes for approval). None: not a report — on to the AI."""
+    telegram_user_id = employee["telegram_user_id"]
+    now = now_local()
+    row = await store.report_for_day(telegram_user_id, now.date())
+    if row is not None and row.get("status") != "asked":  # sent already, or a day with a reason
+        return None
+    kind = await _classify_report(text, run_id)
+    if kind == "other" or (kind == "unsure" and not REPORT_OPEN_HOUR <= now.hour < store.REPORT_CLOSE_HOUR):
+        return None
+    if now.hour >= store.REPORT_CLOSE_HOUR:
+        if row is not None:
+            taken = await late_report.take_typed(employee, now.date(), text, run_id)
+            if taken is not None:
+                return taken
+        await _reply(telegram_user_id, run_id, casual(
+            "бугунги ҳисоботлар соат 22:00 да ёпилган, бу хабар ҳисобот сифатида сақланмади, раҳмат"))
+        return "daily_report_closed"
+    if now.hour < REPORT_OPEN_HOUR:
+        taken = await late_report.take_typed(employee, now.date() - timedelta(days=1), text, run_id)
+        if taken is not None:  # yesterday's missed report, written this morning: for approval
+            return taken
+        await _reply(telegram_user_id, run_id, casual(
+            "бугунги ҳисобот соат 14:00 дан 22:00 гача қабул қилинади, ўшанда юборинг, раҳмат"))
+        return "daily_report_too_early"
+    if kind == "unsure":
+        return await _ask_report_or_ai(employee, text, run_id)
+    if row is None:
+        await store.open_report_request(employee, now.date())
+    pending = await store.pending_report(telegram_user_id, now.date())
+    if pending is None:
+        return None
+    return await _save_daily_report(employee, pending, text, run_id) or "daily_report_duplicate"
+
+
+async def _report_from_held(employee: dict[str, Any], text: str, run_id: uuid.UUID) -> tuple[str, str]:
+    """A held message the person said is their report: saved (from 14:00 the row is opened if there was no ask).
+    (outcome, the line to show)."""
+    telegram_user_id = employee["telegram_user_id"]
+    now = now_local()
+    pending = await store.pending_report(telegram_user_id, now.date())
+    if pending is None and REPORT_OPEN_HOUR <= now.hour < store.REPORT_CLOSE_HOUR and not employee.get("reports_off") \
+            and await store.report_for_day(telegram_user_id, now.date()) is None:
+        await store.open_report_request(employee, now.date())
+        pending = await store.pending_report(telegram_user_id, now.date())
+    if pending is not None and await _save_daily_report(employee, pending, text, run_id, quiet=True) is not None:
+        return "daily_report", casual("ҳисобот сифатида сақладим, раҳмат каттакон")
+    if await store.submitted_report_today(telegram_user_id, now.date()) is not None:
+        return "report_already_submitted", casual("бугунги ҳисоботингиз аллақачон қабул қилинган")
+    if now.hour < REPORT_OPEN_HOUR:
+        return "daily_report_too_early", casual("бугунги ҳисобот соат 14:00 дан 22:00 гача қабул қилинади, ўшанда юборинг")
+    return "report_window_closed", casual("бугунги ҳисоботлар соат 22:00 да ёпилган, бу матн сақланмади")
+
+
 async def _save_daily_report(
-    employee: dict[str, Any], pending: dict[str, Any], text: str, run_id: uuid.UUID
+    employee: dict[str, Any], pending: dict[str, Any], text: str, run_id: uuid.UUID, quiet: bool = False
 ) -> str | None:
     """Store today's report and answer the employee.
 
@@ -1320,6 +1439,8 @@ async def _save_daily_report(
     # employee has reported — but gets ONE short question asking for a number
     # or result. Whatever comes back is added to the report; nothing more is
     # asked (2026-09-28: "a little accuracy is enough").
+    if quiet:  # the caller says what happened (a held draft / a tap)
+        return "daily_report"
     follow_up = await _report_follow_up(text, employee["role"], run_id)
     if follow_up:
         await store.mark_report_followup(str(saved["id"]))
@@ -1568,20 +1689,11 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
         await _answer(query_id, "Аллақачон ҳал қилинган")
         return "relay_already_resolved"
 
-    day = today_local()
     employee = await store.get_employee_by_telegram_id(clicker_id)
-    pending = await store.pending_report(clicker_id, day)
-    outcome = None
-    if employee is not None and pending is not None:
-        outcome = await _save_daily_report(employee, pending, relay["message_text"], run_id)
-    if outcome is not None:
-        status_line = casual("ҳисобот сифатида сақладим, раҳмат каттакон")
-    elif await store.submitted_report_today(clicker_id, day) is not None:
-        status_line = casual("бугунги ҳисоботингиз аллақачон қабул қилинган")
-        outcome = "report_already_submitted"
+    if employee is None or employee["status"] != "active":
+        outcome, status_line = "unknown_employee", casual("ходим топилмади")
     else:
-        status_line = casual("ҳисоботнинг вақти ўтиб кетибди, ҳисоботлар шу куннинг ўзида олинади")
-        outcome = "report_window_closed"
+        outcome, status_line = await _report_from_held(employee, relay["message_text"], run_id)
 
     message = callback.get("message") or {}
     async with TelegramBot(

@@ -2158,8 +2158,14 @@ def test_ai_chat_and_sheet() -> None:
                        ("pending_report", pending_report),
                        ("open_report_followup", none), ("submitted_report_today", none), ("find_task_by_message_id", none),
                        ("create_pending_relay", create_held), ("resolve_pending_relay", resolve_held),
-                       ("get_employee_by_telegram_id", get_by_tg)):
+                       ("get_employee_by_telegram_id", get_by_tg), ("report_for_day", none), ("latest_open_relay", none)):
         patch(store, name, fake)
+    report_verdict = {"kind": "other"}
+
+    async def classify_report(text, run_id):
+        return report_verdict["kind"]
+
+    patch(ops_manager, "_classify_report", classify_report)
     patch(ops_manager, "_reply", fake_reply)
     patch(ops_manager, "_show_typing", none)
     patch(ops_manager, "_answer", none)
@@ -2189,9 +2195,15 @@ def test_ai_chat_and_sheet() -> None:
         pending["row"] = {"id": "r1", "prompt_message_id": 50, "reminder_message_id": None}
         outcome = asyncio.run(ops_manager._handle_employee_message(seller, {"text": "КП қандай ёзилади?"}, uuid.uuid4(), bg))
         check("a question while the report is due goes to the AI, not into the report", outcome, "ai_chat")
+        report_verdict["kind"] = "unsure"
         outcome = asyncio.run(ops_manager._handle_employee_message(seller, {"text": "мижоз билан учрашдим"}, uuid.uuid4(), bg))
         buttons = [b["callback_data"].split(":")[0] for row in replies[-1][1]["inline_keyboard"] for b in row]
-        check("a plain message while the report is due: report or question?", (outcome, buttons), ("report_or_ai_asked", ["asrep", "asai"]))
+        check("a message the AI isn't sure about while the report is due: report or question? (only then, 26.10)",
+              (outcome, buttons), ("report_or_ai_asked", ["asrep", "asai"]))
+        report_verdict["kind"] = "other"
+        check("…one the AI says isn't a report goes to the AI, no buttons",
+              asyncio.run(ops_manager._handle_employee_message(seller, {"text": "мижоз билан учрашувга бораман"}, uuid.uuid4(), bg)),
+              "ai_chat")
         tasks_bg.clear()
         tap = {"id": "q", "data": "asai:h1", "from": {"id": 7}}
         check("'йўқ, бу савол' sends it to the AI", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4(), bg)), "ai_chat")
@@ -5840,6 +5852,123 @@ def test_lead_groups() -> None:
                and "lead_groups" not in load_source("agents/lead-agent/agent.py")  # Primus / B2B: stopped 26.10
                and "RETURNING *" in load_source("integrations/garmin/leads.py")
                and "CREATE TABLE IF NOT EXISTS lead_groups" in load_source("database/schema.sql"))
+
+
+def test_reports_any_time() -> None:
+    """26.10.2026, the owner: the AI decides what is a report (asks only when unsure), reports from 14:00, after 22:00
+    for approval, «ҳа» sends a held draft, the work AI never says a report was accepted."""
+    print("reports from 14:00, the AI decides, no false «accepted» (26.10.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import ai_chat, ops_manager, store
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    check("a short yes", [ops_manager.is_confirmation(t) for t in ("Ха", "Хоп.", "ok!", "ҳа шундай", "хоп, лекин эртага", "")],
+          [True, True, True, True, False, False])
+    check("a short message is never a report (no AI call)",
+          asyncio.run(ops_manager._classify_report("раҳмат", uuid.uuid4())), "other")
+    check("reports open at 14:00", ops_manager.REPORT_OPEN_HOUR, 14)
+
+    # ---- no ask open: before 14:00, 14:00–22:00, after 22:00
+    seller = {"id": "e1", "telegram_user_id": 11, "role": "garmin_sotuv", "full_name": "Ширин Умматова"}
+    state: dict = {}
+    replies: list = []
+
+    async def report_for_day(tg, day):
+        return state.get("row")
+
+    async def open_request(employee, day):
+        state["opened"] = day
+        state["row"] = {"id": "r9", "status": "asked"}
+        return state["row"]
+
+    async def pending_report(tg, day):
+        return state.get("row") if state.get("opened") else None
+
+    async def save(employee, pending, text, run_id, quiet=False):
+        state["saved"] = (pending["id"], text)
+        return "daily_report"
+
+    async def classify(text, run_id):
+        return state["kind"]
+
+    async def take_typed(employee, day, text, run_id):
+        state["typed"] = day
+        return "late_report_sent" if state.get("late_ok") else None
+
+    async def reply(tg, run_id, text, reply_markup=None, reply_to=None):
+        replies.append(text)
+        return [1]
+
+    def at(hour):
+        return lambda: datetime(2026, 10, 26, hour, 5)
+
+    patch(store, "report_for_day", report_for_day)
+    patch(store, "open_report_request", open_request)
+    patch(store, "pending_report", pending_report)
+    patch(ops_manager, "_save_daily_report", save)
+    patch(ops_manager, "_classify_report", classify)
+    patch(ops_manager.late_report, "take_typed", take_typed)
+    patch(ops_manager, "_reply", reply)
+    results = []
+    try:
+        for hour, kind, row, late_ok in ((15, "report", None, False), (15, "other", None, False), (10, "report", None, False),
+                                         (10, "report", None, True), (22, "report", {"id": "r1", "status": "asked"}, True),
+                                         (23, "report", None, False), (15, "report", {"status": "submitted"}, False)):
+            state.clear()
+            state.update(kind=kind, row=row, late_ok=late_ok)
+            patch(ops_manager, "now_local", at(hour))
+            results.append((asyncio.run(ops_manager._report_outside_ask(seller, "дўконни очдим, 4 мижоз, 2 сотув", uuid.uuid4())),
+                            state.get("opened") is not None, state.get("typed")))
+            restore()
+            for obj, name, value in ((store, "report_for_day", report_for_day), (store, "open_report_request", open_request),
+                                     (store, "pending_report", pending_report), (ops_manager, "_save_daily_report", save),
+                                     (ops_manager, "_classify_report", classify), (ops_manager.late_report, "take_typed", take_typed),
+                                     (ops_manager, "_reply", reply)):
+                patch(obj, name, value)
+    finally:
+        restore()
+    d26, d25 = date(2026, 10, 26), date(2026, 10, 25)
+    check("15:00 a report → today's opened and saved (no 16:00 ask needed); not a report → the AI; 10:00 → «from 14:00» "
+          "(yesterday's missed one → for approval); 22:05 → today's closed ask for approval; 23:00 not asked → told; "
+          "already sent → the AI",
+          results, [("daily_report", True, None), (None, False, None), ("daily_report_too_early", False, d25),
+                    ("late_report_sent", False, d25), ("late_report_sent", False, d26), ("daily_report_closed", False, None),
+                    (None, False, None)])
+    check_true("…in the polite voice", all(friendly_problems(t) == [] for t in replies))
+    check_true("the late report takes today's after 22:00", "day == now.date() and now.hour >= 22"
+               in load_source("integrations/org_bot/late_report.py"))
+
+    # ---- the work AI: never «accepted», a draft gets a real button, one question, the language asked for
+    for text in ("Хўп, ҳисоботингиз қабул қилинди.", "Ҳисоботингиз қабул қилинди. Бугунги ишларингиз: тозаланди.", "Хўп, қабул қилинди."):
+        out, removed = ai_chat.strip_false_claims(text)
+        check_true(f"no false «accepted»: {text[:30]}", removed and "қабул қилинди" not in out and "сақлай олмайман" in out)
+    check("…but «calls accepted: 7» and a plain greeting stay",
+          [ai_chat.strip_false_claims(t)[1] for t in ("<b>Қабул қилинган:</b> 7 та", "Салом! Қандай ёрдам берай?")], [False, False])
+    shown, draft = ai_chat.split_draft("Мана:\nҲИСОБОТ ЛОЙИҲАСИ:\n• Дўконни очдим")
+    check("a draft after «ҲИСОБОТ ЛОЙИҲАСИ:» is cut out for the button", (draft, "<b>Ҳисобот лойиҳаси:</b>" in shown),
+          ("• Дўконни очдим", True))
+    prompt = ai_chat.SYSTEM_PROMPT
+    check_true("the AI is told: never say accepted, the draft line, at most one question, the language asked in the chat",
+               "You can NEVER save, accept, send or receive a report" in prompt and "ҲИСОБОТ ЛОЙИҲАСИ:" in prompt
+               and "at most ONE short clarifying question" in prompt and "answer in Uzbek or in Russian, do so" in prompt
+               and "unless they ask in this chat\nfor Uzbek" in ai_chat.RUSSIAN)
+    src = load_source("integrations/org_bot/ops_manager.py")
+    check_true("wired: every AI answer filtered; a draft held with «📝 Ҳисобот сифатида юбориш»; «ҳа» after it sends it",
+               "ai_chat.strip_false_claims(answer)" in src and '"📝 Ҳисобот сифатида юбориш", "callback_data": f"asrep:' in src
+               and "latest_open_relay(employee[\"telegram_user_id\"], HELD_CONFIRM_MINUTES)" in src)
+    check_true("the «ҳисоботми ёки савол?» buttons only when the AI isn't sure", 'if decided == "unsure":' in src)
 
 
 def test_report_bonus() -> None:
@@ -9525,6 +9654,7 @@ def main() -> int:
         test_excused_and_late_reports,
         test_morning_verifix_and_admin_sheet,
         test_lead_groups,
+        test_reports_any_time,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

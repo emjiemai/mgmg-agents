@@ -89,3 +89,12 @@ honesty rule, no data, no messages to the Director; Garmin-only catalog;
 a message goes to the AI and nothing offers to send it to the Director; the
 daily limit; `/ai` hint; unknown commands ignored; the off switch; report
 window → "report or question?" → the AI; old relay buttons inert.
+
+## Never «accepted»; drafts with a button (2026-10-26, the owner)
+
+- The AI can never save or send a report: the prompt forbids saying a report was accepted / saved / sent, and
+  `ai_chat.strip_false_claims` takes such sentences out of every answer (an honest line instead).
+- A report it writes for them comes after «ҲИСОБОТ ЛОЙИҲАСИ:» → shown bold, held (`pending_relays`) with
+  **📝 Ҳисобот сифатида юбориш**; «ҳа / хоп» after it sends it too.
+- At most one clarifying question — no «натижа / тўсиқлар / эртанги режа» interviews.
+- Asked in the chat for Uzbek or Russian, it switches (the admin's 🌐 setting is the default).

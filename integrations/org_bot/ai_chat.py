@@ -81,9 +81,23 @@ video (for example a photo report) they can send right here: the bot asks
 what it's for and passes it to the Director as it is. To change or delete
 TODAY'S report: the /hisobot command (only today's report can be changed).
 
+THEIR DAILY REPORT (2026-10-26 — the AI told people «ҳисоботингиз қабул
+қилинди» when nothing was saved, and they lost points):
+- You can NEVER save, accept, send or receive a report. Never write that a
+  report was accepted, received, saved or sent («қабул қилинди», «қабул
+  қилдим», «сақланди», «юборилди», «принят», «сохранён») — not even «ok,
+  accepted». The bot itself saves a report they write here as a plain
+  message, between 14:00 and 22:00.
+- If they ask you to write or tidy up their report, give the finished text
+  after one line that says exactly «ҲИСОБОТ ЛОЙИҲАСИ:» — the bot then shows
+  them a button to send it. Do not ask them to copy or paste it.
+- Never interview them about a report (no «натижа / тўсиқлар / эртанги
+  режа» lists). Ask at most ONE short clarifying question, ever.
+
 How you write:
 - Uzbek, Cyrillic script. A draft they ask for in another language (e.g. a
-  Russian email to a customer) is written in that language.
+  Russian email to a customer) is written in that language. If they ask you in
+  this chat to answer in Uzbek or in Russian, do so from then on.
 - Always polite: the respectful "сиз", never "сен" or its verb forms; be
   especially courteous with women.
 - Short and practical. Telegram HTML only: <b>, <i>; no Markdown, no tables.
@@ -96,8 +110,8 @@ How you write:
 RUSSIAN = """
 LANGUAGE FOR THIS PERSON: Russian. The admin set it — they read Russian
 better. Write every answer in Russian (Cyrillic), whatever language they
-write in; this replaces the Uzbek rule above. Still polite ("вы"), short,
-Telegram HTML only.
+write in; this replaces the Uzbek rule above — unless they ask in this chat
+for Uzbek, then answer in Uzbek. Still polite ("вы"), short, Telegram HTML only.
 """
 
 
@@ -167,6 +181,50 @@ def clean_answer(answer: str) -> str:
     if len(text) > ANSWER_MAX:
         text = text[:ANSWER_MAX].rsplit(" ", 1)[0] + "…"
     return text or casual("кечирасиз, жавоб топа олмадим, саволни бошқача ёзиб кўринг")
+
+
+# 2026-10-26: «Хўп, ҳисоботингиз қабул қилинди» — said by the AI, saved by nobody. A sentence that claims a report was
+# accepted / saved / sent is taken out of every answer, and an honest line put instead.
+_CLAIM = re.compile(
+    r"(қабул\s+қилин|қабул\s+қилдим|сақлан|сақладим|юборилди|юбордим|принят|сохран|отправлен|получен)", re.IGNORECASE)
+_REPORT_WORD = re.compile(r"(ҳисобот|хисобот|hisobot|отч[её]т)", re.IGNORECASE)
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
+DRAFT_MARK = "ҲИСОБОТ ЛОЙИҲАСИ:"
+
+
+def _plain_text(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
+
+
+def strip_false_claims(answer: str) -> tuple[str, bool]:
+    """(the answer without sentences saying a report was accepted / saved / sent, whether any was taken out).
+    A bare «қабул қилинди» after a report-shaped exchange counts too: any claim sentence in an answer that mentions
+    a report — or a claim sentence that is the whole answer."""
+    sentences = _SENTENCE.findall(answer)
+    about_report = bool(_REPORT_WORD.search(_plain_text(answer)))
+    kept, removed = [], False
+    for s in sentences:
+        plain = _plain_text(s)
+        bare_accept = len(sentences) <= 2 and re.search(r"(қабул|принят)", plain, re.IGNORECASE)  # «Хўп, қабул қилинди»
+        if _CLAIM.search(plain) and (about_report or bare_accept) and "қабул қилинган:" not in plain.lower():
+            removed = True
+            continue
+        kept.append(s)
+    if not removed:
+        return answer, False
+    text = "".join(kept).strip()
+    honest = casual("ҳисоботни мен сақлай олмайман, уни шу ерга оддий хабар қилиб 14:00 дан 22:00 гача юборинг, бот ўзи қабул қилади")
+    return (f"{text}\n\n{honest}" if text else honest), True
+
+
+def split_draft(answer: str) -> tuple[str, str | None]:
+    """(the answer to show, the report draft after «ҲИСОБОТ ЛОЙИҲАСИ:» — None when there is none)."""
+    at = answer.find(DRAFT_MARK)
+    if at < 0:
+        return answer, None
+    draft = _plain_text(answer[at + len(DRAFT_MARK):]).strip()
+    shown = answer[:at] + "<b>Ҳисобот лойиҳаси:</b>" + answer[at + len(DRAFT_MARK):]
+    return shown, (draft or None)
 
 
 def hint_text() -> str:

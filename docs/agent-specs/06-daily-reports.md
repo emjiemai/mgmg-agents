@@ -265,3 +265,21 @@ team only (`report_calendar.TEAM_OF`).
 Every morning (`agents/report-bonus/`, 08:00, before the explanations) each person in `REPORT_BONUS_ROLES` (garmin_sotuv) hears about yesterday's report, once (`daily_reports.bonus_at`): sent by them → `REPORT_BONUS_POINTS` (+1) into `bonus_points` and a polite thank-you with the month's total; missed, or «[чатдан тузилди]» → «бу сафар балл берилмади», politely, with how to get it. The 22:00 minus stays.
 Since 2026-10-24 it is said in the person's one morning message (spec 30): a missed report's «no point» goes inside the
 «where's yesterday's report?» question instead of a message of its own. An excused day (status `excused`) gets nothing.
+
+## The AI decides; reports from 14:00 (2026-10-26, the owner)
+
+After reading `ai_chat_turns`: reports typed before 16:00, after 22:00, on days without an ask or the next morning
+went to the work AI and were lost; the AI said «ҳисоботингиз қабул қилинди» (Зиёда 22.10, Ширин 17.10) and saved
+nothing; the «бу бугунги ҳисоботингизми?» tap was answered «ҳа» 39 times of 40.
+
+- **The AI decides** (`ops_manager._classify_report`: report / other / unsure; under 12 characters never a report;
+  AI unreachable → unsure). While a report is owed: report → saved, other → the work AI, unsure → the two buttons.
+- **From 14:00** (`REPORT_OPEN_HOUR`), with no ask open (before 16:00, a day the person isn't asked): a report is
+  saved — today's row is opened then (the 16:00 run then skips them). The 16:00 ask and 17:00 reminder stay.
+- **Before 14:00**: «бугунги ҳисобот соат 14:00 дан 22:00 гача қабул қилинади» — refused ("employees might lie");
+  yesterday's missed report written in the morning goes for approval (spec 29).
+- **After 22:00**: today's closed ask takes it as a late report → the Director / manager approve (spec 29); a day
+  without an ask: told it wasn't saved.
+- **«Ҳа / хоп / ок»** within 30 minutes of a held draft or question = send it (`is_confirmation`, `latest_open_relay`).
+- Data fixed 26.10: Зиёда 19, 20, 22.10 and Ширин 17.10 green with their own words («[26.10 тузатилди…]»),
+  `report_cell_edits` rows so the Director is told.

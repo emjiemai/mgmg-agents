@@ -130,8 +130,11 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (2026-10-22, `report_media.py`):** a voice / video marked «бугунги ҳисобот» is turned into report text by the
   AI (the person is shown it); a photo / document is kept unread; report files wait with the report and go to
   whoever asks for that person's report (`analyst.employee_report`: the Director anyone's, the Garmin manager his
-  team's) — no longer pushed at once. **Reports aren't guessed during the day** (any typed message while it's
-  owed is confirmed), **but at 22:00** an owed report is put together from the person's own unconfirmed messages
+  team's) — no longer pushed at once. **The AI decides what is the report** (2026-10-26, the owner — the «ҳисоботми ёки савол?»
+  tap was a waste: 39 of 40 taps were «ҳа»): sure → saved, unsure → asked with the two buttons. **Reports from 14:00**
+  (16:00 ask / 17:00 reminder are reminders; before 14:00 refused — "employees might lie"); after 22:00 today's goes
+  for approval as a late report; «ҳа/хоп» after a held draft sends it. **The work AI never says a report was accepted**
+  (`ai_chat.strip_false_claims`; drafts get «📝 Ҳисобот сифатида юбориш»). **At 22:00** an owed report is put together from the person's own unconfirmed messages
   of the day (held text, files, work-AI messages — `report_close.build_from_chat`, «[чатдан тузилди]», no minus;
   the owner: "human error"); **/hisobot** changes/deletes today's
   report only. A message with «?» in the report window goes to the AI, never into the report (2026-10-17). Daily reports can be switched off per person (📝, 2026-10-06:

@@ -138,8 +138,12 @@ async def deliver(employee: dict[str, Any], row_id: str, content: str, run_id: u
 
 async def take_typed(employee: dict[str, Any], day: date, text: str, run_id: uuid.UUID) -> str | None:
     """The report typed as the answer to the morning question, without the tap (ops_manager decided it is the
-    report itself): the same way as after the tap. None when that day's report can't take it."""
-    if day != today_local() - timedelta(days=1):
+    report itself): the same way as after the tap. Also today's, written after 22:00 (2026-10-26 — Зиёда's came at
+    22:04–22:14 and was lost). None when that day's report can't take it."""
+    from integrations.common.timeutil import now_local
+
+    now = now_local()
+    if not (day == now.date() - timedelta(days=1) or (day == now.date() and now.hour >= 22)):
         return None
     row = await store.report_for_day(employee["telegram_user_id"], day)
     if row is None or row.get("status") != "asked" or row.get("late_content"):

@@ -107,3 +107,5 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 
 
 **Lead groups (2026-10-26):** Garmin and Primus leads to their own Telegram groups, one message per lead (`lead_groups.py`; specs 04, 14).
+
+**Reports any time from 14:00, the AI decides (2026-10-26):** sure → saved, unsure → asked; after 22:00 → for approval; the work AI never claims a report was accepted (specs 06, 15).

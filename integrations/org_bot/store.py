@@ -2999,3 +2999,12 @@ async def unanswered_explanation_ids(ids: list[str]) -> set[str]:
     rows = await fetch_all(
         "SELECT id::text FROM explanations WHERE id = ANY(%s::uuid[]) AND answered_at IS NULL", (ids,))
     return {r["id"] for r in rows}
+
+
+async def latest_open_relay(telegram_user_id: int, minutes: int) -> dict[str, Any] | None:
+    """The person's newest held message (a report draft, or a «report or question?» one) still open — so a «ҳа» /
+    «хоп» right after it means «send it» (2026-10-26)."""
+    return await fetch_one(
+        """SELECT * FROM pending_relays WHERE employee_telegram_user_id = %s AND resolved_at IS NULL
+             AND created_at > now() - make_interval(mins => %s) ORDER BY created_at DESC LIMIT 1""",
+        (telegram_user_id, minutes))
