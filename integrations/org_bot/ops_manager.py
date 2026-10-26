@@ -144,9 +144,28 @@ CONFIRM_WORDS = frozenset({"ха", "ҳа", "xa", "ha", "хоп", "хўп", "xop"
                            "togri", "to'g'ri", "ҳа шундай", "ha shunaqa", "ха шундай", "юбор", "юборинг", "yubor"})
 REPORT_CHECK = """An employee of MGMG (Tashkent: Garmin shops, Primus laundry equipment, Londry laundries) wrote this \
 message to the work bot at {time}. Is it their DAILY WORK REPORT — what they did at work (tasks done, customers, places, \
-sales, numbers)? A question, a request for help, a greeting, thanks, chatter, a complaint or only a plan is not. \
+sales, numbers)? A question, a request for help, a greeting, thanks, chatter, a complaint or only a plan is not; nor is \
+a message that only points elsewhere («the report above», «same as yesterday») or refuses to say. \
 Answer "unsure" only when it could really be either. JSON only: {{"kind": "report"}}, {{"kind": "other"}} or \
 {{"kind": "unsure"}}."""
+
+
+# 2026-10-26: «Tepadagi xisobot» ("the report above") was saved as Абдукарим's 21.10 report — a pointer, no work in it.
+POINTER = re.compile(
+    r"(tepadagi|тепадаги|юқоридаги|юкоридаги|юқорида|yuqoridagi|yuqorida|кечагидек|kechagidek|кечаги\s+каби|"
+    r"аввалгидек|oldingidek|олдингидек|выше|как\s+вчера|как\s+и\s+вчера|above|same\s+as)", re.IGNORECASE)
+POINTER_MAX_CHARS = 60
+
+
+def is_pointer(text: str) -> bool:
+    """A short message that only points to a report elsewhere («тепадаги ҳисобот», «кечагидек», «выше»)."""
+    text = " ".join((text or "").split())
+    return len(text) <= POINTER_MAX_CHARS and bool(POINTER.search(text))
+
+
+def pointer_text() -> str:
+    return casual("ҳисоботни шу ерга бугун нима иш қилганингиз билан тўлиқ ёзинг, «тепадаги» ёки «кечагидек» деган "
+                  "хабар ҳисобот сифатида сақланмайди, раҳмат")
 
 
 def is_confirmation(text: str) -> bool:
@@ -1344,6 +1363,9 @@ async def _try_daily_report(
     kind = report_message_kind(replied_to_ask, replied_to_task, asks_something(text))
     if kind in ("task_question", "question"):
         return None
+    if is_pointer(text):  # «тепадаги ҳисобот» — never the report itself (2026-10-26)
+        await _reply(telegram_user_id, run_id, pointer_text())
+        return "report_pointer"
     if kind == "ask":  # the AI decides (2026-10-26); asked only when it isn't sure
         decided = await _classify_report(text, run_id)
         if decided == "other":
@@ -1364,6 +1386,9 @@ async def _report_outside_ask(employee: dict[str, Any], text: str, run_id: uuid.
     row = await store.report_for_day(telegram_user_id, now.date())
     if row is not None and row.get("status") != "asked":  # sent already, or a day with a reason
         return None
+    if is_pointer(text):
+        await _reply(telegram_user_id, run_id, pointer_text())
+        return "report_pointer"
     kind = await _classify_report(text, run_id)
     if kind == "other" or (kind == "unsure" and not REPORT_OPEN_HOUR <= now.hour < store.REPORT_CLOSE_HOUR):
         return None
@@ -1397,6 +1422,8 @@ async def _report_from_held(employee: dict[str, Any], text: str, run_id: uuid.UU
     (outcome, the line to show)."""
     telegram_user_id = employee["telegram_user_id"]
     now = now_local()
+    if is_pointer(text):
+        return "report_pointer", pointer_text()
     pending = await store.pending_report(telegram_user_id, now.date())
     if pending is None and REPORT_OPEN_HOUR <= now.hour < store.REPORT_CLOSE_HOUR and not employee.get("reports_off") \
             and await store.report_for_day(telegram_user_id, now.date()) is None:

@@ -283,3 +283,4 @@ nothing; the «бу бугунги ҳисоботингизми?» tap was answe
 - **«Ҳа / хоп / ок»** within 30 minutes of a held draft or question = send it (`is_confirmation`, `latest_open_relay`).
 - Data fixed 26.10: Зиёда 19, 20, 22.10 and Ширин 17.10 green with their own words («[26.10 тузатилди…]»),
   `report_cell_edits` rows so the Director is told.
+- **A pointer is not a report** (2026-10-26): «Tepadagi xisobot» was saved as Абдукарим's 21.10 report. `is_pointer` (≤ 60 characters, «тепадаги / юқоридаги», «кечагидек», «как вчера», «выше», «above») is answered «ҳисоботни шу ерга … тўлиқ ёзинг» on every path — owed, no ask, a tapped or «ҳа» held message; the AI check is told the same. 21.10 set back to not sent (−1), his text kept, `report_cell_edits` row.

@@ -5879,6 +5879,13 @@ def test_reports_any_time() -> None:
     check("a short message is never a report (no AI call)",
           asyncio.run(ops_manager._classify_report("раҳмат", uuid.uuid4())), "other")
     check("reports open at 14:00", ops_manager.REPORT_OPEN_HOUR, 14)
+    check("«the report above» is never a report (Абдукарим 21.10)",
+          [ops_manager.is_pointer(t) for t in ("Tepadagi xisobot", "юқоридаги ҳисобот", "как вчера", "кечагидек",
+                                               "дўконни очдим, 4 мижоз, 2 сотув", "Qarzdorlar bn ishlavomman")],
+          [True, True, True, True, False, False])
+    check_true("…answered, not saved, on every path (owed, no ask, a tapped / «ҳа» held message)",
+               load_source("integrations/org_bot/ops_manager.py").count("if is_pointer(text):") == 3
+               and friendly_problems(ops_manager.pointer_text()) == [])
 
     # ---- no ask open: before 14:00, 14:00–22:00, after 22:00
     seller = {"id": "e1", "telegram_user_id": 11, "role": "garmin_sotuv", "full_name": "Ширин Умматова"}
