@@ -38,7 +38,7 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **Leads to B2B sales: STOPPED 2026-10-07** by the Director (he will do it another way) — the AI
   sends nothing to B2B Sotuv; `agents/lead-handout/` is deleted; history kept (`14-lead-handout.md`).
   The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1). **Lead groups** (2026-10-26, the owner,
-  `lead_groups.py`): each new Primus lead (Lead Agent) and Garmin lead (Garmin AI bot, + a phone added later) goes as
+  `lead_groups.py`): each new Garmin lead (Garmin AI bot, + a phone added later; Primus/B2B leads to a group STOPPED the same day) goes as
   ONE message to its Telegram group, bound by `/lidlar_garmin` / `/lidlar_primus` typed there (admin or Director).
   In groups the OPS Manager bot ignores everything else.
 - **Database review** (2026-10-17, `agents/db-review/`, `docs/agent-specs/24-db-review.md`, Admin Bot `/baza`): the bot's own

@@ -255,3 +255,5 @@ Each new lead also goes to its Telegram group as **one message per lead**, with 
 (`integrations/org_bot/lead_groups.py`; ~3 s apart — Telegram's group limit). The group is bound by adding OPS Manager
 Bot to it and typing `/lidlar_garmin` or `/lidlar_primus` there (the admin or the Director; `/lidlar_stop` unbinds;
 table `lead_groups`). No group bound → nothing posted (logged). In a group the bot reads only these commands.
+
+**Stopped the same day (2026-10-26, the owner: "stop sending leads to B2B Sotuv"):** Lead Agent leads are no longer posted to any group; `/lidlar_primus` is ignored. The sheet and the Director's summary stay.

@@ -5799,7 +5799,9 @@ def test_lead_groups() -> None:
         by_admin = asyncio.run(ops_manager.handle_update(
             {"message": {"chat": group, "from": {"id": 5}, "text": "/lidlar_garmin@MgmgOpsBot"}}, uuid.uuid4(), None))
         by_boss = asyncio.run(ops_manager.handle_update(
-            {"message": {"chat": {**group, "id": -100456}, "from": {"id": 77}, "text": "/lidlar_primus"}}, uuid.uuid4(), None))
+            {"message": {"chat": {**group, "id": -100456}, "from": {"id": 77}, "text": "/lidlar_garmin"}}, uuid.uuid4(), None))
+        primus = asyncio.run(ops_manager.handle_update(
+            {"message": {"chat": group, "from": {"id": 77}, "text": "/lidlar_primus"}}, uuid.uuid4(), None))
         stop = asyncio.run(ops_manager.handle_update(
             {"message": {"chat": group, "from": {"id": 5}, "text": "/lidlar_stop"}}, uuid.uuid4(), None))
     finally:
@@ -5808,7 +5810,7 @@ def test_lead_groups() -> None:
           (ignored, stranger, by_admin, by_boss, stop),
           ("group_ignored", "group_ignored", "lead_group_set", "lead_group_set", "lead_group_cleared"))
     check_true("…bound to the right business and told in the group",
-               done[0][1][:2] == ("garmin", -100123) and done[1][1][:2] == ("primus", -100456)
+               done[0][1][:2] == ("garmin", -100123) and done[1][1][:2] == ("garmin", -100456) and primus == "group_ignored"
                and "Garmin лидлари юборилади" in sent[0][1] and sent[0][0] == "-100123")
 
     # ---- one message per lead, a gap between
@@ -5835,7 +5837,7 @@ def test_lead_groups() -> None:
           (n, [s[1] for s in sent], len(gaps), none), (3, ["a", "b", "c"], 2, 0))
     check_true("wired: the Garmin webhook posts each new lead / added phone; the Lead Agent each new lead",
                'background.add_task(lead_groups.send, "garmin"' in load_source("integrations/api/app.py")
-               and 'lead_groups.send("primus", [lead_groups.primus_text(lead) for lead in new_leads]' in load_source("agents/lead-agent/agent.py")
+               and "lead_groups" not in load_source("agents/lead-agent/agent.py")  # Primus / B2B: stopped 26.10
                and "RETURNING *" in load_source("integrations/garmin/leads.py")
                and "CREATE TABLE IF NOT EXISTS lead_groups" in load_source("database/schema.sql"))
 

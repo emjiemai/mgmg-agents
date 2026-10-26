@@ -30,7 +30,8 @@ AGENT = "lead-groups"
 log = setup_logging(AGENT)
 
 BUSINESSES = {"garmin": "Garmin", "primus": "Primus"}
-BIND = {"/lidlar_garmin": "garmin", "/lidlar_primus": "primus"}
+# Primus leads to a group: stopped 2026-10-26 (the owner: "stop sending leads to B2B Sotuv") — Garmin only.
+BIND = {"/lidlar_garmin": "garmin"}
 UNBIND = "/lidlar_stop"
 GAP_SECONDS = 3.1
 URGENCY = {"now": "🔥 Иссиқ — ҳозир олмоқчи", "next": "🟡 Илиқ — кейинроқ", "outage": "⚠️ Бот жавоб беролмади — мижоз кутмоқда"}
