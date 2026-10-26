@@ -38,3 +38,10 @@ days: hot/warm, phone, product, the chat summary). The table is also in the
    `COMMAND_CENTER_SECRET=<the same secret>`.
 4. Send `/stats` to the Garmin bot from the manager chat: "🗄 Command Center:
    ✅ все лиды сохранены".
+
+## Garmin lead group (2026-10-26, the owner)
+
+Each new lead also goes to its Telegram group as **one message per lead**, with every detail
+(`integrations/org_bot/lead_groups.py`; ~3 s apart — Telegram's group limit). The group is bound by adding OPS Manager
+Bot to it and typing `/lidlar_garmin` or `/lidlar_primus` there (the admin or the Director; `/lidlar_stop` unbinds;
+table `lead_groups`). No group bound → nothing posted (logged). In a group the bot reads only these commands.

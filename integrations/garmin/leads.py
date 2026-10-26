@@ -74,20 +74,20 @@ async def save(event: dict[str, Any]) -> dict[str, Any]:
             """UPDATE garmin_leads SET phone = %s, phone_added_at = now()
                WHERE id = (SELECT id FROM garmin_leads WHERE chat_id = %s AND urgency <> 'outage'
                            AND phone IS NULL ORDER BY created_at DESC LIMIT 1)
-               RETURNING id""",
+               RETURNING *""",
             (event["phone"], event["chat_id"]),
         )
-        return {"ok": True, "updated": row is not None}
+        return {"ok": True, "updated": row is not None, "row": row}
     row = await fetch_one(
         """INSERT INTO garmin_leads (lead_id, chat_id, urgency, name, username, phone, product_id, product_name,
                                      price, budget, summary, lang, source, created_at)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s, now()))
-           ON CONFLICT (lead_id) DO NOTHING RETURNING id""",
+           ON CONFLICT (lead_id) DO NOTHING RETURNING *""",
         (event["lead_id"], event["chat_id"], event["urgency"], event["name"], event["username"], event["phone"],
          event["product_id"], event["product_name"], event["price"], event["budget"], event["summary"],
          event["lang"], event["source"], event["at"]),
     )
-    return {"ok": True, "stored": row is not None}
+    return {"ok": True, "stored": row is not None, "row": row}
 
 
 async def recent(days: int = 30) -> list[dict[str, Any]]:

@@ -38,6 +38,7 @@ from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient
 from integrations.search.tavily_client import TavilyClient
+from integrations.org_bot import lead_groups
 from integrations.org_bot import leads as leads_sheet
 from integrations.org_bot.notify import notify_directors
 from integrations.telegram.bot import escape
@@ -904,6 +905,8 @@ async def run(dry_run: bool = False) -> int:
             print()
     else:
         await store_new_leads(new_leads, run_id)
+        # Each new lead as its own message in the Primus lead group (lead_groups.py, 2026-10-26).
+        await lead_groups.send("primus", [lead_groups.primus_text(lead) for lead in new_leads], run_id)
         # The sheet write is the part that matters and has already happened
         # by this point -- notify_directors() logs and swallows delivery
         # failures internally rather than raising, so a broken Telegram

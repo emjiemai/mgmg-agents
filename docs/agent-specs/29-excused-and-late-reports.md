@@ -61,7 +61,8 @@ reports. The month as a calendar of buttons (Monday first; ◀ ▶ months, never
 - 🟩 = the report counts as sent, minus 0 (a day with no row gets «[админ: юборилган деб белгиланди]»; a row's own
   text is kept); 🟥 = −1 KPI once the day is closed (from 16.10); ⬜ = the same as the Director's ⬜ Сабабли;
 - every change is kept in `report_cell_edits`; **✅ Тайёр** sends each active Director one summary (per person, per
-  day first → last; a day turned all the way back isn't listed); what is left open reaches him at 22:00 (the API's
+  day first → last; a day turned all the way back isn't listed; since 26.10 in words, days grouped by change:
+  «• юборилмади (−1 балл) → сабабли: 14.10, 16.10»); what is left open reaches him at 22:00 (the API's
   5-minute loop). The employee isn't messaged. PULSE's kept data is cleared at once.
 
 Also fixed on 24.10: since 17.10 the Garmin shop staff's card showed only their week — ака/опа, AI, 📝 daily report,

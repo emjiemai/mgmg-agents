@@ -224,6 +224,11 @@ async def handle_update(update: dict[str, Any], run_id: uuid.UUID, background: B
     message = update.get("message")
     if not message:
         return "ignored"
+    if (message.get("chat") or {}).get("type") not in (None, "private"):
+        # A group (2026-10-26): only the lead groups' binding commands — never tasks, reports or join requests.
+        from integrations.org_bot import lead_groups
+
+        return await lead_groups.handle_group_message(message, run_id)
 
     return await _handle_message(message, run_id, background)
 

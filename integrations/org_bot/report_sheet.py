@@ -116,23 +116,35 @@ async def apply(employee: dict[str, Any], day: date, target: str, admin_id: int,
         await store.set_report_missed(employee, day, points, closed)
 
 
+SUMMARY_WORDS = {**WORDS, "missed": "юборилмади (−1 балл)"}
+
+
 def summary_text(edits: list[dict[str, Any]]) -> str | None:
-    """The Director's one message: per person, each day changed from → to (several taps on a day = one line)."""
+    """The Director's one message: per person, the days grouped by what they turned from → into, in words
+    (2026-10-26, the owner: a row of coloured squares per day was hard to read). Several taps on one day count
+    as first → last; a day turned all the way back isn't listed."""
     people: dict[str, tuple[str, dict[date, list[str]]]] = {}
     for e in edits:
         name, days = people.setdefault(str(e["employee_id"]), (names.person_name(e), {}))
         first_last = days.setdefault(e["day"], [e["before"], e["after"]])
         first_last[1] = e["after"]
-    lines = []
+    blocks, excused = [], False
     for name, days in people.values():
-        changed = [f"{d:%d.%m} {MARKS.get(b, '') or '·'}→{MARKS.get(a, '') or '·'} {WORDS.get(a, a)}"
-                   for d, (b, a) in sorted(days.items()) if b != a]
-        if changed:
-            lines.append(f"• {escape(name)}: " + ", ".join(changed))
-    if not lines:
+        moves: dict[tuple[str, str], list[date]] = {}
+        for d, (b, a) in sorted(days.items()):
+            if b != a:
+                moves.setdefault((b, a), []).append(d)
+        if not moves:
+            continue
+        excused = excused or any(a == "excused" for _, a in moves)
+        lines = [f"<b>{escape(name)}</b>"] + [
+            f"• {SUMMARY_WORDS.get(b, b)} → {SUMMARY_WORDS.get(a, a)}: " + ", ".join(f"{d:%d.%m}" for d in ds)
+            for (b, a), ds in moves.items()]
+        blocks.append("\n".join(lines))
+    if not blocks:
         return None
-    return ("⚙️ <b>Ҳисобот варағи ўзгартирилди (админ)</b>\n" + "\n".join(lines)
-            + "\n<i>🟩 юборилган · 🟥 юборилмаган (−1 балл) · ⬜ сабабли — ҳисобот ва давомат ҳисобланмайди</i>")
+    note = "\n\n<i>Сабабли кун ҳисобот ва давомат бўйича ҳисобланмайди.</i>" if excused else ""
+    return "⚙️ <b>Ҳисобот варағи ўзгартирилди (админ)</b>\n\n" + "\n\n".join(blocks) + note
 
 
 async def tell_director(run_id: uuid.UUID) -> int:

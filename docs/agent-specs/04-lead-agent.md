@@ -248,3 +248,10 @@ provider congestion, then add a paid model to the chain.
   Now the SerpAPI and Tavily clients turn it into their own error (that engine
   is skipped) and each query in `collect_raw_leads` catches anything, so one
   failing query never stops the others. The 429 itself is SerpAPI's plan quota.
+
+## Primus lead group (2026-10-26, the owner)
+
+Each new lead also goes to its Telegram group as **one message per lead**, with every detail
+(`integrations/org_bot/lead_groups.py`; ~3 s apart — Telegram's group limit). The group is bound by adding OPS Manager
+Bot to it and typing `/lidlar_garmin` or `/lidlar_primus` there (the admin or the Director; `/lidlar_stop` unbinds;
+table `lead_groups`). No group bound → nothing posted (logged). In a group the bot reads only these commands.

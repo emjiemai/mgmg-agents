@@ -366,7 +366,7 @@ async def sap_data_webhook(dataset: str, secret: str, request: Request) -> dict[
 
 
 @app.post("/webhooks/garmin-lead/{secret}")
-async def garmin_lead_webhook(secret: str, request: Request) -> JSONResponse:
+async def garmin_lead_webhook(secret: str, request: Request, background: BackgroundTasks) -> JSONResponse:
     """Store a lead (or a later phone number) sent by the Garmin AI bot.
 
     Unlike the SAP routes, failures answer with an HTTP error status: the bot
@@ -388,6 +388,12 @@ async def garmin_lead_webhook(secret: str, request: Request) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 — a 5xx makes the bot retry later
         log.error("Could not store a Garmin lead: {}", exc)
         return JSONResponse({"ok": False, "error": "storage failed"}, status_code=503)
+    row = result.pop("row", None)
+    if row is not None:  # new, or a phone added: one message to the Garmin lead group (lead_groups.py, 2026-10-26)
+        from integrations.org_bot import lead_groups
+
+        text = lead_groups.garmin_text(row, phone_only=event["event"] == "phone")
+        background.add_task(lead_groups.send, "garmin", [text])
     return JSONResponse(result)
 
 

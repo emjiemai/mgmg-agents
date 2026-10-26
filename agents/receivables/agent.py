@@ -161,16 +161,16 @@ def render(aging: ARAging, min_days: int) -> str:
     # 2026-09-22: headline only, at the business's request — the per-invoice
     # and per-owner detail below is no longer sent. The age range is folded
     # into the one line instead.
+    # 2026-10-26 (the owner: "formatting is ugly"): the total on its own line, each age range on its own line —
+    # no longer folded into one long bracket.
     counts = {bucket: sum(1 for i in overdue if i.aging_bucket == bucket) for bucket in BUCKET_ORDER}
     ranges = [(BUCKET_LABELS[b], n) for b, n in counts.items() if n and b in BUCKET_LABELS]
+    head = (f"{headline} <b>Дебиторлик қарзлари — {fmt_date(aging.snapshot_date)}</b>\n"
+            f"Муддати ўтган: <b>{escape(_total_of(overdue))}</b>")
     if len(ranges) == 1:
-        spread = f"{len(overdue)} та ҳисоб-фактура, {ranges[0][0]} ичида"
-    else:
-        spread = f"{len(overdue)} та ҳисоб-фактура: " + ", ".join(f"{label} — {n}" for label, n in ranges)
-    return (
-        f"{headline} <b>Дебиторлик қарзлари — {fmt_date(aging.snapshot_date)}</b>\n"
-        f"<b>Муддати ўтган: {escape(_total_of(overdue))}</b> ({spread})"
-    )
+        return f"{head}\n{len(overdue)} та ҳисоб-фактура, ҳаммаси {ranges[0][0]} ичида"
+    return (f"{head}\n{len(overdue)} та ҳисоб-фактура:\n"
+            + "\n".join(f"• {label} — {n} та" for label, n in ranges))
 
 
 def _total_of(invoices: list[ARInvoice], *, short: bool = False) -> str:

@@ -104,3 +104,6 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 **One morning message (2026-10-24):** `agents/morning-notes/` — the report bonus, the explanation question and task reminders come to each employee as ONE message, at most one question, last (`30-morning-message.md`); the work AI knows what the bot waits for from each person.
 
 **Verifix days without data + admin report sheet (2026-10-24):** a day the terminals didn't record is «no data» (automatic, or ⛔ on Admin `/verifix`) — nobody absent or late, wrong questions withdrawn with an apology (`11-attendance.md`); Admin `/xodimlar` → 📊 the month's report days, tap 🟩 / 🟥 / ⬜, the Director gets a summary (`29-excused-and-late-reports.md`).
+
+
+**Lead groups (2026-10-26):** Garmin and Primus leads to their own Telegram groups, one message per lead (`lead_groups.py`; specs 04, 14).

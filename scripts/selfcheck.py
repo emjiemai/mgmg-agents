@@ -886,12 +886,13 @@ def test_receivables_rendering() -> None:
 
     text = receivables.render(aging, min_days=1)
     check_true("headline critical", text.startswith("🔴"))
-    check_true("age ranges folded into the headline", "90+ кун — 2" in text and "1–30 кун — 1" in text)
-    check_true("two lines only", len(text.splitlines()) == 2)
+    check_true("each age range on its own line (26.10: one long bracket was hard to read)",
+               "\n• 90+ кун — 2 та" in text and "\n• 1–30 кун — 1 та" in text and "(" not in text)
+    check_true("the total on its own line", text.splitlines()[1].startswith("Муддати ўтган: <b>"))
     check_true("no per-invoice detail", "Customer" not in text)
     check_true("no owner breakdown", "Mas'ul xodim" not in text)
     one_range = receivables.render(aging, min_days=100)
-    check_true("single range reads 'ичида'", "2 та ҳисоб-фактура, 90+ кун ичида" in one_range)
+    check_true("single range reads 'ичида'", "2 та ҳисоб-фактура, ҳаммаси 90+ кун ичида" in one_range)
     check_true("the alert is Uzbek Cyrillic", latin_words(text) == [])
 
     text_30 = receivables.render(aging, min_days=30)
@@ -5638,8 +5639,15 @@ def test_morning_verifix_and_admin_sheet() -> None:
              {"employee_id": "e1", "full_name": "Ширин Умматова", "day": date(2026, 10, 21), "before": "missed", "after": "excused"},
              {"employee_id": "e1", "full_name": "Ширин Умматова", "day": date(2026, 10, 21), "before": "excused", "after": "sent"}]
     summary = report_sheet.summary_text(edits)
-    check_true("the Director's summary: per person, first → last per day; a day turned all the way back isn't listed",
-               summary is not None and "Ширин Умматова: 23.10 🟥→🟩 юборилди" in summary and "21.10" not in summary)
+    check_true("the Director's summary: per person, days grouped by change, in words; a day turned back isn't listed",
+               summary is not None and "<b>Ширин Умматова</b>\n• юборилмади (−1 балл) → юборилди: 23.10" in summary
+               and "21.10" not in summary and "🟥" not in summary)
+    many = [{"employee_id": "e9", "full_name": "Умар Хошимов", "day": date(2026, 10, d), "before": "missed",
+             "after": "excused"} for d in (14, 16, 18)] + [
+        {"employee_id": "e9", "full_name": "Умар Хошимов", "day": date(2026, 10, 17), "before": "none", "after": "excused"}]
+    check("…many days: one line per change, the note once",
+          report_sheet.summary_text(many).split("\n")[2:5],
+          ["<b>Умар Хошимов</b>", "• юборилмади (−1 балл) → сабабли: 14.10, 16.10, 18.10", "• сўралмаган → сабабли: 17.10"])
     check_true("the card: 📊 for people asked for reports — the Garmin shop staff included, with ака/опа, AI, 📝 "
                "(missing on their card since 17.10)",
                all(x in str(admin.employee_card({**emp, "display_name": "Ширин"})[1])
@@ -5706,6 +5714,130 @@ def test_morning_verifix_and_admin_sheet() -> None:
                "at most ONE message from the bot" in __import__("integrations.org_bot.knowledge", fromlist=["x"]).EMPLOYEE_BOT_GUIDE)
     check_true("the excused flow and the sheet clear PULSE's copy at once", "_forget_pulse()" in inspect.getsource(admin)
                and callable(excused._forget_pulse) and kpi.asked_for_reports(emp))
+
+
+def test_lead_groups() -> None:
+    """26.10.2026, the owner: leads to two Telegram groups (Garmin, Primus), one message per lead."""
+    print("lead groups (26.10.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.org_bot import lead_groups, ops_manager
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
+
+    check("commands with the bot's name", [lead_groups.command(t) for t in ("/lidlar_garmin@MgmgOpsBot", "/LIDLAR_PRIMUS x",
+                                                                            "салом", "")],
+          ["/lidlar_garmin", "/lidlar_primus", "салом", ""])
+    g = lead_groups.garmin_text({"urgency": "now", "name": "Азиз <b>", "username": "aziz", "phone": "+998901234567",
+                                 "product_name": "Forerunner 265", "price": 5490000, "summary": "сотиб олмоқчи",
+                                 "source": "card", "created_at": datetime(2026, 10, 26, 9, 0)})
+    check_true("a Garmin lead: hot / warm, who, phone, product with price, the words — escaped",
+               "🔥 Иссиқ" in g and "Азиз &lt;b&gt; @aziz" in g and "+998901234567" in g
+               and "Forerunner 265 — 5 490 000 сўм" in g and "сотиб олмоқчи" in g)
+    check_true("…a phone added later says so", "телефон қўшилди" in lead_groups.garmin_text({"phone": "+998"}, phone_only=True))
+    p = lead_groups.primus_text({"track": "equipment_sales", "company_name": "Hilton Tashkent", "project_name": "New wing",
+                                 "industry": "hotel", "location": "Ташкент", "signal_source_url": "https://x.uz/a?b=1&c=2",
+                                 "contact_name": "Ali", "contact_method": "info@x.uz", "priority": "high", "confidence": 0.8})
+    check_true("a Primus lead: track, company — project, where, source link, contact, priority",
+               "🏗 Ускуналар сотуви" in p and "Hilton Tashkent — New wing" in p and "https://x.uz/a?b=1&amp;c=2" in p
+               and "Ali, info@x.uz" in p and "high · ишонч 0.8" in p)
+
+    # ---- a group is never a chat with the bot
+    sent, done = [], []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, **k):
+            sent.append((chat_id, text))
+            return [1]
+
+    async def execute(sql, params=None):
+        done.append((sql.split()[0], params))
+
+    async def employee(tg):
+        return {"status": "active", "role": "operatsion_direktor"} if tg == 77 else None
+
+    async def nothing(*a, **k):
+        return None
+
+    async def must_not(*a, **k):
+        raise AssertionError("a group message reached the private chat flow")
+
+    from integrations.org_bot import store
+
+    patch(lead_groups, "TelegramBot", Bot)
+    patch(lead_groups, "execute", execute)
+    patch(lead_groups, "log_action", nothing)
+    patch(store, "get_employee_by_telegram_id", employee)
+    patch(ops_manager, "_handle_message", must_not)
+    patch(settings, "admin_bot_admin_user_id", 5)
+    group = {"id": -100123, "type": "supergroup", "title": "Garmin лидлар"}
+    try:
+        ignored = asyncio.run(ops_manager.handle_update(
+            {"message": {"chat": group, "from": {"id": 77}, "text": "Азизга қўнғироқ қилинг"}}, uuid.uuid4(), None))
+        stranger = asyncio.run(ops_manager.handle_update(
+            {"message": {"chat": group, "from": {"id": 9}, "text": "/lidlar_garmin"}}, uuid.uuid4(), None))
+        by_admin = asyncio.run(ops_manager.handle_update(
+            {"message": {"chat": group, "from": {"id": 5}, "text": "/lidlar_garmin@MgmgOpsBot"}}, uuid.uuid4(), None))
+        by_boss = asyncio.run(ops_manager.handle_update(
+            {"message": {"chat": {**group, "id": -100456}, "from": {"id": 77}, "text": "/lidlar_primus"}}, uuid.uuid4(), None))
+        stop = asyncio.run(ops_manager.handle_update(
+            {"message": {"chat": group, "from": {"id": 5}, "text": "/lidlar_stop"}}, uuid.uuid4(), None))
+    finally:
+        restore()
+    check("in a group: the Director's words aren't a task; a stranger can't bind; the admin and the Director can; stop",
+          (ignored, stranger, by_admin, by_boss, stop),
+          ("group_ignored", "group_ignored", "lead_group_set", "lead_group_set", "lead_group_cleared"))
+    check_true("…bound to the right business and told in the group",
+               done[0][1][:2] == ("garmin", -100123) and done[1][1][:2] == ("primus", -100456)
+               and "Garmin лидлари юборилади" in sent[0][1] and sent[0][0] == "-100123")
+
+    # ---- one message per lead, a gap between
+    sent.clear()
+    gaps: list = []
+
+    async def group_of(business):
+        return -100123 if business == "garmin" else None
+
+    async def sleep(s):
+        gaps.append(s)
+
+    patch(lead_groups, "TelegramBot", Bot)
+    patch(lead_groups, "group_of", group_of)
+    patch(lead_groups, "log_action", nothing)
+    patch(lead_groups.asyncio, "sleep", sleep)
+    patch(settings, "bots_frozen", False)
+    try:
+        n = asyncio.run(lead_groups.send("garmin", ["a", "b", "c"]))
+        none = asyncio.run(lead_groups.send("primus", ["x"]))
+    finally:
+        restore()
+    check("three leads → three messages to the group, ~3 s apart; no group bound → nothing",
+          (n, [s[1] for s in sent], len(gaps), none), (3, ["a", "b", "c"], 2, 0))
+    check_true("wired: the Garmin webhook posts each new lead / added phone; the Lead Agent each new lead",
+               'background.add_task(lead_groups.send, "garmin"' in load_source("integrations/api/app.py")
+               and 'lead_groups.send("primus", [lead_groups.primus_text(lead) for lead in new_leads]' in load_source("agents/lead-agent/agent.py")
+               and "RETURNING *" in load_source("integrations/garmin/leads.py")
+               and "CREATE TABLE IF NOT EXISTS lead_groups" in load_source("database/schema.sql"))
 
 
 def test_report_bonus() -> None:
@@ -9390,6 +9522,7 @@ def main() -> int:
         test_report_bonus,
         test_excused_and_late_reports,
         test_morning_verifix_and_admin_sheet,
+        test_lead_groups,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

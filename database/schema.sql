@@ -1323,3 +1323,13 @@ CREATE TABLE IF NOT EXISTS morning_notes (
     message_id        BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_morning_notes_unsent ON morning_notes (day) WHERE sent_at IS NULL;
+
+-- Lead groups (2026-10-26, the owner): the Telegram group each business's leads go to, one message per lead —
+-- set by the admin / the Director typing /lidlar_garmin or /lidlar_primus in the group (lead_groups.py).
+CREATE TABLE IF NOT EXISTS lead_groups (
+    business  TEXT         PRIMARY KEY CHECK (business IN ('garmin', 'primus')),
+    chat_id   BIGINT       NOT NULL,
+    title     TEXT,
+    set_by    BIGINT       NOT NULL,
+    set_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+);

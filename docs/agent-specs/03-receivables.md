@@ -95,3 +95,7 @@ invoices are material, add conversion before trusting the total.
 - Payment-promise tracking (customer said they would pay on date X)
 - Escalation ladder: 30 d → manager, 60 d → division head, 90 d → CEO + legal
 - Multi-currency conversion at the CBU rate
+
+## Layout (2026-10-26, the owner: "formatting is ugly")
+
+The headline, then «Муддати ўтган: <total>», then «N та ҳисоб-фактура:» and one «• 90+ кун — 6 та» line per age range (one range: «…, ҳаммаси 90+ кун ичида»). Still no per-invoice or per-owner detail (2026-09-22).
