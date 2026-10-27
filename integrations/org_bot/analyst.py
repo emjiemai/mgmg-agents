@@ -198,12 +198,11 @@ TOOLS: list[dict] = [
         "90 days; display dummies left out. garmin_only = the Garmin warehouses only.",
         {"garmin_only": {"type": "boolean", "description": "only the Garmin warehouses (default false = all)"},
          "idle_90d": {"type": "boolean", "description": "on hand but not sold in 90 days, any age (default false)"}}),
-    _fn("garmin_stock_list", "Garmin stock FOR ORDERING (27.10.2026, the Garmin manager): every Garmin item on hand "
-        "or sold in the last 90 days — pieces per Garmin warehouse (faulty-goods warehouse left out), total, sold in 90 "
-        "days, per month, months it lasts, on order in SAP, Min/Max, and a mark: тугаган (none left, it sells) / кам / "
-        "етарли / кўп / сотилмаяпти. Use it for «барча товарлар қолдиғи / остаткаси», «нима буюртма қилиш керак», "
-        "«заказ учун», «нима тугади». file=true when he wants the whole list / Excel / file — the bot attaches the .xlsx.",
-        {"file": {"type": "boolean", "description": "true: attach the .xlsx with every item"}}),
+    _fn("garmin_stock_list", "The whole Garmin stock (27.10.2026, the Garmin manager): every Garmin product left — its "
+        "name and pieces per Garmin warehouse and in total (faulty-goods warehouse left out). Use it for «барча товарлар "
+        "қолдиғи / остаткаси», «нима қолди». file=true when he wants the whole list / Excel / file — the bot attaches "
+        "the .xlsx. Report quantities only; never advise what to buy or order.",
+        {"file": {"type": "boolean", "description": "true: attach the .xlsx with every product"}}),
     _fn("employee_report", "ONE employee's daily report(s): what they wrote (voice and video already turned into "
         "text; «[чатдан тузилди]» = put together by the bot from their unconfirmed messages), when, or that it "
         "wasn't sent — and their report's photos / videos / voice / files, which the bot sends right after your "
@@ -370,8 +369,9 @@ The daily reports of HIS TEAM (the Garmin сотув people) ARE in his access:
 garmin_data source "reports" — what each wrote, when, who didn't send one;
 one person's report with its photos / videos / voice: employee_report.
 Anyone else's reports, attendance and KPI stay the Director's only.
-ORDERING (27.10.2026): «барча товарлар остаткаси», «нима буюртма қилиш керак», «заказ учун» → garmin_stock_list
-(file=true for the whole list / Excel): what is sold out but sells first, then what is low.
+WHOLE STOCK (27.10.2026): «барча товарлар остаткаси / қолдиғи», «нима қолди» → garmin_stock_list (file=true for
+the whole list / Excel). Say what is left — product names and pieces — and nothing more: never advise what to buy
+or order, never mark items as «кам / кўп / тугаган»; that decision is his.
 STOCK = QUANTITY (27.10.2026, his words: «остатка — суммаси эмас, товар кол-воси»): «қолдиқ», «остаток / остатка»,
 «кол-во / колво», «нечта қолди», «қанча товар бор» mean how many PIECES are on hand — garmin_sap kind
 "stock_items", OnHand, per warehouse and per model; answer in дона (pieces), not money, unless he asks for the
@@ -1059,19 +1059,18 @@ def report_state(r: dict[str, Any], now: datetime) -> str:
 
 
 async def garmin_stock_list(args: dict[str, Any]) -> str:
-    """Garmin stock for ordering (integrations/garmin/stock_list.py) — the summary, every item compactly, and
-    the .xlsx attached when asked (or when the list is long)."""
+    """The whole Garmin stock (integrations/garmin/stock_list.py) — the summary, every product left compactly, and
+    the .xlsx attached when asked."""
     from integrations.garmin import stock_list
 
     items, warehouses, as_of = await stock_list.load()
     if not items:
         return "No Garmin stock in the latest SAP push."
-    lines = [re.sub(r"<[^>]+>", "", stock_list.summary(items, as_of, limit=15)), "", "Every item (mark | name | left per "
-             "warehouse | total | sold 90d | months it lasts | on order):"]
+    lines = [re.sub(r"<[^>]+>", "", stock_list.summary(items, warehouses, as_of)), "",
+             "Every product left (name | pieces per warehouse | total) — quantities only, no advice on what to buy:"]
     for i in items[:150]:
-        per = ", ".join(f"{warehouses.get(c, c)} {q:g}" for c, q in i.per_wh.items()) or "none left"
-        months = f"{i.months:.1f}" if i.months is not None else "-"
-        lines.append(f"- {i.status} | {i.name} | {per} | {i.total:g} | {i.sold90:g} | {months} | {i.on_order:g}")
+        per = ", ".join(f"{warehouses.get(c, c)} {q:g}" for c, q in i.per_wh.items())
+        lines.append(f"- {i.name} | {per} | {i.total:g}")
     if len(items) > 150:
         lines.append(f"- … {len(items) - 150} more items (in the .xlsx)")
     files = _files.get()

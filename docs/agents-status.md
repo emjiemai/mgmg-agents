@@ -112,4 +112,4 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 
 **Garmin stock as quantity (2026-10-27):** one row in the Garmin brief (pieces, models, top warehouses); the analyst answers stock questions in pieces.
 
-**Garmin stock for ordering (2026-10-27):** `/qoldiq` and the analyst's `garmin_stock_list` — every item, what's sold out / low / too much, Excel.
+**Garmin stock (2026-10-27):** `/qoldiq` and the analyst's `garmin_stock_list` — every product left, pieces per warehouse, Excel; no buying advice.

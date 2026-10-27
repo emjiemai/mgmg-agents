@@ -6011,8 +6011,9 @@ def test_garmin_stock_quantity() -> None:
 
 
 def test_garmin_stock_for_ordering() -> None:
-    """27.10.2026, Murod aka: «барча товарлар остаткаси керак … заказ уришдан олдин остаткага қараб» — every item."""
-    print("Garmin stock for ordering (27.10.2026)")
+    """27.10.2026, Murod aka: «барча товарлар остаткаси керак» — and the owner the same day: only the product's name
+    and how many are left; it isn't the bot's job to say what to buy."""
+    print("Garmin stock: names and pieces left, nothing more (27.10.2026)")
     import io
 
     from openpyxl import load_workbook
@@ -6027,36 +6028,29 @@ def test_garmin_stock_for_ordering() -> None:
     check("the faulty-goods warehouse isn't stock to sell", stock_list.sellable(codes, whs), frozenset({"G.A._01", "05"}))
     stock = [{"WhsCode": "G.A._01", "ItemCode": "A", "ItemName": "Forerunner 265", "OnHand": 2},
              {"WhsCode": "05", "ItemCode": "A", "ItemName": "Forerunner 265", "OnHand": 1},
-             {"WhsCode": "G.A._01", "ItemCode": "B", "ItemName": "Fenix 8", "OnHand": 20},
-             {"WhsCode": "G.A._01", "ItemCode": "C", "ItemName": "Instinct 3", "OnHand": 6},
-             {"WhsCode": "G.A._01", "ItemCode": "D", "ItemName": "Old band", "OnHand": 4},
+             {"WhsCode": "G.A._01", "ItemCode": "B", "ItemName": "fenix 8", "OnHand": 20},
+             {"WhsCode": "G.A._01", "ItemCode": "Z", "ItemName": "Sold out", "OnHand": 0},
              {"WhsCode": "G.A._01", "ItemCode": "010-M9", "ItemName": "Dummy Unit", "OnHand": 3},
+             {"WhsCode": "06", "ItemCode": "B", "ItemName": "fenix 8", "OnHand": 4},
              {"WhsCode": "Parts", "ItemCode": "P", "ItemName": "Washer part", "OnHand": 50}]
-    products = [{"ItemCode": "E", "ItemName": "Venu 4", "ItmsGrpNam": "Watches", "OnOrder": 5},
-                {"ItemCode": "C", "ItemName": "Instinct 3", "MinLevel": 8}]
-    sales = [{"WhsCode": "G.A._01", "ItemCode": "A", "Quantity": 12}, {"WhsCode": "G.A._01", "ItemCode": "B", "Quantity": 6},
-             {"WhsCode": "05", "ItemCode": "E", "Quantity": 9}, {"WhsCode": "G.A._01", "ItemCode": "C", "Quantity": 9},
-             {"WhsCode": "Parts", "ItemCode": "P", "Quantity": 99}]
-    items = stock_list.build(stock, products, sales, frozenset({"G.A._01", "05"}))
-    check("sold out first, then low (under a month, or under SAP's Min), enough, too much, not selling — Garmin only, no dummies",
-          [(i.name, i.status, i.total, i.sold90) for i in items],
-          [("Venu 4", "тугаган", 0, 9), ("Forerunner 265", "кам", 3, 12), ("Instinct 3", "кам", 6, 9),
-           ("Fenix 8", "кўп", 20, 6), ("Old band", "сотилмаяпти", 4, 0)])
-    check("months it lasts at the 90-day pace", round(items[3].months, 1), 10.0)
-    text = stock_list.summary(items)
-    check_true("the chat summary: totals, the marks, what to order first",
-               "Жами: <b>33 дона</b>, 4 хил товар" in text and "Тугаган 1 · кам 2" in text
-               and "Venu 4 — қолмаган, 90 кунда 9 сотилган, буюртмада 5" in text and "Excel" in text)
-    wb = load_workbook(io.BytesIO(stock_list.workbook_bytes(items, {"G.A._01": "Garmin Abay", "05": "Garmin-Minor"})))
-    ws = wb.active
-    check("the .xlsx: a column per warehouse, one row per item, filters on",
-          ([c.value for c in ws[2]][:7], ws.max_row, bool(ws.auto_filter.ref)),
-          (["Ҳолат", "Товар", "Код", "Гуруҳ", "Garmin Abay", "Garmin-Minor", "Жами қолдиқ"], 7, True))
-    check_true("/qoldiq for the Garmin manager and the Director; the analyst tool for his words, file attached",
+    items = stock_list.build(stock, frozenset({"G.A._01", "05"}))
+    check("every product left, by name, pieces per warehouse — nothing sold out, no dummies, no faulty, no other business",
+          [(i.name, i.per_wh, i.total) for i in items],
+          [("fenix 8", {"G.A._01": 20.0}, 20.0), ("Forerunner 265", {"G.A._01": 2.0, "05": 1.0}, 3.0)])
+    names = {"G.A._01": "Garmin Abay", "05": "Garmin-Minor"}
+    text = stock_list.summary(items, names)
+    check_true("the chat summary: total, products, per warehouse — no advice on what to buy",
+               "Жами: <b>23 дона</b>, 2 хил товар" in text and "• Garmin Abay — 22 дона" in text
+               and not any(w in text for w in ("буюртма", "тугаган", "кам ", "кўп", "сотил")))
+    ws = load_workbook(io.BytesIO(stock_list.workbook_bytes(items, names))).active
+    check("the .xlsx: product, code, a column per warehouse, the total",
+          ([c.value for c in ws[2]], ws.max_row, bool(ws.auto_filter.ref)),
+          (["Товар", "Код", "Garmin Abay", "Garmin-Minor", "Жами қолдиқ"], 4, True))
+    prompt = analyst.employee_prompt("М", "x", {"sap_garmin"})
+    check_true("/qoldiq for the Garmin manager and the Director; the analyst says what is left and never what to buy",
                "qoldiq" in [c for c, _ in menus.GARMIN_MANAGER] and "qoldiq" in [c for c, _ in menus.DIRECTOR]
                and "garmin_stock_list" in {t["function"]["name"] for t in analyst.tools_for({"sap_garmin", "billz", "garmin"})}
-               and "garmin_stock_list" in analyst.employee_prompt("М", "x", {"sap_garmin"}))
-
+               and "never advise what to buy" in prompt and "буюртма учун" not in str(menus.GARMIN_MANAGER))
 
 def test_report_bonus() -> None:
     """22.10.2026, the owner: each morning Garmin сотув get +1 KPI for yesterday's report, or politely none."""

@@ -109,8 +109,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   listings and Uzbek shops' pages (Google gl=uz) vs our garmin.com.uz prices by model; private sellers never named.
   Shops' contacts (2026-10-20, `competitor_shops.py`): name, phones, Instagram, Telegram, site, address — only what the
   shop publishes (OLX shop page, site, Telegram channel; Instagram by Google name search). Private persons' phones: never.
-  Mobile app: not now. **Stock for ordering** (2026-10-27, `garmin/stock_list.py`): `/qoldiq` + analyst `garmin_stock_list` —
-  every Garmin item, pieces per warehouse (faulty out), sold 90 d, months it lasts, тугаган/кам/етарли/кўп, Excel.
+  Mobile app: not now. **Garmin stock** (2026-10-27, `garmin/stock_list.py`): `/qoldiq` + analyst `garmin_stock_list` — every
+  product left, pieces per warehouse (faulty out), Excel. **Never advise what to buy** (the owner) — names and pieces only.
 - **Google reviews: separate pages and QR codes** (2026-10-08, `docs/agent-specs/20-google-reviews.md`):
   `/r` Londry, `/r/garmin` Garmin — the branch button opens that branch's Google review page
   (`GOOGLE_REVIEW_URLS`, Google https hosts only). `/f` stays complaints only (red). Reviews are
