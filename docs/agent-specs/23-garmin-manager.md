@@ -80,3 +80,5 @@ credit notes off, every warehouse named «Garmin»), no stock, the four figures,
 08:00 order, the Billz → SAP recipients.
 
 **Stock = quantity (2026-10-27, Murod aka):** the Garmin brief's «Garmin қолдиғи» row — pieces on hand in the Garmin warehouses, models, the two biggest warehouses (one row, no block). For the Garmin manager «қолдиқ / остаток / кол-во / нечта қолди» = OnHand pieces from `stock_items`, per warehouse and model; money only when asked.
+
+**Stock for ordering (2026-10-27, Murod aka), `integrations/garmin/stock_list.py`:** every Garmin item on hand or sold in 90 days (SAP `stock_items`, `item_sales_90d`, `products`), per Garmin warehouse — the faulty-goods warehouse left out — total, sold 90 d, per month, months it lasts, on order, Min/Max, mark тугаган / кам (< 1 month or < Min) / етарли (1–4) / кўп (> 4) / сотилмаяпти. `/qoldiq` → summary + .xlsx; analyst tool `garmin_stock_list` (system sap_garmin; file=true attaches the .xlsx). Quantity only, no money.

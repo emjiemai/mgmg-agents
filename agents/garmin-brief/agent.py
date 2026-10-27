@@ -140,7 +140,9 @@ async def collect(today: date | None = None) -> GarminData:
         items, items_as_of = await _latest("stock_items")
         whs, _ = await _latest("warehouses")
         if items:
-            data.stock = garmin_stock(items, whs, old_stock.garmin_codes(whs))
+            from integrations.garmin import stock_list
+
+            data.stock = garmin_stock(items, whs, stock_list.sellable(old_stock.garmin_codes(whs), whs))  # faulty out
             data.stock_as_of = items_as_of
     except Exception as exc:  # noqa: BLE001
         data.errors.append(f"stock: {type(exc).__name__}")

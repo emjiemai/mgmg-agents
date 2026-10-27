@@ -31,7 +31,7 @@ from integrations.common.db import fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
-from integrations.garmin import competitors
+from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
     admin, agenda, ai_chat, cheques, excused, explanations, late_report, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
@@ -885,6 +885,8 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
 
     # /hisobotlar: the month's report calendar as a picture (report_calendar.py, 2026-10-17).
     # /eski: goods a year or more in the warehouse, every warehouse (old_stock.py, 2026-10-17).
+    if (message.get("text") or "").strip().lower() in stock_list.COMMANDS:  # Garmin stock for ordering (27.10)
+        return await stock_list.send(telegram_user_id, run_id)
     if (message.get("text") or "").strip().lower() in old_stock.COMMANDS:
         return await old_stock.send(telegram_user_id, None, run_id)
     if (message.get("text") or "").strip().lower() in PULSE_COMMANDS:  # the live dashboard (2026-10-22)
@@ -1806,6 +1808,8 @@ async def _handle_employee_message(
         return await _show_today_report(employee, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS:  # his team's dashboard (2026-10-22)
         return await _send_pulse_link(telegram_user_id, run_id)
+    if employee.get("role") == "garmin_manager" and text.lower() in stock_list.COMMANDS:  # every item, for ordering (27.10)
+        return await stock_list.send(telegram_user_id, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in old_stock.COMMANDS:  # his warehouses' old stock
         return await old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in competitors.COMMANDS:  # who else sells Garmin (19.10)

@@ -3883,7 +3883,8 @@ def test_command_menus() -> None:
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
-                   *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS}
+                   *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS,
+                   *ops_manager.stock_list.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
@@ -4267,8 +4268,8 @@ def test_own_week_and_team_calendar() -> None:
     check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
                and 'prefix == "kr" and not director' in cb)
     check_true("his menu: team calendar, excused days, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, "
-               "/ruxsat or /ism", [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "eski", "raqobat",
-                                                         "pulse", "bekor"])
+               "/ruxsat or /ism", [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "qoldiq", "eski",
+                                                         "raqobat", "pulse", "bekor"])
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
@@ -6009,6 +6010,54 @@ def test_garmin_stock_quantity() -> None:
                and "дона (pieces), not money" in analyst.employee_prompt("М", "x", {"sap_garmin"}))
 
 
+def test_garmin_stock_for_ordering() -> None:
+    """27.10.2026, Murod aka: «барча товарлар остаткаси керак … заказ уришдан олдин остаткага қараб» — every item."""
+    print("Garmin stock for ordering (27.10.2026)")
+    import io
+
+    from openpyxl import load_workbook
+
+    from integrations.garmin import stock_list
+    from integrations.org_bot import analyst
+    from integrations.telegram import menus
+
+    codes = frozenset({"G.A._01", "05", "06"})
+    whs = [{"WhsCode": "G.A._01", "WhsName": "Garmin Abay"}, {"WhsCode": "05", "WhsName": "Garmin-Minor"},
+           {"WhsCode": "06", "WhsName": "Faulty Product Garmin"}]
+    check("the faulty-goods warehouse isn't stock to sell", stock_list.sellable(codes, whs), frozenset({"G.A._01", "05"}))
+    stock = [{"WhsCode": "G.A._01", "ItemCode": "A", "ItemName": "Forerunner 265", "OnHand": 2},
+             {"WhsCode": "05", "ItemCode": "A", "ItemName": "Forerunner 265", "OnHand": 1},
+             {"WhsCode": "G.A._01", "ItemCode": "B", "ItemName": "Fenix 8", "OnHand": 20},
+             {"WhsCode": "G.A._01", "ItemCode": "C", "ItemName": "Instinct 3", "OnHand": 6},
+             {"WhsCode": "G.A._01", "ItemCode": "D", "ItemName": "Old band", "OnHand": 4},
+             {"WhsCode": "G.A._01", "ItemCode": "010-M9", "ItemName": "Dummy Unit", "OnHand": 3},
+             {"WhsCode": "Parts", "ItemCode": "P", "ItemName": "Washer part", "OnHand": 50}]
+    products = [{"ItemCode": "E", "ItemName": "Venu 4", "ItmsGrpNam": "Watches", "OnOrder": 5},
+                {"ItemCode": "C", "ItemName": "Instinct 3", "MinLevel": 8}]
+    sales = [{"WhsCode": "G.A._01", "ItemCode": "A", "Quantity": 12}, {"WhsCode": "G.A._01", "ItemCode": "B", "Quantity": 6},
+             {"WhsCode": "05", "ItemCode": "E", "Quantity": 9}, {"WhsCode": "G.A._01", "ItemCode": "C", "Quantity": 9},
+             {"WhsCode": "Parts", "ItemCode": "P", "Quantity": 99}]
+    items = stock_list.build(stock, products, sales, frozenset({"G.A._01", "05"}))
+    check("sold out first, then low (under a month, or under SAP's Min), enough, too much, not selling — Garmin only, no dummies",
+          [(i.name, i.status, i.total, i.sold90) for i in items],
+          [("Venu 4", "тугаган", 0, 9), ("Forerunner 265", "кам", 3, 12), ("Instinct 3", "кам", 6, 9),
+           ("Fenix 8", "кўп", 20, 6), ("Old band", "сотилмаяпти", 4, 0)])
+    check("months it lasts at the 90-day pace", round(items[3].months, 1), 10.0)
+    text = stock_list.summary(items)
+    check_true("the chat summary: totals, the marks, what to order first",
+               "Жами: <b>33 дона</b>, 4 хил товар" in text and "Тугаган 1 · кам 2" in text
+               and "Venu 4 — қолмаган, 90 кунда 9 сотилган, буюртмада 5" in text and "Excel" in text)
+    wb = load_workbook(io.BytesIO(stock_list.workbook_bytes(items, {"G.A._01": "Garmin Abay", "05": "Garmin-Minor"})))
+    ws = wb.active
+    check("the .xlsx: a column per warehouse, one row per item, filters on",
+          ([c.value for c in ws[2]][:7], ws.max_row, bool(ws.auto_filter.ref)),
+          (["Ҳолат", "Товар", "Код", "Гуруҳ", "Garmin Abay", "Garmin-Minor", "Жами қолдиқ"], 7, True))
+    check_true("/qoldiq for the Garmin manager and the Director; the analyst tool for his words, file attached",
+               "qoldiq" in [c for c, _ in menus.GARMIN_MANAGER] and "qoldiq" in [c for c, _ in menus.DIRECTOR]
+               and "garmin_stock_list" in {t["function"]["name"] for t in analyst.tools_for({"sap_garmin", "billz", "garmin"})}
+               and "garmin_stock_list" in analyst.employee_prompt("М", "x", {"sap_garmin"}))
+
+
 def test_report_bonus() -> None:
     """22.10.2026, the owner: each morning Garmin сотув get +1 KPI for yesterday's report, or politely none."""
     print("report bonus (22.10.2026)")
@@ -6449,7 +6498,7 @@ def test_garmin_manager() -> None:
     check_true("the Boss is told (no buttons: changing the role closes it)", "ролига кўра" in text and keyboard is None)
     tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(ok_gm))]
     check("its tools: Garmin's SAP only, Billz, Garmin records, his team's report with files (22.10) — no general SAP, 1C, attendance or the Boss's records",
-          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data", "employee_report"])
+          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data", "garmin_stock_list", "employee_report"])
     prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(ok_gm))
     check_true("its prompt keeps it on Garmin", "THIS PERSON RUNS GARMIN" in prompt and "garmin_sap" in prompt)
     check_true("the work AI gives it the public Garmin catalog too", "Garmin catalog" in ai_chat.system_prompt(gm, "ctx"))
@@ -9694,6 +9743,7 @@ def main() -> int:
         test_lead_groups,
         test_reports_any_time,
         test_garmin_stock_quantity,
+        test_garmin_stock_for_ordering,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,

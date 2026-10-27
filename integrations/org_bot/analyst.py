@@ -198,6 +198,12 @@ TOOLS: list[dict] = [
         "90 days; display dummies left out. garmin_only = the Garmin warehouses only.",
         {"garmin_only": {"type": "boolean", "description": "only the Garmin warehouses (default false = all)"},
          "idle_90d": {"type": "boolean", "description": "on hand but not sold in 90 days, any age (default false)"}}),
+    _fn("garmin_stock_list", "Garmin stock FOR ORDERING (27.10.2026, the Garmin manager): every Garmin item on hand "
+        "or sold in the last 90 days — pieces per Garmin warehouse (faulty-goods warehouse left out), total, sold in 90 "
+        "days, per month, months it lasts, on order in SAP, Min/Max, and a mark: тугаган (none left, it sells) / кам / "
+        "етарли / кўп / сотилмаяпти. Use it for «барча товарлар қолдиғи / остаткаси», «нима буюртма қилиш керак», "
+        "«заказ учун», «нима тугади». file=true when he wants the whole list / Excel / file — the bot attaches the .xlsx.",
+        {"file": {"type": "boolean", "description": "true: attach the .xlsx with every item"}}),
     _fn("employee_report", "ONE employee's daily report(s): what they wrote (voice and video already turned into "
         "text; «[чатдан тузилди]» = put together by the bot from their unconfirmed messages), when, or that it "
         "wasn't sent — and their report's photos / videos / voice / files, which the bot sends right after your "
@@ -226,6 +232,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "garmin_data": {"garmin"},
     "billz_sap_check": {"billz", "sap"},
     "old_stock": {"sap"},
+    "garmin_stock_list": {"sap_garmin"},
     "employee_report": {"garmin"},  # the Director; the Garmin manager for his team (data_access.ROLE_SCOPES)
     "attendance": None,
     "company_data": None,
@@ -363,6 +370,8 @@ The daily reports of HIS TEAM (the Garmin сотув people) ARE in his access:
 garmin_data source "reports" — what each wrote, when, who didn't send one;
 one person's report with its photos / videos / voice: employee_report.
 Anyone else's reports, attendance and KPI stay the Director's only.
+ORDERING (27.10.2026): «барча товарлар остаткаси», «нима буюртма қилиш керак», «заказ учун» → garmin_stock_list
+(file=true for the whole list / Excel): what is sold out but sells first, then what is low.
 STOCK = QUANTITY (27.10.2026, his words: «остатка — суммаси эмас, товар кол-воси»): «қолдиқ», «остаток / остатка»,
 «кол-во / колво», «нечта қолди», «қанча товар бор» mean how many PIECES are on hand — garmin_sap kind
 "stock_items", OnHand, per warehouse and per model; answer in дона (pieces), not money, unless he asks for the
@@ -1049,6 +1058,32 @@ def report_state(r: dict[str, Any], now: datetime) -> str:
     return "not sent yet (open until 22:00)"
 
 
+async def garmin_stock_list(args: dict[str, Any]) -> str:
+    """Garmin stock for ordering (integrations/garmin/stock_list.py) — the summary, every item compactly, and
+    the .xlsx attached when asked (or when the list is long)."""
+    from integrations.garmin import stock_list
+
+    items, warehouses, as_of = await stock_list.load()
+    if not items:
+        return "No Garmin stock in the latest SAP push."
+    lines = [re.sub(r"<[^>]+>", "", stock_list.summary(items, as_of, limit=15)), "", "Every item (mark | name | left per "
+             "warehouse | total | sold 90d | months it lasts | on order):"]
+    for i in items[:150]:
+        per = ", ".join(f"{warehouses.get(c, c)} {q:g}" for c, q in i.per_wh.items()) or "none left"
+        months = f"{i.months:.1f}" if i.months is not None else "-"
+        lines.append(f"- {i.status} | {i.name} | {per} | {i.total:g} | {i.sold90:g} | {months} | {i.on_order:g}")
+    if len(items) > 150:
+        lines.append(f"- … {len(items) - 150} more items (in the .xlsx)")
+    files = _files.get()
+    if files is not None and (args.get("file") is True or _wants_file.get()):
+        files[:] = [f for f in files if f[1] != stock_list.file_name()] + [
+            (stock_list.workbook_bytes(items, warehouses, as_of), stock_list.file_name())]
+        lines.append("The .xlsx with every item (a column per warehouse) will be sent with your answer — say so in one line.")
+    else:
+        lines.append("The whole list as Excel: /qoldiq (or ask for the file).")
+    return "\n".join(lines)
+
+
 async def employee_report(args: dict[str, Any]) -> str:
     """One person's report rows and their files (2026-10-22, the owner: "when a report is asked from a specific
     employee, only that row is sent, with their files")."""
@@ -1134,6 +1169,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "garmin_data": garmin_data,
     "billz_sap_check": billz_sap_check,
     "old_stock": old_stock_tool,
+    "garmin_stock_list": garmin_stock_list,
     "employee_report": employee_report,
     "company_data": company_data,
 }
