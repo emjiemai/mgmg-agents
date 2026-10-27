@@ -11,7 +11,9 @@ Four figures:
      warehouse named «Garmin»), in so'm, as entered into SAP by 08:00;
   3. open Garmin complaint tickets (and how many came yesterday);
   4. Garmin AI bot leads yesterday (how many want to buy now).
-Garmin stock was taken out (19.10.2026, the owner) — old stock is /eski.
+Garmin stock was taken out (19.10.2026, the owner) — old stock is /eski. It came back on 27.10.2026 as
+QUANTITY, not money (Murod aka: «Garmin остаткасини қўшиш керак, суммаси эмас, товар кол-воси»): pieces on hand
+in the Garmin warehouses, how many models, per warehouse (SAP stock_items, display dummies left out).
 Blocks: the shops, the Billz → SAP check (cheques not in SAP), Garmin sales
 people who didn't report, the open complaints.
 
@@ -72,6 +74,8 @@ class GarminData:
     leads: int = 0
     leads_now: int = 0
     check: dict[str, Any] | None = None  # yesterday's Billz → SAP result (billz_sap_checks)
+    stock: tuple[int, int, list[tuple[str, int]]] | None = None  # (pieces, models, [(warehouse, pieces)]) — 27.10
+    stock_as_of: datetime | None = None
     reports: list[dict[str, Any]] | None = None
     errors: list[str] = field(default_factory=list)
 
@@ -86,6 +90,29 @@ def sap_sales(sales: list[dict[str, Any]], lines: list[dict[str, Any]], day: dat
     """(so'm total, documents, documents without a so'm total) for one day in the Garmin warehouses."""
     docs = [d for d in sap_check.docs_from_sap(sales, lines, codes) if d.day == day]
     return sum(d.amount for d in docs if d.amount_known), len(docs), sum(1 for d in docs if not d.amount_known)
+
+
+def garmin_stock(items: list[dict[str, Any]], warehouses: list[dict[str, Any]],
+                 codes: frozenset[str]) -> tuple[int, int, list[tuple[str, int]]]:
+    """(pieces on hand, different items, [(warehouse name, pieces)] most first) in the Garmin warehouses —
+    quantity, never money; display dummies («Dummy Unit…», 010-M…) aren't stock."""
+    names = {str(w.get("WhsCode") or "").strip(): str(w.get("WhsName") or w.get("WhsCode") or "").strip() for w in warehouses}
+    per_wh: dict[str, int] = {}
+    models: set[str] = set()
+    for r in items:
+        code = str(r.get("WhsCode") or "").strip()
+        item = str(r.get("ItemCode") or "")
+        if code not in codes or old_stock._DUMMY.search(str(r.get("ItemName") or "")) or old_stock._DUMMY.search(item):  # noqa: SLF001
+            continue
+        try:
+            qty = int(float(r.get("OnHand") or 0))
+        except (TypeError, ValueError):
+            continue
+        if qty > 0:
+            per_wh[code] = per_wh.get(code, 0) + qty
+            models.add(item)
+    rows = sorted(((names.get(c) or c, n) for c, n in per_wh.items()), key=lambda x: -x[1])
+    return sum(per_wh.values()), len(models), rows
 
 
 async def collect(today: date | None = None) -> GarminData:
@@ -109,6 +136,14 @@ async def collect(today: date | None = None) -> GarminData:
             data.sap_as_of = as_of
     except Exception as exc:  # noqa: BLE001
         data.errors.append(f"sap: {type(exc).__name__}")
+    try:
+        items, items_as_of = await _latest("stock_items")
+        whs, _ = await _latest("warehouses")
+        if items:
+            data.stock = garmin_stock(items, whs, old_stock.garmin_codes(whs))
+            data.stock_as_of = items_as_of
+    except Exception as exc:  # noqa: BLE001
+        data.errors.append(f"stock: {type(exc).__name__}")
     try:
         rows = [r for r in await org_store.recent_client_feedback(days=60) if r.get("place") == "garmin"]
         data.complaints_open = [r for r in rows if r.get("ticket_status") == "open"]
@@ -183,7 +218,17 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
     if notes:  # both warnings when both hold — neither hides the other
         sap.update(sub=" · ".join(notes), sub_alert=True)
 
-    # «Garmin захираси» was taken out (19.10.2026, the owner) — stock is in /eski and the bot.
+    # Garmin stock as QUANTITY (27.10.2026, Murod aka) — pieces, not money.
+    stock = _row("Garmin қолдиғи", "stock")
+    if data.stock is None:
+        stock.update(tone="muted", number="SAP'дан келмаган")
+    else:
+        pieces, models, per_wh = data.stock
+        # one row only (27.10, the owner: "doesn't it become too long?") — the main warehouses in its detail line
+        top = " · ".join(f"{name} {n}" for name, n in per_wh[:2]) + (f" · +{len(per_wh) - 2} омбор" if len(per_wh) > 2 else "")
+        stock.update(number=f"{pieces:,}".replace(",", " "), unit="дона", detail=f"{models} хил товар · {top}" if top else f"{models} хил товар")
+        if data.stock_as_of is not None and to_local(data.stock_as_of).date() < today:
+            stock.update(sub=f"SAP {to_local(data.stock_as_of):%d.%m %H:%M} ҳолатида", sub_alert=True)
     complaints = _row("Очиқ шикоятлар", "alert")
     complaints.update(number=str(len(data.complaints_open)), detail=f"кеча келгани: {data.complaints_new} та")
     if data.complaints_open:
@@ -230,7 +275,7 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
     return {"title": "Garmin кунлик ҳисоботи", "date": fmt_date(today), "when": when,
             "foot": "Дўконлар — Billz · сотув — SAP (Garmin омборлари, 08:00 гача киритилгани) · шикоятлар — QR саҳифа · "
                     "лидлар — Garmin бот. Эски товарлар: /eski. Батафсил: OPS Manager'дан сўранг.",
-            "figures": [shop, sap, complaints, leads], "blocks": blocks, "lower_bound": False, "notice": notice}
+            "figures": [shop, sap, stock, complaints, leads], "blocks": blocks, "lower_bound": False, "notice": notice}
 
 
 def caption(data: GarminData) -> str:

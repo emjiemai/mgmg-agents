@@ -363,6 +363,10 @@ The daily reports of HIS TEAM (the Garmin сотув people) ARE in his access:
 garmin_data source "reports" — what each wrote, when, who didn't send one;
 one person's report with its photos / videos / voice: employee_report.
 Anyone else's reports, attendance and KPI stay the Director's only.
+STOCK = QUANTITY (27.10.2026, his words: «остатка — суммаси эмас, товар кол-воси»): «қолдиқ», «остаток / остатка»,
+«кол-во / колво», «нечта қолди», «қанча товар бор» mean how many PIECES are on hand — garmin_sap kind
+"stock_items", OnHand, per warehouse and per model; answer in дона (pieces), not money, unless he asks for the
+value. A whole-stock question: the total pieces, how many models, per warehouse, then the models with most.
 """
     if lang == "ru":
         prompt += """

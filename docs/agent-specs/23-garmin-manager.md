@@ -78,3 +78,5 @@ button, complaint routing, the scope (no 1C), the Director's notice, the
 tools offered, `garmin_data`, the brief's SAP sum (Garmin warehouses only,
 credit notes off, every warehouse named «Garmin»), no stock, the four figures, the 08:00 labels, the blocks, the picture, the
 08:00 order, the Billz → SAP recipients.
+
+**Stock = quantity (2026-10-27, Murod aka):** the Garmin brief's «Garmin қолдиғи» row — pieces on hand in the Garmin warehouses, models, the two biggest warehouses (one row, no block). For the Garmin manager «қолдиқ / остаток / кол-во / нечта қолди» = OnHand pieces from `stock_items`, per warehouse and model; money only when asked.

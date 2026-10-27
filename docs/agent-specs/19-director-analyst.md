@@ -120,3 +120,5 @@ model: `OPS_MANAGER_BOT_MODEL` / `OPS_MANAGER_BOT_FALLBACK_MODELS`.
 `employee_report` (systems: garmin — so the Director and the Garmin manager): one person's report row(s) for a
 day or up to 14 days — sent or not, «[чатдан тузилди]», the text (voice / video already as text) — and up to 10
 of its files, which the bot sends after the answer. The Garmin manager finds only his team (garmin_sotuv).
+
+**Stock = quantity (2026-10-27, Murod aka):** the Garmin brief's «Garmin қолдиғи» row — pieces on hand in the Garmin warehouses, models, the two biggest warehouses (one row, no block). For the Garmin manager «қолдиқ / остаток / кол-во / нечта қолди» = OnHand pieces from `stock_items`, per warehouse and model; money only when asked.

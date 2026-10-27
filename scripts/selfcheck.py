@@ -5980,6 +5980,35 @@ def test_reports_any_time() -> None:
     check_true("the «ҳисоботми ёки савол?» buttons only when the AI isn't sure", 'if decided == "unsure":' in src)
 
 
+def test_garmin_stock_quantity() -> None:
+    """27.10.2026, Murod aka: «Garmin остаткасини қўшиш керак, суммаси эмас, товар кол-воси» — stock in pieces."""
+    print("Garmin stock as quantity (27.10.2026)")
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import analyst
+
+    brief = load_agent("garmin-brief")
+    whs = [{"WhsCode": "G.A._01", "WhsName": "Garmin Абай"}, {"WhsCode": "G.M_05", "WhsName": "Garmin Минор"},
+           {"WhsCode": "Parts", "WhsName": "Parts"}]
+    items = [{"WhsCode": "G.A._01", "ItemCode": "FR265", "ItemName": "Forerunner 265", "OnHand": 4, "StockValue": 9e6},
+             {"WhsCode": "G.M_05", "ItemCode": "FR265", "ItemName": "Forerunner 265", "OnHand": 2},
+             {"WhsCode": "G.A._01", "ItemCode": "F8", "ItemName": "Fenix 8", "OnHand": "3.000"},
+             {"WhsCode": "G.A._01", "ItemCode": "010-M1", "ItemName": "Dummy Unit Fenix", "OnHand": 5},
+             {"WhsCode": "G.A._01", "ItemCode": "X", "ItemName": "Sold out", "OnHand": 0},
+             {"WhsCode": "Parts", "ItemCode": "D51", "ItemName": "Washer part", "OnHand": 56}]
+    stock = brief.garmin_stock(items, whs, frozenset({"G.A._01", "G.M_05"}))
+    check("pieces in Garmin warehouses only, models, per warehouse — dummies and zeros left out",
+          stock, (9, 2, [("Garmin Абай", 7), ("Garmin Минор", 2)]))
+    data = brief.GarminData(day=date(2026, 10, 26), stock=stock)
+    view = brief.view(data, datetime(2026, 10, 27, 8, 0))
+    fig = next(f for f in view["figures"] if f["label"] == "Garmin қолдиғи")
+    check("the brief's figure: pieces (дона), not money", (fig["number"], fig["unit"], fig["detail"]),
+          ("9", "дона", "2 хил товар · Garmin Абай 7 · Garmin Минор 2"))
+    check_true("…one row only, no extra block (the brief stays short)", not any("Қолдиқ" in b["title"] for b in view["blocks"]))
+    check_true("the analyst answers «қолдиқ / остаток / кол-во» in pieces for the Garmin manager",
+               "STOCK = QUANTITY" in analyst.employee_prompt("Мурод", "Garmin менежер", {"sap_garmin", "billz", "garmin"})
+               and "дона (pieces), not money" in analyst.employee_prompt("М", "x", {"sap_garmin"}))
+
+
 def test_report_bonus() -> None:
     """22.10.2026, the owner: each morning Garmin сотув get +1 KPI for yesterday's report, or politely none."""
     print("report bonus (22.10.2026)")
@@ -6473,9 +6502,9 @@ def test_garmin_manager() -> None:
                          reports=[{"report_date": date(2026, 10, 13), "status": "missed", "display_name": "Абдурашид",
                                    "role": "garmin_sotuv"}])
     v = gb.view(data, datetime(2026, 10, 14, 8, 5))
-    check("four Garmin figures, no stock and nothing of the Boss's (no cash, customer debt, payments)",
+    check("five Garmin figures — stock back as pieces on 27.10 — and nothing of the Boss's (no cash, customer debt, payments)",
           [f["label"] for f in v["figures"]],
-          ["Дўкон савдоси (Billz)", "SAP'даги сотув", "Очиқ шикоятлар", "Garmin бот лидлари"])
+          ["Дўкон савдоси (Billz)", "SAP'даги сотув", "Garmin қолдиғи", "Очиқ шикоятлар", "Garmin бот лидлари"])
     check_true("SAP sales say they count what was entered by 08:00",
                "08:00 гача SAP'га киритилгани" in v["figures"][1]["detail"])
     check_true("the Billz → SAP block says it is the 08:00 picture", "08:00 ҳолатига" in str(v["blocks"][0]))
@@ -9664,6 +9693,7 @@ def main() -> int:
         test_morning_verifix_and_admin_sheet,
         test_lead_groups,
         test_reports_any_time,
+        test_garmin_stock_quantity,
         test_reregistration_and_order,
         test_garmin_manager,
         test_complaint_tickets,
