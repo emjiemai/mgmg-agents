@@ -6050,7 +6050,8 @@ def test_garmin_stock_for_ordering() -> None:
     check_true("/qoldiq for the Garmin manager and the Director; the analyst says what is left and never what to buy",
                "qoldiq" in [c for c, _ in menus.GARMIN_MANAGER] and "qoldiq" in [c for c, _ in menus.DIRECTOR]
                and "garmin_stock_list" in {t["function"]["name"] for t in analyst.tools_for({"sap_garmin", "billz", "garmin"})}
-               and "never advise what to buy" in prompt and "буюртма учун" not in str(menus.GARMIN_MANAGER))
+               and "never advise what to buy" in prompt and "буюртма учун" not in str(menus.GARMIN_MANAGER)
+               and "never count it in what is left" in prompt)
 
 def test_report_bonus() -> None:
     """22.10.2026, the owner: each morning Garmin сотув get +1 KPI for yesterday's report, or politely none."""
