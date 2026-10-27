@@ -4893,6 +4893,8 @@ def test_pulse() -> None:
     check("six tickers; a source not read is «—», never 0",
           ([t["key"] for t in o["tickers"]], next(t for t in o["tickers"] if t["key"] == "shop")["value"]),
           (["sales", "shop", "tasks", "reports", "attendance", "complaints"], None))
+    check_true("«Шикоят»: the number is the period's new complaints, like its ▲▼ (27.10)",
+               '"value": now_p["complaints"], "open": open_now' in load_source("integrations/pulse/data.py"))
     check("the board: best first, today's arrival state", [(p["name"], p["today"]) for p in o["people"]],
           [("Ширин Умматова", "on_time"), ("Абдукарим Зунунов", "late")])
     check("sectors: one per business present", [s["label"] for s in o["sectors"]], ["Garmin", "Primus"])

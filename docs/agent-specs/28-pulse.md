@@ -85,3 +85,5 @@ keystrokes, location or private chats. Read-only.
 the tape and a person's day, the tokens, who may open what, the CSP, the served files, the vendored library,
 text-only rendering, the /pulse command and menus; speed — a kept answer at once and rebuilt behind it, one
 Verifix read shared, sources read at the same time, gzip, WOFF2 fonts kept a year.
+
+**27.10:** the «Шикоят» ticker's number is the new complaints in the period (as its ▲▼ and line); the open ones stay in the data as `open`.

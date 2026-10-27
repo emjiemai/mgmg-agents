@@ -301,7 +301,8 @@ def assemble(staff: list[Person], data: dict[str, list[dict[str, Any]]], recs: l
         {"key": "attendance", "label": "Давомат", "unit": "pct", "value": now_p["attendance"] if recs is not None else None,
          "delta": sc.delta(now_p["attendance"], before_p["attendance"]) if recs is not None else None,
          "spark": daily_share("attendance") if recs is not None else []},
-        {"key": "complaints", "label": "Шикоят", "unit": "count", "value": open_now, "invert": True,
+        # value = new in the period, like its ▲▼ and line (2026-10-27: it showed the open ones, 2, beside ▲17 — confusing)
+        {"key": "complaints", "label": "Шикоят", "unit": "count", "value": now_p["complaints"], "open": open_now, "invert": True,
          "delta": sc.delta(now_p["complaints"], before_p["complaints"]), "spark": [period([d])["complaints"] for d in cur]},
     ]
 
