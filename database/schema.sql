@@ -899,7 +899,7 @@ CREATE TABLE IF NOT EXISTS kpi_periods (
 
 -- ---------------------------------------------------------------------------
 -- leads / lead_assignments / lead_checkins — the Lead Agent's leads handed
--- to B2B sales (agents/lead-handout, integrations/org_bot/leads.py).
+-- to B2B sales (agents/lead-handout, integrations/org_bot/leads.py; stopped 07.10, back 28.10 — see below).
 -- 08:00: each B2B sales person at work gets one lead (today's new ones
 -- first, then the best unworked older ones). 15:00: "how is it going?" with
 -- жараёнда / рад этилди / бажарилди for every lead still open; an open lead
@@ -964,6 +964,27 @@ CREATE TABLE IF NOT EXISTS lead_checkins (
 );
 CREATE INDEX IF NOT EXISTS idx_lead_checkins_question ON lead_checkins (telegram_user_id, question_asked_at DESC)
     WHERE note IS NULL AND question IS NOT NULL;
+
+-- 2026-10-28 (the Boss): the hand-out is back as the B2B lead tracker (lead_tracker.py, spec 14) — each lead has
+-- a number (leads.id, «Лид №33»); at 15:00 the seller is asked: contacted? (бугун / кеча / ҳали йўқ), then sold
+-- (what and how much, typed) / not sold (a reason) / still going. Days to contact, sales and the reasons make the
+-- Boss's statistics (/lidlar, PULSE, the PDF table). A lead not contacted in a week is closed as «алоқага чиқилмади».
+ALTER TABLE lead_assignments ADD COLUMN IF NOT EXISTS contacted_on DATE;
+ALTER TABLE lead_assignments ADD COLUMN IF NOT EXISTS sold_amount NUMERIC;
+ALTER TABLE lead_assignments ADD COLUMN IF NOT EXISTS sold_currency TEXT;  -- 'UZS' | 'USD'
+ALTER TABLE lead_assignments ADD COLUMN IF NOT EXISTS closed_by TEXT;      -- 'seller' | 'auto'
+ALTER TABLE lead_checkins DROP CONSTRAINT IF EXISTS lead_checkins_status_check;
+ALTER TABLE lead_checkins ADD CONSTRAINT lead_checkins_status_check
+    CHECK (status IN ('not_contacted', 'in_progress', 'dismissed', 'done'));
+
+-- The tracker's stop / start (the Boss: «вақтинча stop / start қилиш керак»): one row; none = stopped.
+-- Set by the Director's /lidlar (OPS Manager Bot) or the admin's /lidlar (Admin Bot); the other side is told.
+CREATE TABLE IF NOT EXISTS lead_handout_switch (
+    id       BOOLEAN      PRIMARY KEY DEFAULT TRUE CHECK (id),
+    enabled  BOOLEAN      NOT NULL,
+    set_by   TEXT         NOT NULL,
+    set_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
 
 -- ---------------------------------------------------------------------------
 -- days_off — days nobody works (a holiday, a company day off), set by the

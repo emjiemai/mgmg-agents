@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, agenda, ai_chat, cheques, excused, explanations, late_report, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, agenda, ai_chat, cheques, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -345,6 +345,11 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         # A button on an old 15:00 lead question: the hand-out was stopped by
         # the Director on 2026-10-07 — nothing is recorded, the buttons go.
         return await _handle_stopped_lead_button(callback, run_id)
+
+    # The B2B lead tracker: the 15:00 answers, the Director's ⏸ / ▶️ and 📄 (lead_tracker.py, 2026-10-28).
+    lead_outcome = await lead_tracker.handle_callback(prefix, rest, callback, run_id)
+    if lead_outcome is not None:
+        return lead_outcome
 
     # Excused days: the explanation card's ⬜ / ↩ and /sababli (excused.py, 2026-10-23).
     excused_outcome = await excused.handle_callback(prefix, rest, callback, run_id)
@@ -891,6 +896,8 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await old_stock.send(telegram_user_id, None, run_id)
     if (message.get("text") or "").strip().lower() in PULSE_COMMANDS:  # the live dashboard (2026-10-22)
         return await _send_pulse_link(telegram_user_id, run_id)
+    if (message.get("text") or "").strip().lower() in lead_tracker.COMMANDS:  # B2B leads: statistics, ⏸ / ▶️ (28.10)
+        return await lead_tracker.send_director(telegram_user_id, run_id)
     # /hisobot too — the Director sends no report of his own (2026-10-17).
     if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
         return await _send_report_calendar(telegram_user_id, run_id)
@@ -1796,6 +1803,10 @@ async def _handle_employee_message(
     late = await late_report.take_message(employee, message, run_id, background)
     if late is not None:
         return late
+    # After «💰 Сотилди» / «бошқа сабаб» on a lead: what was sold and for how much, or the reason (lead_tracker.py).
+    lead_answer = await lead_tracker.take_message(employee, message, run_id)
+    if lead_answer is not None:
+        return lead_answer
     # A photo, video or file: ask what it's for — it goes to the Director as
     # it is, never to the AI (report_tools.py).
     kind = report_tools.file_kind(message)
@@ -1806,6 +1817,8 @@ async def _handle_employee_message(
         return "ignored"
     if text.lower() in report_tools.REPORT_COMMANDS:
         return await _show_today_report(employee, run_id)
+    if employee.get("role") == leads.SALES_ROLE and text.lower() in lead_tracker.COMMANDS:  # own open leads (28.10)
+        return await lead_tracker.send_seller(employee, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS:  # his team's dashboard (2026-10-22)
         return await _send_pulse_link(telegram_user_id, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in stock_list.COMMANDS:  # every item, for ordering (27.10)
@@ -2971,8 +2984,9 @@ async def _fetch_attendance_data() -> str:
 
 
 async def _fetch_lead_handout_data() -> str:
-    """Leads handed to sales people in the last 30 days and where each stands."""
-    return leads.describe(await store.recent_lead_assignments(days=30))
+    """The B2B lead tracker: leads given in the last 30 days, where each stands, and the Boss's statistics."""
+    s, rows, _since = await lead_tracker.figures(30)
+    return leads.describe(rows, s)
 
 
 async def _fetch_client_feedback_data() -> str:

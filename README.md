@@ -29,6 +29,7 @@ All times Asia/Tashkent. Everything the bots say is **Uzbek Cyrillic**.
 | 08:00 | Billz → SAP check: every shop cheque must be in SAP the same day | Director + Garmin manager (on trial: the admin, counts only) | `agents/billz-sap-check/` |
 | 08:00 | **Garmin brief** — the same picture as the Director's, Garmin only: shop sales (Billz), SAP sales of the Garmin warehouses (as entered by 08:00), open complaints, Garmin bot leads, Billz → SAP (08:00 state), who didn't report | Garmin manager | `agents/garmin-brief/` |
 | 08:00 | Lead Agent (F2): new tenders/leads into the Google sheet | Director | `agents/lead-agent/` |
+| 08:00 · 15:00 | **B2B lead tracker** (when on — /lidlar ▶️): one numbered lead each («Лид №33 Hilton»), the Boss gets the list; 15:00 contacted? → sold (what, how much — the Boss told at once) / not sold (why) / going; Mondays the statistics + PDF | B2B Sotuv; Director | `agents/lead-handout/`, `integrations/org_bot/lead_tracker.py` |
 | 08:00 | Receivables alert: overdue customer debt by age | Director | `agents/receivables/` |
 | 08:00 | Task reminders and overdue notices (A3) | employees, Director | `agents/task-tracker/` |
 | 08:00 | IT's technical report (after the other 08:00 agents): connections, SAP push, brief delivered, errors, DB, security — no figures | admin | `agents/tech-report/` |
@@ -118,6 +119,7 @@ Every link the system uses (pages, webhooks, services): `docs/links.md`.
 | `/dam` | Mark days off (no asks, reminders, cheer or leads that day) |
 | `/elon <text>` | Announce to every employee (preview, then confirm); `/elon` alone = a "technical error" notice |
 | `/grafik` | Who is on "эркин график" (never shown as late/absent) |
+| `/lidlar` | The B2B lead tracker **on / off** (⏸ / ▶️) — who set it and when, nothing else (no leads or sums); the Director is told |
 | `/verifix`, `/billz`, `/1c` | Is that system connected and readable — status and counts only, no figures (the Director's order of 07.10.2026). `/verifix` also lists the last 7 days' arrival marks (how many of how many — never who) with a button per day: **⛔ = the terminals didn't record that day** → nobody is absent or late that day, the «why weren't you at work?» questions about it are withdrawn with an apology, the Director is told; tap again to undo. A day with almost no marks (≤ 20 % of ≥ 4 people) is treated so on its own |
 | `/texnik` | IT's technical report now: connections, SAP push, brief delivered, errors, DB, security (also every morning) |
 | `/sifat` | Data quality check now (SAP feeds, missing columns, unnamed people…) |
@@ -161,8 +163,17 @@ add OPS Manager Bot to the group, then the admin or the Director types
 `/lidlar_garmin` or `/lidlar_primus` there (`/lidlar_stop` stops it). The bot
 reads nothing else in a group — no tasks, reports or AI answers there.
 
+**B2B leads** (2026-10-28, the Boss) — every lead has a number (№33). 08:00: one
+to each B2B Sotuv person at work, the Director gets «№33 Hilton → Абдукарим». 15:00:
+«боғландингизми?» (бугун / кеча / ҳали йўқ) → «натижаси?» (💰 сотилди → type what and
+how much; ❌ сотилмади → a reason button; ⏳ жараёнда). Not contacted in 7 days → closed
+«алоқага чиқилмади». The Director's **/lidlar**: given, contacted (in how many days, how
+many late), sold (sum), not sold by reason, lost opportunity ≈ not sold × average sale, per
+seller; ⏸ / ▶️ and 📄 the PDF table; the same in PULSE. **Starts stopped** — press ▶️ on
+/lidlar (Director or Admin Bot) to begin; ⏸ any time. Sellers' `/lidlar`: their open leads.
+
 **OPS Manager Bot commands** — Director: `/maqsad`, `/maqsadlar`, `/kpi`,
-`/baho`; employees: `/hisobot` (change or delete today's report), `/kpi`,
+`/baho`, `/lidlar`; employees: `/hisobot` (change or delete today's report), `/kpi`,
 `/natija`, `/ism`, `/ruxsat` (written permission request), `/bekor`.
 Everything else is plain text: the Director writes a task or a question, an
 employee writes their report or asks the work AI.
@@ -333,6 +344,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-28 | **B2B lead tracker — back, on the Boss's design** (stopped 07.10). Each lead the Lead Agent finds has a **number** («Лид №33 Hilton»); 08:00 one to each B2B Sotuv person at work, **the Boss gets the list**. 15:00 (inside the API, no new cron): «боғландингизми?» ✅ бугун / ✅ кеча / ❌ ҳали йўқ → «натижаси?» 💰 сотилди (what and how much, typed; the sum is read, never guessed; **the Boss told at once**) / ❌ сотилмади (лид эскирган, эҳтиёжи йўқ, бошқадан олди, нархи, жавоб бермади, бошқа сабаб) / ⏳ жараёнда. Not contacted in 7 days → closed «алоқага чиқилмади». **Statistics** (the Director's `/lidlar`, Mondays 08:00, PULSE «Лидлар» card, 📄 PDF table): given, contacted and in how many days, late, sold and the sum, not sold by reason, **lost opportunity ≈ not sold × average sale**, the part from not / late contact, per seller. **Stop / start:** ⏸ / ▶️ on the Director's `/lidlar` and on Admin Bot `/lidlar` (on/off only, no figures); the other side is told. **It starts stopped — press ▶️ to begin.** B2B sellers: `/lidlar` = their open leads. KPI unchanged. Spec 14. |
 | 2026-10-27 | **Garmin stock in chat matches /qoldiq**: the bot never counts the «Faulty Product Garmin» warehouse (broken goods) in what is left, and names «Garmin Abay» (the shop, G.A._01) and «Garmin-Abay» (04) as the two SAP warehouses they are. Spec 23. |
 | 2026-10-27 | **Garmin stock — `/qoldiq`** (Murod aka: «барча товарлар остаткаси керак»). Every Garmin product left: its name and how many pieces, per Garmin warehouse and in total — nothing more (the owner the same day: it isn't the bot's job to say what to buy, so no «буюртма» advice, marks or sales pace). `/qoldiq` (Garmin manager, Director) sends a short summary (total, per warehouse) and the Excel file (product, code, a column per warehouse, total; filters on). Asked in words («барча товарлар қолдиғи», «Forerunner 265 нечта қолди»), the bot answers in pieces and attaches the file for the whole list. The faulty-goods warehouse (06) isn't counted (also in the brief row). `/eski` stays. Specs 19, 23.
 | 2026-10-27 | **Garmin stock as quantity** (Murod aka: «остаткасини қўшиш керак, суммаси эмас, товар кол-воси»). The Garmin morning brief has one more row, «Garmin қолдиғи»: pieces on hand in the Garmin warehouses (дона), how many models, the two biggest warehouses (dummies left out; SAP `stock_items`). Kept to one row so the brief stays short. Asked in the bot («нечта қолди», «остаток», «кол-во»), the analyst answers in pieces per warehouse and model, money only if asked. Specs 19, 23. |

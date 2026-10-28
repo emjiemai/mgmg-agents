@@ -44,12 +44,12 @@ only H0 has been running long enough to call proven; the rest are in their
 first weeks — the plan asks for each one's И to be measured before the next
 is started (A1 and A3 are measured automatically every Friday).
 
-## Stopped by the business
+## Back on the Boss's design
 
-- **F2+ Lead hand-out to B2B sales** (08:00 one lead each, 15:00 "how is it
-  going?") — stopped and removed on 2026-10-07 by the Director, who will do
-  it another way. Nothing goes to B2B Sotuv; its history stays in the data,
-  in October's KPI and in the Director's answers (`14-lead-handout.md`).
+- **F2+ B2B lead tracker** (2026-10-28; stopped 07.10, back 28.10): numbered leads to B2B Sotuv at 08:00 (the
+  Boss gets the list), 15:00 contacted? → sold (what, how much) / not sold (why) / going; the Boss's statistics
+  on /lidlar, Mondays, PULSE and a PDF table (lost opportunity = not sold × average sale). **Stop / start:** the
+  Director's /lidlar and Admin Bot /lidlar — **stopped until someone presses ▶️** (`14-lead-handout.md`).
 
 The Lead Agent (F2) itself — the tender and lead search into the sheet —
 keeps running (paused 2026-09-16, back on 2026-09-30).

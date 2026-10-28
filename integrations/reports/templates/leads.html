@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_ui.html" import masthead %}
+{% block title %}Лидлар — {{ date }}{% endblock %}
+{% block style %}
+.figs { display: flex; gap: 8pt; margin: 10pt 0 4pt; }
+.fig { flex: 1; border: 1px solid var(--rule); border-radius: 6pt; padding: 6pt 8pt; }
+.fig .k { font-size: 7.5pt; color: var(--ink-3); }
+.fig .v { font-size: 14pt; font-weight: 700; margin-top: 1pt; }
+.fig .s { font-size: 7.5pt; color: var(--ink-2); }
+.fig.alert { border-color: var(--alert); background: var(--alert-wash); }
+.fig.alert .v { color: var(--alert); }
+.fig.ok .v { color: var(--ok); }
+h2.part { font-size: 11pt; margin: 12pt 0 3pt; }
+ul.reasons { margin: 0; padding-left: 12pt; font-size: 8.5pt; columns: 2; }
+table.leads { width: 100%; border-collapse: collapse; font-size: 8pt; margin-top: 4pt; }
+table.leads th { text-align: left; font-weight: 700; color: var(--ink-2); border-bottom: 1.5px solid var(--ink); padding: 3pt 4pt; }
+table.leads td { padding: 3pt 4pt; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.leads td.no { color: var(--ink-3); white-space: nowrap; }
+table.leads td.nw { white-space: nowrap; }
+table.leads td.late { color: var(--alert); font-weight: 700; }
+table.leads tr.done td.state { color: var(--ok); font-weight: 700; }
+table.leads tr.dismissed td.state { color: var(--alert); }
+table.sellers { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+table.sellers th { text-align: left; color: var(--ink-2); border-bottom: 1.5px solid var(--ink); padding: 3pt 4pt; }
+table.sellers td { padding: 3pt 4pt; border-bottom: 1px solid var(--rule); }
+table.sellers .num, table.sellers th.num { text-align: right; white-space: nowrap; }
+.note { margin-top: 10pt; font-size: 7.5pt; color: var(--ink-3); line-height: 1.4; }
+{% endblock %}
+{% block body %}
+{{ masthead("Лидлар · B2B сотув", period ~ " · " ~ state) }}
+<div class="figs">
+  <div class="fig"><div class="k">Берилди</div><div class="v">{{ s.given }}</div><div class="s">очиқ: {{ s.open }}</div></div>
+  <div class="fig"><div class="k">Боғланилди</div><div class="v">{{ s.contacted }}</div><div class="s">{% if s.avg_days is not none %}ўртача {{ s.avg_days|string|replace('.', ',') }} кунда{% else %}&nbsp;{% endif %}</div></div>
+  <div class="fig {{ 'alert' if s.late else '' }}"><div class="k">Кеч / боғланилмаган</div><div class="v">{{ s.late }}</div><div class="s">{{ late_short }}</div></div>
+  <div class="fig ok"><div class="k">Сотилди</div><div class="v">{{ s.sold }}</div><div class="s">{{ sold_sum }}</div></div>
+  <div class="fig {{ 'alert' if s.not_sold else '' }}"><div class="k">Сотилмади</div><div class="v">{{ s.not_sold }}</div><div class="s">{{ lost }}</div></div>
+</div>
+{% if s.reasons %}
+<h2 class="part">Сотилмаганлик сабаби</h2>
+<ul class="reasons">{% for r, n in s.reasons %}<li>{{ r }} — {{ n }}</li>{% endfor %}</ul>
+{% endif %}
+{% if s.sellers %}
+<h2 class="part">Сотувчилар</h2>
+<table class="sellers">
+  <thead><tr><th>Сотувчи</th><th class="num">Лид</th><th class="num">Боғланди</th><th class="num">Ўртача кун</th><th class="num">Кеч</th><th class="num">Сотди</th><th class="num">Сумма</th><th class="num">Сотмади</th><th class="num">Очиқ</th></tr></thead>
+  <tbody>
+  {% for p in sellers %}
+    <tr><td>{{ p.name }}</td><td class="num">{{ p.given }}</td><td class="num">{{ p.contacted }}</td><td class="num">{{ p.avg }}</td>
+      <td class="num">{{ p.late }}</td><td class="num">{{ p.sold }}</td><td class="num">{{ p.sum }}</td><td class="num">{{ p.not_sold }}</td><td class="num">{{ p.open }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<h2 class="part">Ҳар бир лид</h2>
+<table class="leads">
+  <thead><tr><th>№</th><th>Компания</th><th>Сотувчи</th><th>Берилди</th><th>Боғланди</th><th>Ҳолати</th><th>Сумма / сабаб</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="{{ r.status }}"><td class="no">{{ r.no }}</td><td>{{ r.company }}</td><td>{{ r.seller }}</td><td class="nw">{{ r.given }}</td>
+      <td class="nw {{ 'late' if r.late else '' }}">{{ r.contacted }}</td><td class="state">{{ r.state }}</td><td>{{ r.detail }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="note">Лид — Lead Agent интернетдан топган компания; ҳар бирининг рақами бор (№). Ҳар куни 15:00 да сотувчидан сўралади: боғландими, натижаси (сотилди — нима ва қанча; сотилмади — сабаби). {{ late_rule }}. Бир ҳафта боғланилмаган лид «алоқага чиқилмади» деб ёпилади. Бой берилган имконият — тахмин: сотилмаган лидлар × шу пайтгача ўртача сотув суммаси. Ҳозир: /lidlar.</p>
+{% endblock %}

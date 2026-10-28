@@ -35,8 +35,11 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   scorecard; 22:00 reports close (inside the API). **Team cheer removed 2026-10-17** (the owner: not
   effective; code, tests, cron gone — delete the `mgmg-team-cheer` service in Render). Daily; weekends only
   for employees marked as weekend workers.
-- **Leads to B2B sales: STOPPED 2026-10-07** by the Director (he will do it another way) — the AI
-  sends nothing to B2B Sotuv; `agents/lead-handout/` is deleted; history kept (`14-lead-handout.md`).
+- **B2B lead tracker — back 2026-10-28 on the Boss's design** (stopped 07.10; `lead_tracker.py`, `leads.py`,
+  `agents/lead-handout/`, spec 14): numbered leads («Лид №33 Hilton») to B2B Sotuv at 08:00 + the Boss's list; 15:00
+  (API loop) contacted? → sold (typed what/how much, the Boss told) / not sold (reason) / going; 7 days uncontacted →
+  closed; statistics on the Director's /lidlar, Mondays, PULSE, PDF (lost ≈ not sold × average sale). **Stop/start:**
+  `lead_handout_switch` via the Director's /lidlar and Admin Bot /lidlar (on/off only) — no row = stopped.
   The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1). **Lead groups** (2026-10-26, the owner,
   `lead_groups.py`): each new Garmin lead (Garmin AI bot, + a phone added later; Primus/B2B leads to a group STOPPED the same day) goes as
   ONE message to its Telegram group, bound by `/lidlar_garmin` / `/lidlar_primus` typed there (admin or Director).

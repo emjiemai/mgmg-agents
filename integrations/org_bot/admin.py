@@ -59,6 +59,8 @@ DAY_OFF_DAYS = 14
 TECH_REPORT_COMMANDS = ("/texnik", "/tech")
 # "/baza" -> the bot's own tables checked now: stale, test, duplicate rows (db_review.py, 2026-10-17).
 DB_REVIEW_COMMANDS = ("/baza", "/база")
+# "/lidlar" -> the B2B lead tracker on / off (2026-10-28, the Boss: stop / start) — no figures for IT.
+LEADS_COMMANDS = ("/lidlar", "/лидлар")
 # "/elon" (+ text) -> one message to every employee, after a confirm tap.
 ANNOUNCE_COMMAND = "/elon"
 # What /elon sends when no text is given: the "something went wrong" notice.
@@ -229,12 +231,38 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         from integrations.org_bot import db_review
 
         return await db_review.send(run_id)
+    if text in LEADS_COMMANDS:
+        return await _show_lead_switch(run_id)
     if text in TECH_REPORT_COMMANDS:
         from integrations.org_bot import tech_report
 
         return "tech_report_" + await tech_report.send(run_id)
 
     return "ignored"
+
+
+async def _show_lead_switch(run_id: uuid.UUID) -> str:
+    """/lidlar: whether the B2B lead tracker runs, with ⏸ / ▶️ (on or off only — no leads or sums)."""
+    from integrations.org_bot import lead_tracker
+
+    text, keyboard = lead_tracker.admin_view(await store.lead_switch())
+    async with TelegramBot(
+        agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+        default_chat_id=settings.admin_bot_telegram_chat_id,
+    ) as bot:
+        await bot.send_message(text, reply_markup=keyboard)
+    return "lead_switch_shown"
+
+
+async def _toggle_leads(enabled: bool, query_id: str, decided_by: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """⏸ / ▶️ on /lidlar: the tracker off or on; the Director is told."""
+    from integrations.org_bot import lead_tracker
+
+    await lead_tracker.set_switch(enabled, decided_by, True, run_id)
+    await _answer(query_id, "▶️ Ёқилди" if enabled else "⏸ Тўхтатилди")
+    text, keyboard = lead_tracker.admin_view(await store.lead_switch())
+    await _edit(callback, text, keyboard, run_id)
+    return "lead_tracker_on" if enabled else "lead_tracker_off"
 
 
 async def _send_review_qr(run_id: uuid.UUID) -> str:
@@ -1366,6 +1394,9 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action in ("rsh", "rsm", "rsd", "rsok", "rsx"):  # 📊 the report sheet (report_sheet.py, 2026-10-24)
         return await _report_sheet_action(action, target_id, query_id, decided_by, callback, run_id)
+
+    if action == "lsw":  # /lidlar: the B2B lead tracker ⏸ / ▶️ (lead_tracker.py, 2026-10-28)
+        return await _toggle_leads(target_id == "on", query_id, decided_by, callback, run_id)
 
     if action in ("vbad", "vbadx"):  # /verifix: a day the terminals didn't record (2026-10-24)
         return await _toggle_verifix_day(target_id, query_id, decided_by, callback, run_id)

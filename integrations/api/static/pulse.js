@@ -530,6 +530,74 @@
       $("screen").setAttribute("aria-busy", "false");
     }
   }
+  // ---- B2B leads (2026-10-28): the Director only — anyone else gets 404 and the card stays hidden -------------
+  function leadFig(label, value, sub, tone) {
+    const box = el("div", "lead-fig" + (tone ? " " + tone : ""));
+    box.appendChild(el("span", "k", label));
+    const v = el("span", "v");
+    if (Array.isArray(value)) { v.textContent = value[0]; if (value[1]) v.appendChild(el("small", null, value[1])); }
+    else v.textContent = value === null || value === undefined ? "—" : String(value);
+    box.appendChild(v);
+    if (sub) box.appendChild(el("span", "s", sub));
+    return box;
+  }
+  function renderLeads(L) {
+    $("leads-card").hidden = false;
+    $("rail-leads").hidden = false;
+    $("leads-hint").textContent = `${L.period} · ${L.enabled ? "тарқатиш ишлаяпти" : "тарқатиш тўхтатилган"} · /lidlar`;
+    const sold = som(L.soldSum);
+    $("leads-sold").textContent = L.sold ? `${sold[0]} ${sold[1]}` : "—";
+    const figs = $("lead-figs");
+    figs.textContent = "";
+    figs.appendChild(leadFig("Берилди", L.given, `очиқ: ${L.open}`));
+    figs.appendChild(leadFig("Боғланилди", L.contacted, L.avgDays === null ? "" : `ўртача ${fmt1.format(L.avgDays)} кунда`));
+    figs.appendChild(leadFig("Кеч / боғланилмаган", L.late, `${L.lateAfter + 1}-кундан кейин`, L.late ? "bad" : ""));
+    figs.appendChild(leadFig("Сотилди", L.sold, L.sold ? `${sold[0]} ${sold[1]}` + (L.soldUsd ? ` + $${fmtInt.format(L.soldUsd)}` : "") : "", L.sold ? "good" : ""));
+    figs.appendChild(leadFig("Сотилмади", L.notSold, L.ourFault ? `${L.ourFault} таси — боғланилмаган / кеч` : "", L.notSold ? "bad" : ""));
+    figs.appendChild(leadFig("Бой берилган ≈", L.lost === null ? "—" : som(L.lost), L.lost === null ? "биринчи сотувдан кейин" : "сотилмаган × ўртача сотув", L.lost ? "bad" : ""));
+    const rs = $("lead-reasons");
+    rs.textContent = "";
+    const top = Math.max(1, ...L.reasons.map((r) => r.n));
+    if (!L.reasons.length) rs.appendChild(el("li", "empty", "Ҳали йўқ"));
+    L.reasons.forEach((r) => {
+      const li = el("li");
+      li.appendChild(el("span", null, r.label));
+      const bar = el("span", "bar");
+      bar.style.width = `${Math.round((100 * r.n) / top)}%`;
+      li.appendChild(bar);
+      li.appendChild(el("span", "n", String(r.n)));
+      rs.appendChild(li);
+    });
+    const sb = $("lead-sellers");
+    sb.textContent = "";
+    L.sellers.forEach((p) => {
+      const tr = el("tr");
+      tr.appendChild(el("td", "name", p.name));
+      [p.given, p.contacted + (p.avgDays === null ? "" : ` (${fmt1.format(p.avgDays)} кун)`), p.late, p.sold, p.notSold]
+        .forEach((v) => tr.appendChild(el("td", "num", String(v))));
+      sb.appendChild(tr);
+    });
+    const body = $("lead-rows");
+    body.textContent = "";
+    if (!L.rows.length) {
+      const tr = el("tr"), td = el("td", "empty", "Бу даврда лид берилмаган");
+      td.colSpan = 7; tr.appendChild(td); body.appendChild(tr);
+    }
+    L.rows.forEach((r) => {
+      const tr = el("tr");
+      tr.appendChild(el("td", "n", String(r.no)));
+      tr.appendChild(el("td", "name", r.company));
+      tr.appendChild(el("td", "hide-sm", r.seller));
+      tr.appendChild(el("td", "hide-sm", r.given));
+      tr.appendChild(el("td", r.late ? "late" : "", r.contacted));
+      tr.appendChild(el("td", `st ${r.status}`, r.state));
+      tr.appendChild(el("td", "detail", r.detail || ""));
+      body.appendChild(tr);
+    });
+  }
+  async function loadLeads() {
+    try { renderLeads(await api(`/pulse/api/leads?days=${state.days}`)); } catch (e) { /* not the Director, or later */ }
+  }
   async function loadTape() {
     try { renderTape((await api("/pulse/api/tape")).items); } catch (e) { /* the next round tries again */ }
   }
@@ -541,6 +609,7 @@
       document.querySelectorAll(".range button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       skeleton();
       loadOverview();
+      loadLeads();
       if (state.person) openPerson(state.person, state.personDay);
     });
   });
@@ -567,9 +636,11 @@
   renderKey();
   loadOverview();
   loadTape();
+  loadLeads();
   document.querySelectorAll(".rail-link[href]").forEach((a) => a.addEventListener("click", () => {
     document.querySelectorAll(".rail-link").forEach((x) => x.classList.toggle("on", x === a));
   }));
   setInterval(loadTape, TAPE_EVERY);
   setInterval(loadOverview, OVERVIEW_EVERY);
+  setInterval(loadLeads, OVERVIEW_EVERY);
 })();

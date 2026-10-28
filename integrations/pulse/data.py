@@ -560,3 +560,25 @@ async def _build_tape(roles: tuple[str, ...] | None) -> list[dict[str, Any]]:
 
 async def tape(roles: tuple[str, ...] | None) -> list[dict[str, Any]]:
     return await _cached(_tape_cache, roles, TAPE_SECONDS, lambda: _build_tape(roles))
+
+
+async def leads(days: int) -> dict[str, Any]:
+    """The B2B lead tracker for the Boss (2026-10-28): the period's figures, reasons, sellers and every lead."""
+    from integrations.org_bot import lead_tracker, store
+    from integrations.org_bot import leads as lead_rules
+
+    days = days if days in RANGES else 30
+    s, rows, since = await lead_tracker.figures(days)
+    switch = await store.lead_switch()
+    return {
+        "period": lead_tracker.period_text(since), "enabled": bool(switch and switch["enabled"]),
+        "given": s["given"], "contacted": s["contacted"], "avgDays": s["avg_days"], "late": s["late"],
+        "sold": s["sold"], "soldSum": round(s["sold_sum"].get("UZS", 0.0)), "soldUsd": round(s["sold_sum"].get("USD", 0.0)),
+        "notSold": s["not_sold"], "open": s["open"], "lost": s["lost_value"], "ourFault": s["our_fault"],
+        "ourFaultLost": s["our_fault_value"], "reasons": [{"label": r, "n": n} for r, n in s["reasons"]],
+        "sellers": [{"name": p["name"], "given": p["given"], "contacted": p["contacted"], "avgDays": p["avg_days"],
+                     "late": p["late"], "sold": p["sold"], "soldSum": round(p["sold_sum"].get("UZS", 0.0)),
+                     "notSold": p["not_sold"], "open": p["open"]} for p in s["sellers"]],
+        "rows": lead_rules.table_rows(rows, now_local().date()),
+        "lateAfter": lead_rules.LATE_AFTER_DAYS,
+    }

@@ -42,6 +42,7 @@ AGENTS = [
     "agents/billz-sap-check/agent.py",  # did every shop cheque reach SAP? (needs the full SAP push)
     "agents/garmin-brief/agent.py",  # the Garmin manager's brief (after the check: it shows its result)
     "agents/lead-agent/agent.py",
+    "agents/lead-handout/agent.py --morning",  # 28.10: one numbered lead per B2B seller (when on — /lidlar), the Boss's list
     "agents/receivables/agent.py",
     "agents/data-quality/agent.py",  # sends only on Mondays
     "agents/cash-calendar/agent.py",  # sends only on Mondays
@@ -62,7 +63,8 @@ EVENING_AGENTS = [
 
 # The daytime job is empty: team cheer was removed (2026-10-17, the owner: "not effective")
 # and the 15:00 lead check-in with the lead hand-out (2026-10-07). A leftover
-# mgmg-team-cheer cron on Render runs nothing — delete that service.
+# mgmg-team-cheer cron on Render runs nothing — delete that service. The lead tracker's 15:00
+# follow-up (back 2026-10-28) runs inside the API's 5-minute round, not here.
 DAYTIME_AGENTS: list[str] = []
 
 

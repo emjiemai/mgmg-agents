@@ -113,7 +113,8 @@ async def _complaint_status_loop() -> None:
 
 
 async def _report_close_loop() -> None:
-    """Every 5 minutes: from 22:00, close the day's unanswered report asks — minus KPI points, once (report_close.py)."""
+    """Every 5 minutes: from 22:00, close the day's unanswered report asks — minus KPI points, once (report_close.py);
+    15:00–15:25 the lead tracker's questions (lead_tracker.tick)."""
     from integrations.org_bot import report_close
 
     try:  # once, at the first start after 2026-10-22: red cells on Garmin сотув days off
@@ -130,6 +131,12 @@ async def _report_close_loop() -> None:
             await _morning_notes_left()
         except Exception as exc:  # noqa: BLE001 — tried again in 5 minutes
             log.error("Morning notes flush failed: {}", type(exc).__name__)
+        try:  # 15:00: the B2B lead tracker's follow-up (lead_tracker.py, 2026-10-28) — when it's on
+            from integrations.org_bot import lead_tracker
+
+            await lead_tracker.tick(uuid.uuid4())
+        except Exception as exc:  # noqa: BLE001 — the next round (until 15:25) tries again
+            log.error("Lead follow-up failed: {}", type(exc).__name__)
 
 
 async def _morning_notes_left() -> None:

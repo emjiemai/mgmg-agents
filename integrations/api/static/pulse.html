@@ -15,6 +15,7 @@
   <span class="rail-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 13h4l2.5-6 4 11 3-8 1.5 3H22"/></svg></span>
   <a class="rail-link" href="#market" aria-label="Индекс"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 16l4-5 4 3 6-8"/></svg></a>
   <a class="rail-link" href="#board-card" aria-label="Ходимлар"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.6c2 .7 3.2 2.5 3.6 5.4"/></svg></a>
+  <a class="rail-link" href="#leads-card" aria-label="Лидлар" id="rail-leads" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.8"/></svg></a>
   <a class="rail-link" href="#tape-card" aria-label="Бугун"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></a>
   <button class="rail-link theme" type="button" data-theme-toggle aria-label="Тема"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="moon" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><g class="sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button>
 </nav>
@@ -83,6 +84,29 @@
       <ul class="tape-key" id="tape-key" hidden></ul>
       <ol class="tape-list" id="tape"></ol>
     </aside>
+
+    <section class="card leads" id="leads-card" aria-labelledby="leads-title" hidden>
+      <div class="card-head">
+        <div class="head-text">
+          <h2 id="leads-title">Лидлар <span class="h-sub">(B2B сотув: берилди → боғланилди → сотилди)</span></h2>
+          <p class="hint" id="leads-hint"></p>
+        </div>
+        <p class="price"><span class="value" id="leads-sold">—</span></p>
+      </div>
+      <div class="lead-figs" id="lead-figs"></div>
+      <div class="lead-split">
+        <div>
+          <h3 class="sub-h">Сотилмаганлик сабаби</h3>
+          <ul class="reasons" id="lead-reasons"></ul>
+        </div>
+        <div>
+          <h3 class="sub-h">Сотувчилар</h3>
+          <table class="rows sellers"><thead><tr><th scope="col">Сотувчи</th><th class="num" scope="col">Лид</th><th class="num" scope="col">Боғланди</th><th class="num" scope="col">Кеч</th><th class="num" scope="col">Сотди</th><th class="num" scope="col">Сотмади</th></tr></thead><tbody id="lead-sellers"></tbody></table>
+        </div>
+      </div>
+      <h3 class="sub-h">Ҳар бир лид</h3>
+      <div class="lead-table"><table class="rows lead-rows"><thead><tr><th class="n" scope="col">№</th><th scope="col">Компания</th><th scope="col">Сотувчи</th><th scope="col">Берилди</th><th scope="col">Боғланди</th><th scope="col">Ҳолати</th><th scope="col">Сумма / сабаб</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
+    </section>
   </main>
   <footer class="credit"><a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView</a> графиклари</footer>
 </div>

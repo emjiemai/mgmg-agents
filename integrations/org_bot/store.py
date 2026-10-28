@@ -14,6 +14,7 @@ double-tapping a button on a slow connection can't apply the same change twice.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -2129,6 +2130,254 @@ async def kpi_month_rows(start: date, end: date) -> dict[str, list[dict[str, Any
 
 
 # ------------------------------------------------------------------ leads
+# The B2B lead tracker (leads.py / lead_tracker.py): back 2026-10-28, the Boss's design.
+
+
+async def upsert_leads(leads: list[dict[str, Any]]) -> int:
+    """Copy the leads sheet into ``leads``; rows already there (same dedupe_key) are left as they are. How many were new."""
+    added = 0
+    for lead in leads:
+        row = await fetch_one(
+            """
+            INSERT INTO leads (dedupe_key, company_name, project_name, industry, location, project_stage, signal,
+                               signal_source_url, contact_name, contact_role, contact_method, priority, confidence,
+                               track, date_added)
+            VALUES (%(dedupe_key)s, %(company_name)s, %(project_name)s, %(industry)s, %(location)s,
+                    %(project_stage)s, %(signal)s, %(signal_source_url)s, %(contact_name)s, %(contact_role)s,
+                    %(contact_method)s, %(priority)s, %(confidence)s, %(track)s, %(date_added)s)
+            ON CONFLICT (dedupe_key) DO NOTHING
+            RETURNING id
+            """,
+            lead,
+        )
+        added += row is not None
+    return added
+
+
+async def free_leads() -> list[dict[str, Any]]:
+    """Leads nobody has been given yet."""
+    return await fetch_all(
+        """SELECT l.* FROM leads l
+           WHERE NOT EXISTS (SELECT 1 FROM lead_assignments a WHERE a.lead_id = l.id)"""
+    )
+
+
+async def set_lead_brief(lead_id: int, brief: str) -> None:
+    """Keep the Uzbek summary written for a lead's card, so it's written once."""
+    await execute("UPDATE leads SET brief = %s WHERE id = %s", (brief, lead_id))
+
+
+async def create_lead_assignment(lead_id: int, employee_id: str, day: date) -> dict[str, Any] | None:
+    """Give a lead to someone for ``day``; None if the lead is taken or they already got one today."""
+    return await fetch_one(
+        """INSERT INTO lead_assignments (lead_id, employee_id, assigned_on) VALUES (%s, %s, %s)
+           ON CONFLICT DO NOTHING RETURNING *""",
+        (lead_id, employee_id, day),
+    )
+
+
+async def set_lead_assignment_message(assignment_id: str, message_id: int | None) -> None:
+    await execute("UPDATE lead_assignments SET message_id = %s WHERE id = %s", (message_id, assignment_id))
+
+
+async def close_uncontacted_leads(day: date, days: int) -> list[dict[str, Any]]:
+    """Leads never contacted ``days`` days after they were given: closed as «алоқага чиқилмади» (by the bot)."""
+    return await fetch_all(
+        """
+        UPDATE lead_assignments a SET status = 'dismissed', outcome = 'алоқага чиқилмади', closed_on = %s,
+                                      closed_by = 'auto'
+        FROM leads l, employees e
+        WHERE l.id = a.lead_id AND e.id = a.employee_id AND a.status = 'new' AND a.contacted_on IS NULL
+          AND a.assigned_on <= %s - make_interval(days => %s)
+        RETURNING a.id, a.lead_id, a.assigned_on, l.company_name, l.project_name, e.telegram_user_id, e.status AS person_status
+        """,
+        (day, day, days),
+    )
+
+
+async def open_leads_to_ask(day: date) -> list[dict[str, Any]]:
+    """Every open lead of an active sales person not yet asked about today, with the lead and the person.
+    Leads given out today are included: the 08:00 lead is asked about at 15:00."""
+    return await fetch_all(
+        """
+        SELECT a.id AS assignment_id, a.assigned_on, a.lead_id, a.status, a.contacted_on,
+               l.company_name, l.project_name,
+               e.id AS employee_id, e.telegram_user_id, e.full_name, e.display_name, e.address_form,
+               e.works_saturday, e.works_sunday, e.work_days, e.role
+        FROM lead_assignments a
+        JOIN leads l ON l.id = a.lead_id
+        JOIN employees e ON e.id = a.employee_id
+        WHERE a.status IN ('new', 'in_progress') AND e.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM lead_checkins c WHERE c.assignment_id = a.id AND c.checkin_day = %s)
+        ORDER BY e.id, a.assigned_on
+        """,
+        (day,),
+    )
+
+
+async def create_lead_checkin(assignment_id: str, day: date, telegram_user_id: int) -> dict[str, Any] | None:
+    """Open today's 15:00 question for a lead; None if it was already asked today."""
+    return await fetch_one(
+        """INSERT INTO lead_checkins (assignment_id, checkin_day, telegram_user_id) VALUES (%s, %s, %s)
+           ON CONFLICT (assignment_id, checkin_day) DO NOTHING RETURNING *""",
+        (assignment_id, day, telegram_user_id),
+    )
+
+
+async def set_lead_checkin_message(checkin_id: str, message_id: int | None) -> None:
+    await execute("UPDATE lead_checkins SET message_id = %s WHERE id = %s", (message_id, checkin_id))
+
+
+async def lead_checkin(checkin_id: str) -> dict[str, Any] | None:
+    """A 15:00 question with its lead and assignment (None for a bad id)."""
+    try:
+        uuid.UUID(str(checkin_id))
+    except ValueError:
+        return None
+    return await fetch_one(
+        """
+        SELECT c.id, c.checkin_day, c.telegram_user_id, c.status AS answer, c.message_id, c.question,
+               a.id AS assignment_id, a.assigned_on, a.contacted_on, a.status, a.lead_id, a.employee_id,
+               l.company_name, l.project_name
+        FROM lead_checkins c JOIN lead_assignments a ON a.id = c.assignment_id JOIN leads l ON l.id = a.lead_id
+        WHERE c.id = %s
+        """,
+        (checkin_id,),
+    )
+
+
+async def mark_lead_contacted(checkin_id: str, telegram_user_id: int, day: date) -> dict[str, Any] | None:
+    """«Ҳа, бугун / кеча»: the day contacted is kept (the first one given); the lead is in progress."""
+    return await fetch_one(
+        """
+        UPDATE lead_assignments a SET contacted_on = COALESCE(a.contacted_on, GREATEST(%s, a.assigned_on)),
+                                      status = 'in_progress'
+        FROM lead_checkins c
+        WHERE c.id = %s AND c.telegram_user_id = %s AND c.status IS NULL AND a.id = c.assignment_id
+          AND a.status IN ('new', 'in_progress')
+        RETURNING a.id, a.contacted_on
+        """,
+        (day, checkin_id, telegram_user_id),
+    )
+
+
+async def answer_lead_checkin(checkin_id: str, telegram_user_id: int, status: str,
+                              outcome: str | None = None) -> dict[str, Any] | None:
+    """Record today's answer once: not contacted / in progress, or the lead closed as sold (done) / not sold
+    (dismissed, with the reason). None if it isn't theirs or was already answered."""
+    return await fetch_one(
+        """
+        WITH c AS (
+            UPDATE lead_checkins SET status = %(status)s, answered_at = now()
+            WHERE id = %(id)s AND telegram_user_id = %(user)s AND status IS NULL
+            RETURNING *
+        ), a AS (
+            UPDATE lead_assignments la
+            SET status = CASE WHEN %(status)s = 'not_contacted' THEN la.status ELSE %(status)s END,
+                outcome = COALESCE(%(outcome)s, la.outcome),
+                closed_on = CASE WHEN %(status)s IN ('dismissed', 'done')
+                                 THEN (now() AT TIME ZONE 'Asia/Tashkent')::date END,
+                closed_by = CASE WHEN %(status)s IN ('dismissed', 'done') THEN 'seller' END
+            FROM c WHERE la.id = c.assignment_id AND la.status IN ('new', 'in_progress')
+            RETURNING la.*
+        )
+        SELECT c.id, c.message_id, a.id AS assignment_id, a.status, a.lead_id, l.company_name, l.project_name
+        FROM c JOIN a ON a.id = c.assignment_id JOIN leads l ON l.id = a.lead_id
+        """,
+        {"status": status, "id": checkin_id, "user": telegram_user_id, "outcome": outcome},
+    )
+
+
+async def ask_lead_question(checkin_id: str, question: str, question_message_id: int | None) -> None:
+    """Remember the typed follow-up asked ('sale' / 'reason'), so the answer can be recognised."""
+    await execute(
+        """UPDATE lead_checkins SET question = %s, question_message_id = %s, question_asked_at = now()
+           WHERE id = %s""",
+        (question, question_message_id, checkin_id),
+    )
+
+
+async def pending_lead_question(telegram_user_id: int, within_minutes: int) -> dict[str, Any] | None:
+    """The latest unanswered typed follow-up asked of this person within ``within_minutes``, with its lead."""
+    return await fetch_one(
+        """
+        SELECT c.id, c.question, c.question_message_id, a.id AS assignment_id, a.lead_id, a.employee_id,
+               l.company_name, l.project_name
+        FROM lead_checkins c JOIN lead_assignments a ON a.id = c.assignment_id JOIN leads l ON l.id = a.lead_id
+        WHERE c.telegram_user_id = %s AND c.question IS NOT NULL AND c.note IS NULL
+          AND c.question_asked_at > now() - make_interval(mins => %s)
+        ORDER BY c.question_asked_at DESC LIMIT 1
+        """,
+        (telegram_user_id, within_minutes),
+    )
+
+
+async def save_lead_answer(checkin_id: str, note: str, outcome: str, amount: float | None = None,
+                           currency: str | None = None) -> dict[str, Any] | None:
+    """The typed answer: kept on the question (once) and on the lead — what was sold and for how much, or the
+    reason written for «бошқа сабаб»."""
+    return await fetch_one(
+        """
+        WITH c AS (UPDATE lead_checkins SET note = %(note)s, noted_at = now()
+                   WHERE id = %(id)s AND note IS NULL RETURNING *)
+        UPDATE lead_assignments a SET outcome = %(outcome)s,
+               sold_amount = COALESCE(%(amount)s, a.sold_amount), sold_currency = COALESCE(%(currency)s, a.sold_currency)
+        FROM c WHERE a.id = c.assignment_id
+        RETURNING a.id, a.lead_id, a.employee_id, a.sold_amount, a.sold_currency, a.outcome
+        """,
+        {"note": note, "id": checkin_id, "outcome": outcome, "amount": amount, "currency": currency},
+    )
+
+
+async def lead_rows(since: date | None) -> list[dict[str, Any]]:
+    """Every lead handed out on or after ``since`` (None = all), with who has it — the Boss's statistics."""
+    return await fetch_all(
+        """
+        SELECT a.lead_id, a.employee_id::text AS employee_id, a.assigned_on, a.contacted_on, a.status, a.outcome,
+               a.sold_amount, a.sold_currency, a.closed_on, a.closed_by,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS person,
+               l.company_name, l.project_name
+        FROM lead_assignments a JOIN employees e ON e.id = a.employee_id JOIN leads l ON l.id = a.lead_id
+        WHERE %(since)s::date IS NULL OR a.assigned_on >= %(since)s
+        ORDER BY a.assigned_on DESC, a.lead_id DESC
+        """,
+        {"since": since},
+    )
+
+
+async def average_lead_sale() -> float | None:
+    """The average so'm sale of every lead sold so far — prices the lost opportunity; None before the first."""
+    row = await fetch_one(
+        """SELECT avg(sold_amount) AS avg FROM lead_assignments
+           WHERE status = 'done' AND sold_amount > 0 AND COALESCE(sold_currency, 'UZS') = 'UZS'"""
+    )
+    return float(row["avg"]) if row and row["avg"] is not None else None
+
+
+async def open_leads_for_employee(employee_id: str) -> list[dict[str, Any]]:
+    """This person's own open leads, oldest first — their /lidlar."""
+    return await fetch_all(
+        """
+        SELECT a.lead_id, a.assigned_on, a.contacted_on, a.status, l.company_name, l.project_name
+        FROM lead_assignments a JOIN leads l ON l.id = a.lead_id
+        WHERE a.employee_id = %s AND a.status IN ('new', 'in_progress')
+        ORDER BY a.assigned_on, a.lead_id
+        """,
+        (employee_id,),
+    )
+
+
+async def lead_switch() -> dict[str, Any] | None:
+    """The tracker's stop / start row (None = never started = stopped)."""
+    return await fetch_one("SELECT enabled, set_by, set_at FROM lead_handout_switch")
+
+
+async def set_lead_switch(enabled: bool, set_by: str) -> None:
+    await execute(
+        """INSERT INTO lead_handout_switch (id, enabled, set_by) VALUES (TRUE, %s, %s)
+           ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, set_by = EXCLUDED.set_by, set_at = now()""",
+        (enabled, set_by),
+    )
 
 
 async def lead_kpi_rows(start: date, end: date) -> list[dict[str, Any]]:
@@ -2158,25 +2407,6 @@ async def lead_kpi_rows(start: date, end: date) -> list[dict[str, Any]]:
             {k: int(v) for k, v in row.items() if k != "employee_id"}
         )
     return list(by_id.values())
-
-
-async def recent_lead_assignments(days: int = 30) -> list[dict[str, Any]]:
-    """Leads handed out in the last ``days`` days, with who has them, where they stand and the latest note."""
-    return await fetch_all(
-        """
-        SELECT a.assigned_on, a.status, a.outcome,
-               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS person,
-               COALESCE(l.company_name, l.project_name) AS company,
-               (SELECT c.note FROM lead_checkins c WHERE c.assignment_id = a.id AND c.note IS NOT NULL
-                ORDER BY c.noted_at DESC LIMIT 1) AS last_note
-        FROM lead_assignments a
-        JOIN employees e ON e.id = a.employee_id
-        JOIN leads l ON l.id = a.lead_id
-        WHERE a.assigned_on >= (now() AT TIME ZONE 'Asia/Tashkent')::date - make_interval(days => %s)
-        ORDER BY a.assigned_on DESC, person
-        """,
-        (days,),
-    )
 
 
 # ---------------------------------------------------------------- days off

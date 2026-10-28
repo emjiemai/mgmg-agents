@@ -1823,39 +1823,133 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
-def test_lead_handout() -> None:
-    """The lead hand-out to B2B sales was stopped by the Director (2026-10-07): nothing goes to them.
-
-    What stays: the leads sheet read by header (the Lead Agent, the Director's
-    questions) and the hand-out's history in the KPI and the Director's answers.
-    """
-    print("lead hand-out removed (2026-10-07)")
+def test_lead_tracker() -> None:
+    """The B2B lead tracker (2026-10-28, the Boss): numbered leads to B2B Sotuv, the 15:00 follow-up (contacted?
+    sold — what and how much / not sold — why), the Boss's statistics (/lidlar, Mondays, PULSE, the PDF table)
+    and stop / start from the Director's and the admin's /lidlar. Stopped on 07.10, back on 28.10."""
+    print("B2B lead tracker (28.10.2026)")
     import asyncio
     import uuid
+    from datetime import timezone
 
     from integrations.common.agent_loader import load_agent
-    from integrations.common.config import settings
-    from integrations.org_bot import ai_chat, kpi_score, leads, ops_manager
+    from integrations.org_bot import admin, kpi_score, lead_tracker, leads, ops_manager, store
+    from integrations.org_bot.tone import is_polite
+    from integrations.pulse import data as pulse_data
+    from integrations.telegram import menus
+
+    saved: list = []
+
+    def patch(obj, name, value):
+        saved.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def restore():
+        while saved:
+            obj, name, value = saved.pop()
+            setattr(obj, name, value)
 
     root = Path(__file__).resolve().parents[1]
-    # ---- nothing left that sends to B2B Sotuv
-    check_true("the hand-out agent is gone", not (root / "agents" / "lead-handout").exists())
-    check_true("no job runs it", "lead-handout" not in load_source("scripts/run_morning_agents.py"))
-    check_true("its switch is gone", not hasattr(settings, "lead_handout_enabled"))
-    check_true("no hand-out logic left", not any(hasattr(leads, n) for n in (
-        "plan_handout", "checkin_due", "card_text", "checkin_keyboard", "parse_brief", "SALES_ROLE")))
-    check_true("no daytime job left (team cheer removed 17.10; the 15:00 check-in before it)",
-               "mgmg-team-cheer" not in load_source("render.yaml").split("Team cheer (mgmg-team-cheer")[0]
-               and "DAYTIME_AGENTS: list[str] = []" in load_source("scripts/run_morning_agents.py"))
-    check_true("the work AI no longer gets 'own leads'",
-               "own_leads" not in inspect_source(ai_chat.work_context) and "own_leads" not in inspect_source(ops_manager))
+    d = date(2026, 10, 28)
 
-    # ---- the sheet, still read by header (the Lead Agent and the Director's questions)
+    # ---- the sheet, still read by header (the Lead Agent's own columns)
     check("the sheet's columns are the Lead Agent's own", leads.SHEET_COLUMNS, load_agent("lead-agent").SHEET_COLUMNS)
     check_true("...and the bot's", ops_manager.LEAD_SHEET_COLUMNS is leads.SHEET_COLUMNS)
+    sheet = [["company_name", *leads.SHEET_COLUMNS[1:]],
+             ["Hilton", "Hilton Tashkent", "hotel", "Tashkent", "under construction", "", "", "", "", "", "", "", "",
+              "0.8", "high", "", "", "2026-10-27", "hilton|eq", "equipment_sales"],
+             ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+    rows = leads.rows_to_leads(sheet)
+    check("sheet rows → leads (an unnamed row skipped)", (len(rows), rows[0]["dedupe_key"], rows[0]["date_added"]),
+          (1, "hilton|eq", date(2026, 10, 27)))
 
-    # ---- an old 15:00 button: nothing recorded, the buttons come off
-    edits, toasts = [], []
+    # ---- the morning: the newest lead first, a number on every card, the Boss's list
+    people = [{"id": "b", "full_name": "Ғиёсиддин Махкамов"}, {"id": "a", "full_name": "Абдукарим Зунунов"}]
+    pool = [{"id": 31, "company_name": "Old", "date_added": date(2026, 10, 1)},
+            {"id": 33, "company_name": "Hilton", "date_added": date(2026, 10, 27)},
+            {"id": 32, "company_name": "Hyatt", "date_added": date(2026, 10, 27)}]
+    plan = leads.plan_handout(people, pool)
+    check("one lead each, the newest first (same day: the later sheet row)",
+          [(p["id"], lead["id"]) for p, lead in plan], [("a", 33), ("b", 32)])
+    hilton = {"id": 33, "company_name": "Hilton", "location": "Tashkent", "project_stage": "under construction",
+              "priority": "high", "signal_source_url": "https://example.uz/a"}
+    card = leads.card_text(hilton, "Меҳмонхона қурилмоқда.", "Тошкент")
+    check_true("the card: «Лид №33 Hilton», stage and priority in words, the 15:00 promise",
+               "🎯 <b>Лид №33 Hilton</b>" in card and "қурилмоқда" in card and "муҳимлиги юқори" in card and "15:00" in card)
+    copy = leads.boss_copy_text([("Абдукарим Зунунов", hilton)], d)
+    check_true("the Boss's copy: who got which number («менга ҳам келсин»)",
+               "№33 Hilton → Абдукарим Зунунов" in copy and "/lidlar" in copy)
+    runner = load_source("scripts/run_morning_agents.py")
+    check_true("08:00: the agent is back, right after the Lead Agent fills the sheet",
+               (root / "agents" / "lead-handout" / "agent.py").exists()
+               and runner.index("agents/lead-agent/agent.py") < runner.index("agents/lead-handout/agent.py --morning"))
+    agent_src = load_source("agents/lead-handout/agent.py")
+    check_true("...nothing goes out while stopped, on a day off or frozen; Mondays the Boss's statistics",
+               "lead_tracker.is_on()" in agent_src and "is_day_off" in agent_src and "bots_frozen" in agent_src
+               and "today.weekday() == 0" in agent_src and "lead_tracker.weekly(" in agent_src)
+    check_true("15:00 inside the API's 5-minute round (no daytime cron)",
+               "lead_tracker.tick(" in load_source("integrations/api/app.py")
+               and "DAYTIME_AGENTS: list[str] = []" in runner)
+    check_true("15:00–15:25 only", leads.checkin_due(datetime(2026, 10, 28, 15, 0)) and leads.checkin_due(datetime(2026, 10, 28, 15, 24))
+               and not leads.checkin_due(datetime(2026, 10, 28, 14, 59)) and not leads.checkin_due(datetime(2026, 10, 28, 15, 25)))
+
+    # ---- the buttons, the amount, the money
+    cid = str(uuid.uuid4())
+    datas = [b["callback_data"] for kb in (leads.contact_keyboard(cid), leads.result_keyboard(cid), leads.reason_keyboard(cid))
+             for row in kb["inline_keyboard"] for b in row]
+    check_true("every button fits Telegram's 64 bytes", all(len(x.encode()) <= 64 for x in datas))
+    check("button values", [leads.parse_value(f"{cid}:{v}") is not None for v in ("t", "y", "n", "s", "x", "p", "r0", "r5", "r6", "q")],
+          [True] * 8 + [False, False])
+    for text, want in (("2 та кир ювиш машинаси, 120 млн сўм", (120e6, "UZS")), ("$5 000", (5000.0, "USD")),
+                       ("1,5 млрд", (1.5e9, "UZS")), ("350 000 сўм", (350000.0, "UZS")), ("15 минг доллар", (15000.0, "USD")),
+                       ("120", None), ("2 та", None), ("ҳали гаплашяпмиз", None)):
+        check(f"amount: {text}", leads.parse_amount(text), want)
+    check("money in words", [leads.money(120e6), leads.money(1.5e9), leads.money(350000), leads.money(5000, "USD")],
+          ["120 млн сўм", "1,5 млрд сўм", "350 000 сўм", "$5 000"])
+    check_true("questions to sellers are polite", all(is_polite(t) for t in (
+        leads.SALE_QUESTION, leads.SALE_AGAIN, leads.REASON_QUESTION, leads.contact_question(hilton, 2))))
+
+    # ---- the Boss's statistics: given / contacted (days, late) / sold (how much) / not sold (why) / lost
+    def row(n, status, given, contacted=None, outcome=None, amount=None, person="Абдукарим Зунунов"):
+        return {"lead_id": n, "company_name": f"Co{n}", "person": person, "employee_id": person, "assigned_on": given,
+                "contacted_on": contacted, "status": status, "outcome": outcome, "sold_amount": amount, "sold_currency": "UZS"}
+
+    sample = [row(1, "done", date(2026, 10, 20), date(2026, 10, 20), "2 та машина", 120e6),
+              row(2, "done", date(2026, 10, 20), date(2026, 10, 22), "1 та", 180e6, "Ғиёсиддин Махкамов"),
+              row(3, "dismissed", date(2026, 10, 21), date(2026, 10, 22), "лид эскирган"),
+              row(4, "dismissed", date(2026, 10, 14), None, leads.AUTO_REASON, person="Ғиёсиддин Махкамов"),
+              row(5, "new", d),
+              row(6, "new", date(2026, 10, 25), person="Ғиёсиддин Махкамов"),
+              row(7, "in_progress", date(2026, 10, 27), date(2026, 10, 27))]
+    s = leads.stats(sample, d, 150e6)
+    check("totals", {k: s[k] for k in ("given", "contacted", "avg_days", "late", "sold", "not_sold", "open", "our_fault")},
+          {"given": 7, "contacted": 4, "avg_days": 0.8, "late": 3, "sold": 2, "not_sold": 2, "open": 3, "our_fault": 1})
+    check("sold sum and the lost opportunity (not sold × the average sale)",
+          (s["sold_sum"], s["lost_value"], s["our_fault_value"]), ({"UZS": 300e6}, 300_000_000, 150_000_000))
+    check("reasons counted by their button («бошқа сабаб: …» typed counts as «бошқа сабаб»)",
+          leads.stats(sample + [row(8, "dismissed", d, d, "бошқа сабаб: директори йўқ")], d, None)["reasons"],
+          [("лид эскирган", 1), (leads.AUTO_REASON, 1), ("бошқа сабаб", 1)])
+    check("per seller", [(p["name"], p["given"], p["sold"], p["late"]) for p in s["sellers"]],
+          [("Абдукарим Зунунов", 4, 1, 0), ("Ғиёсиддин Махкамов", 3, 1, 3)])
+    text = leads.stats_text(s, "30 кун", True)
+    check_true("the Boss's message: given, contacted in how many days, late, sold how much, not sold by reason, "
+               "the lost opportunity, each seller",
+               "Берилди: <b>7</b>" in text and "ўртача 0,8 кунда" in text and "Сотилди: <b>2</b> — 300 млн сўм" in text
+               and "• лид эскирган — 1" in text and "Бой берилган имконият ≈ 300 млн сўм" in text
+               and "кеч боғланилган 1 лид ≈ 150 млн сўм" in text and "• Ғиёсиддин Махкамов — 3 лид" in text
+               and "(2 кунда)" in text and latin_words(text, allow={"B2B"}) == [])
+    check_true("...before any sale the loss isn't guessed", "биринчи сотувдан кейин" in leads.stats_text(leads.stats(sample[2:], d, None), "7 кун", False))
+    table = leads.table_rows(sample, d)
+    check("the table: newest first, days to contact, late marked",
+          [(t["no"], t["contacted"], t["late"], t["state"]) for t in table[:2]]
+          + [(t["no"], t["detail"]) for t in table if t["no"] in (1, 4)],
+          [(5, "—", False, "боғланилмаган"), (7, "27.10 · 0 кун", False, "жараёнда"), (1, "120 млн сўм · 2 та машина"),
+           (4, leads.AUTO_REASON)])
+    check_true("the Director's questions get the numbers and every lead", "№1 Co1" in leads.describe(sample, s)
+               and "Lost opportunity estimate: 300 млн сўм" in leads.describe(sample, s))
+
+    # ---- the 15:00 answers (buttons, then typed): the store and Telegram faked
+    sent, edits, toasts, calls = [], [], [], []
 
     class Bot:
         def __init__(self, **kwargs):
@@ -1867,30 +1961,186 @@ def test_lead_handout() -> None:
         async def __aexit__(self, *exc):
             return False
 
+        async def send_message(self, text, chat_id=None, reply_markup=None):
+            sent.append((int(chat_id), text, reply_markup))
+            return [500 + len(sent)]
+
         async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
-            edits.append((message_id, text, reply_markup))
+            edits.append((text, reply_markup))
 
-    async def fake_answer(query_id, text):
-        toasts.append(text)
+        async def _answer_callback(self, query_id, text):
+            toasts.append(text)
 
-    saved = [(ops_manager, "TelegramBot", ops_manager.TelegramBot), (ops_manager, "_answer", ops_manager._answer)]
-    ops_manager.TelegramBot, ops_manager._answer = Bot, fake_answer
+        async def send_file(self, content, filename, chat_id, caption=None, **kw):
+            sent.append((int(chat_id), filename, None))
+
+    state = {"answer": None, "contacted_on": None, "status": "new", "question": "sale"}
+
+    async def lead_checkin(c):
+        return {"id": c, "checkin_day": d, "telegram_user_id": 602, "answer": state["answer"], "status": state["status"],
+                "assigned_on": date(2026, 10, 27), "contacted_on": state["contacted_on"], "lead_id": 33,
+                "company_name": "Hilton", "project_name": None, "question": None}
+
+    async def record(name, result=None):
+        async def fn(*args, **kwargs):
+            calls.append((name, args))
+            return result
+        return fn
+
+    async def by_role(role):
+        return [{"telegram_user_id": 900, "full_name": "Шухрат"}] if role == "operatsion_direktor" else []
+
+    async def employee_of(tg):
+        return {"telegram_user_id": tg, "status": "active", "full_name": {900: "Шухрат", 602: "Абдукарим Зунунов"}.get(tg, "X"),
+                "role": "operatsion_direktor" if tg == 900 else "b2b_sotuv", "id": f"e{tg}"}
+
+    async def waiting(tg, minutes):
+        return {"id": cid, "question": state["question"], "question_message_id": 777, "lead_id": 33, "company_name": "Hilton"}
+
+    def tap(value, who=602):
+        return {"id": "q", "from": {"id": who}, "data": f"lq:{cid}:{value}",
+                "message": {"message_id": 801, "chat": {"id": who}, "text": "?"}}
+
+    def go(coro):
+        return asyncio.run(coro)
+
     try:
-        tap = {"id": "q", "from": {"id": 7}, "data": f"ld:{uuid.uuid4()}:p",
-               "message": {"message_id": 801, "chat": {"id": 7}, "text": "Hyatt — қандай кетяпти?"}}
-        check("an old lead button", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "lead_handout_stopped")
-        check_true("...says it's stopped and takes the buttons off",
-                   toasts == ["лидлар тарқатиш тўхтатилган"] and edits == [(801, "Hyatt — қандай кетяпти?", {"inline_keyboard": []})])
-    finally:
-        for obj, name, value in saved:
-            setattr(obj, name, value)
+        patch(lead_tracker, "TelegramBot", Bot)
+        patch(store, "lead_checkin", lead_checkin)
+        for name, result in (("mark_lead_contacted", {"id": "a"}), ("answer_lead_checkin", {"id": cid}),
+                             ("ask_lead_question", None), ("save_lead_answer", {"id": "a"}), ("set_lead_switch", None)):
+            patch(store, name, go(record(name, result)))
+        patch(store, "active_employees_by_role", by_role)
+        patch(store, "get_employee_by_telegram_id", employee_of)
+        patch(store, "pending_lead_question", waiting)
 
-    # ---- history: the Director's answer says it stopped; the KPI still counts what happened
-    check_true("the Director's data says the hand-out stopped", "stopped by the Director on 2026-10-07" in leads.describe([]))
+        check("someone else's question: refused", go(ops_manager._handle_callback(tap("t", 603), uuid.uuid4())), "lead_unauthorized")
+        check("«✅ Ҳа, бугун»", go(ops_manager._handle_callback(tap("t"), uuid.uuid4())), "lead_contacted")
+        check_true("...the day kept, the same message now asks the result",
+                   calls[-1] == ("mark_lead_contacted", (cid, 602, d)) and "Натижаси қандай?" in edits[-1][0]
+                   and f"lq:{cid}:s" in str(edits[-1][1]))
+        go(ops_manager._handle_callback(tap("y"), uuid.uuid4()))
+        check("«✅ Ҳа, кеча» keeps yesterday", calls[-1], ("mark_lead_contacted", (cid, 602, d - timedelta(days=1))))
+        state["contacted_on"] = date(2026, 10, 27)
+        check("«💰 Сотилди»", go(ops_manager._handle_callback(tap("s"), uuid.uuid4())), "lead_sold")
+        check_true("...closed as done, then «what and how much?» asked and remembered",
+                   ("answer_lead_checkin", (cid, 602, "done")) in calls and sent[-1][1] == leads.SALE_QUESTION
+                   and calls[-1][0] == "ask_lead_question" and calls[-1][1][:2] == (cid, "sale"))
+        employee = {"telegram_user_id": 602, "full_name": "Абдукарим Зунунов", "role": "b2b_sotuv", "id": "e602"}
+        check("words without a number go on to the usual flow (the AI)",
+              go(lead_tracker.take_message(employee, {"text": "ҳали ҳужжатлар тайёрланмоқда"}, uuid.uuid4())), None)
+        check("a bare «120» is asked again, never guessed",
+              go(lead_tracker.take_message(employee, {"text": "120"}, uuid.uuid4())), "lead_sale_unclear")
+        check("a reply to another message isn't the answer",
+              go(lead_tracker.take_message(employee, {"text": "120 млн", "reply_to_message": {"message_id": 5}}, uuid.uuid4())), None)
+        sent.clear()
+        check("«2 та кир ювиш машинаси, 120 млн сўм»",
+              go(lead_tracker.take_message(employee, {"text": "2 та кир ювиш машинаси, 120 млн сўм"}, uuid.uuid4())), "lead_sale_saved")
+        check_true("...kept with the amount; the Boss told at once",
+                   calls[-1] == ("save_lead_answer", (cid, "2 та кир ювиш машинаси, 120 млн сўм",
+                                                      "2 та кир ювиш машинаси, 120 млн сўм", 120e6, "UZS"))
+                   and any(c == 900 and "Лид №33 Hilton сотилди" in t and "120 млн сўм" in t for c, t, _ in sent))
+        check("«❌ Сотилмади» → the reasons", go(ops_manager._handle_callback(tap("x"), uuid.uuid4())), "lead_reason_asked")
+        check_true("...as buttons on the same message", "Нима сабабдан" in edits[-1][0] and "лид эскирган" in str(edits[-1][1]))
+        go(ops_manager._handle_callback(tap("r0"), uuid.uuid4()))
+        check("a reason button closes it with that reason", calls[-1], ("answer_lead_checkin", (cid, 602, "dismissed", "лид эскирган")))
+        go(ops_manager._handle_callback(tap("r5"), uuid.uuid4()))
+        check_true("«бошқа сабаб» asks to write it", calls[-1][0] == "ask_lead_question" and calls[-1][1][1] == "reason")
+        state["question"] = "reason"
+        check("the written reason is kept", go(lead_tracker.take_message(employee, {"text": "директори алмашди"}, uuid.uuid4())),
+              "lead_reason_saved")
+        check("...as «бошқа сабаб: …»", calls[-1][1][2], "бошқа сабаб: директори алмашди")
+        go(ops_manager._handle_callback(tap("n"), uuid.uuid4()))
+        check_true("«❌ Ҳали йўқ»: asked again tomorrow, told when it closes",
+                   calls[-1] == ("answer_lead_checkin", (cid, 602, "not_contacted")) and "ёпилади" in edits[-1][0])
+        state["answer"] = "done"
+        check("answered already", go(ops_manager._handle_callback(tap("p"), uuid.uuid4())), "lead_already_answered")
+
+        # ---- stop / start: the Director (OPS Manager) and the admin (Admin Bot); the other side told
+        told_admin = []
+
+        async def tell_admin(text, run_id):
+            told_admin.append(text)
+
+        async def figures(days):
+            return s, sample, d - timedelta(days=days - 1)
+
+        async def switch():
+            return {"enabled": True, "set_by": "Шухрат", "set_at": datetime(2026, 10, 28, 9, 5, tzinfo=timezone.utc)}
+
+        patch(admin, "tell_admin", tell_admin)
+        patch(lead_tracker, "figures", figures)
+        patch(store, "lead_switch", switch)
+        sw = {"id": "q", "from": {"id": 602}, "data": "lsw:off", "message": {"message_id": 9, "chat": {"id": 602}}}
+        check("only the Director stops it in OPS Manager", go(ops_manager._handle_callback(sw, uuid.uuid4())), "lead_unauthorized")
+        sw["from"]["id"] = 900
+        check("the Director's ⏸", go(ops_manager._handle_callback(sw, uuid.uuid4())), "lead_tracker_off")
+        check_true("...kept with his name; IT told (no figures)",
+                   calls[-1] == ("set_lead_switch", (False, "Шухрат")) and told_admin and "тўхтатди" in told_admin[-1]
+                   and "сўм" not in told_admin[-1])
+        text, keyboard = go(lead_tracker.director_view())
+        check_true("the Director's /lidlar: the statistics, ⏸ and 📄", "Берилди: <b>7</b>" in text
+                   and "lsw:off" in str(keyboard) and "lpdf:30" in str(keyboard))
+        text, keyboard = lead_tracker.admin_view(None)
+        check_true("the admin's /lidlar: on or off only, never started = stopped, no leads or sums (IT sees no figures)",
+                   "⏸ Тўхтатилган" in text and "lsw:on" in str(keyboard) and "сўм" not in text and "№" not in text)
+        sent.clear()
+        go(lead_tracker.set_switch(True, "ulugbek", True, uuid.uuid4()))
+        check_true("the admin's ▶️: the Director told", any(c == 900 and "ёқди" in t for c, t, _ in sent))
+        check_true("Admin Bot routes /lidlar and ⏸ / ▶️",
+                   "/lidlar" in admin.LEADS_COMMANDS and 'action == "lsw"' in inspect_source(admin.handle_admin_callback))
+
+        async def off():
+            return False
+
+        async def boom(run_id):
+            raise AssertionError("asked while stopped")
+
+        patch(lead_tracker, "is_on", off)
+        patch(lead_tracker, "checkin", boom)
+        patch(lead_tracker, "now_local", lambda: datetime(2026, 10, 28, 15, 5))
+        check("stopped: no 15:00 questions", go(lead_tracker.tick(uuid.uuid4())), 0)
+
+        # ---- PULSE: the Director's leads card
+        payload = go(pulse_data.leads(30))
+        check_true("PULSE gets the figures, reasons, sellers and every lead",
+                   payload["given"] == 7 and payload["soldSum"] == 300_000_000 and payload["lost"] == 300_000_000
+                   and payload["reasons"][0] == {"label": "лид эскирган", "n": 1} and len(payload["rows"]) == 7
+                   and payload["enabled"] is True)
+    finally:
+        restore()
+    page_src = load_source("integrations/api/pulse_page.py")
+    html, js = load_source("integrations/api/static/pulse.html"), load_source("integrations/api/static/pulse.js")
+    check_true("PULSE: /pulse/api/leads for the Director only (the Garmin manager's view is his team)",
+               '@router.get("/api/leads")' in page_src and "if who[1] is not None:" in page_src
+               and 'id="leads-card"' in html and "hidden" in html.split('id="leads-card"')[1][:80]
+               and "renderLeads" in js and "/pulse/api/leads?days=" in js)
+
+    # ---- menus, KPI, old buttons
+    check_true("menus: the admin's and the Director's /lidlar; B2B сотув their own open leads",
+               "lidlar" in dict(menus.ADMIN) and "lidlar" in dict(menus.DIRECTOR) and menus.role_menu("b2b_sotuv") == menus.B2B_SALES
+               and "lidlar" in dict(menus.B2B_SALES) and set(menus.EMPLOYEE) <= set(menus.B2B_SALES))
     emp = [{"id": "e1", "full_name": "Алишер", "role": "b2b_sotuv"}]
     lead_rows = [{"employee_id": "e1", "asked": 4, "answered": 3, "closed": 2, "done": 1}]
     month = kpi_score.build(emp, [], [], {}, [], [], date(2026, 10, 1), date(2026, 10, 31), lead_rows=lead_rows)[0]
-    check("October's past lead answers still count in Жараён", round(month.parts["process"]), 75)
+    check("the 15:00 answers count in Жараён, as before", round(month.parts["process"]), 75)
+    check_true("old 15:00 buttons (ld / lc, before 07.10) still just come off",
+               'if prefix in ("ld", "lc"):' in inspect_source(ops_manager._handle_callback))
+
+    try:
+        import importlib
+
+        importlib.import_module("weasyprint")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  skip the leads PDF: WeasyPrint unavailable ({type(exc).__name__})")
+        return
+    from integrations.reports import render
+
+    values = lead_tracker.pdf_view(s, sample, d - timedelta(days=29), True)
+    document = render.pdf("leads.html", **values)
+    check_true("📄 the table is a PDF, in Uzbek Cyrillic", document[:5] == b"%PDF-" and latin_words(
+        render.render_html("leads.html", image=False, **values).split("<body")[1],
+        allow={"B2B", "Lead", "Agent", "Co1", "Co2", "Co3", "Co4", "Co5", "Co6", "Co7", "Noto", "Sans"}) == [])
 
 
 def inspect_source(obj) -> str:
@@ -3872,22 +4122,23 @@ def test_command_menus() -> None:
     from integrations.telegram import menus
 
     for name, items in (("Admin", menus.ADMIN), ("employee", menus.EMPLOYEE), ("Director", menus.DIRECTOR),
-                        ("Garmin manager", menus.GARMIN_MANAGER)):
+                        ("Garmin manager", menus.GARMIN_MANAGER), ("B2B сотув", menus.B2B_SALES)):
         check_true(f"{name} menu: valid Telegram commands, Cyrillic descriptions",
                    all(re.fullmatch(r"[a-z0-9_]{1,32}", c) and 0 < len(d) <= 256 and re.search("[а-яўқғҳ]", d.lower())
                        for c, d in items) and len({c for c, _ in items}) == len(items))
     admin_handles = {*admin.EMPLOYEE_LIST_COMMANDS, *admin.ASK_NAMES_COMMANDS, *admin.DATA_QUALITY_COMMANDS,
                      admin.QR_COMMAND, admin.VERIFIX_COMMAND, admin.BILLZ_COMMAND, *admin.ONEC_COMMANDS, *admin.DB_REVIEW_COMMANDS,
-                     *admin.DAY_OFF_COMMANDS, *admin.FLEXIBLE_COMMANDS, *admin.TECH_REPORT_COMMANDS, admin.ANNOUNCE_COMMAND}
+                     *admin.DAY_OFF_COMMANDS, *admin.FLEXIBLE_COMMANDS, *admin.TECH_REPORT_COMMANDS, admin.ANNOUNCE_COMMAND,
+                     *admin.LEADS_COMMANDS}
     ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
                    *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS,
-                   *ops_manager.stock_list.COMMANDS}
+                   *ops_manager.stock_list.COMMANDS, *ops_manager.lead_tracker.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
-               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER))
+               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES))
     check_true("the Director's menu has /maqsad /baho; the employees' doesn't",
                {"maqsad", "baho"} <= {c for c, _ in menus.DIRECTOR} and not {"maqsad", "baho"} & {c for c, _ in menus.EMPLOYEE})
 
@@ -4985,7 +5236,7 @@ def test_pulse() -> None:
                "following the crosshair", 'PARTS = [["attendance", "in"' in js and "pChart.subscribeCrosshairMove" in js
                and 'id="p-parts"' in load_source("integrations/api/static/pulse.html"))
     html = load_source("integrations/api/static/pulse.html")
-    check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE", "TradingView"}) == []
+    check_true("Uzbek Cyrillic, minimal words", latin_words(html.split("<body>")[1], allow={"PULSE", "TradingView", "B2B"}) == []
                and "<script>" not in html)
 
     # ---- 2026-10-23 (the owner): index and sales on two charts, explained; no businesses card; the tape's key; motion
@@ -5393,7 +5644,7 @@ def test_morning_verifix_and_admin_sheet() -> None:
     order = [runner.index(a) for a in ("agents/report-bonus", "agents/explanations", "agents/task-tracker/agent.py --morning",
                                        "agents/morning-notes")]
     check_true("08:00: bonus → questions → task reminders → ONE message each (task-tracker --morning runs once)",
-               order == sorted(order) and runner.count("--morning") == 1)
+               order == sorted(order) and runner.count("agents/task-tracker/agent.py --morning") == 1)
     check_true("Verifix down no longer stops the report questions (the 22.10 agent crashed on it)",
                "except Exception as exc:  # noqa: BLE001 — 2026-10-24: Verifix down" in expl_src)
     check_true("the API sends what the 08:00 job left (30 min) and the sheet's untold changes at 22:00",
@@ -9705,7 +9956,7 @@ def main() -> int:
         test_payment_gate,
         test_report_accuracy,
         test_client_feedback,
-        test_lead_handout,
+        test_lead_tracker,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,
