@@ -33,9 +33,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   receivables, task tracker, data quality Mon, cash calendar Mon,
   monthly KPI 1st); 16:00 daily-reports ask; 17:00 reminder + Friday
   scorecard; 22:00 reports close (inside the API). **Team cheer removed 2026-10-17** (the owner: not
-  effective; code, tests, cron gone — delete the `mgmg-team-cheer` service in Render). Daily; weekends only
+  effective; code, tests, cron gone; the Render service deleted by 29.10). Daily; weekends only
   for employees marked as weekend workers.
-- **B2B lead tracker — back 2026-10-28 on the Boss's design** (stopped 07.10; `lead_tracker.py`, `leads.py`,
+- **B2B lead tracker — back 2026-10-28 on the Boss's design, switched on (▶️) 28.10** (stopped 07.10; `lead_tracker.py`, `leads.py`,
   `agents/lead-handout/`, spec 14): numbered leads («Лид №33 Hilton») to B2B Sotuv at 08:00 + the Boss's list; 15:00
   (API loop) contacted? → sold (typed what/how much, the Boss told) / not sold (reason) / going; 7 days uncontacted →
   closed; statistics on the Director's /lidlar, Mondays, PULSE, PDF (lost ≈ not sold × average sale). **Stop/start:**
@@ -227,8 +227,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (`director_clarifications`); never asks "which system?" or for a period.
 
 ## Open items
-- **Brief vs SAP check (15.10, `docs/sap-data-check-2026-10-15.md`):** delete the old duplicate push task
-  (:17/:47 — it re-wrote 17 debt rows and made the brief say «камида»; now ignored in code); deploy `sap-gateway/src/` (stock value fix + 12 complete tools, 16.10) and the new `push-ar-aging.ps1` (keep its settings; no log file);
+- **Brief vs SAP check (15.10, `docs/sap-data-check-2026-10-15.md`):** the duplicate push task deleted and `sap-gateway/src/` deployed (the owner, 29.10);
   accounting to decide what «касса / банк» counts (today: every class-5000 account incl. 5530/5710/5720) and
   whether «Кечаги сотув» shows so'm by entry date; Garmin bot leads never arrive (check its webhook secret).
 - **The owner's IT instruction** (08.10–31.12.2026, received 10.10): phases Ф0–Ф3, 10 rules, 8 agents,
@@ -248,6 +247,6 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   `CreateDate`, service calls' `TechnicianName` / `AssigneeName` (joins OHEM / OUSR: if `service_calls` stops
   arriving, the gateway's HANA user lacks SELECT on them). Customers' phone / address: the owner to decide (personal
   data rule — server in Uzbekistan + masking before AI, not met today).
-- **1C OData «410 Gone» (20.10.2026):** the web client works, OData doesn't — re-enable the database's OData publication in Clobus.
+- 1C OData «410 Gone» (20.10): re-enabled in Clobus by the owner (29.10).
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.
