@@ -1823,6 +1823,152 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_lead_index() -> None:
+    """Our own lead search index (2026-10-30, the owner: «build a search engine like Tavily and SerpApi»): the
+    paid APIs had run out every month (429 / 432); Uzbek news RSS, Telegram channels and Google News are
+    collected into our database and searched there; the paid APIs are a small weekly backup."""
+    print("lead search index (30.10.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.search import crawler
+    from integrations.search.models import RawLead
+
+    rss = """<?xml version="1.0"?><rss version="2.0"><channel>
+      <item><title>Андижонда 300 ўринли меҳмонхона қурилади</title><link>https://kun.uz/news/1</link>
+        <description><![CDATA[<p>Аэропорт ёнида <b>янги</b> меҳмонхона</p>]]></description>
+        <pubDate>Thu, 30 Oct 2026 07:10:00 +0500</pubDate></item>
+      <item><title></title><link>https://kun.uz/news/2</link></item></channel></rss>"""
+    items = crawler.parse_rss(rss, "kun.uz")
+    check("RSS: title, link, text without tags, date; an untitled item skipped",
+          [(i["url"], i["body"], i["published_at"].isoformat()) for i in items],
+          [("https://kun.uz/news/1", "Аэропорт ёнида янги меҳмонхона", "2026-10-30T07:10:00+05:00")])
+    atom = """<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Hotel opens</title>
+      <link href="https://x.uz/a"/><summary>Tashkent</summary><updated>2026-10-29T10:00:00Z</updated></entry></feed>"""
+    check("Atom entries too", [(i["url"], i["title"]) for i in crawler.parse_rss(atom, "x")], [("https://x.uz/a", "Hotel opens")])
+    broken = '<rss><channel><atom:link href="x"/><item><title>Обзор</title><link>https://review.uz/1</link></item></channel></rss>'
+    check("a feed that isn't valid XML (review.uz) is read by pattern", [i["url"] for i in crawler.parse_rss(broken, "review.uz")],
+          ["https://review.uz/1"])
+    tg = ('<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message" data-post="minsportuz/812">'
+          '<div class="tgme_widget_message_text js-message_text" dir="auto">Toshkent marafoni&nbsp;2027: <b>homiy</b> kompaniyalar</div>'
+          '<time datetime="2026-10-30T10:50:32+00:00" class="time">10:50</time></div></div>'
+          '<div class="tgme_widget_message_wrap"><div data-post="minsportuz/813"><div class="tgme_widget_message_photo"></div></div></div>')
+    posts = crawler.parse_telegram(tg, "minsportuz")
+    check("a public Telegram channel: one item per post with text, its link and time",
+          [(p["url"], p["body"], p["source"]) for p in posts],
+          [("https://t.me/minsportuz/812", "Toshkent marafoni 2027: homiy kompaniyalar", "telegram:minsportuz")])
+    check_true("Google News RSS: free, no key, the last 90 days, Russian queries in Russian",
+               crawler.google_news_url("новая гостиница").startswith("https://news.google.com/rss/search?q=")
+               and "when:90d" in crawler.google_news_url("x") and "hl=ru" in crawler.google_news_url("новая гостиница"))
+    q = crawler.tsquery()
+    check_true("the search: an object word AND a signal word, prefixes, Uzbek Cyrillic and Latin, Russian, English",
+               q.count(") & (") == 1 and all(f"{w}:*" in q for w in ("гостиниц", "mehmonxon", "меҳмонхон", "hotel", "марафон",
+                                                                    "qurilish", "строител", "тендер", "homiy", "sponsor")))
+    check_true("checked live sources: 11 news feeds, Telegram channels (no Russian procurement or football channels)",
+               len(crawler.RSS_FEEDS) == 11 and "goszakupki_uz" not in crawler.TELEGRAM_CHANNELS
+               and "uzreport" not in crawler.TELEGRAM_CHANNELS and "minstroyuz" in crawler.TELEGRAM_CHANNELS)
+
+    # ---- crawl: every source once, one down never stops the others; counts only in the log
+    saved = [(crawler, n, getattr(crawler, n)) for n in ("_get", "store", "execute", "log_action")]
+    stored, logged, sql = [], [], []
+
+    async def fake_get(client, url):
+        if "daryo" in url:
+            raise RuntimeError("down")
+        return tg if url.startswith("https://t.me/") else rss
+
+    async def fake_store(rows):
+        stored.extend(rows)
+        return len(rows)
+
+    async def fake_execute(query, params=None):
+        sql.append(query)
+
+    async def fake_log(**kw):
+        logged.append(kw)
+
+    crawler._get, crawler.store, crawler.execute, crawler.log_action = fake_get, fake_store, fake_execute, fake_log
+    try:
+        counts = asyncio.run(crawler.crawl(uuid.uuid4(), google_news_queries=["новая гостиница"]))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("crawl: every source, two daryo feeds down, the rest kept (same URL once)",
+          (counts["sources"], counts["failed"], counts["items"]),
+          (len(crawler.RSS_FEEDS) + len(crawler.TELEGRAM_CHANNELS) + 1, 2, 2))  # the fake pages share their URLs
+    check_true("...old items deleted after 60 days, the run counted, the log has counts and source names only",
+               any("DELETE FROM crawl_items" in s for s in sql) and any("INSERT INTO crawl_runs" in s for s in sql)
+               and logged[-1]["payload"]["failed"] == 2 and "Андижон" not in str(logged[-1]))
+    check_true("the API's round crawls every 3 hours in the day (06–22), nothing at night",
+               "crawler.tick(" in load_source("integrations/api/app.py")
+               and not asyncio.run(crawler.due(datetime(2026, 10, 30, 2, 0))))
+
+    # ---- the Lead Agent: the index first; SerpAPI / Tavily weekly, Google only, stop at the quota
+    agent = load_agent("lead-agent")
+    check_true("paid searches: Mondays only, the tender-portal site: searches + the hotel chains (≤ 12)",
+               agent.paid_search_due(date(2026, 11, 2)) and not agent.paid_search_due(date(2026, 10, 30))
+               and len(agent.PAID_QUERIES) <= 12 and all(q in agent.PAID_QUERIES for q in agent.ALL_TENDER_SITE_QUERIES))
+    check_true("429 / 432 is a plan's limit", agent.is_quota_error(RuntimeError("SerpAPI google search failed after retries: 429 from"))
+               and agent.is_quota_error(RuntimeError('Tavily search failed: HTTP 432 {"detail": "This request exceeds your plan"}'))
+               and not agent.is_quota_error(RuntimeError("timeout")))
+    calls = {"serp": [], "tavily": 0, "crawl": []}
+
+    class Serp:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def search(self, query, engine, num=10, freshness=None):
+            calls["serp"].append(engine)
+            raise RuntimeError("SerpAPI google search failed after retries: 429 from https://serpapi.com")
+
+    class Tav(Serp):
+        async def search_news(self, query, days=1, max_results=10):
+            calls["tavily"] += 1
+            return []
+
+    class Empty(Serp):
+        async def recent_projects(self, **kw):
+            return []
+
+        async def search_all_keywords(self):
+            return [RawLead(source="uzex", title="Тендер", url="https://etender.uzex.uz/1")]
+
+    async def fake_crawl(run_id, google_news_queries=None):
+        calls["crawl"].append(len(google_news_queries or []))
+
+    async def fake_search(since):
+        return [RawLead(source="index:kun.uz", title="Меҳмонхона қурилади", url="https://kun.uz/news/1")]
+
+    saved = [(agent, n, getattr(agent, n)) for n in ("SerpAPIClient", "TavilyClient", "WorldBankClient", "UzExClient", "today_local")]
+    saved += [(crawler, "crawl", crawler.crawl), (crawler, "search", crawler.search)]
+    agent.SerpAPIClient, agent.TavilyClient, agent.WorldBankClient, agent.UzExClient = Serp, Tav, Empty, Empty
+    crawler.crawl, crawler.search = fake_crawl, fake_search
+    try:
+        agent.today_local = lambda: date(2026, 10, 30)  # a Friday
+        friday = asyncio.run(agent.collect_raw_leads(uuid.uuid4()))
+        check_true("a weekday: no paid request at all; the index crawled with Google News for every news query",
+                   calls["serp"] == [] and calls["tavily"] == 0 and calls["crawl"] == [len(agent.FRESH_QUERIES)])
+        check("...tenders first, then our index", [r.source for r in friday], ["uzex", "index:kun.uz"])
+        agent.today_local = lambda: date(2026, 11, 2)  # a Monday
+        asyncio.run(agent.collect_raw_leads(uuid.uuid4()))
+        check_true("Monday: Google only, and the first 429 stops SerpAPI's other queries (not 51 × 3 errors)",
+                   set(calls["serp"]) == {"google"} and len(calls["serp"]) <= 4 and calls["tavily"] == len(agent.PAID_QUERIES))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("the schema: the index with its full-text column, the runs",
+               "CREATE TABLE IF NOT EXISTS crawl_items" in load_source("database/schema.sql")
+               and "to_tsvector('simple'" in load_source("database/schema.sql")
+               and "CREATE TABLE IF NOT EXISTS crawl_runs" in load_source("database/schema.sql"))
+
+
 def test_lead_tracker() -> None:
     """The B2B lead tracker (2026-10-28, the Boss): numbered leads to B2B Sotuv, the 15:00 follow-up (contacted?
     sold — what and how much / not sold — why), the Boss's statistics (/lidlar, Mondays, PULSE, the PDF table)
@@ -9957,6 +10103,7 @@ def main() -> int:
         test_report_accuracy,
         test_client_feedback,
         test_lead_tracker,
+        test_lead_index,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

@@ -40,7 +40,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   (API loop) contacted? → sold (typed what/how much, the Boss told) / not sold (reason) / going; 7 days uncontacted →
   closed; statistics on the Director's /lidlar, Mondays, PULSE, PDF (lost ≈ not sold × average sale). **Stop/start:**
   `lead_handout_switch` via the Director's /lidlar and Admin Bot /lidlar (on/off only) — no row = stopped.
-  The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1). **Lead groups** (2026-10-26, the owner,
+  The Lead Agent still fills the sheet ("POSSIBLE Leads", tab Sheet1). **Its search is our own index since 30.10**
+  (`integrations/search/crawler.py`, spec 04): Uzbek news RSS + public Telegram channels every 3 h, Google News RSS at
+  08:00 → `crawl_items`, full-text searched; SerpAPI/Tavily quotas had run out monthly — now Mondays only, stop at 429/432. **Lead groups** (2026-10-26, the owner,
   `lead_groups.py`): each new Garmin lead (Garmin AI bot, + a phone added later; Primus/B2B leads to a group STOPPED the same day) goes as
   ONE message to its Telegram group, bound by `/lidlar_garmin` / `/lidlar_primus` typed there (admin or Director).
   In groups the OPS Manager bot ignores everything else.

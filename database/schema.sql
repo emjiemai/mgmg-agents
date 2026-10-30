@@ -1354,3 +1354,28 @@ CREATE TABLE IF NOT EXISTS lead_groups (
     set_by    BIGINT       NOT NULL,
     set_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- Our own lead search index (2026-10-30, the owner: «build a search engine like Tavily and SerpApi»;
+-- integrations/search/crawler.py, spec 04): Uzbek news RSS, public Telegram channels and Google News RSS,
+-- collected every 3 hours in the day and before the 08:00 Lead Agent; searched with full-text (object word
+-- AND signal word). Kept 60 days. crawl_runs: one row per crawl (counts only).
+CREATE TABLE IF NOT EXISTS crawl_items (
+    id            BIGSERIAL    PRIMARY KEY,
+    url           TEXT         NOT NULL UNIQUE,
+    source        TEXT         NOT NULL,
+    title         TEXT         NOT NULL,
+    body          TEXT,
+    published_at  TIMESTAMPTZ,
+    fetched_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    tsv           TSVECTOR     GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(body, ''))) STORED
+);
+CREATE INDEX IF NOT EXISTS idx_crawl_items_tsv ON crawl_items USING GIN (tsv);
+CREATE INDEX IF NOT EXISTS idx_crawl_items_fetched ON crawl_items (fetched_at DESC);
+CREATE TABLE IF NOT EXISTS crawl_runs (
+    id          BIGSERIAL    PRIMARY KEY,
+    started_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    sources     INTEGER      NOT NULL,
+    failed      INTEGER      NOT NULL,
+    items       INTEGER      NOT NULL,
+    new_items   INTEGER      NOT NULL
+);

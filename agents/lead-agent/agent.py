@@ -3,6 +3,10 @@
 Replaces the n8n "Lead Agent" workflow with a native Python cron job, so it
 runs on Render without paying for an n8n web service + persistent disk.
 
+Sources (2026-10-30): our own index first (integrations/search/crawler.py — Uzbek news RSS, public
+Telegram channels, Google News RSS; free), UZEX tenders, World Bank; SerpAPI (Google only) and Tavily
+only on Mondays for the tender-portal site: searches, stopped at the first quota error.
+
 Pipeline: search multiple engines/sources -> dedupe by URL -> AI-qualify
 against the two-track brief in prompt.py -> drop anything not grounded in a
 real search result -> check against the existing Google Sheet -> append only
@@ -26,6 +30,7 @@ import argparse
 import asyncio
 import sys
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -34,7 +39,9 @@ from integrations.ai.openrouter_client import OpenRouterClient, OpenRouterError
 from integrations.common.config import settings
 from integrations.common.db import close_pool, log_action
 from integrations.common.logging_setup import setup_logging
+from integrations.common.timeutil import today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
+from integrations.search import crawler
 from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient
 from integrations.search.tavily_client import TavilyClient
@@ -316,6 +323,26 @@ SEARCH_FRESHNESS_DAYS = 365  # Tavily time_range
 # freshness filter there would drop real open tenders for no reason.
 FRESH_QUERIES = TRACK1_QUERIES + TRACK2_QUERIES + SPORTS_TECH_QUERIES + LAUNDRY_NEW_SEGMENT_QUERIES
 ALL_TENDER_SITE_QUERIES = TENDER_SITE_QUERIES + SPORTS_TECH_TENDER_SITE_QUERIES
+
+# Our own index (2026-10-30, integrations/search/crawler.py) is the main source now: Uzbek news RSS, public
+# Telegram channels and Google News RSS for FRESH_QUERIES — free, every day. The paid APIs ran 51 queries a
+# day (SerpAPI × 3 engines + Tavily ≈ 6 000 requests a month) and hit their plans' limits in the first days of
+# each month (429 / 432 for the rest of it). They stay as a small weekly backup: the tender-portal site:
+# searches (Google News can't do site:) plus the named hotel chains, Google only, on PAID_SEARCH_WEEKDAY; the
+# first quota error stops the rest of that provider's queries.
+PAID_SEARCH_WEEKDAY = 0  # Monday
+PAID_QUERIES = ALL_TENDER_SITE_QUERIES + [q for q in TRACK1_QUERIES if "Hilton" in q[0]]
+INDEX_WINDOW_HOURS = 26  # what the index collected since the last morning (and a little more)
+
+
+def paid_search_due(today: date) -> bool:
+    return today.weekday() == PAID_SEARCH_WEEKDAY
+
+
+def is_quota_error(err: BaseException) -> bool:
+    """A plan's limit, not a passing failure: SerpAPI 429, Tavily 432 — no point sending more today."""
+    text = str(err)
+    return " 429" in text or "432" in text or "exceeds your" in text
 async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
     """Fetch every source, tolerating individual failures, and dedupe by URL.
 
@@ -332,40 +359,58 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
     # at once against one API — polite to the provider, and avoids tripping
     # any undocumented rate limit.
     concurrency = asyncio.Semaphore(4)
+    paid = paid_search_due(today_local())
+    quota_hit: set[str] = set()  # a provider whose plan limit answered — its other queries are skipped
 
     async def _serpapi_one(client: SerpAPIClient, query: str, freshness: str | None) -> list[RawLead]:
         async with concurrency:
+            if "serpapi" in quota_hit:
+                return []
             try:
-                return await client.search_all_engines(query, num=10, freshness=freshness)
+                return await client.search(query, "google", 10, freshness=freshness)
             except Exception as err:  # noqa: BLE001 — one query must never fail the others (see below)
+                if is_quota_error(err):
+                    quota_hit.add("serpapi")
                 log.error("SerpAPI failed for '{}': {}", query, err)
                 return []
 
     async def _serpapi_all() -> list[RawLead]:
+        if not paid:
+            return []
         async with SerpAPIClient(agent=AGENT, run_id=run_id) as client:
-            tasks = [_serpapi_one(client, q, SEARCH_FRESHNESS) for q, _t in FRESH_QUERIES]
-            tasks += [_serpapi_one(client, q, None) for q, _t in ALL_TENDER_SITE_QUERIES]
-            batches = await asyncio.gather(*tasks)
+            batches = await asyncio.gather(*[_serpapi_one(client, q, None) for q, _t in PAID_QUERIES])
         return [lead for batch in batches for lead in batch]
 
     async def _tavily_one(client: TavilyClient, query: str, days: int) -> list[RawLead]:
         async with concurrency:
+            if "tavily" in quota_hit:
+                return []
             try:
                 return await client.search_news(query, days=days, max_results=10)
             except Exception as err:  # noqa: BLE001 — one query must never fail the others
+                if is_quota_error(err):
+                    quota_hit.add("tavily")
                 log.error("Tavily failed for '{}': {}", query, err)
                 return []
 
     async def _tavily_all() -> list[RawLead]:
+        if not paid:
+            return []
         async with TavilyClient(agent=AGENT, run_id=run_id) as client:
-            # Past-year window for news-style queries (matches SerpAPI's
-            # SEARCH_FRESHNESS above); tender-portal pages are left at
-            # Tavily's "week" bucket for the same reason SerpAPI skips the
-            # freshness filter on them.
-            tasks = [_tavily_one(client, q, SEARCH_FRESHNESS_DAYS) for q, _t in FRESH_QUERIES]
-            tasks += [_tavily_one(client, q, 3) for q, _t in ALL_TENDER_SITE_QUERIES]
-            batches = await asyncio.gather(*tasks)
+            batches = await asyncio.gather(*[_tavily_one(client, q, 7) for q, _t in PAID_QUERIES])
         return [lead for batch in batches for lead in batch]
+
+    async def _own_index() -> list[RawLead]:
+        """Our index: collect now (news, Telegram, Google News for every news query), then search it."""
+        try:
+            await crawler.crawl(run_id, google_news_queries=[q for q, _t in FRESH_QUERIES])
+        except Exception as err:  # noqa: BLE001 — what the day's earlier crawls kept is still searched
+            log.error("Crawl failed: {}", type(err).__name__)
+        try:
+            return await crawler.search(datetime.now(timezone.utc) - timedelta(hours=INDEX_WINDOW_HOURS))
+        except Exception as err:  # noqa: BLE001
+            log.error("Index search failed: {}", type(err).__name__)
+            return []
 
     async def _worldbank() -> list[RawLead]:
         try:
@@ -386,7 +431,7 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
 
     # All sources run concurrently, not one after another.
     for batch in await asyncio.gather(
-        _serpapi_all(), _tavily_all(), _worldbank(), _uzex(), return_exceptions=True
+        _own_index(), _serpapi_all(), _tavily_all(), _worldbank(), _uzex(), return_exceptions=True
     ):
         if isinstance(batch, BaseException):
             log.error("A source raised unexpectedly: {}", batch)
@@ -411,7 +456,7 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
     # Government tenders first: they carry named buyers, budgets and firm
     # deadlines, so if a batch or the model budget runs short, the most
     # actionable material has already been seen.
-    ordered = sorted(seen.values(), key=lambda l: 0 if l.source.startswith("uzex") else 1)
+    ordered = sorted(seen.values(), key=lambda l: 0 if l.source.startswith("uzex") else 1 if l.source.startswith("index:") else 2)
     return ordered
 
 

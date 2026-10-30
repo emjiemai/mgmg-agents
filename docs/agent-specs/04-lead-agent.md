@@ -1,12 +1,44 @@
 # Agent 4 — Lead Agent (Primus Londry + EMJIEM sports-tech)
 
 **Code:** `agents/lead-agent/agent.py` + `agents/lead-agent/prompt.py`
-**Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily
+**Schedule:** 08:00 Asia/Tashkent (03:00 UTC), daily; its search index collects every 3 h (06–22)
 **Mode:** read-only from every source; writes to Google Sheets + Telegram, both gated
 **Owner:** sales / business development
 **Status:** running — paused 2026-09-16, resumed 2026-09-30
 **After it:** its leads go to B2B sales — the B2B lead tracker (stopped 07.10, back 28.10 on the Boss's design: numbered leads, the 15:00 follow-up, the Boss's statistics, stop / start on /lidlar — `14-lead-handout.md`); the leads stay in the sheet
 (`LEAD_AGENT_ENABLED=true` in Render's `mgmg-shared`; `false` pauses it again)
+
+## Our own search index (2026-10-30)
+
+**Why:** the agent ran 51 searches a day through SerpAPI (× Google, Bing, Yandex) and Tavily — about
+4 600 + 1 500 requests a month against their plans' limits. After the first days of each month every request
+failed (`429` / `432`, 204 errors a day in `/texnik`) and no leads came. The owner: «build a search engine
+like Tavily and SerpApi».
+
+**What:** `integrations/search/crawler.py` collects the Uzbek sources our leads come from into our own
+database and searches them there — no key, no quota:
+
+| Source | How | When |
+| ---- | ---- | ---- |
+| 11 news RSS feeds — kun.uz (uz, ru), gazeta.uz (ru, oz), daryo.uz (uz, ru), spot.uz (ru, oz), uza.uz, review.uz, nuz.uz | `RSS_FEEDS` | every 3 h, 06–22, in the API's 5-minute round; and at 08:00 |
+| Public Telegram channels — minstroyuz, minsportuz, olympicuz, sportuz, uzdaily (`t.me/s/<name>`, no login) | `TELEGRAM_CHANNELS` | same |
+| Google News RSS for every news query of the agent (`FRESH_QUERIES`, last 90 days) | `google_news_url` | 08:00, before the search |
+
+Each item is kept once by URL (title, ≤ 1 500 characters of text, link, date) in `crawl_items` for 60 days;
+`crawl_runs` counts each crawl. **Search:** PostgreSQL full-text (`to_tsvector('simple')`, GIN index) — an
+object word (гостиница / mehmonxona / меҳмонхона / больница / прачечная / марафон / федерация…) AND a signal word
+(строительство / qurilish / открытие / тендер / инвест / спонсор / homiy / партнёр…), prefixes, every
+language. The newest 150 matches collected in the last 26 hours go to the AI qualifier with the other
+sources (UZEX tenders first, then the index). Add a feed or a channel: one line in `crawler.py`.
+
+Checked live 30.10: 324 items from 20 sources, 18 matches — including Barceló's projects in Uzbekistan, a
+300-room hotel at Andijan airport, IHG's first Garner hotel (2027). Foreign news that matches the words is
+dropped by the qualifier (Uzbekistan check), as before.
+
+**Paid APIs now:** a weekly backup on Mondays (`PAID_SEARCH_WEEKDAY`) — the 9 tender-portal `site:` searches
+(Google News can't do `site:`) and the named hotel chains: SerpAPI Google only, Tavily 7 days. The first
+quota error stops the rest of that provider's queries. Not reachable: hh.uz (needs a registered app),
+Bing RSS / DuckDuckGo (empty / blocked from servers).
 
 ## Purpose
 
