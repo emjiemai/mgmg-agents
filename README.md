@@ -182,6 +182,10 @@ employee writes their report or asks the work AI.
 **Emergency stop:** `BOTS_FROZEN=true` in `mgmg-shared` → both bots and every
 cron job stop sending. Each agent also has its own `*_ENABLED` switch.
 
+**Local copy of the database** (2026-10-30): on the IT computer, `psql mgmg_mirror` — the bot's own
+tables, refreshed every 30 minutes with changes only (`scripts/db-mirror/README.md`; install once with
+`bash scripts/db-mirror/install.sh`).
+
 **Look at the data:** `https://<mgmg-api host>/db` (read-only, password
 `DB_VIEWER_PASSWORD`) — technical tables only since 2026-10-07 (audit log,
 access requests, changes, days off); financial and confidential tables are
@@ -345,6 +349,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-10-30 | **Local database copy on the IT computer** (the owner): `scripts/db-mirror/` — every 30 minutes while the computer is awake (a systemd user timer that catches up after sleep), **changes only**: Postgres's per-table change counters pick the tables that changed (a quiet run = one 0.3 s query to production), checksums over 64 slices by primary key find the changed rows, `COPY` brings only those; the audit log gets its new rows by id; a full check once a day. Production is only read (READ ONLY session). Copies the bot's own tables (`/db`'s permanent list); SAP / 1C / Billz / Verifix stay structure only (the Director's order of 07.10). Install once: `bash scripts/db-mirror/install.sh`. The lead index, lead groups and the B2B tracker switch are now listed as the bot's own tables on `/db`. |
 | 2026-10-30 | **People who left are out of the statistics** (the owner: Абдулбосит's 3 missed days were still in the Friday result after he was removed). The weekly result, the brief's «who didn't report», tasks due and the Director's report questions count active employees only; their rows stay in the database as history. This week: 34/42 instead of 34/45. |
 | 2026-10-30 | **DeepSeek web search every 3 days** (the owner). The Lead Agent's 42 news queries go to DeepSeek through OpenRouter with its web plugin (DeepSeek has no search of its own — OpenRouter searches with Exa, ≈ $0.30 a run, ≈ $3 a month, same `OPENROUTER_API_KEY`); the pages it cites go into our lead index and are qualified like the rest. Out of credit stops the run. Adds international news the Uzbek feeds miss. `integrations/search/deepseek_web.py`, spec 04. |
 | 2026-10-30 | **Lead Agent: our own search index** (the owner: «lead agent is working bad — build a search engine like Tavily and SerpApi»). Cause: 51 searches a day through SerpAPI (× 3 engines) and Tavily ≈ 6 000 requests a month — the plans' limits ran out in the first days of each month, then 429 / 432 (204 errors a day) and no leads. Now `integrations/search/crawler.py` collects 11 Uzbek news RSS feeds (kun.uz, gazeta.uz, daryo.uz, spot.uz, uza.uz, review.uz, nuz.uz), 5 public Telegram channels (minstroyuz, minsportuz, olympicuz, sportuz, uzdaily) every 3 hours (06–22) and Google News RSS for every lead query at 08:00, keeps them 60 days (`crawl_items`), and searches them with PostgreSQL full-text (object word AND signal word, Uzbek / Russian / English). Free, no quota. SerpAPI (Google only) and Tavily now run only on Mondays for the 9 tender-portal searches + hotel chains, and stop at the first quota error. Tested live: 324 items from 20 sources, 18 matches. Spec 04. |

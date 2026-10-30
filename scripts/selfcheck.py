@@ -1823,6 +1823,46 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_db_mirror() -> None:
+    """The local database copy on the IT computer (2026-10-30, the owner): every 30 minutes while awake, changes
+    only (table counters → checksums → 64 slices → COPY), the bot's own tables only."""
+    print("local database copy (30.10.2026)")
+    import importlib.util
+
+    from integrations.api import db_viewer
+
+    spec = importlib.util.spec_from_file_location("db_mirror", Path(__file__).resolve().parent / "db-mirror" / "mirror.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    check("only the slices that differ, and slices on one side only", m.changed_buckets(
+        {1: (3, "a"), 2: (1, "b"), 5: (2, "c")}, {1: (3, "a"), 2: (1, "x"), 7: (1, "d")}), [2, 5, 7])
+    check("nothing differs → nothing copied", m.changed_buckets({1: (3, "a")}, {1: (3, "a")}), [])
+    now = 1_000_000.0
+    seen = {"tasks": (40, now - 600), "agent_actions": (100, now - 600), "leads": (9, now - 25 * 3600)}
+    churn = {"tasks": 40, "agent_actions": 104, "leads": 9, "employees": 3}
+    check("a table whose counter didn't move is skipped; a changed one, one checked > 24 h ago or a new one is read",
+          [t for t in ("tasks", "agent_actions", "leads", "employees") if not m.quiet(t, churn, seen, now)],
+          ["agent_actions", "leads", "employees"])
+    text = m.bucket_check("tasks", ["id", "status"], ["id"]).as_string(None)
+    check_true("the same checksum SQL on both sides: md5 of the row's text, the slice from the key's md5",
+               'md5(ROW("id", "status")::text)' in text and "get_byte(decode(md5(ROW(\"id\")::text), 'hex'), 0) % 64" in text)
+    src = load_source("scripts/db-mirror/mirror.py")
+    check_true("production is only read: a READ ONLY session with a time limit; both sides print values the same way",
+               "default_transaction_read_only = on" in src and "statement_timeout" in src and "SET TimeZone = 'UTC'" in src
+               and src.count("await local.execute(SESSION)") == 1)
+    check_true("only the bot's own tables (IT's permanent /db list) — SAP, 1C, Billz, Verifix keep their structure only",
+               m.TECHNICAL_TABLES is db_viewer.TECHNICAL_TABLES and "if table not in TECHNICAL_TABLES:" in src
+               and 'sql.SQL("TRUNCATE {}")' in src and "PLATFORM_TABLES" not in src.split('"""', 2)[2]
+               and not (db_viewer.TECHNICAL_TABLES & db_viewer.PLATFORM_TABLES))
+    check_true("the audit log is insert-only: new rows by id", m.APPEND_ONLY == {"agent_actions": "id"})
+    check_true("asleep or offline: the run is skipped quietly, the next one tries", "except psycopg.OperationalError" in src)
+    install = load_source("scripts/db-mirror/install.sh")
+    check_true("installed as a 30-minute user timer that catches up after sleep; a role that isn't a superuser",
+               "OnCalendar=*:00,30" in install and "Persistent=true" in install and "--createdb" in install
+               and "--superuser" not in install and "createdb mgmg_mirror" in install)
+
+
 def test_removed_people_out_of_stats() -> None:
     """30.10.2026 (the owner): a removed person's days stay out of the statistics — the Friday result
     («Юбормаганлар: Абдулбосит (3 кун)» after he left), the brief's «who didn't report», tasks due, the
@@ -10191,6 +10231,7 @@ def main() -> int:
         test_lead_index,
         test_deepseek_web_search,
         test_removed_people_out_of_stats,
+        test_db_mirror,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

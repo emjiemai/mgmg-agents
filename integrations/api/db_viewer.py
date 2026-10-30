@@ -80,6 +80,8 @@ TECHNICAL_TABLES = frozenset({
     "leads", "lead_assignments", "lead_checkins",
     "garmin_competitor_offers",  # public OLX / web listings of Garmin (2026-10-19) — no company figures
     "garmin_competitor_shops",   # competitor shops' own published contacts (2026-10-20)
+    "lead_groups", "lead_handout_switch",  # the lead groups' chats and the B2B tracker's on / off (2026-10-26, 28)
+    "crawl_items", "crawl_runs",           # the lead search index: public news and Telegram posts (2026-10-30)
 })
 # Open for IT until this day only (2026-10-17, the Boss: find and fix the briefs' SAP / Billz / 1C
 # mismatches — docs/access-review-2026-10-07.md §4); closed again by itself after it.

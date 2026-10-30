@@ -85,6 +85,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   is checked against SAP's columns by selfcheck (`test_sap_gateway_code`); values are bound
   parameters (`exec(sql, params)`). No Node on this PC — JS is syntax-checked with a parser only.
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).
+- **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
+  30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
+  `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.
 
 Status of the owner's 21-agent plan: `docs/agents-status.md` (running: H0, A1,
 A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
