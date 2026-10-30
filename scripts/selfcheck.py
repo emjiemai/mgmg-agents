@@ -1823,6 +1823,20 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_removed_people_out_of_stats() -> None:
+    """30.10.2026 (the owner): a removed person's days stay out of the statistics — the Friday result
+    («Юбормаганлар: Абдулбосит (3 кун)» after he left), the brief's «who didn't report», tasks due, the
+    Director's report questions. Their rows are kept (history), only not counted."""
+    print("removed people out of statistics (30.10.2026)")
+    from integrations.org_bot import store
+
+    for fn in (store.tasks_due_between, store.reports_between, store.recent_reports):
+        check_true(f"{fn.__name__}: only active people", "e.status = 'active'" in inspect_source(fn))
+    src = inspect_source(store)
+    check_true("the brief's day before: only active people",
+               "WHERE r.report_date = (SELECT max(report_date) FROM daily_reports WHERE report_date < %s)\n          AND r.status <> 'excused' AND e.status = 'active'" in src)
+
+
 def test_deepseek_web_search() -> None:
     """DeepSeek web search through OpenRouter every 3 days (2026-10-30): Exa results' cited pages into our index."""
     print("DeepSeek web search (30.10.2026)")
@@ -10176,6 +10190,7 @@ def main() -> int:
         test_lead_tracker,
         test_lead_index,
         test_deepseek_web_search,
+        test_removed_people_out_of_stats,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

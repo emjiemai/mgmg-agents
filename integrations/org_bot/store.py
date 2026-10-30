@@ -721,7 +721,7 @@ async def tasks_due_between(start: date, end: date) -> list[dict[str, Any]]:
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
-        WHERE t.due_date BETWEEN %s AND %s
+        WHERE t.due_date BETWEEN %s AND %s AND e.status = 'active'  -- 30.10: people who left aren't counted
         ORDER BY t.due_date, e.display_name
         """,
         (start, end),
@@ -753,6 +753,7 @@ async def reports_between(start: date, end: date) -> list[dict[str, Any]]:
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date BETWEEN %s AND %s AND r.status <> 'excused'
+          AND e.status = 'active'  -- 30.10, the owner: a removed person's days leave the weekly result
         ORDER BY r.report_date, e.display_name
         """,
         (start, end),
@@ -1931,7 +1932,7 @@ async def report_results_before(day: date) -> list[dict[str, Any]]:
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = (SELECT max(report_date) FROM daily_reports WHERE report_date < %s)
-          AND r.status <> 'excused'
+          AND r.status <> 'excused' AND e.status = 'active'
         ORDER BY e.display_name
         """,
         (day,),
@@ -1953,7 +1954,7 @@ async def recent_reports(days: int = 14) -> list[dict[str, Any]]:
                r.submitted_at, COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM daily_reports r
         JOIN employees e ON e.id = r.employee_id
-        WHERE r.report_date >= %s::date - %s::int AND r.status <> 'excused'
+        WHERE r.report_date >= %s::date - %s::int AND r.status <> 'excused' AND e.status = 'active'
         ORDER BY r.report_date DESC, e.display_name
         """,
         # Tashkent's date, not the database's: in UTC the day turns over five

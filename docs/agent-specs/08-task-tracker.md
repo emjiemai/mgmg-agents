@@ -137,3 +137,6 @@ A role change is a clean start (`store.change_employee_role`): that person's
 open tasks are cancelled (a co-assignee keeps theirs), today's unanswered
 report ask closes without a minus, the work AI forgets the old chat, and KPI
 counts only the role held now. Removal already did this (2026-10-14).
+
+
+**2026-10-30:** the Friday result counts active employees only — a removed person's tasks and report days are kept as history but left out (`store.tasks_due_between`, `store.reports_between`; also the brief's day before and `recent_reports`).
