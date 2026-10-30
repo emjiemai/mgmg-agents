@@ -35,6 +35,14 @@ Checked live 30.10: 324 items from 20 sources, 18 matches — including Barceló
 300-room hotel at Andijan airport, IHG's first Garner hotel (2027). Foreign news that matches the words is
 dropped by the qualifier (Uzbekistan check), as before.
 
+**DeepSeek web search (every 3 days, `integrations/search/deepseek_web.py`):** the 42 news queries go to
+`deepseek/deepseek-v4.1-flash` through OpenRouter with the `web` plugin — DeepSeek has no search of its own, so
+OpenRouter searches with **Exa** ($0.007 a request incl. 10 results ≈ $0.30 a run, ≈ $3 a month). The pages its
+answer cites (`url_citation`: link, title, text) go into `crawl_items` as source `deepseek_web` and are searched and
+qualified like the rest. Same OpenRouter key; 402 / 429 (out of credit / limit) stops the run. Every third calendar
+day (`toordinal() % 3`), in the 08:00 Lead Agent run before the index search. Exa is the world's web, strongest in
+English — international hotel chains, investors, events the Uzbek feeds miss.
+
 **Paid APIs now:** a weekly backup on Mondays (`PAID_SEARCH_WEEKDAY`) — the 9 tender-portal `site:` searches
 (Google News can't do `site:`) and the named hotel chains: SerpAPI Google only, Tavily 7 days. The first
 quota error stops the rest of that provider's queries. Not reachable: hh.uz (needs a registered app),

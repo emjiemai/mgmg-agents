@@ -1823,6 +1823,71 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_deepseek_web_search() -> None:
+    """DeepSeek web search through OpenRouter every 3 days (2026-10-30): Exa results' cited pages into our index."""
+    print("DeepSeek web search (30.10.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.search import deepseek_web as dw
+
+    check_true("every third calendar day", [dw.due(date(2026, 10, 30) + timedelta(days=i)) for i in range(6)].count(True) == 2)
+    body = dw.payload("new hotel Uzbekistan")
+    check_true("DeepSeek with OpenRouter's web plugin on Exa, 10 results",
+               body["model"].startswith("deepseek/") and body["plugins"] == [{"id": "web", "engine": "exa", "max_results": 10}])
+    answer = {"choices": [{"message": {"content": "...", "annotations": [
+        {"type": "url_citation", "url_citation": {"url": "https://spot.uz/a", "title": "IHG <b>Garner</b> 2027", "content": "Toshkent"}},
+        {"type": "url_citation", "url_citation": {"url": "javascript:x", "title": "bad"}},
+        {"type": "file", "file": {}}]}}]}
+    check("the cited pages become index items (only real links)",
+          [(i["url"], i["title"], i["source"]) for i in dw.citations(answer)], [("https://spot.uz/a", "IHG Garner 2027", "deepseek_web")])
+
+    posted, stored, logged = [], [], []
+
+    class Response:
+        def __init__(self, status):
+            self.status_code = status
+
+        def json(self):
+            return answer
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None):
+            posted.append(json["messages"][0]["content"])
+            return Response(402 if len(posted) == 2 else 200)
+
+    async def fake_store(rows):
+        stored.extend(rows)
+        return len(rows)
+
+    async def fake_log(**kw):
+        logged.append(kw)
+
+    from pydantic import SecretStr
+
+    saved = [(dw, "_client", dw._client), (dw.crawler, "store", dw.crawler.store), (dw, "log_action", dw.log_action),
+             (dw, "CONCURRENCY", dw.CONCURRENCY), (settings, "openrouter_api_key", settings.openrouter_api_key)]
+    dw._client, dw.crawler.store, dw.log_action, dw.CONCURRENCY = (lambda key: Client()), fake_store, fake_log, 1
+    settings.openrouter_api_key = SecretStr("test-key")
+    try:
+        counts = asyncio.run(dw.search(["q1", "q2", "q3", "q4"], uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("out of credit (402) stops the rest; what came is kept", (len(posted), counts["new"], counts["failed"]), (2, 1, 1))
+    check_true("...logged with counts only", logged[-1]["payload"]["stopped"] and "spot.uz" not in str(logged[-1]))
+    src = load_source("agents/lead-agent/agent.py")
+    check_true("the Lead Agent runs it on its day, before searching the index",
+               "deepseek_web.due(today_local())" in src and src.index("deepseek_web.search(") < src.index("crawler.search("))
+
+
 def test_lead_index() -> None:
     """Our own lead search index (2026-10-30, the owner: «build a search engine like Tavily and SerpApi»): the
     paid APIs had run out every month (429 / 432); Uzbek news RSS, Telegram channels and Google News are
@@ -1947,7 +2012,13 @@ def test_lead_index() -> None:
         return [RawLead(source="index:kun.uz", title="Меҳмонхона қурилади", url="https://kun.uz/news/1")]
 
     saved = [(agent, n, getattr(agent, n)) for n in ("SerpAPIClient", "TavilyClient", "WorldBankClient", "UzExClient", "today_local")]
-    saved += [(crawler, "crawl", crawler.crawl), (crawler, "search", crawler.search)]
+    saved += [(crawler, "crawl", crawler.crawl), (crawler, "search", crawler.search),
+              (agent.deepseek_web, "search", agent.deepseek_web.search)]
+
+    async def no_web(queries, run_id=None):  # never a paid call from a test
+        return {}
+
+    agent.deepseek_web.search = no_web
     agent.SerpAPIClient, agent.TavilyClient, agent.WorldBankClient, agent.UzExClient = Serp, Tav, Empty, Empty
     crawler.crawl, crawler.search = fake_crawl, fake_search
     try:
@@ -10104,6 +10175,7 @@ def main() -> int:
         test_client_feedback,
         test_lead_tracker,
         test_lead_index,
+        test_deepseek_web_search,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

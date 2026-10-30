@@ -4,7 +4,8 @@ Replaces the n8n "Lead Agent" workflow with a native Python cron job, so it
 runs on Render without paying for an n8n web service + persistent disk.
 
 Sources (2026-10-30): our own index first (integrations/search/crawler.py — Uzbek news RSS, public
-Telegram channels, Google News RSS; free), UZEX tenders, World Bank; SerpAPI (Google only) and Tavily
+Telegram channels, Google News RSS; free — and every 3 days DeepSeek + Exa web search through OpenRouter,
+integrations/search/deepseek_web.py), UZEX tenders, World Bank; SerpAPI (Google only) and Tavily
 only on Mondays for the tender-portal site: searches, stopped at the first quota error.
 
 Pipeline: search multiple engines/sources -> dedupe by URL -> AI-qualify
@@ -41,7 +42,7 @@ from integrations.common.db import close_pool, log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import today_local
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.search import crawler
+from integrations.search import crawler, deepseek_web
 from integrations.search.models import RawLead
 from integrations.search.serpapi_client import SerpAPIClient
 from integrations.search.tavily_client import TavilyClient
@@ -406,6 +407,11 @@ async def collect_raw_leads(run_id: uuid.UUID) -> list[RawLead]:
             await crawler.crawl(run_id, google_news_queries=[q for q, _t in FRESH_QUERIES])
         except Exception as err:  # noqa: BLE001 — what the day's earlier crawls kept is still searched
             log.error("Crawl failed: {}", type(err).__name__)
+        if deepseek_web.due(today_local()):  # every 3 days: DeepSeek + Exa web search (OpenRouter), into the index
+            try:
+                await deepseek_web.search([q for q, _t in FRESH_QUERIES], run_id)
+            except Exception as err:  # noqa: BLE001 — the index's other sources still count
+                log.error("DeepSeek web search failed: {}", type(err).__name__)
         try:
             return await crawler.search(datetime.now(timezone.utc) - timedelta(hours=INDEX_WINDOW_HOURS))
         except Exception as err:  # noqa: BLE001
