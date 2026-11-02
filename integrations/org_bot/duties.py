@@ -410,6 +410,9 @@ async def director_view() -> str:
     if today:
         lines += ["", "<b>Бугун</b> (✅ / жами): " + ", ".join(
             f"{escape(r['person'])} {r['done']}/{r['total']}" + (f" 👎{r['useless']}" if r["useless"] else "") for r in today)]
+    from integrations.org_bot import rollout
+
+    lines += ["", rollout.status_text(await rollout.status(today_local()))]
     lines.append(f"\nСўнгги 7 кунда ўзгариш: {changes['n'] if changes else 0} та")
     url = sheet_url()
     lines.append(f'<a href="{url}">Реестрни очиш ва ўзгартириш</a>' if url else

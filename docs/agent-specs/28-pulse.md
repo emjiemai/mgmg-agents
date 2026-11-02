@@ -87,3 +87,6 @@ text-only rendering, the /pulse command and menus; speed — a kept answer at on
 Verifix read shared, sources read at the same time, gzip, WOFF2 fonts kept a year.
 
 **27.10:** the «Шикоят» ticker's number is the new complaints in the period (as its ▲▼ and line); the open ones stay in the data as `open`.
+
+
+**2026-11-02:** the «tasks» part of the daily score also counts the duties register's daily tasks (`duty_tasks`: done that day 1, missed / ⛔ 0); the Director's «Режа ва факт» card (`/pulse/api/plans`, the monthly plans against SAP with the month's pace) — the Garmin manager gets 404.

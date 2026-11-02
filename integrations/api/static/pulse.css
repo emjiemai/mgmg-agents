@@ -118,6 +118,7 @@ svg { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round
     "t t t t t t t t t t t t"
     "m m m m m m m m s s s s"
     "b b b b b b b b p p p p"
+    "r r r r r r r r r r r r"
     "l l l l l l l l l l l l";
 }
 .tickers { grid-area: t; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px; }
@@ -128,6 +129,7 @@ svg { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round
 .board { grid-area: b; }
 .tape { grid-area: p; }
 .leads { grid-area: l; }
+.plans { grid-area: r; }
 
 .card, .ticker { transition: background-color 200ms ease-out, border-color 200ms ease-out, transform 220ms cubic-bezier(0.16, 1, 0.3, 1); }
 .card { background: var(--card); border-radius: 16px; padding: 22px 24px; border: 1px solid var(--edge); box-shadow: var(--shadow); min-width: 0; }
@@ -294,7 +296,7 @@ svg.spark circle { display: none; }
   .tickers { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 1100px) {
-  .screen { grid-template-areas: "t t t t t t t t t t t t" "m m m m m m m m m m m m" "s s s s s s s s s s s s" "b b b b b b b b b b b b" "p p p p p p p p p p p p" "l l l l l l l l l l l l"; }
+  .screen { grid-template-areas: "t t t t t t t t t t t t" "m m m m m m m m m m m m" "s s s s s s s s s s s s" "b b b b b b b b b b b b" "p p p p p p p p p p p p" "r r r r r r r r r r r r" "l l l l l l l l l l l l"; }
   .lead-split { grid-template-columns: minmax(0, 1fr); }
   .tape-list { max-height: 420px; }
   .chart { height: 300px; }
@@ -308,7 +310,7 @@ svg.spark circle { display: none; }
   .range { order: 3; width: 100%; margin-left: 0; justify-content: space-between; }
   .range button { flex: 1; min-height: 40px; }
   .title { margin-right: auto; }
-  .screen { gap: 14px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "t" "m" "s" "p" "b" "l"; }
+  .screen { gap: 14px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "t" "m" "s" "p" "b" "r" "l"; }
   .lead-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lead-rows .hide-sm { display: none; }
   .tickers { display: flex; overflow-x: auto; gap: 12px; scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none; margin: 0 -16px; padding: 2px 16px 4px; }
@@ -374,4 +376,17 @@ svg.spark.draw { animation: reveal 1100ms cubic-bezier(0.65, 0, 0.35, 1) both; a
 .lead-rows .st.dismissed { color: var(--down); }
 .lead-rows .st.new, .lead-rows .st.in_progress { color: var(--ink-2); }
 .lead-rows .detail { color: var(--ink-2); max-width: 26em; }
-.rail-link[hidden], .leads[hidden] { display: none; }
+.rail-link[hidden], .leads[hidden], .plans[hidden] { display: none; }
+
+/* ---- plans against SAP (2026-11-02, the Director only) -------------------------------------------------- */
+.plan-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 14px; }
+.plan-list li { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr) auto; align-items: center; gap: 14px; font-size: 13.5px; }
+.plan-list .name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-list .track { position: relative; height: 10px; border-radius: 5px; background: var(--card-2); overflow: hidden; }
+.plan-list .fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--down); }
+.plan-list .fill.ahead { background: var(--up); }
+.plan-list .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink-2); }
+.plan-list .num { text-align: right; white-space: nowrap; color: var(--ink-2); }
+.plan-list .num b { color: var(--ink); }
+.plan-list li.none .num { color: var(--ink-3); }
+@media (max-width: 760px) { .plan-list li { grid-template-columns: minmax(0, 1fr) auto; } .plan-list .track { grid-column: 1 / -1; grid-row: 2; } }

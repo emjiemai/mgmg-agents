@@ -50,6 +50,7 @@ is started (A1 and A3 are measured automatically every Friday).
 - **Duties register and work profiles** — week 1 of automatic delegation (to 30.11), `/vazifalar` (`32-duties-register.md`).
 - **Daily tasks from the register** — week 2: 08:45 card, ✅/⛔/👎, IT check, 17:30, 22:00; ⏸/▶️ (`32-duties-register.md`).
 - **System check, plan vs fact, Friday review** — week 3: SAP/Billz facts on dollar duties, `/reja`, Fridays 16:30 (`32-duties-register.md`).
+- **Everyone connected, acceptance, PULSE** — week 4: connection status, the ≥ 90 % × 5 days condition, register tasks in PULSE, «Режа ва факт» (`32-duties-register.md`).
 
 ## Back on the Boss's design
 

@@ -240,7 +240,11 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
 
         async with TelegramBot(agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
                                default_chat_id=settings.admin_bot_telegram_chat_id) as bot:
-            await bot.send_message(duties.admin_text(await duties.sync(run_id)),
+            from integrations.common.timeutil import today_local
+            from integrations.org_bot import rollout
+
+            await bot.send_message(duties.admin_text(await duties.sync(run_id)) + "\n\n"
+                                   + rollout.status_text(await rollout.status(today_local())),
                                    reply_markup={"inline_keyboard": [[duty_tasks.switch_button(await duty_tasks.is_on())]]})
         return "duties_synced"
     if text in TECH_REPORT_COMMANDS:

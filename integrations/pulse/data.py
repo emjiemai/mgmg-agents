@@ -205,7 +205,22 @@ async def _db(start: date, end: date, ids: list[str], garmin_only: bool) -> dict
            WHERE kind = 'complaint' AND (created_at >= %s OR ticket_status = 'open')""", (start,))
     if garmin_only:
         complaints = [c for c in complaints if c.get("place") == "garmin"]
-    return {"reports": reports, "tasks": tasks, "complaints": complaints}
+    return {"reports": reports, "tasks": tasks + await _duty_tasks(start, ids), "complaints": complaints}
+
+
+async def _duty_tasks(start: date, ids: list[str]) -> list[dict[str, Any]]:
+    """The register's daily tasks (duty_tasks.py, 2026-11-02) in the task part's shape: due = the period's end, done =
+    answered ✅ (⛔ and missed count as not done) — so the score's «tasks» 30 points count them too."""
+    try:
+        rows = await fetch_all(
+            """SELECT employee_id::text AS pid, period_start, period_end, status, answered_at FROM duty_tasks
+               WHERE employee_id::text = ANY(%s) AND period_end >= %s""", (ids, start))
+    except Exception as exc:  # noqa: BLE001 — before the table exists, or a read error: the task part stays as it was
+        log.warning("Duty tasks not read: {}", type(exc).__name__)
+        return []
+    return [{"pid": r["pid"], "due_date": r["period_end"], "created_at": r["period_start"], "task_summary": "",
+             "status": "done" if r["status"] == "done" else ("missed" if r["status"] in ("not_done", "missed") else "open"),
+             "completed_at": r["answered_at"] if r["status"] == "done" else None, "code": "", "id": ""} for r in rows]
 
 
 def _series(values: dict[date, float | None], days: list[date]) -> list[dict[str, Any]]:
@@ -582,3 +597,16 @@ async def leads(days: int) -> dict[str, Any]:
         "rows": lead_rules.table_rows(rows, now_local().date()),
         "lateAfter": lead_rules.LATE_AFTER_DAYS,
     }
+
+
+async def plans(day: date | None = None) -> dict[str, Any]:
+    """The monthly plans against SAP so far (plan_facts.py) — the Director's «Режа» card (2026-11-02)."""
+    import calendar
+
+    from integrations.org_bot import plan_facts
+
+    day = day or now_local().date()
+    rows = await plan_facts.plans_vs_facts(day)
+    return {"month": f"{day:%m.%Y}", "pace": round(day.day / calendar.monthrange(day.year, day.month)[1], 3),
+            "rows": [{"direction": r["direction"], "plan": r["plan"], "planText": r["plan_text"], "fact": None if r["fact"] is None else round(r["fact"]),
+                      "share": None if r["share"] is None else round(r["share"], 3)} for r in rows]}

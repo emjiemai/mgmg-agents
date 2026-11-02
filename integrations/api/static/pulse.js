@@ -595,6 +595,39 @@
       body.appendChild(tr);
     });
   }
+  // ---- plans against SAP (2026-11-02): the Director only — anyone else gets 404 and the card stays hidden ------
+  function renderPlans(P) {
+    $("plans-card").hidden = false;
+    $("rail-plans").hidden = false;
+    $("plans-hint").textContent = `${P.month} · ой ${fmt1.format(P.pace * 100)}% ўтди · чизиқ — ой қаердалиги · /reja`;
+    const list = $("plan-list");
+    list.textContent = "";
+    P.rows.forEach((r) => {
+      const li = el("li", r.fact === null ? "none" : "");
+      li.appendChild(el("span", "name", r.direction));
+      const track = el("span", "track");
+      if (r.fact !== null && r.share !== null) {
+        const fill = el("span", r.share >= P.pace ? "fill ahead" : "fill");
+        fill.style.width = `${Math.min(100, Math.round(r.share * 100))}%`;
+        track.appendChild(fill);
+      }
+      const pace = el("span", "pace");
+      pace.style.left = `${Math.round(P.pace * 100)}%`;
+      track.appendChild(pace);
+      li.appendChild(track);
+      const num = el("span", "num");
+      if (r.fact === null) num.textContent = "SAP'да алоҳида ҳисобланмайди";
+      else {
+        num.appendChild(el("b", null, `$${fmtInt.format(r.fact)}`));
+        num.appendChild(document.createTextNode(` / $${r.planText}` + (r.share === null ? "" : ` · ${fmtInt.format(r.share * 100)}%`)));
+      }
+      li.appendChild(num);
+      list.appendChild(li);
+    });
+  }
+  async function loadPlans() {
+    try { renderPlans(await api("/pulse/api/plans")); } catch (e) { /* not the Director, or later */ }
+  }
   async function loadLeads() {
     try { renderLeads(await api(`/pulse/api/leads?days=${state.days}`)); } catch (e) { /* not the Director, or later */ }
   }
@@ -637,10 +670,12 @@
   loadOverview();
   loadTape();
   loadLeads();
+  loadPlans();
   document.querySelectorAll(".rail-link[href]").forEach((a) => a.addEventListener("click", () => {
     document.querySelectorAll(".rail-link").forEach((x) => x.classList.toggle("on", x === a));
   }));
   setInterval(loadTape, TAPE_EVERY);
   setInterval(loadOverview, OVERVIEW_EVERY);
   setInterval(loadLeads, OVERVIEW_EVERY);
+  setInterval(loadPlans, OVERVIEW_EVERY);
 })();

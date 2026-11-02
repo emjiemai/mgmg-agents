@@ -79,6 +79,24 @@ frequency, time, merge, remove) and why, from the reasons people wrote — polit
 own words; and /reja's plans. To the Director with ✅ Қабул / ❌ Рад per suggestion (`duty_suggestions`); an accepted
 one goes to IT to change in the register. IT gets the same without the plans' amounts.
 
-## Next (week 4, to 30.11)
+## Week 4 — everyone connected, acceptance, PULSE (2026-11-02, `integrations/org_bot/rollout.py`)
 
-Week 4: everyone connected, tuning, acceptance.
+**Who is connected** (the Director's and the admin's `/vazifalar`, the Friday review): the register's people in the
+bot or not (they write to OPS Manager Bot and register — technicians with the «Техник» role), the bot's people with no
+duty in the register (a head adds their rows; the Owner / Director gets none), live 02.11: 11 of 13 in the bot (not:
+Рушан, Жамолиддин), no duties: Умар Хошимов.
+
+**Acceptance** — the ЭМЖИЕМ МИЯ document's stage-1 condition, measured: «ходимларнинг ≥ 90 % 5 иш куни кетма-кет
+чек-инга жавоб берди». A card day counts when at least 90 % of those who got the 08:45 card answered at least one line
+that day; shown as «⏳ 3/5 кун · охирги кун 06.11: 11/12 (92 %)», then «✅ бажарилди».
+
+**PULSE:** the register's tasks count in each person's daily score (the «tasks» 30 points: done that day 1, missed or
+⛔ 0, a week's task not before it is due); and the Director's **«Режа ва факт»** card — each monthly plan as a bar
+against the month's pace (green ahead, red behind), the unmeasurable plans said.
+
+**The Garmin manager's `/vazifalar`:** his own duties and his team's day (✅ / жами, ⛔, 👎).
+
+## To 30.11 (by hand)
+
+Connect the register's Google Sheet (`DUTIES_SHEET_ID`) so heads can fix their rows; the technicians register; Умар
+Хошимов's duties added; ▶️ on `/vazifalar`; then 5 working days in a row at ≥ 90 % — the Boss's acceptance.

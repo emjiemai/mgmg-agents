@@ -1877,7 +1877,12 @@ async def _handle_employee_message(
         return await _show_today_report(employee, run_id)
     if text.lower() in RECONCILE_COMMANDS and may_reconcile(employee):  # accounting: SAP ↔ 1C ↔ Billz now (02.11)
         return await _start_reconcile(employee, run_id, background)
-    if text.lower() in duties.COMMANDS:  # their own duties from the register (02.11)
+    if text.lower() in duties.COMMANDS:  # their own duties from the register; a manager also his team's day (02.11)
+        if employee.get("role") in report_calendar.TEAM_OF:
+            from integrations.org_bot import rollout
+
+            await _reply(telegram_user_id, run_id, await rollout.team_view(employee, today_local()))
+            return "duties_team_sent"
         await _reply(telegram_user_id, run_id, await duties.own_view(employee))
         return "duties_own_sent"
     if employee.get("role") == leads.SALES_ROLE and text.lower() in lead_tracker.COMMANDS:  # own open leads (28.10)

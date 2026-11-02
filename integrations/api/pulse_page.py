@@ -6,6 +6,7 @@
     GET /pulse/api/tape           today's actions, newest first
     GET /pulse/api/person/{id}    one person's line and day (?days=…&day=YYYY-MM-DD)
     GET /pulse/api/leads          the B2B lead tracker (?days=…) — the Director only (2026-10-28)
+    GET /pulse/api/plans          the monthly plans against SAP — the Director only (2026-11-02)
     GET /pulse/static/{file}      the page's own files and fonts
 
 Read-only, private: only the Director (everyone) and the Garmin manager (his team), checked on every request.
@@ -142,6 +143,20 @@ async def lead_figures(request: Request, days: int = 30) -> Response:
         return _json(await data.leads(days))
     except Exception as exc:  # noqa: BLE001
         log.error("PULSE leads failed: {}", type(exc).__name__)
+        return _json({"error": "failed"}, 500)
+
+
+@router.get("/api/plans")
+async def plan_figures(request: Request) -> Response:
+    who = await viewer(request)
+    if who is None:
+        return _json({"error": "expired"}, 401)
+    if who[1] is not None:  # the Garmin manager's view is his team; the company's plans are the Boss's
+        return _json({"error": "not_found"}, 404)
+    try:
+        return _json(await data.plans())
+    except Exception as exc:  # noqa: BLE001
+        log.error("PULSE plans failed: {}", type(exc).__name__)
         return _json({"error": "failed"}, 500)
 
 

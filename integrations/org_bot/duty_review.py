@@ -214,6 +214,13 @@ async def run(day: date, run_id: uuid.UUID) -> dict[str, int]:
     except Exception as exc:  # noqa: BLE001
         log.warning("Plans not read: {}", type(exc).__name__)
         plans = None
+    from integrations.org_bot import rollout
+
+    try:
+        connected = "\n\n" + rollout.status_text(await rollout.status(day))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Connection status not read: {}", type(exc).__name__)
+        connected = ""
     keyboard = {"inline_keyboard": [[{"text": f"{n} ✅ Қабул", "callback_data": f"{PREFIX}:{s['id']}:y"},
                                      {"text": f"{n} ❌ Рад", "callback_data": f"{PREFIX}:{s['id']}:n"}]
                                     for n, s in enumerate(stored, start=1)]}
@@ -223,11 +230,11 @@ async def run(day: date, run_id: uuid.UUID) -> dict[str, int]:
     async with _bot(run_id) as bot:
         for boss in await store.active_employees_by_role(DIRECTOR_ROLE):
             try:
-                await bot.send_message(review_text(monday, day, people, plans, False) + tail, chat_id=str(boss["telegram_user_id"]),
+                await bot.send_message(review_text(monday, day, people, plans, False) + connected + tail, chat_id=str(boss["telegram_user_id"]),
                                        reply_markup=keyboard if stored else None)
             except TelegramError as exc:
                 log.warning("Review not delivered: {}", type(exc).__name__)
-    await admin.tell_admin(review_text(monday, day, people, None, True) + tail.replace("<b>Реестрга таклифлар</b>", "<b>Таклифлар</b>"), run_id)
+    await admin.tell_admin(review_text(monday, day, people, None, True) + connected + tail.replace("<b>Реестрга таклифлар</b>", "<b>Таклифлар</b>"), run_id)
     counts = {"people": len(people), "tasks": len(tasks), "suggestions": len(stored)}
     await log_action(agent=AGENT, action="weekly_review", target_system="telegram", status="success", run_id=run_id,
                      mode="notify", payload=counts)

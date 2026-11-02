@@ -1823,6 +1823,57 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_rollout() -> None:
+    """Week 4 (2026-11-02): everyone connected, the Boss's acceptance measured, the register's tasks in PULSE's score,
+    plan vs fact in PULSE, the Garmin manager's team day."""
+    print("everyone connected, acceptance, PULSE plans (02.11.2026)")
+    import asyncio
+
+    from integrations.org_bot import duties, duty_review, ops_manager, rollout
+    from integrations.pulse import data as pulse_data
+    from integrations.pulse import score as sc
+
+    d = [date(2026, 11, 9 - i) for i in range(7)]
+    check("the acceptance streak: card days in a row (newest first) with ≥ 90 % answering",
+          [rollout.streak([(x, s) for x, s in zip(d, shares)]) for shares in
+           ([1, 0.95, 0.9, 1, 0.92, 0.5], [0.89, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1])], [5, 0, 7])
+    text = rollout.status_text({"register": 13, "in_bot": 11, "not_in_bot": ["Жамолиддин", "Рушан"], "no_duties": ["Умар Хошимов"],
+                                "acceptance": {"streak": 3, "met": False, "last": (date(2026, 11, 6), 0.917, 11, 12)}})
+    check_true("who is connected, who isn't, who has no duty, the acceptance condition — names and counts only",
+               "реестрдаги 13 кишидан 11 таси ботда" in text and "Ботда йўқ (OPS Manager ботига ёзиб рўйхатдан ўтсин): Жамолиддин, Рушан" in text
+               and "реестрда вазифаси йўқ: Умар Хошимов" in text and "⏳ 3/5 кун · охирги кун 06.11: 11/12 (92%)" in text and "$" not in text)
+    check_true("...before any card: said, not a zero", "карталар ҳали юборилмаган" in rollout.status_text(
+        {"register": 1, "in_bot": 1, "not_in_bot": [], "no_duties": [], "acceptance": {"streak": 0, "met": False, "last": None}}))
+    check_true("shown on the Director's /vazifalar, the admin's and in the Friday review",
+               "rollout.status_text(" in inspect_source(duties.director_view) and "rollout.status_text(" in load_source("integrations/org_bot/admin.py")
+               and "rollout.status_text(" in inspect_source(duty_review.run))
+    check_true("the Owner gets no tasks from the register (not listed as missing duties)", "operatsion_direktor" in rollout.NO_DUTIES_ROLES)
+    check_true("a manager's /vazifalar: his duties and his team's day", "rollout.team_view(employee" in inspect_source(ops_manager))
+
+    # ---- PULSE: the register's tasks in the score's task part; the plans card
+    rows = [{"pid": "p", "period_start": date(2026, 11, 2), "period_end": date(2026, 11, 2), "status": "done",
+             "answered_at": __import__("datetime").datetime(2026, 11, 2, 10, tzinfo=__import__("datetime").timezone.utc)},
+            {"pid": "p", "period_start": date(2026, 11, 2), "period_end": date(2026, 11, 2), "status": "missed", "answered_at": None},
+            {"pid": "p", "period_start": date(2026, 11, 2), "period_end": date(2026, 11, 7), "status": "open", "answered_at": None}]
+
+    async def fake_fetch(sql, params=None):
+        return rows
+
+    saved = pulse_data.fetch_all
+    pulse_data.fetch_all = fake_fetch
+    try:
+        mapped = asyncio.run(pulse_data._duty_tasks(date(2026, 11, 1), ["p"]))
+    finally:
+        pulse_data.fetch_all = saved
+    check("a duty done that day counts 1, a missed one 0, the week's task not yet (due Saturday)",
+          sc.task_value(mapped, date(2026, 11, 2), pulse_data._local_day), 0.5)
+    page = load_source("integrations/api/pulse_page.py")
+    html, js = load_source("integrations/api/static/pulse.html"), load_source("integrations/api/static/pulse.js")
+    check_true("PULSE «Режа ва факт» for the Director only: bars against the month's pace, unmeasured said",
+               '@router.get("/api/plans")' in page and page.count("if who[1] is not None:") >= 2 and 'id="plans-card"' in html
+               and "renderPlans" in js and "SAP'да алоҳида ҳисобланмайди" in js and ".innerHTML" not in js)
+
+
 def test_plan_facts_and_review() -> None:
     """Week 3 (2026-11-02): the system checks what people report (SAP, Billz), the month's plans against facts, and
     the Friday review — rules pick the duties, the AI writes the change, the Director decides."""
@@ -10647,6 +10698,7 @@ def main() -> int:
         test_duties_register,
         test_duty_tasks,
         test_plan_facts_and_review,
+        test_rollout,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,
