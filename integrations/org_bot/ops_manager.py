@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, agenda, ai_chat, cheques, duties, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, agenda, ai_chat, cheques, duties, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -350,6 +350,11 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
     lead_outcome = await lead_tracker.handle_callback(prefix, rest, callback, run_id)
     if lead_outcome is not None:
         return lead_outcome
+
+    # Daily tasks from the register: ✅ / ⛔ / 👎 and the Director's ⏸ / ▶️ (duty_tasks.py, 2026-11-03).
+    duty_outcome = await duty_tasks.handle_callback(prefix, rest, callback, run_id)
+    if duty_outcome is not None:
+        return duty_outcome
 
     # Excused days: the explanation card's ⬜ / ↩ and /sababli (excused.py, 2026-10-23).
     excused_outcome = await excused.handle_callback(prefix, rest, callback, run_id)
@@ -900,8 +905,9 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await lead_tracker.send_director(telegram_user_id, run_id)
     if (message.get("text") or "").strip().lower() in RECONCILE_COMMANDS:  # SAP ↔ 1C ↔ Billz now (02.11)
         return await _start_reconcile(employee, run_id, background)
-    if (message.get("text") or "").strip().lower() in duties.COMMANDS:  # the duties register (02.11)
-        await _reply(telegram_user_id, run_id, await duties.director_view())
+    if (message.get("text") or "").strip().lower() in duties.COMMANDS:  # the duties register (02.11), ⏸ / ▶️ (03.11)
+        text, keyboard = await duties.director_card()
+        await _reply(telegram_user_id, run_id, text, keyboard)
         return "duties_register_sent"
     # /hisobot too — the Director sends no report of his own (2026-10-17).
     if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
@@ -1842,6 +1848,10 @@ async def _handle_employee_message(
     lead_answer = await lead_tracker.take_message(employee, message, run_id)
     if lead_answer is not None:
         return lead_answer
+    # After ✅ / ⛔ on a daily duty: the number done, or why not (duty_tasks.py, 2026-11-03).
+    duty_answer = await duty_tasks.take_message(employee, message, run_id)
+    if duty_answer is not None:
+        return duty_answer
     # A photo, video or file: ask what it's for — it goes to the Director as
     # it is, never to the AI (report_tools.py).
     kind = report_tools.file_kind(message)

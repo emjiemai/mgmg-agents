@@ -1823,6 +1823,123 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_duty_tasks() -> None:
+    """Week 2 (2026-11-03): each day's tasks from the duties register — one card per person at 08:45, ✅ (with the
+    number) / ⛔ (with the reason) / 👎 «фойдасиз», IT's check, 17:30 reminder, 22:00 close, ⏸ / ▶️."""
+    print("daily tasks from the register (03.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import admin, duties, duty_tasks, ops_manager
+
+    tue, mon = date(2026, 11, 3), date(2026, 11, 2)
+    P = duty_tasks.period
+    check("daily → the day", P("daily", "", tue), (tue, tue))
+    check("weekly with a weekday → only that day", (P("weekly", "душанба", mon), P("weekly", "душанба", tue)), ((mon, mon), None))
+    check("weekly without one → Monday to Saturday", P("weekly", "", tue), (mon, date(2026, 11, 7)))
+    check("monthly → the month; with a day → that day only", (P("monthly", "", tue), P("monthly", "3", tue), P("monthly", "5", tue)),
+          ((date(2026, 11, 1), date(2026, 11, 30)), (tue, tue), None))
+    check("a deadline → its last 7 days", (P("deadline", "10.11.2026", tue), P("deadline", "24.12.2026", tue), P("deadline", "31 дек", tue)),
+          ((tue, date(2026, 11, 10)), None, None))
+    check_true("rules and «as needed» are the profile only, never a task",
+               P("rule", "", tue) is None and P("as_needed", "", tue) is None and "rule" not in duty_tasks.TASK_CADENCES)
+
+    def T(i, title, cadence, start, end, target="", unit="", status="open", **kw):
+        return {"id": i, "title": title, "cadence": cadence, "period_start": start, "period_end": end, "target": target,
+                "unit": unit, "status": status, "value": kw.get("value"), "reason": kw.get("reason"), "useless": kw.get("useless", False)}
+
+    tasks = [T(1, "Тижорий таклиф", "daily", tue, tue, "2", "та", "done", value=3),
+             T(2, "Қўнғироқ", "daily", tue, tue, "3", "та", "not_done", reason="телефон кўтармади", useless=True),
+             T(3, "Учрашув", "weekly", mon, date(2026, 11, 7), "3", "та"),
+             T(4, "Сотув", "monthly", date(2026, 11, 1), date(2026, 11, 30), "30000", "$"),
+             T(5, "Санаш", "deadline", tue, date(2026, 11, 10))]
+    text, kb = duty_tasks.card(tasks, tue)
+    check_true("the card: numbered, what's done with its number, why not, 👎; the week's task «(ҳафта охиригача)», a deadline's date",
+               "✅ 1. Тижорий таклиф — 2 та · бажарилди: 3" in text and "⛔ 2. Қўнғироқ — 3 та · телефон кўтармади 👎" in text
+               and "▫️ 3. Учрашув — 3 та (ҳафта охиригача)" in text and "▫️ 4. Санаш (муддат 10.11)" in text)
+    check_true("a month's target isn't on every morning's card (Mondays, its first and last 5 days)",
+               "Сотув" not in text and "Сотув — $30 000 (ой охиригача)" in duty_tasks.card(tasks, mon)[0])
+    check("three buttons per open line only", [[b["callback_data"] for b in row] for row in kb["inline_keyboard"]],
+          [["dt:3:d", "dt:3:x", "dt:3:u"], ["dt:5:d", "dt:5:x", "dt:5:u"]])
+    check("numbers typed back", [duty_tasks.parse_value(x) for x in ("3", "3 та", "2,5", "қилдим")], [3.0, 3.0, 2.5, None])
+    check("money targets read as money", [duty_tasks.aim_text("1350", "$"), duty_tasks.aim_text("15000–20000", "$")], ["$1 350", "$15 000–20 000"])
+
+    # ---- the buttons and typed answers, store and Telegram faked
+    calls, sent = [], []
+    task = {"id": 7, "employee_id": "e1", "status": "open", "title": "Қўнғироқ", "target": "10", "unit": "та", "useless": False}
+
+    async def fake_one(sql, params=None):
+        calls.append((sql.split()[0], params))
+        if "FROM duty_tasks WHERE id" in sql:
+            return dict(task)
+        if "asked_kind IS NOT NULL" in sql:
+            return dict(task, asked_kind=pending["kind"]) if pending["kind"] else None
+        return None
+
+    async def fake_exec(sql, params=None):
+        calls.append((sql.split()[0] + " " + sql.split()[1], params))
+
+    async def fake_send(chat_id, text, run_id, keyboard=None):
+        sent.append(text)
+
+    async def fake_answer(cb, text):
+        pass
+
+    async def fake_refresh(cb, emp, run_id):
+        pass
+
+    async def me(tg):
+        return {"id": "e1", "status": "active", "role": "b2b_sotuv", "telegram_user_id": tg} if tg == 5 else \
+            {"id": "e2", "status": "active", "role": "b2b_sotuv", "telegram_user_id": tg}
+
+    from integrations.org_bot import store
+    pending = {"kind": "value"}
+    saved = [(duty_tasks, n, getattr(duty_tasks, n)) for n in ("fetch_one", "execute", "_send", "_answer", "_refresh")]
+    saved.append((store, "get_employee_by_telegram_id", store.get_employee_by_telegram_id))
+    duty_tasks.fetch_one, duty_tasks.execute, duty_tasks._send, duty_tasks._answer, duty_tasks._refresh = (
+        fake_one, fake_exec, fake_send, fake_answer, fake_refresh)
+    store.get_employee_by_telegram_id = me
+
+    def tap(v, who=5):
+        return {"id": "q", "from": {"id": who}, "data": f"dt:7:{v}", "message": {"message_id": 1, "chat": {"id": who}}}
+
+    try:
+        check("someone else's card: refused", asyncio.run(ops_manager._handle_callback(tap("d", 6), uuid.uuid4())), "duty_unauthorized")
+        check("✅ on a duty with a target", asyncio.run(ops_manager._handle_callback(tap("d"), uuid.uuid4())), "duty_value_asked")
+        check_true("...done at once (a forgotten number never makes it «missed»), and «нечта?» asked with the target",
+                   any(c[0] == "UPDATE duty_tasks" and c[1][:2] == ("done", "value") for c in calls) and "нечта бўлди" in sent[-1]
+                   and "мақсад: 10 та" in sent[-1])
+        emp = {"id": "e1", "telegram_user_id": 5}
+        check("words without a number go on to the usual flow", asyncio.run(duty_tasks.take_message(emp, {"text": "кейин ёзаман"}, uuid.uuid4())), None)
+        check("the number", asyncio.run(duty_tasks.take_message(emp, {"text": "8 та"}, uuid.uuid4())), "duty_value_saved")
+        check_true("...kept", any(c[0] == "UPDATE duty_tasks" and c[1] == (8.0, 7) for c in calls))
+        check("⛔ asks why", asyncio.run(ops_manager._handle_callback(tap("x"), uuid.uuid4())), "duty_reason_asked")
+        pending["kind"] = "reason"
+        check("a question isn't the reason", asyncio.run(duty_tasks.take_message(emp, {"text": "буни ким қилади?"}, uuid.uuid4())), None)
+        check("the reason", asyncio.run(duty_tasks.take_message(emp, {"text": "мижоз телефон кўтармади"}, uuid.uuid4())), "duty_reason_saved")
+        check("👎 «фойдасиз»", asyncio.run(ops_manager._handle_callback(tap("u"), uuid.uuid4())), "duty_useless")
+        check("only the Director switches it in OPS Manager", asyncio.run(ops_manager._handle_callback(
+            {"id": "q", "from": {"id": 5}, "data": "dsw:on", "message": {}}, uuid.uuid4())), "duty_unauthorized")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # ---- the day
+    check_true("before 08:45 or on a stopped switch nothing goes out; 22:00 closes the day anyway",
+               "if hm >= CLOSE_AT:" in inspect_source(duty_tasks.tick) and "not await is_on()" in inspect_source(duty_tasks.tick)
+               and "SEND_AT <= hm" in inspect_source(duty_tasks.tick) and duty_tasks.SEND_AT == (8, 45))
+    check_true("not on a day off, outside a person's week, or on an excused day",
+               "store.is_day_off(day)" in inspect_source(duty_tasks.tick) and "kpi.works_on(e, day)" in inspect_source(duty_tasks.people_today)
+               and "excused_days" in inspect_source(duty_tasks.people_today))
+    check_true("IT's 08:45 check: counts, the unreached, the register read, yesterday's «фойдасиз» — no targets",
+               "admin.tell_admin(await it_check(" in inspect_source(duty_tasks.tick) and "target" not in inspect_source(duty_tasks.it_check))
+    check_true("⏸ / ▶️ on the Director's and the admin's /vazifalar; the API runs it",
+               "duty_tasks.switch_button" in inspect_source(duties.director_card) and 'action == "dsw"' in inspect_source(admin.handle_admin_callback)
+               and "duty_tasks.tick(" in load_source("integrations/api/app.py")
+               and "CREATE TABLE IF NOT EXISTS duty_switch" in load_source("database/schema.sql"))
+    check_true("the Director sees today's progress per person", "duty_tasks.progress(" in inspect_source(duties.director_view))
+
+
 def test_duties_register() -> None:
     """The duties register (2026-11-02, the Boss's T-0051 / T-0054 / T-0055, week 1): a Google Sheet people edit (or
     the Boss's example until it's set), its history, and each person's work profile for the work AI."""
@@ -1864,7 +1981,7 @@ def test_duties_register() -> None:
                                                 "unmatched_list": ["Жамолиддин", "Рушан"]}))
     check_true("/vazifalar everywhere: the employee's own, the Director's register, the admin's sync",
                duties.COMMANDS == admin.DUTIES_COMMANDS and "vazifalar" in dict(menus.EMPLOYEE) and "vazifalar" in dict(menus.DIRECTOR)
-               and "vazifalar" in dict(menus.ADMIN) and "duties.director_view()" in inspect_source(ops_manager)
+               and "vazifalar" in dict(menus.ADMIN) and "duties.director_card()" in inspect_source(ops_manager)
                and "duties.own_view(employee)" in inspect_source(ops_manager))
     check_true("read every morning from 07:30, once; history of every change; the sheet's id a setting",
                "duties.tick(" in load_source("integrations/api/app.py") and "CREATE TABLE IF NOT EXISTS duty_changes" in load_source("database/schema.sql")
@@ -10406,6 +10523,7 @@ def main() -> int:
         test_db_mirror,
         test_reconcile,
         test_duties_register,
+        test_duty_tasks,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

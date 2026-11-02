@@ -36,8 +36,24 @@ work AI already reads it, so it answers knowing the person's job. Names are matc
 - Admin Bot: **/vazifalar** — reads the sheet now: counts, the rows to fix (by row number), who isn't in the bot, how to
   connect the sheet (the service account's address). No targets or sums (IT sees no company figures).
 
-## Next (weeks 2–4, to 30.11)
+## Week 2 — the daily tasks (2026-11-03, `integrations/org_bot/duty_tasks.py`)
 
-Week 2: 08:45 — each person's tasks for the day from the register, one morning card, ✅ with the number, the end-of-day
-check, «фойдали / фойдасиз»; IT's 08:45 check. Week 3: checked against SAP / Billz / Verifix where the data is; plan vs
+**On / off:** ⏸ / ▶️ on the Director's `/vazifalar` and Admin Bot `/vazifalar` (`duty_switch`; no row = off — the
+other side is told). Nothing goes out on a /dam day off, outside a person's working week, on their excused day, or
+with `BOTS_FROZEN`.
+
+| Time | What happens |
+| ---- | ---- |
+| 07:30 | the register is read (week 1) |
+| 08:45 | each person's due duties become tasks (`duty_tasks`): daily → today; weekly with a weekday → that day, without → Monday–Saturday; monthly with a day → that day, without → the month (on the card Mondays, its first and last 5 days); a deadline → its last 7 days. «Қоида» / «зарур бўлганда» stay the profile only. Then **one card per person**: «📋 Бугунги вазифаларингиз», numbered lines with the target, three buttons each — **✅** done (a duty with a target then asks «нечта бўлди?» and keeps the number; done counts at once, a forgotten number never makes it missed), **⛔** not done (asks why, one sentence), **👎** «фойдасиз» (the Boss: useless tasks are analysed). The card redraws itself as items are answered. |
+| 08:50 | IT's check in Admin Bot: was the register read at 07:30, how many people and tasks went out, who wasn't reached, yesterday's «фойдасиз» marks (titles and names — no targets or sums) |
+| 17:30 | one reminder card «Бугун қолган вазифалар» — only to those with something still open today |
+| 22:00 | today's open tasks, and weekly / monthly / deadline ones whose period ended, become «бажарилмади» |
+
+The Director's `/vazifalar` shows today's progress per person (✅ / жами, 👎). A typed number or reason is taken for 3
+hours after the tap; words without a number, or a question, go on to the usual flow.
+
+## Next (weeks 3–4, to 30.11)
+
+Week 3: checked against SAP / Billz / Verifix where the data is; plan vs
 fact; the Friday review with the AI's suggestions (a head approves). Week 4: everyone connected, tuning, acceptance.

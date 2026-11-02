@@ -236,9 +236,12 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
     if text in LEADS_COMMANDS:
         return await _show_lead_switch(run_id)
     if text in DUTIES_COMMANDS:
-        from integrations.org_bot import duties
+        from integrations.org_bot import duties, duty_tasks
 
-        await tell_admin(duties.admin_text(await duties.sync(run_id)), run_id)
+        async with TelegramBot(agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+                               default_chat_id=settings.admin_bot_telegram_chat_id) as bot:
+            await bot.send_message(duties.admin_text(await duties.sync(run_id)),
+                                   reply_markup={"inline_keyboard": [[duty_tasks.switch_button(await duty_tasks.is_on())]]})
         return "duties_synced"
     if text in TECH_REPORT_COMMANDS:
         from integrations.org_bot import tech_report
@@ -1401,6 +1404,15 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action in ("rsh", "rsm", "rsd", "rsok", "rsx"):  # 📊 the report sheet (report_sheet.py, 2026-10-24)
         return await _report_sheet_action(action, target_id, query_id, decided_by, callback, run_id)
+
+    if action == "dsw":  # /vazifalar: the daily cards from the register ⏸ / ▶️ (duty_tasks.py, 2026-11-03)
+        from integrations.org_bot import duty_tasks
+
+        await duty_tasks.set_switch(target_id == "on", decided_by, True, run_id)
+        await _answer(query_id, "▶️ Ёқилди" if target_id == "on" else "⏸ Тўхтатилди")
+        await _edit(callback, (callback.get("message") or {}).get("text") or "📋",
+                    {"inline_keyboard": [[duty_tasks.switch_button(target_id == "on")]]}, run_id)
+        return "duty_switch_on" if target_id == "on" else "duty_switch_off"
 
     if action == "lsw":  # /lidlar: the B2B lead tracker ⏸ / ▶️ (lead_tracker.py, 2026-10-28)
         return await _toggle_leads(target_id == "on", query_id, decided_by, callback, run_id)

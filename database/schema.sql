@@ -1426,3 +1426,50 @@ CREATE TABLE IF NOT EXISTS monthly_plans (
     note        TEXT         NOT NULL DEFAULT '',
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- Daily tasks from the duties register (2026-11-03, week 2; integrations/org_bot/duty_tasks.py): one row per duty and
+-- period (a day; a weekday; the week; the month; a deadline's last 7 days), answered on one card per person —
+-- ✅ (with the number when the duty has a target), ⛔ (with the reason), 👎 «фойдасиз». duty_cards: the cards sent;
+-- duty_runs: each step once a day; duty_switch: on / off (no row = off).
+CREATE TABLE IF NOT EXISTS duty_tasks (
+    id            BIGSERIAL    PRIMARY KEY,
+    duty_id       BIGINT       NOT NULL REFERENCES duties (id),
+    employee_id   UUID         NOT NULL REFERENCES employees (id),
+    period_start  DATE         NOT NULL,
+    period_end    DATE         NOT NULL,
+    cadence       TEXT         NOT NULL,
+    title         TEXT         NOT NULL,
+    target        TEXT         NOT NULL DEFAULT '',
+    unit          TEXT         NOT NULL DEFAULT '',
+    status        TEXT         NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'not_done', 'missed')),
+    value         NUMERIC,
+    reason        TEXT,
+    useless       BOOLEAN      NOT NULL DEFAULT FALSE,
+    useless_at    TIMESTAMPTZ,
+    answered_at   TIMESTAMPTZ,
+    asked_kind    TEXT         CHECK (asked_kind IN ('value', 'reason')),
+    asked_at      TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (duty_id, period_start)
+);
+CREATE INDEX IF NOT EXISTS idx_duty_tasks_person ON duty_tasks (employee_id, period_end);
+CREATE TABLE IF NOT EXISTS duty_cards (
+    employee_id  UUID         NOT NULL REFERENCES employees (id),
+    day          DATE         NOT NULL,
+    kind         TEXT         NOT NULL CHECK (kind IN ('morning', 'evening')),
+    message_id   BIGINT,
+    sent_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (employee_id, day, kind)
+);
+CREATE TABLE IF NOT EXISTS duty_runs (
+    day   DATE  NOT NULL,
+    kind  TEXT  NOT NULL,
+    at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (day, kind)
+);
+CREATE TABLE IF NOT EXISTS duty_switch (
+    id       BOOLEAN      PRIMARY KEY DEFAULT TRUE CHECK (id),
+    enabled  BOOLEAN      NOT NULL,
+    set_by   TEXT         NOT NULL,
+    set_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);

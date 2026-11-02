@@ -403,11 +403,28 @@ async def director_view() -> str:
         lines.append(f"• {escape(person)} — {len(mine)} та (кунлик {daily}){tag}")
     if plans:
         lines += ["", "<b>Ойлик режалар, $</b>"] + [f"• {escape(p['direction'])} — {escape(p['amount_usd'])}" for p in plans]
+    from integrations.common.timeutil import today_local
+    from integrations.org_bot import duty_tasks
+
+    today = await duty_tasks.progress(today_local())
+    if today:
+        lines += ["", "<b>Бугун</b> (✅ / жами): " + ", ".join(
+            f"{escape(r['person'])} {r['done']}/{r['total']}" + (f" 👎{r['useless']}" if r["useless"] else "") for r in today)]
     lines.append(f"\nСўнгги 7 кунда ўзгариш: {changes['n'] if changes else 0} та")
     url = sheet_url()
     lines.append(f'<a href="{url}">Реестрни очиш ва ўзгартириш</a>' if url else
                  "<i>Реестр жадвали ҳали уланмаган — ҳозир Эгасининг 02.11 даги намунаси ишлатилмоқда.</i>")
     return "\n".join(lines)
+
+
+async def director_card() -> tuple[str, dict[str, Any]]:
+    """The Director's /vazifalar with ⏸ / ▶️ for the daily cards (week 2)."""
+    from integrations.org_bot import duty_tasks
+
+    on = await duty_tasks.is_on()
+    text = await director_view() + ("\n\n▶️ Кунлик вазифалар 08:45 да юборилмоқда" if on else
+                                    "\n\n⏸ Кунлик вазифалар ҳали юборилмайди — ▶️ босинг")
+    return text, {"inline_keyboard": [[duty_tasks.switch_button(on)]]}
 
 
 def admin_text(result: dict[str, Any]) -> str:

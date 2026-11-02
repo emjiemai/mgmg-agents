@@ -138,6 +138,13 @@ async def _report_close_loop() -> None:
             await duties.tick(now_local())
         except Exception as exc:  # noqa: BLE001 — the next round tries again
             log.error("Duties sync failed: {}", type(exc).__name__)
+        try:  # 08:45 / 17:30 / 22:00: the daily tasks from the register (duty_tasks.py, 03.11) — when it's on
+            from integrations.common.timeutil import now_local
+            from integrations.org_bot import duty_tasks
+
+            await duty_tasks.tick(now_local())
+        except Exception as exc:  # noqa: BLE001 — the next round tries again
+            log.error("Daily duty tasks failed: {}", type(exc).__name__)
         try:  # 09:00: SAP ↔ 1C ↔ Billz discrepancy report to accounting (reconcile/run.py, 02.11), once a day
             from integrations.common.timeutil import now_local
             from integrations.reconcile import run as reconcile
