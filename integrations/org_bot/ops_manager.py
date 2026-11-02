@@ -898,6 +898,8 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await _send_pulse_link(telegram_user_id, run_id)
     if (message.get("text") or "").strip().lower() in lead_tracker.COMMANDS:  # B2B leads: statistics, ⏸ / ▶️ (28.10)
         return await lead_tracker.send_director(telegram_user_id, run_id)
+    if (message.get("text") or "").strip().lower() in RECONCILE_COMMANDS:  # SAP ↔ 1C ↔ Billz now (02.11)
+        return await _start_reconcile(employee, run_id, background)
     # /hisobot too — the Director sends no report of his own (2026-10-17).
     if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
         return await _send_report_calendar(telegram_user_id, run_id)
@@ -1750,6 +1752,7 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
 
 
 PULSE_COMMANDS = ("/pulse", "/пулс")
+RECONCILE_COMMANDS = ("/farqlar", "/фарқлар", "/sverka", "/сверка")  # = reconcile.run.COMMANDS (selfcheck)
 
 
 async def _send_pulse_link(telegram_user_id: int, run_id: uuid.UUID) -> str:
@@ -1773,6 +1776,35 @@ async def _send_competitors(telegram_user_id: int, run_id: uuid.UUID) -> None:
         log.error("Competitors check failed: {}", type(exc).__name__)
         try:
             await _reply(telegram_user_id, run_id, "Рақобатчиларни текшириб бўлмади, бир оздан кейин қайта уриниб кўринг.")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def may_reconcile(employee: dict[str, Any]) -> bool:
+    """/farqlar: the Director, or accounting holding SAP and 1C (the 09:00 report's people)."""
+    access = set(employee.get("data_access") or [])
+    return employee.get("role") == DIRECTOR_ROLE or (employee.get("role") == "buxgalteriya" and {"sap", "1c"} <= access)
+
+
+async def _start_reconcile(employee: dict[str, Any], run_id: uuid.UUID, background: BackgroundTasks | None) -> str:
+    """/farqlar: SAP ↔ 1C ↔ Billz now (reconcile/run.py) — it reads three systems, so it runs in the background."""
+    await _reply(employee["telegram_user_id"], run_id, "SAP, 1C ва Billz солиштирилмоқда, бир-икки дақиқа кутинг.")
+    if background is not None:
+        background.add_task(_send_reconcile, employee, run_id)
+    else:
+        await _send_reconcile(employee, run_id)
+    return "reconcile_asked"
+
+
+async def _send_reconcile(employee: dict[str, Any], run_id: uuid.UUID) -> None:
+    from integrations.reconcile import run as reconcile
+
+    try:
+        await reconcile.send_now(employee, run_id)
+    except Exception as exc:  # noqa: BLE001 — told, not raised (background)
+        log.error("Discrepancy report failed: {}", type(exc).__name__)
+        try:
+            await _reply(employee["telegram_user_id"], run_id, "Солиштириб бўлмади, бир оздан кейин қайта уриниб кўринг.")
         except Exception:  # noqa: BLE001
             pass
 
@@ -1817,6 +1849,8 @@ async def _handle_employee_message(
         return "ignored"
     if text.lower() in report_tools.REPORT_COMMANDS:
         return await _show_today_report(employee, run_id)
+    if text.lower() in RECONCILE_COMMANDS and may_reconcile(employee):  # accounting: SAP ↔ 1C ↔ Billz now (02.11)
+        return await _start_reconcile(employee, run_id, background)
     if employee.get("role") == leads.SALES_ROLE and text.lower() in lead_tracker.COMMANDS:  # own open leads (28.10)
         return await lead_tracker.send_seller(employee, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS:  # his team's dashboard (2026-10-22)

@@ -85,6 +85,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   is checked against SAP's columns by selfcheck (`test_sap_gateway_code`); values are bound
   parameters (`exec(sql, params)`). No Node on this PC — JS is syntax-checked with a parser only.
 - Schema self-applies on startup (`database/schema.sql`, idempotent ALTERs).
+- **SAP ↔ 1C ↔ Billz discrepancy report** (2026-11-02, T-2026-11-0048, `integrations/reconcile/`, spec 31): 09:00
+  working days (API loop, `reconcile_runs`) + `/farqlar` — to accounting with SAP + 1C access (Зайнабхон, Russian xlsx)
+  and the Director: sales/payments documents, customers'/suppliers' debt, shop by day, wrong data. AmoCRM, Didox later.
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

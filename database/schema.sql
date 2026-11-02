@@ -1379,3 +1379,10 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
     items       INTEGER      NOT NULL,
     new_items   INTEGER      NOT NULL
 );
+
+-- The 09:00 discrepancy report for accounting (2026-11-02, T-2026-11-0048, integrations/reconcile/): one row per
+-- day it went out — the API's 5-minute round claims the day, so it is sent once.
+CREATE TABLE IF NOT EXISTS reconcile_runs (
+    day      DATE         PRIMARY KEY,
+    sent_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);

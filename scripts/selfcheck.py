@@ -1823,6 +1823,128 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_reconcile() -> None:
+    """SAP B1 ↔ 1C ↔ Billz for accounting at 09:00 (2026-11-02, T-2026-11-0048): documents, balances, the shop,
+    wrong data — each named; retail and the operations SAP never records kept out."""
+    print("SAP ↔ 1C ↔ Billz discrepancy report (02.11.2026)")
+    import asyncio
+    import io
+    import uuid
+
+    from openpyxl import load_workbook
+
+    from integrations.org_bot import ops_manager
+    from integrations.reconcile import core
+    from integrations.reconcile import run as rec
+    from integrations.telegram import menus
+
+    d = date(2026, 10, 20)
+    sap = [core.Doc("SAP", d, "101", "301234567", "ООО Hilton", 1_000_000),
+           core.Doc("SAP", d, "102", "301234567", "ООО Hilton", 500_000),
+           core.Doc("SAP", d, "103", "", "Artel", 200_000),
+           core.Doc("SAP", d, "104", "309999999", "Akfa", 70_000)]
+    onec = [core.Doc("1C", d + timedelta(days=1), "Р-1", "301234567", "Hilton МЧЖ", 1_000_400),  # another day, ≤ 1 000 сўм
+            core.Doc("1C", d, "Р-2", "301234567", "Hilton", 450_000),                           # same party, other amount
+            core.Doc("1C", d, "Р-3", "", "«ARTEL» ООО", 200_000),                               # no ИНН: by name
+            core.Doc("1C", d, "Р-4", "305555555", "Korzinka", 90_000),                          # only 1C
+            core.Doc("1C", date(2026, 9, 1), "Р-0", "305555555", "Korzinka", 90_000)]          # outside the period
+    pairs = core.match_docs(sap, onec, date(2026, 10, 15), date(2026, 10, 31))
+    check("documents: amount differs, only SAP, only 1C (in the period), another date, matched by name",
+          sorted((p.status, (p.sap or p.onec).number) for p in pairs),
+          sorted([("amount", "102"), ("only_sap", "104"), ("only_1c", "Р-4"), ("date", "101"), ("match", "103")]))
+    check("...problems first", pairs[0].status, "amount")
+    bal = core.compare_balances([core.Balance("301234567", "Hilton", -5_000_000), core.Balance("", "Artel", 0)],
+                                [core.Balance("301234567", "Hilton МЧЖ", 5_000_000), core.Balance("309", "X", 2_000)])
+    check("balances: SAP's sign chosen by agreement; zero balances left out; one side only",
+          [(p.status, round(p.diff)) for p in bal], [("only_1c", 2000), ("match", 0)])
+    check_true("the shop: a day differs when SAP or 1C is off Billz",
+               core.ShopDay(d, 1_000_000, 1_000_000, 0).problem and not core.ShopDay(d, 1_000_000, 1_000_300, 1_000_000).problem)
+    probs = core.sap_problems(
+        [{"CardCode": "C1", "CardName": "Hilton", "LicTradNum": "30123", "BalanceSys": 9e6},
+         {"CardCode": "C2", "CardName": "A", "LicTradNum": "301234567"}, {"CardCode": "C3", "CardName": "B", "LicTradNum": "301234567"},
+         {"CardCode": "C4", "CardName": "C", "LicTradNum": "", "BalanceSys": 5e6}],
+        [{"DocEntry": 1, "DocNum": 7, "CardCode": "C4", "CardName": "C", "SlpCode": -1, "DocDate": "2026-10-01",
+          "CreateDate": "2026-10-09", "Price": 0, "Quantity": 1, "ObjType": "13", "CANCELED": "N"}],
+        [{"DocNum": 9, "CardCode": "", "Canceled": "N", "DocDate": "2026-10-02"}],
+        [{"ItemCode": "X1", "ItemName": "Fenix", "WhsCode": "01", "OnHand": -2}], date(2026, 11, 2))
+    check("SAP wrong data, each named", sorted(p.kind for p in probs),
+          sorted(["inn_bad", "inn_twice", "inn_missing", "no_salesperson", "entered_late", "zero_price", "payment_no_party",
+                  "stock_negative"]))
+    oprobs = core.onec_problems([{"Ref_Key": "a", "Description": "X", "ИНН": ""}, {"Ref_Key": "b", "Description": "Y", "ИНН": "301234567"},
+                                 {"Ref_Key": "c", "Description": "Z", "ИНН": "301234567"}],
+                                [{"Posted": False, "DeletionMark": False, "Number": "15", "Date": "2026-10-20", "_kind": "Реализация"}], {"a"})
+    check("1C wrong data: no ИНН (in use), one ИНН twice, not posted", sorted(p.kind for p in oprobs), ["inn_missing", "inn_twice", "unposted"])
+
+    # ---- reading: the shop and retail out of the document matching; only counterparty operations from 1C
+    sales = [{"DocEntry": 1, "DocNum": 11, "CardCode": "C9", "CardName": "Shop buyer", "WhsCode": "G.A._01", "DocDate": "2026-10-20",
+              "DocTotalSy": 300000, "CANCELED": "N", "ObjType": "13"},
+             {"DocEntry": 2, "DocNum": 12, "CardCode": "C1", "CardName": "Hilton", "WhsCode": "01", "DocDate": "2026-10-20",
+              "DocTotalSy": 900000, "CANCELED": "N", "ObjType": "14"}]
+    docs, shop_days = rec.sap_docs(sales, {"C1": "301234567"}, sales=True, shop=frozenset({"G.A._01"}))
+    check("SAP sales: shop invoices by day (not matched one by one), a credit note negative",
+          ([(x.number, x.amount, x.inn) for x in docs], shop_days), ([("12", -900000.0, "301234567")], {d: 300000.0}))
+    check("the shop's customers", rec.retail_cards(sales, frozenset({"G.A._01"})), {"C9"})
+    pays, _ = rec.sap_docs([{"DocEntry": 5, "CardCode": "C9", "DocDate": "2026-10-20", "DocTotalSy": 1, "Canceled": "N"}],
+                           {}, sales=False, shop=frozenset(), skip={"C9"})
+    check("their payments stay out (per cheque in SAP, card-terminal totals in 1C)", pays, [])
+    som, usd = "s", "u"
+    data = {"parties": [{"Ref_Key": "p", "Description": "Hilton", "ИНН": "301234567"}],
+            "currencies": [{"Ref_Key": som, "Code": "860"}, {"Ref_Key": usd, "Code": "840"}],
+            "docs": {"Document_ПоступлениеНаРасчетныйСчет": [
+                {"Posted": True, "Date": "2026-10-20", "Number": "1", "ВидОперации": "ОплатаПокупателя",
+                 "Контрагент": "p", "Контрагент_Type": "StandardODATA.Catalog_Контрагенты", "СуммаДокумента": 100, "ВалютаДокумента_Key": usd,
+                 "КурсДокумента": 12000, "КратностьДокумента": 1},
+                {"Posted": True, "Date": "2026-10-20", "Number": "2", "ВидОперации": "ПоступленияОтПродажПоПлатежнымКартамИБанковскимКредитам",
+                 "Контрагент": "p", "Контрагент_Type": "StandardODATA.Catalog_Контрагенты", "СуммаДокумента": 5}],
+                "Document_СписаниеСРасчетногоСчета": [
+                {"Posted": True, "Date": "2026-10-20", "Number": "3", "ВидОперации": "КомиссияБанка", "Контрагент": "p",
+                 "Контрагент_Type": "StandardODATA.Catalog_Контрагенты", "СуммаДокумента": 7}],
+                rec.RETAIL_SET: [{"Posted": True, "Date": "2026-10-20", "СуммаДокумента": 300000}]}}
+    found, retail, used, _every = rec.onec_docs(data)
+    check("1C: a buyer's payment in dollars at the document's rate; card-terminal money and bank fees left out; retail by day",
+          ([(x.number, x.amount) for x in found["money_in"]], found["money_out"], retail, used),
+          ([("1", 1_200_000.0)], [], {d: 300000.0}, {"p"}))
+    check("1C customers' debt: 4010 + 4015 minus advances received 6310", [(b.inn, b.amount) for b in rec.onec_customer_balances({
+        "chart": [{"Ref_Key": "a1", "Code": "4010"}, {"Ref_Key": "a2", "Code": "6310"}],
+        "parties": [{"Ref_Key": "p", "Description": "Hilton", "ИНН": "301234567"}],
+        "rows": [{"Account_Key": "a1", "ExtDimension1": "p", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты", "СуммаBalanceDr": 900},
+                 {"Account_Key": "a2", "ExtDimension1": "p", "ExtDimension1_Type": "StandardODATA.Catalog_Контрагенты", "СуммаBalanceCr": 100}]})],
+          [("301234567", 800.0)])
+
+    # ---- the file and the message
+    report = core.Report(date(2026, 11, 2), date(2026, 10, 3), date(2026, 11, 1), sales=pairs, customers=bal,
+                         shop=[core.ShopDay(d, 1_000_000, 1_000_000, 0)], problems=probs + oprobs)
+    for lang, first, last in (("uz", "Хулоса", "Нотўғри маълумот"), ("ru", "Сводка", "Ошибки в данных")):
+        wb = load_workbook(io.BytesIO(rec.workbook_bytes(report, lang)))
+        check_true(f"the workbook in {lang}: eight sheets, every pair / wrong record a row",
+                   wb.sheetnames[0] == first and wb.sheetnames[-1] == last and len(wb.sheetnames) == 8
+                   and wb.worksheets[1].max_row == 1 + len(pairs) and wb.worksheets[7].max_row == 1 + len(probs + oprobs))
+    msg = rec.message(report)
+    check_true("the message: a count per section, the details in the file, Uzbek Cyrillic",
+               "Сотув ҳужжатлари: 4" in msg and "Нотўғри маълумот: 11" in msg and "Excel" in msg
+               and latin_words(msg, allow={"Billz", "SAP", "C", "Excel"}) == [])
+    report.missing = ["1C"]
+    check_true("an unread system is named, never shown as zero", "Ўқилмади: 1C" in rec.message(report))
+
+    # ---- who, when
+    check_true("at 09:00–09:30 on working days only", asyncio.run(rec.tick(datetime(2026, 11, 2, 10, 0))) == 0
+               and asyncio.run(rec.tick(datetime(2026, 11, 1, 9, 5))) == 0)  # 01.11 is a Sunday
+    check_true("to accounting holding SAP and 1C (Зайнабхон); her language decides the file's",
+               "role = 'buxgalteriya' AND data_access @> ARRAY['sap', '1c']" in inspect_source(rec.recipients)
+               and 'lang = "ru" if (person.get("lang") or "") == "ru"' in inspect_source(rec.send))
+    check("/farqlar: the same words in the bot", ops_manager.RECONCILE_COMMANDS, rec.COMMANDS)
+    check_true("/farqlar for the Director and accounting with SAP + 1C only",
+               ops_manager.may_reconcile({"role": "operatsion_direktor"})
+               and ops_manager.may_reconcile({"role": "buxgalteriya", "data_access": ["sap", "1c", "billz"]})
+               and not ops_manager.may_reconcile({"role": "buxgalteriya", "data_access": ["billz"]})
+               and not ops_manager.may_reconcile({"role": "it", "data_access": ["sap", "1c"]}))
+    check_true("in the menus of the Director and accounting", "farqlar" in dict(menus.DIRECTOR) and "farqlar" in dict(menus.ACCOUNTING)
+               and menus.role_menu("buxgalteriya") == menus.ACCOUNTING)
+    check_true("the API sends it at 09:00, once a day", "reconcile.tick(" in load_source("integrations/api/app.py")
+               and "CREATE TABLE IF NOT EXISTS reconcile_runs" in load_source("database/schema.sql"))
+    del uuid
+
+
 def test_db_mirror() -> None:
     """The local database copy on the IT computer (2026-10-30, the owner): every 30 minutes while awake, changes
     only (table counters → checksums → 64 slices → COPY), the bot's own tables only."""
@@ -4393,7 +4515,8 @@ def test_command_menus() -> None:
     from integrations.telegram import menus
 
     for name, items in (("Admin", menus.ADMIN), ("employee", menus.EMPLOYEE), ("Director", menus.DIRECTOR),
-                        ("Garmin manager", menus.GARMIN_MANAGER), ("B2B сотув", menus.B2B_SALES)):
+                        ("Garmin manager", menus.GARMIN_MANAGER), ("B2B сотув", menus.B2B_SALES),
+                        ("Бухгалтерия", menus.ACCOUNTING)):
         check_true(f"{name} menu: valid Telegram commands, Cyrillic descriptions",
                    all(re.fullmatch(r"[a-z0-9_]{1,32}", c) and 0 < len(d) <= 256 and re.search("[а-яўқғҳ]", d.lower())
                        for c, d in items) and len({c for c, _ in items}) == len(items))
@@ -4406,10 +4529,11 @@ def test_command_menus() -> None:
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
                    *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS,
-                   *ops_manager.stock_list.COMMANDS, *ops_manager.lead_tracker.COMMANDS}
+                   *ops_manager.stock_list.COMMANDS, *ops_manager.lead_tracker.COMMANDS,
+                   *ops_manager.RECONCILE_COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
-               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES))
+               all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES + menus.ACCOUNTING))
     check_true("the Director's menu has /maqsad /baho; the employees' doesn't",
                {"maqsad", "baho"} <= {c for c, _ in menus.DIRECTOR} and not {"maqsad", "baho"} & {c for c, _ in menus.EMPLOYEE})
 
@@ -4451,7 +4575,7 @@ def test_command_menus() -> None:
         check_true("the ☰ button is set to show the commands",
                    sum(1 for _t, m, p in calls if m == "setChatMenuButton" and p["menu_button"] == {"type": "commands"}) == 3)
         calls.clear()
-        asyncio.run(menus.sync_person(88, "buxgalteriya"))
+        asyncio.run(menus.sync_person(88, "ombor"))
         check_true("someone who stops being Director goes back to the employees' menu",
                    calls == [("O", "deleteMyCommands", {"scope": {"type": "chat", "chat_id": 88}})])
     finally:
@@ -10232,6 +10356,7 @@ def main() -> int:
         test_deepseek_web_search,
         test_removed_people_out_of_stats,
         test_db_mirror,
+        test_reconcile,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

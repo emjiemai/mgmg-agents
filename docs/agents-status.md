@@ -44,6 +44,10 @@ only H0 has been running long enough to call proven; the rest are in their
 first weeks — the plan asks for each one's И to be measured before the next
 is started (A1 and A3 are measured automatically every Friday).
 
+## Added 2026-11-02
+
+- **SAP ↔ 1C ↔ Billz discrepancy report** for accounting, 09:00 + `/farqlar` (`31-reconcile.md`).
+
 ## Back on the Boss's design
 
 - **F2+ B2B lead tracker** (2026-10-28; stopped 07.10, back 28.10): numbered leads to B2B Sotuv at 08:00 (the
