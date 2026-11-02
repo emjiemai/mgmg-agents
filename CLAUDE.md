@@ -92,8 +92,10 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   («Вазифалар», «Режалар»), else the Boss's 02.11 example (`SEED`); synced 07:30 + Admin `/vazifalar`; `duty_changes`
   history; each person's duties → `employees.responsibilities` (work AI). `/vazifalar` for all. Role `texnik` added.
   **Week 2 (03.11, `duty_tasks.py`):** 08:45 one card per person (✅ + number / ⛔ + reason / 👎 фойдасиз), 08:50 IT check,
-  17:30 reminder, 22:00 missed; ⏸/▶️ on /vazifalar (Director, Admin; `duty_switch`, no row = off). Next: week 3 = system
-  checks (SAP/Billz/Verifix), plan vs fact, Friday review; week 4 = everyone connected. Шоҳруҳ = Эшонов Шахзод.
+  17:30 reminder, 22:00 missed; ⏸/▶️ on /vazifalar (Director, Admin; `duty_switch`, no row = off). **Week 3 (03.11):**
+  `plan_facts.py` (SAP lines → `sales_facts` hourly; $ duties checked in SAP/Billz, typed > fact+10 % = ⚠️; `/reja`
+  plans vs fact), `duty_review.py` (Fri 16:30: rules pick duties, AI writes the change, Director ✅/❌, accepted → IT).
+  Next: week 4 = everyone connected, tuning, acceptance. Шоҳруҳ = Эшонов Шахзод.
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

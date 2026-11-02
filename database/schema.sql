@@ -1473,3 +1473,39 @@ CREATE TABLE IF NOT EXISTS duty_switch (
     set_by   TEXT         NOT NULL,
     set_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- Week 3 (2026-11-03): plan vs fact and the system's check (integrations/org_bot/plan_facts.py, duty_review.py).
+-- sales_facts: every pushed SAP invoice line kept (SAP pushes 14 days; the month adds up here), dollars from the
+-- document's gross total split over its lines; product group from the item master; the salesperson.
+CREATE TABLE IF NOT EXISTS sales_facts (
+    obj_type    TEXT     NOT NULL,
+    doc_entry   TEXT     NOT NULL,
+    line_num    INTEGER  NOT NULL,
+    day         DATE     NOT NULL,
+    slp_code    TEXT     NOT NULL DEFAULT '',
+    item_code   TEXT     NOT NULL DEFAULT '',
+    item_group  TEXT     NOT NULL DEFAULT '',
+    wh          TEXT     NOT NULL DEFAULT '',
+    amount_usd  NUMERIC  NOT NULL DEFAULT 0,
+    amount_som  NUMERIC  NOT NULL DEFAULT 0,
+    PRIMARY KEY (obj_type, doc_entry, line_num)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_facts_day ON sales_facts (day);
+ALTER TABLE duty_tasks ADD COLUMN IF NOT EXISTS fact NUMERIC;            -- the system's own figure (SAP / Billz)
+ALTER TABLE duty_tasks ADD COLUMN IF NOT EXISTS fact_source TEXT;
+ALTER TABLE duty_tasks ADD COLUMN IF NOT EXISTS fact_at TIMESTAMPTZ;
+ALTER TABLE duty_tasks ADD COLUMN IF NOT EXISTS mismatch BOOLEAN NOT NULL DEFAULT FALSE;  -- typed number > fact + 10 %
+-- The Friday review's suggestions to change the register: chosen by rules, written by the AI, decided by the Director.
+CREATE TABLE IF NOT EXISTS duty_suggestions (
+    id          BIGSERIAL    PRIMARY KEY,
+    week        DATE         NOT NULL,
+    duty_id     BIGINT,
+    person      TEXT         NOT NULL,
+    title       TEXT         NOT NULL,
+    change      TEXT         NOT NULL,
+    why         TEXT         NOT NULL,
+    status      TEXT         NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    decided_by  TEXT,
+    decided_at  TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);

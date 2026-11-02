@@ -1823,6 +1823,127 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_plan_facts_and_review() -> None:
+    """Week 3 (2026-11-03): the system checks what people report (SAP, Billz), the month's plans against facts, and
+    the Friday review — rules pick the duties, the AI writes the change, the Director decides."""
+    print("plan vs fact, system check, Friday review (03.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import duty_review as dr
+    from integrations.org_bot import duty_tasks, ops_manager
+    from integrations.org_bot import plan_facts as pf
+    from integrations.telegram import menus
+
+    check("names folded for SAP's spelling", [pf.fold(x) for x in ("Ходжиев Абдурашид", "Ёрқинов Рустам", "Мирпўлатов")],
+          ["хожиев абдурашид", "еркинов рустам", "мирпулатов"])
+    sp = [{"SlpCode": 3, "SlpName": "Ходжиев Абдурашид"}, {"SlpCode": 5, "SlpName": "Ёрқинов Рустам"},
+          {"SlpCode": 8, "SlpName": "Умаров Шухрат"}, {"SlpCode": 9, "SlpName": "Умаров Шухрат"}]
+    check("the bot's people → SAP salespeople (one match only)",
+          [pf.slp_of({"full_name": n}, sp) for n in ("Абдурашид Хожиев", "Рустам Ёркинов", "Шухрат Умаров", "Мурод")],
+          ["3", "5", None, None])
+    headers = [{"ObjType": "13", "DocEntry": 1, "DocTotal": 110, "DocTotalSy": 1_320_000, "DocDate": "2026-11-02", "SlpCode": 3, "CANCELED": "N"},
+               {"ObjType": "14", "DocEntry": 2, "DocTotal": 50, "DocTotalSy": 600_000, "DocDate": "2026-11-02", "SlpCode": 3, "CANCELED": "N"},
+               {"ObjType": "13", "DocEntry": 3, "DocTotal": 99, "DocTotalSy": 1, "DocDate": "2026-11-02", "CANCELED": "Y"}]
+    lines = [{"ObjType": "13", "DocEntry": 1, "LineNum": 0, "LineTotal": 60, "TotalSumSy": 720_000, "ItemCode": "G1", "WhsCode": "01"},
+             {"ObjType": "13", "DocEntry": 1, "LineNum": 1, "LineTotal": 40, "TotalSumSy": 480_000, "ItemCode": "P1", "WhsCode": "02"},
+             {"ObjType": "14", "DocEntry": 2, "LineNum": 0, "LineTotal": 50, "TotalSumSy": 600_000, "ItemCode": "G1", "WhsCode": "01"},
+             {"ObjType": "13", "DocEntry": 3, "LineNum": 0, "LineTotal": 99, "TotalSumSy": 1, "ItemCode": "G1"}]
+    facts = pf.lines_to_facts(headers, lines, {"G1": "Garmin", "P1": "Primus"})
+    check("an invoice's gross total split over its lines (USD), a credit note negative, a cancelled one out",
+          sorted((f["doc_entry"], f["item_group"], f["amount_usd"]) for f in facts),
+          [("1", "Garmin", 66.0), ("1", "Primus", 44.0), ("2", "Garmin", -50.0)])
+    check("so'm per dollar from SAP's own lines (the median)", pf.usd_rate(lines[:3]), 12000.0)
+    check("what a dollar duty counts", [pf.scope_of({"title": t}) for t in (
+        "Ўлик захирадан сотув", "Эҳтиёт қисм сотуви (жавобгар)", "Garmin бўлими сотуви", "Primus сотуви", "Сотув",
+        "Эски Garmin қолдиғидан сотув")], ["dead", "parts", "garmin", "primus", "person", "dead"])
+    check("plans to measures; what SAP can't tell stays unmeasured", [pf.direction_scope(n) for n in (
+        "Garmin", "Primus", "Сервис шартномалари (йиллик)", "Эҳтиёт қисм", "Химикат", "Ўлик захира ва туриб қолган товарлар")],
+          ["garmin", "primus", None, "parts", None, "dead"])
+    check_true("only dollar targets checked in SAP / Billz are measured, the rest is «қўлда»",
+               pf.measurable({"unit": "$", "verify": "SAP"}) and pf.measurable({"unit": "$", "verify": "Billz"})
+               and not pf.measurable({"unit": "та", "verify": "SAP"}) and not pf.measurable({"unit": "$", "verify": "қўлда"}))
+    text = pf.plans_text([{"direction": "Garmin", "plan": 70000, "plan_text": "70000", "fact": 35000.0, "share": 0.5, "scope": "garmin"},
+                          {"direction": "Химикат", "plan": 10000, "plan_text": "10000", "fact": None, "share": None, "scope": None}],
+                         date(2026, 11, 15))
+    check_true("/reja: fact / plan with the pace (half the month gone, half the plan → green), the unmeasurable said",
+               "🟢 Garmin: $35 000 / $70000 (50%)" in text and "Химикат: режа $10000 — <i>SAP'да алоҳида ҳисобланмайди</i>" in text)
+
+    # ---- the card shows the system's figure; a typed number above it is flagged
+    tue = date(2026, 11, 3)
+    line = duty_tasks.item_line(1, {"title": "Сотув", "target": "1350", "unit": "$", "status": "done", "value": 1350, "fact": 820,
+                                    "fact_source": "SAP (сотувчи)", "mismatch": True, "cadence": "daily",
+                                    "period_start": tue, "period_end": tue}, tue)
+    check_true("the card: what was typed, what SAP says, ⚠️ not confirmed",
+               "бажарилди: 1350 · SAP (сотувчи): $820 · ⚠️ тизимда тасдиқланмади" in line)
+    check_true("checked when typed, before the 17:30 card and at 22:00",
+               "await _facts(today_local())" in inspect_source(duty_tasks.take_message)
+               and inspect_source(duty_tasks.tick).count("await _facts(day)") == 2 and pf.MISMATCH_SHARE == 0.10)
+
+    # ---- the Friday review
+    check("the week", dr.week_of(date(2026, 11, 6)), (date(2026, 11, 2), date(2026, 11, 8)))
+
+    def T(duty, person, title, status, **kw):
+        return {"duty_id": duty, "person": person, "title": title, "cadence": "daily", "target": kw.get("target", ""),
+                "unit": kw.get("unit", ""), "status": status, "useless": kw.get("useless", False),
+                "mismatch": kw.get("mismatch", False), "reason": kw.get("reason")}
+
+    week = ([T(1, "Абдукарим", "Қўнғироқ", "not_done", reason="мижоз жавоб бермади")] * 3 + [T(1, "Абдукарим", "Қўнғироқ", "done")]
+            + [T(2, "Абдукарим", "Таклиф", "done")] * 4
+            + [T(3, "Ширин", "Витрина", "done", useless=True)] * 2
+            + [T(4, "Ғиёсиддин", "Сотув", "done", mismatch=True)])
+    people = dr.person_stats(week)
+    check("per person: done / total, «фойдасиз», not confirmed", [(p["person"], p["done"], p["total"], p["useless"], p["mismatch"]) for p in people],
+          [("Абдукарим", 5, 8, 0, 0), ("Ширин", 2, 2, 2, 0), ("Ғиёсиддин", 1, 1, 0, 1)])
+    picked = dr.flagged(week)
+    check("rules pick the duties (not the AI): useless ×2, a number above the fact, under half done",
+          [(d["title"], d["why"]) for d in picked], [("Витрина", ["useless"]), ("Сотув", ["mismatch"]), ("Қўнғироқ", ["low"])])
+    check_true("...the reasons people wrote go to the AI", "мижоз жавоб бермади" in dr.ai_prompt(picked) and "done 1 of 4" in dr.ai_prompt(picked))
+    good = '{"items": [{"n": 1, "change": "вазифани олиб ташлаш", "why": "икки марта фойдасиз деб белгиланди"},' \
+           ' {"n": 2, "change": "Please lower it", "why": "english"}, {"n": 9, "change": "х", "why": "у"}]}'
+    check("the AI's text kept only when polite Uzbek Cyrillic and for a real item", dr.parse_ai(good, 3),
+          {1: ("вазифани олиб ташлаш", "икки марта фойдасиз деб белгиланди")})
+    check_true("without the AI, the rule's own words", all(dr.rule_text(d)[0] for d in picked))
+    for_it = dr.review_text(date(2026, 11, 2), date(2026, 11, 6), people, "🎯 $35 000", True)
+    check_true("IT's copy: the people's results, never the plans' amounts", "$" not in for_it and "Абдукарим — 5/8 (62%)" in for_it)
+
+    sent = []
+
+    class Bot:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
+        async def _answer_callback(self, qid, text):
+            sent.append(text)
+
+    from integrations.org_bot import store
+    saved = [(dr, "TelegramBot", dr.TelegramBot), (store, "get_employee_by_telegram_id", store.get_employee_by_telegram_id)]
+
+    async def emp(tg):
+        return {"status": "active", "role": "b2b_sotuv" if tg == 5 else "operatsion_direktor", "full_name": "X"}
+
+    dr.TelegramBot, store.get_employee_by_telegram_id = Bot, emp
+    try:
+        check("only the Director decides a suggestion", asyncio.run(ops_manager._handle_callback(
+            {"id": "q", "from": {"id": 5}, "data": "dsg:1:y", "message": {}}, uuid.uuid4())), "suggestion_unauthorized")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("Fridays 16:30 while the daily tasks are on, once; facts kept hourly; /reja for the Director",
+               dr.REVIEW_AT == (16, 30) and dr.FRIDAY == 4 and "duty_tasks.is_on()" in inspect_source(dr.tick)
+               and 'claim(now.date(), "review")' in inspect_source(dr.tick)
+               and "plan_facts.collect()" in load_source("integrations/api/app.py") and "duty_review.tick(" in load_source("integrations/api/app.py")
+               and "reja" in dict(menus.DIRECTOR) and "/reja" in ops_manager.PLAN_COMMANDS)
+    check_true("an accepted change goes to IT to edit the register — the register stays people's document",
+               "реестрда ўзгартиринг" in inspect_source(dr.handle_callback))
+
+
 def test_duty_tasks() -> None:
     """Week 2 (2026-11-03): each day's tasks from the duties register — one card per person at 08:45, ✅ (with the
     number) / ⛔ (with the reason) / 👎 «фойдасиз», IT's check, 17:30 reminder, 22:00 close, ⏸ / ▶️."""
@@ -4695,7 +4816,8 @@ def test_command_menus() -> None:
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
                    *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS,
                    *ops_manager.stock_list.COMMANDS, *ops_manager.lead_tracker.COMMANDS,
-                   *ops_manager.RECONCILE_COMMANDS, *ops_manager.duties.COMMANDS}
+                   *ops_manager.RECONCILE_COMMANDS, *ops_manager.duties.COMMANDS,
+                   *ops_manager.PLAN_COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES + menus.ACCOUNTING))
@@ -10524,6 +10646,7 @@ def main() -> int:
         test_reconcile,
         test_duties_register,
         test_duty_tasks,
+        test_plan_facts_and_review,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

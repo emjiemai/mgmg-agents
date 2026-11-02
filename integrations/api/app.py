@@ -145,6 +145,15 @@ async def _report_close_loop() -> None:
             await duty_tasks.tick(now_local())
         except Exception as exc:  # noqa: BLE001 — the next round tries again
             log.error("Daily duty tasks failed: {}", type(exc).__name__)
+        try:  # hourly: SAP invoice lines kept for plan vs fact; Fridays 16:30 the review (plan_facts.py, duty_review.py)
+            from integrations.common.timeutil import now_local
+            from integrations.org_bot import duty_review, plan_facts
+
+            if _hourly("sales_facts"):
+                await plan_facts.collect()
+            await duty_review.tick(now_local())
+        except Exception as exc:  # noqa: BLE001 — the next round tries again
+            log.error("Plan facts / weekly review failed: {}", type(exc).__name__)
         try:  # 09:00: SAP ↔ 1C ↔ Billz discrepancy report to accounting (reconcile/run.py, 02.11), once a day
             from integrations.common.timeutil import now_local
             from integrations.reconcile import run as reconcile
@@ -165,6 +174,19 @@ async def _report_close_loop() -> None:
             await lead_tracker.tick(uuid.uuid4())
         except Exception as exc:  # noqa: BLE001 — the next round (until 15:25) tries again
             log.error("Lead follow-up failed: {}", type(exc).__name__)
+
+
+_LAST_RUN: dict[str, float] = {}
+
+
+def _hourly(name: str) -> bool:
+    """True at most once an hour per name (this process)."""
+    import time
+
+    if time.monotonic() - _LAST_RUN.get(name, -3600.0) < 3600:
+        return False
+    _LAST_RUN[name] = time.monotonic()
+    return True
 
 
 async def _morning_notes_left() -> None:

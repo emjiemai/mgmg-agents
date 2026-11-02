@@ -53,7 +53,32 @@ with `BOTS_FROZEN`.
 The Director's `/vazifalar` shows today's progress per person (✅ / жами, 👎). A typed number or reason is taken for 3
 hours after the tap; words without a number, or a question, go on to the usual flow.
 
-## Next (weeks 3–4, to 30.11)
+## Week 3 — the system's check, plan vs fact, the Friday review (2026-11-03)
 
-Week 3: checked against SAP / Billz / Verifix where the data is; plan vs
-fact; the Friday review with the AI's suggestions (a head approves). Week 4: everyone connected, tuning, acceptance.
+**Sales facts** (`plan_facts.py`, hourly in the API's round): SAP pushes 14 days of invoices; every line is kept in
+`sales_facts`, so the month adds up. Dollars = the invoice's gross total (SAP's local currency is USD) split over its
+lines by their net amounts (checked live 03.11: 102 of 102 invoices add back to their totals); the product group from
+the item master (Garmin, Tanita, Primus, Parts, Londry); the salesperson from the invoice. People ↔ SAP salespeople by
+name, spelling-tolerant (Ходжиев = Хожиев, Ёрқинов = Ёркинов, Мирпўлатов = Мирпулатов): 8 matched.
+
+**The system's check of a duty** (only dollar targets with «Текшириш» SAP or Billz): SAP — the person's own invoices,
+or the business named in the duty (Garmin / Primus) for someone who isn't a SAP salesperson, dead stock (items last
+bought a year or more ago), spare parts (Parts); Billz — the shop's net sales at SAP's own dollar rate. Filled when a
+number is typed, before the 17:30 card and at 22:00; the card shows «SAP (сотувчи): $820», and a typed number more
+than 10 % above the fact gets «⚠️ тизимда тасдиқланмади» (the МИЯ document: every claim checked in the system). Calls,
+visits, cleaning and the like have no system data — they stay as people report them.
+
+**/reja** (the Director): the «Режалар» tab against the month so far — fact / plan, %, 🟢 ahead of the month's pace,
+🔴 behind. Measured: Garmin (+Tanita), Primus (+Parts), spare parts (Parts), dead stock. Not measurable in SAP today:
+service contracts (no amounts) and chemicals (no product group) — said, never guessed.
+
+**Friday review** (`duty_review.py`, Fridays 16:30, once, while the daily tasks are on): each person's week (done /
+total, «фойдасиз», not confirmed); the duties that need a look, **chosen by rules** — «фойдасиз» twice or more, a number
+above the system's fact, done on under half of at least three days; for each, **the AI writes one change** (target,
+frequency, time, merge, remove) and why, from the reasons people wrote — polite Uzbek Cyrillic checked, else the rule's
+own words; and /reja's plans. To the Director with ✅ Қабул / ❌ Рад per suggestion (`duty_suggestions`); an accepted
+one goes to IT to change in the register. IT gets the same without the plans' amounts.
+
+## Next (week 4, to 30.11)
+
+Week 4: everyone connected, tuning, acceptance.

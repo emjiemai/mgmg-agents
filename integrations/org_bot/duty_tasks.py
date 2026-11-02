@@ -114,6 +114,11 @@ def item_line(n: int, t: dict[str, Any], day: date) -> str:
         done = f" · бажарилди: {float(t['value']):g}"
     elif t["status"] in ("not_done", "missed") and t.get("reason"):
         done = f" · {escape(t['reason'][:80])}"
+    if t.get("fact") is not None:
+        fact = aim_text(f"{float(t['fact']):.0f}", "$")
+        done += f" · {escape(t.get('fact_source') or 'тизим')}: {fact}"
+    if t.get("mismatch"):
+        done += " · ⚠️ тизимда тасдиқланмади"
     flag = " 👎" if t.get("useless") else ""
     return f"{STATUS_MARK[t['status']]} {n}. {escape(t['title'])}{escape(aim)}{escape(when_text(t, day))}{done}{flag}"
 
@@ -354,6 +359,7 @@ async def take_message(employee: dict[str, Any], message: dict[str, Any], run_id
         if value is None:
             return None  # words, not a number: the usual flow (the question stays)
         await execute("UPDATE duty_tasks SET value = %s, asked_kind = NULL WHERE id = %s", (value, task["id"]))
+        await _facts(today_local())  # a typed dollar figure is checked against SAP / Billz at once
         await _send(employee["telegram_user_id"], f"Раҳмат, ёзиб қўйдим: «{escape(task['title'])}» — {value:g}.", run_id)
         return "duty_value_saved"
     if "?" in text:
@@ -364,6 +370,16 @@ async def take_message(employee: dict[str, Any], message: dict[str, Any], run_id
 
 
 # ---------------------------------------------------------------------------------------------------- the day
+
+
+async def _facts(day: date) -> None:
+    """The system's figures for today's dollar targets (plan_facts.py, week 3); a failure never stops the cards."""
+    from integrations.org_bot import plan_facts
+
+    try:
+        await plan_facts.fill_duty_facts(day)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Duty facts not filled: {}", type(exc).__name__)
 
 
 async def close_day(day: date) -> int:
@@ -397,6 +413,7 @@ async def tick(now: datetime) -> str | None:
     hm = (now.hour, now.minute)
     if hm >= CLOSE_AT:
         if await claim(day, "close"):
+            await _facts(day)
             await close_day(day)
             return "closed"
         return None
@@ -415,6 +432,7 @@ async def tick(now: datetime) -> str | None:
         await admin.tell_admin(await it_check(day, morning, run_id), run_id)
         return "sent"
     if EVENING_AT <= hm < (20, 0) and await claim(day, "evening"):
+        await _facts(day)
         await send_cards(day, run_id, evening=True)
         return "evening"
     return None

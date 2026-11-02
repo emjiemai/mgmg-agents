@@ -49,6 +49,7 @@ is started (A1 and A3 are measured automatically every Friday).
 - **SAP ↔ 1C ↔ Billz discrepancy report** for accounting, 09:00 + `/farqlar` (`31-reconcile.md`).
 - **Duties register and work profiles** — week 1 of automatic delegation (to 30.11), `/vazifalar` (`32-duties-register.md`).
 - **Daily tasks from the register** — week 2: 08:45 card, ✅/⛔/👎, IT check, 17:30, 22:00; ⏸/▶️ (`32-duties-register.md`).
+- **System check, plan vs fact, Friday review** — week 3: SAP/Billz facts on dollar duties, `/reja`, Fridays 16:30 (`32-duties-register.md`).
 
 ## Back on the Boss's design
 
