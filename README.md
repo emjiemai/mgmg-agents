@@ -121,6 +121,7 @@ Every link the system uses (pages, webhooks, services): `docs/links.md`.
 | `/dam` | Mark days off (no asks, reminders, cheer or leads that day) |
 | `/elon <text>` | Announce to every employee (preview, then confirm); `/elon` alone = a "technical error" notice |
 | `/grafik` | Who is on "эркин график" (never shown as late/absent) |
+| `/vazifalar` | Read the duties register now: counts, rows to fix (by row number), who isn't in the bot, how to connect the sheet — no targets |
 | `/lidlar` | The B2B lead tracker **on / off** (⏸ / ▶️) — who set it and when, nothing else (no leads or sums); the Director is told |
 | `/verifix`, `/billz`, `/1c` | Is that system connected and readable — status and counts only, no figures (the Director's order of 07.10.2026). `/verifix` also lists the last 7 days' arrival marks (how many of how many — never who) with a button per day: **⛔ = the terminals didn't record that day** → nobody is absent or late that day, the «why weren't you at work?» questions about it are withdrawn with an apology, the Director is told; tap again to undo. A day with almost no marks (≤ 20 % of ≥ 4 people) is treated so on its own |
 | `/texnik` | IT's technical report now: connections, SAP push, brief delivered, errors, DB, security (also every morning) |
@@ -174,8 +175,14 @@ many late), sold (sum), not sold by reason, lost opportunity ≈ not sold × ave
 seller; ⏸ / ▶️ and 📄 the PDF table; the same in PULSE. **Starts stopped** — press ▶️ on
 /lidlar (Director or Admin Bot) to begin; ⏸ any time. Sellers' `/lidlar`: their open leads.
 
+**Duties register** (2026-11-02) — a Google Sheet «Вазифалар» (one row per duty: who, what, how often, by
+when, the target, the proof, how it is checked) and «Режалар» (monthly plans). Set up: create an empty Google
+Sheet, share it as Editor with the service account (Admin Bot `/vazifalar` shows the address), put its id in
+Render as `DUTIES_SHEET_ID` — the bot writes the Boss's example of 02.11 into it. Edit rows any time; the bot
+reads it every morning at 07:30 (or now with Admin `/vazifalar`) and keeps every change.
+
 **OPS Manager Bot commands** — Director: `/maqsad`, `/maqsadlar`, `/kpi`,
-`/baho`, `/lidlar`; employees: `/hisobot` (change or delete today's report), `/kpi`,
+`/baho`, `/lidlar`, `/farqlar`, `/vazifalar`; employees: `/vazifalar` (own duties), `/hisobot` (change or delete today's report), `/kpi`,
 `/natija`, `/ism`, `/ruxsat` (written permission request), `/bekor`.
 Everything else is plain text: the Director writes a task or a question, an
 employee writes their report or asks the work AI.
@@ -350,6 +357,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-11-02 | **Duties register and work profiles** (the Boss's T-0051 / T-0054 / T-0055, week 1 of the plan to 30.11). Who does what, how often, to which target — a Google Sheet (`DUTIES_SHEET_ID`, tabs «Вазифалар» and «Режалар») people edit; read every morning at 07:30 and on Admin `/vazifalar`; every change kept. Until the sheet is set, the Boss's own example of 02.11 is the register (13 people, 72 duties, monthly plans) — and it is written into an empty sheet once. Each person's duties become their work profile (`employees.responsibilities`, read by the work AI). `/vazifalar`: employees their own, the Director the whole register, the admin the sync's counts and rows to fix. New role **Техник** (for Рушан and Жамолиддин). Spec 32. |
 | 2026-11-02 | **SAP B1 ↔ 1C ↔ Billz discrepancy report for accounting** (the Boss's T-2026-11-0048; the owner: Зайнабхон gets the wrong data too). Every working day at 09:00 (and `/farqlar` / `/сверка` any time, also for the Director): sales documents (SAP invoices ↔ 1C «Реализация», 14 days), money in and out (SAP payments ↔ 1C bank and cash documents, 30 days), customers' debt (SAP ↔ 1C 4010/4015 − 6310/6315), suppliers' debt (as before), the shop day by day (Billz ↔ SAP ↔ 1C retail), and wrong data in both systems, each record named. A short message and an Excel workbook in her language (Russian). The shop's retail and what SAP never records (card-terminal receipts, bank fees, salaries, taxes) are kept out. AmoCRM and Didox later. Spec 31. |
 | 2026-10-30 | **Local database copy on the IT computer** (the owner): `scripts/db-mirror/` — every 30 minutes while the computer is awake (a systemd user timer that catches up after sleep), **changes only**: Postgres's per-table change counters pick the tables that changed (a quiet run = one 0.3 s query to production), checksums over 64 slices by primary key find the changed rows, `COPY` brings only those; the audit log gets its new rows by id; a full check once a day. Production is only read (READ ONLY session). Copies the bot's own tables (`/db`'s permanent list); SAP / 1C / Billz / Verifix stay structure only (the Director's order of 07.10). Install once: `bash scripts/db-mirror/install.sh`. The lead index, lead groups and the B2B tracker switch are now listed as the bot's own tables on `/db`. |
 | 2026-10-30 | **People who left are out of the statistics** (the owner: Абдулбосит's 3 missed days were still in the Friday result after he was removed). The weekly result, the brief's «who didn't report», tasks due and the Director's report questions count active employees only; their rows stay in the database as history. This week: 34/42 instead of 34/45. |

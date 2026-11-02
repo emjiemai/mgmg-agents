@@ -1823,6 +1823,54 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_duties_register() -> None:
+    """The duties register (2026-11-02, the Boss's T-0051 / T-0054 / T-0055, week 1): a Google Sheet people edit (or
+    the Boss's example until it's set), its history, and each person's work profile for the work AI."""
+    print("duties register (02.11.2026)")
+    from integrations.org_bot import admin, duties, ops_manager
+    from integrations.telegram import menus
+
+    check_true("the Boss's example is the seed: 13 people's duties (the Owner gets none), every row valid",
+               len({d.person for d in duties.SEED}) == 13 and all(d.cadence in duties.CADENCE_WORDS for d in duties.SEED)
+               and duties.parse([list(duties.COLUMNS), *duties.seed_rows()]) == (duties.SEED, []))
+    check_true("Шоҳруҳ is Эшонов Шахзод (the owner, 02.11)", any(d.person == "Эшонов Шахзод" for d in duties.SEED))
+    moved = ["Изоҳ", "Вазифа", "Ходим", "Қачон", "Кун / сана", "Мақсад", "Менинг устуним"]
+    rows, problems = duties.parse([moved,
+                                   ["", "Таклиф", "Абдукарим", "Ҳар куни", "", "2", "x"],
+                                   ["", "OKR", "Мурод", "har hafta", "душанба", "", ""],
+                                   ["", "Сотув", "Мурод", "ҳар соат", "", "", ""],
+                                   ["", "Санаш", "Отабек", "муддат", "31 декабр", "935", ""],
+                                   ["", "", "", "", "", "", ""]])
+    check("columns found by their header (moved, one added); Latin «har hafta» understood",
+          [(d.person, d.cadence, d.day) for d in rows], [("Абдукарим", "daily", ""), ("Мурод", "weekly", "душанба"),
+                                                          ("Отабек", "deadline", "31 декабр")])
+    check("the rows to fix are named, by row", problems, ["4-қатор: «Қачон» тушунарсиз (ҳар соат)",
+                                                         "5-қатор: муддат санаси кк.оо.йййй бўлиши керак (31 декабр)"])
+    check("a missing key column is said, nothing guessed", duties.parse([["Ходим", "Вазифа"]]), ([], ["«Қачон» устуни йўқ"]))
+    people = [{"id": 1, "full_name": "Умаров Мурод"}, {"id": 2, "full_name": "Шухрат Умаров"}, {"id": 3, "full_name": "Нажотова Зайнабхон"}]
+    check("names to the bot's people: every word, any order, Latin or Cyrillic; ambiguous or absent → none",
+          [(duties.match_person(n, people) or {}).get("id") for n in ("Мурод Умаров", "Umarov Murod", "Умаров", "Рушан", "Нажотова Зайнабхон")],
+          [1, 1, None, None, 3])
+    a = duties.Duty("Абдукарим", "B2B", "Таклиф", "daily", target="2", unit="та")
+    b = duties.Duty("Абдукарим", "B2B", "Таклиф", "daily", target="3", unit="та")
+    check_true("a row's identity is the person + duty + how often: a new target is a change, not a new row", a.key == b.key)
+    text = duties.profile_text([duties.Duty("Зайнаб", "Бэк-офис", "Тўлов тақвимини янгилаш", "daily", time="10:00"),
+                                duties.Duty("Зайнаб", "Бэк-офис", "Номзодлар билан суҳбат", "weekly", target="3", unit="та")])
+    check("the work profile the work AI reads", text, "Лавозими: Бэк-офис\nВазифалари (реестрдан):\n"
+          "- ҳар куни, 10:00 гача — Тўлов тақвимини янгилаш\n- ҳар ҳафта — Номзодлар билан суҳбат (мақсад: 3 та)")
+    check_true("IT's view has counts and rows to fix — no targets or sums",
+               "1350" not in duties.admin_text({"source": "seed", "duties": 70, "added": 70, "changed": 0, "removed": 0,
+                                                "profiles": 11, "unmatched": 2, "problems": 0, "problem_list": [],
+                                                "unmatched_list": ["Жамолиддин", "Рушан"]}))
+    check_true("/vazifalar everywhere: the employee's own, the Director's register, the admin's sync",
+               duties.COMMANDS == admin.DUTIES_COMMANDS and "vazifalar" in dict(menus.EMPLOYEE) and "vazifalar" in dict(menus.DIRECTOR)
+               and "vazifalar" in dict(menus.ADMIN) and "duties.director_view()" in inspect_source(ops_manager)
+               and "duties.own_view(employee)" in inspect_source(ops_manager))
+    check_true("read every morning from 07:30, once; history of every change; the sheet's id a setting",
+               "duties.tick(" in load_source("integrations/api/app.py") and "CREATE TABLE IF NOT EXISTS duty_changes" in load_source("database/schema.sql")
+               and "duties_sheet_id" in load_source("integrations/common/config.py"))
+
+
 def test_reconcile() -> None:
     """SAP B1 ↔ 1C ↔ Billz for accounting at 09:00 (2026-11-02, T-2026-11-0048): documents, balances, the shop,
     wrong data — each named; retail and the operations SAP never records kept out."""
@@ -4523,14 +4571,14 @@ def test_command_menus() -> None:
     admin_handles = {*admin.EMPLOYEE_LIST_COMMANDS, *admin.ASK_NAMES_COMMANDS, *admin.DATA_QUALITY_COMMANDS,
                      admin.QR_COMMAND, admin.VERIFIX_COMMAND, admin.BILLZ_COMMAND, *admin.ONEC_COMMANDS, *admin.DB_REVIEW_COMMANDS,
                      *admin.DAY_OFF_COMMANDS, *admin.FLEXIBLE_COMMANDS, *admin.TECH_REPORT_COMMANDS, admin.ANNOUNCE_COMMAND,
-                     *admin.LEADS_COMMANDS}
+                     *admin.LEADS_COMMANDS, *admin.DUTIES_COMMANDS}
     ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
                    *ops_manager.report_calendar.COMMANDS, *ops_manager.old_stock.COMMANDS,
                    *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS,
                    *ops_manager.stock_list.COMMANDS, *ops_manager.lead_tracker.COMMANDS,
-                   *ops_manager.RECONCILE_COMMANDS}
+                   *ops_manager.RECONCILE_COMMANDS, *ops_manager.duties.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES + menus.ACCOUNTING))
@@ -4915,7 +4963,7 @@ def test_own_week_and_team_calendar() -> None:
                and 'prefix == "kr" and not director' in cb)
     check_true("his menu: team calendar, excused days, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, "
                "/ruxsat or /ism", [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "qoldiq", "eski",
-                                                         "raqobat", "pulse", "bekor"])
+                                                         "raqobat", "vazifalar", "pulse", "bekor"])  # + his duties (02.11)
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
@@ -10357,6 +10405,7 @@ def main() -> int:
         test_removed_people_out_of_stats,
         test_db_mirror,
         test_reconcile,
+        test_duties_register,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

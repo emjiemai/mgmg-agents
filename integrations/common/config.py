@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     # The database's OData address (https://clobus.uz/a/acc313/61458/odata/standard.odata/)
     # and the OData service user made in 1C: Администрирование → Синхронизация
     # данных → Настройки стандартного интерфейса OData → Авторизация.
+    # The duties register (2026-11-02, integrations/org_bot/duties.py): a Google Sheet shared with the service
+    # account (Editor); empty = the Boss's example of 02.11 (duties.SEED) is the register.
+    duties_sheet_id: str = ""
     onec_odata_url: str = ""
     onec_login: str = ""
     onec_password: SecretStr = SecretStr("")

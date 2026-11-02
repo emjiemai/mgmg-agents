@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS employees (
     role              TEXT         NOT NULL
                           CHECK (role IN ('b2b_sotuv','it','buxgalteriya','moliya','hr','ombor',
                                            'operatsion_direktor','mobilograf','aloqa_markazi',
-                                           'garmin_sotuv','londry','garmin_manager')),
+                                           'garmin_sotuv','londry','garmin_manager','texnik')),
     status            TEXT         NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
     approved_by       TEXT,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -384,7 +384,7 @@ ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_role_check;
 ALTER TABLE employees ADD CONSTRAINT employees_role_check
     CHECK (role IN ('b2b_sotuv','it','buxgalteriya','moliya','hr','ombor',
                      'operatsion_direktor','mobilograf','aloqa_markazi',
-                     'garmin_sotuv','londry','garmin_manager'));
+                     'garmin_sotuv','londry','garmin_manager','texnik'));
 
 -- ---------------------------------------------------------------------------
 -- access_requests — pending join requests, decided by the admin via Admin Bot.
@@ -1385,4 +1385,44 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
 CREATE TABLE IF NOT EXISTS reconcile_runs (
     day      DATE         PRIMARY KEY,
     sent_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- The duties register (2026-11-02, the Boss's T-0051 / T-0054 / T-0055; integrations/org_bot/duties.py): who does
+-- what, how often, to which target — read every morning from the Google Sheet «Вазифалар» (or the Boss's example of
+-- 02.11 until the sheet is set). row_key = person + duty + how often; every change kept in duty_changes. A person's
+-- active duties become employees.responsibilities (the work AI reads it). monthly_plans: the «Режалар» tab.
+CREATE TABLE IF NOT EXISTS duties (
+    id           BIGSERIAL    PRIMARY KEY,
+    row_key      TEXT         NOT NULL UNIQUE,
+    person       TEXT         NOT NULL,
+    position     TEXT         NOT NULL DEFAULT '',
+    title        TEXT         NOT NULL,
+    cadence      TEXT         NOT NULL CHECK (cadence IN ('daily', 'weekly', 'monthly', 'deadline', 'rule', 'as_needed')),
+    day          TEXT         NOT NULL DEFAULT '',
+    time         TEXT         NOT NULL DEFAULT '',
+    target       TEXT         NOT NULL DEFAULT '',
+    unit         TEXT         NOT NULL DEFAULT '',
+    proof        TEXT         NOT NULL DEFAULT '',
+    verify       TEXT         NOT NULL DEFAULT '',
+    note         TEXT         NOT NULL DEFAULT '',
+    employee_id  UUID         REFERENCES employees (id),
+    active       BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_duties_employee ON duties (employee_id) WHERE active;
+CREATE TABLE IF NOT EXISTS duty_changes (
+    id       BIGSERIAL    PRIMARY KEY,
+    at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    row_key  TEXT         NOT NULL,
+    change   TEXT         NOT NULL CHECK (change IN ('added', 'changed', 'removed', 'synced')),
+    before   JSONB,
+    after    JSONB
+);
+CREATE TABLE IF NOT EXISTS monthly_plans (
+    direction   TEXT         PRIMARY KEY,
+    amount_usd  TEXT         NOT NULL DEFAULT '',
+    owner       TEXT         NOT NULL DEFAULT '',
+    note        TEXT         NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );

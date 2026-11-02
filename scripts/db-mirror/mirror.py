@@ -277,6 +277,14 @@ async def run(check_only: bool = False) -> int:
                 totals[k] += counts[k]
             if counts["changed"]:
                 log.info("{}: {} slice(s), {} row(s)", table, counts["slices"], counts["rows"])
+        if not check_only:  # id counters past the copied rows, so a local test insert never collides
+            for seq in await (await local.execute(
+                    """SELECT s.relname AS seq, t.relname AS tab, a.attname AS col FROM pg_class s
+                       JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a' JOIN pg_class t ON t.oid = d.refobjid
+                       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+                       WHERE s.relkind = 'S'""")).fetchall():
+                await local.execute(sql.SQL("SELECT setval({}, coalesce((SELECT max({}) FROM {}), 0) + 1, false)").format(
+                    sql.Literal(seq["seq"]), sql.Identifier(seq["col"]), sql.Identifier(seq["tab"])))
         seconds = round(time.monotonic() - started, 1)
         if not check_only:
             await local.execute("INSERT INTO _mirror_runs (seconds, tables, changed, slices, rows_copied) VALUES (%s, %s, %s, %s, %s)",

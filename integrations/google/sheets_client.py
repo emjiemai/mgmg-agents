@@ -40,6 +40,14 @@ class SheetsError(RuntimeError):
     """Raised when the Sheets API returns an error the client cannot recover from."""
 
 
+def service_account_email() -> str:
+    """The service account's address — what a sheet is shared with (Editor) so the bot can read and write it."""
+    try:
+        return str(json.loads(settings.google_service_account_json.get_secret_value()).get("client_email") or "")
+    except (json.JSONDecodeError, AttributeError):
+        return ""
+
+
 class SheetsClient:
     """Async client for one Google Sheets spreadsheet.
 
@@ -182,6 +190,31 @@ class SheetsClient:
 
         log.info("Sheets: read {} row(s) from {}", len(values), a1_range)
         return values
+
+    async def tab_titles(self) -> list[str]:
+        """The spreadsheet's tabs, by title (2026-11-02: the duties register makes its own tabs)."""
+        await self._ensure_token()
+        assert self._client is not None
+        response = await request_with_retry(
+            self._client, "GET", f"{SHEETS_API_ROOT}/{self.spreadsheet_id}",
+            params={"fields": "sheets.properties.title"}, headers={"Authorization": f"Bearer {self._access_token}"})
+        if response.status_code != 200:
+            raise SheetsError(f"Sheets read failed: HTTP {response.status_code} {response.text[:300]}")
+        return [s["properties"]["title"] for s in response.json().get("sheets", [])]
+
+    async def add_tab(self, title: str) -> None:
+        """Add an empty tab (batchUpdate addSheet)."""
+        await self._ensure_token()
+        assert self._client is not None
+        async with audited(agent=self.agent, action="add_tab", target_system="google_sheets", run_id=self.run_id,
+                           target_ref=title, mode="write") as ctx:
+            response = await request_with_retry(
+                self._client, "POST", f"{SHEETS_API_ROOT}/{self.spreadsheet_id}:batchUpdate",
+                json={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+                headers={"Authorization": f"Bearer {self._access_token}"})
+            ctx["http_status"] = response.status_code
+            if response.status_code != 200:
+                raise SheetsError(f"Sheets add tab failed: HTTP {response.status_code} {response.text[:300]}")
 
     async def append_rows(self, a1_range: str, rows: list[list[str]]) -> int:
         """Append rows to a sheet, after the last row with data.

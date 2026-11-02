@@ -46,6 +46,7 @@ ROLES: list[Role] = [
     # SAP + Billz + Garmin data through the bot, a Garmin morning brief.
     Role("garmin_manager", "Garmin менежер"),
     Role("londry", "Londry"),  # Primus Londry's own team — the brand, never "Laundry" (2026-10-02)
+    Role("texnik", "Техник"),  # Primus / LONDRY service technicians (2026-11-02: Рушан, Жамолиддин in the duties register)
 ]
 
 AGENTS: list[Agent] = [

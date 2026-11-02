@@ -47,6 +47,7 @@ is started (A1 and A3 are measured automatically every Friday).
 ## Added 2026-11-02
 
 - **SAP ↔ 1C ↔ Billz discrepancy report** for accounting, 09:00 + `/farqlar` (`31-reconcile.md`).
+- **Duties register and work profiles** — week 1 of automatic delegation (to 30.11), `/vazifalar` (`32-duties-register.md`).
 
 ## Back on the Boss's design
 

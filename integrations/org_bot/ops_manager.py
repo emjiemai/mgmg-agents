@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, agenda, ai_chat, cheques, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, agenda, ai_chat, cheques, duties, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -900,6 +900,9 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await lead_tracker.send_director(telegram_user_id, run_id)
     if (message.get("text") or "").strip().lower() in RECONCILE_COMMANDS:  # SAP ↔ 1C ↔ Billz now (02.11)
         return await _start_reconcile(employee, run_id, background)
+    if (message.get("text") or "").strip().lower() in duties.COMMANDS:  # the duties register (02.11)
+        await _reply(telegram_user_id, run_id, await duties.director_view())
+        return "duties_register_sent"
     # /hisobot too — the Director sends no report of his own (2026-10-17).
     if (message.get("text") or "").strip().lower() in report_calendar.COMMANDS + report_tools.REPORT_COMMANDS:
         return await _send_report_calendar(telegram_user_id, run_id)
@@ -1851,6 +1854,9 @@ async def _handle_employee_message(
         return await _show_today_report(employee, run_id)
     if text.lower() in RECONCILE_COMMANDS and may_reconcile(employee):  # accounting: SAP ↔ 1C ↔ Billz now (02.11)
         return await _start_reconcile(employee, run_id, background)
+    if text.lower() in duties.COMMANDS:  # their own duties from the register (02.11)
+        await _reply(telegram_user_id, run_id, await duties.own_view(employee))
+        return "duties_own_sent"
     if employee.get("role") == leads.SALES_ROLE and text.lower() in lead_tracker.COMMANDS:  # own open leads (28.10)
         return await lead_tracker.send_seller(employee, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS:  # his team's dashboard (2026-10-22)

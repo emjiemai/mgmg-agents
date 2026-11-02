@@ -88,6 +88,11 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **SAP ↔ 1C ↔ Billz discrepancy report** (2026-11-02, T-2026-11-0048, `integrations/reconcile/`, spec 31): 09:00
   working days (API loop, `reconcile_runs`) + `/farqlar` — to accounting with SAP + 1C access (Зайнабхон, Russian xlsx)
   and the Director: sales/payments documents, customers'/suppliers' debt, shop by day, wrong data. AmoCRM, Didox later.
+- **Duties register** (2026-11-02, Boss's T-0051/0054/0055, `duties.py`, spec 32): Google Sheet `DUTIES_SHEET_ID`
+  («Вазифалар», «Режалар»), else the Boss's 02.11 example (`SEED`); synced 07:30 + Admin `/vazifalar`; `duty_changes`
+  history; each person's duties → `employees.responsibilities` (work AI). `/vazifalar` for all. Role `texnik` added.
+  Plan to 30.11: week 2 = 08:45 daily tasks from the register + ✅/number + фойдали/фойдасиз; week 3 = system checks,
+  plan vs fact, Friday review; week 4 = everyone connected. Шоҳруҳ = Эшонов Шахзод.
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

@@ -154,6 +154,7 @@ ROLE_LABELS_CYR: dict[str, str] = {
     "aloqa_markazi": "Алоқа маркази",
     "garmin_sotuv": "Garmin сотув бўлими",
     "garmin_manager": "Garmin менежери",
+    "texnik": "Техник",
     "londry": "Londry бўлими",
 }
 

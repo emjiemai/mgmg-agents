@@ -131,6 +131,13 @@ async def _report_close_loop() -> None:
             await _morning_notes_left()
         except Exception as exc:  # noqa: BLE001 — tried again in 5 minutes
             log.error("Morning notes flush failed: {}", type(exc).__name__)
+        try:  # 07:30: the duties register from its sheet, everyone's work profile (duties.py, 02.11), once a day
+            from integrations.common.timeutil import now_local
+            from integrations.org_bot import duties
+
+            await duties.tick(now_local())
+        except Exception as exc:  # noqa: BLE001 — the next round tries again
+            log.error("Duties sync failed: {}", type(exc).__name__)
         try:  # 09:00: SAP ↔ 1C ↔ Billz discrepancy report to accounting (reconcile/run.py, 02.11), once a day
             from integrations.common.timeutil import now_local
             from integrations.reconcile import run as reconcile

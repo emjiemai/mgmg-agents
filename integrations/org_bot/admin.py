@@ -61,6 +61,8 @@ TECH_REPORT_COMMANDS = ("/texnik", "/tech")
 DB_REVIEW_COMMANDS = ("/baza", "/база")
 # "/lidlar" -> the B2B lead tracker on / off (2026-10-28, the Boss: stop / start) — no figures for IT.
 LEADS_COMMANDS = ("/lidlar", "/лидлар")
+# "/vazifalar" -> read the duties register now; counts and rows to fix, no targets (2026-11-02)
+DUTIES_COMMANDS = ("/vazifalar", "/вазифалар")
 # "/elon" (+ text) -> one message to every employee, after a confirm tap.
 ANNOUNCE_COMMAND = "/elon"
 # What /elon sends when no text is given: the "something went wrong" notice.
@@ -233,6 +235,11 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await db_review.send(run_id)
     if text in LEADS_COMMANDS:
         return await _show_lead_switch(run_id)
+    if text in DUTIES_COMMANDS:
+        from integrations.org_bot import duties
+
+        await tell_admin(duties.admin_text(await duties.sync(run_id)), run_id)
+        return "duties_synced"
     if text in TECH_REPORT_COMMANDS:
         from integrations.org_bot import tech_report
 

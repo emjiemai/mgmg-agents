@@ -82,6 +82,7 @@ TECHNICAL_TABLES = frozenset({
     "garmin_competitor_shops",   # competitor shops' own published contacts (2026-10-20)
     "lead_groups", "lead_handout_switch",  # the lead groups' chats and the B2B tracker's on / off (2026-10-26, 28)
     "crawl_items", "crawl_runs",           # the lead search index: public news and Telegram posts (2026-10-30)
+    "reconcile_runs",                      # the days the 09:00 discrepancy report went out (dates only, 2026-11-02)
 })
 # Open for IT until this day only (2026-10-17, the Boss: find and fix the briefs' SAP / Billz / 1C
 # mismatches — docs/access-review-2026-10-07.md §4); closed again by itself after it.
