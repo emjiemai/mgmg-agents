@@ -1,4 +1,4 @@
-"""The Friday review of the daily tasks — week 3 of automatic delegation (2026-11-03, the Boss's T-0055).
+"""The Friday review of the daily tasks — week 3 of automatic delegation (2026-11-02, the Boss's T-0055).
 
 «Ҳар жума куни агент ишини ҳафталик натижалар асосида тузатинг» and «фойдасиз деб баҳоланган топшириқларни таҳлил
 қилинг». Every Friday at 16:30 (the API's round, once):

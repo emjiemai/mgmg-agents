@@ -351,14 +351,14 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
     if lead_outcome is not None:
         return lead_outcome
 
-    # The Friday review's ✅ Қабул / ❌ Рад on a register change (duty_review.py, 2026-11-03).
+    # The Friday review's ✅ Қабул / ❌ Рад on a register change (duty_review.py, 2026-11-02).
     from integrations.org_bot import duty_review
 
     review_outcome = await duty_review.handle_callback(prefix, rest, callback, run_id)
     if review_outcome is not None:
         return review_outcome
 
-    # Daily tasks from the register: ✅ / ⛔ / 👎 and the Director's ⏸ / ▶️ (duty_tasks.py, 2026-11-03).
+    # Daily tasks from the register: ✅ / ⛔ / 👎 and the Director's ⏸ / ▶️ (duty_tasks.py, 2026-11-02).
     duty_outcome = await duty_tasks.handle_callback(prefix, rest, callback, run_id)
     if duty_outcome is not None:
         return duty_outcome
@@ -912,12 +912,12 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await lead_tracker.send_director(telegram_user_id, run_id)
     if (message.get("text") or "").strip().lower() in RECONCILE_COMMANDS:  # SAP ↔ 1C ↔ Billz now (02.11)
         return await _start_reconcile(employee, run_id, background)
-    if (message.get("text") or "").strip().lower() in PLAN_COMMANDS:  # the month's plans against SAP (03.11)
+    if (message.get("text") or "").strip().lower() in PLAN_COMMANDS:  # the month's plans against SAP (02.11)
         from integrations.org_bot import plan_facts
 
         await _reply(telegram_user_id, run_id, plan_facts.plans_text(await plan_facts.plans_vs_facts(), today_local()))
         return "plans_sent"
-    if (message.get("text") or "").strip().lower() in duties.COMMANDS:  # the duties register (02.11), ⏸ / ▶️ (03.11)
+    if (message.get("text") or "").strip().lower() in duties.COMMANDS:  # the duties register (02.11), ⏸ / ▶️ (02.11)
         text, keyboard = await duties.director_card()
         await _reply(telegram_user_id, run_id, text, keyboard)
         return "duties_register_sent"
@@ -1773,8 +1773,8 @@ async def _handle_save_as_report(relay_id: str, callback: dict[str, Any], run_id
 
 
 PULSE_COMMANDS = ("/pulse", "/пулс")
-RECONCILE_COMMANDS = ("/farqlar", "/фарқлар", "/sverka", "/сверка")
-PLAN_COMMANDS = ("/reja", "/режа")  # the Director: the month's plans against SAP (plan_facts.py, 03.11)  # = reconcile.run.COMMANDS (selfcheck)
+RECONCILE_COMMANDS = ("/farqlar", "/фарқлар", "/sverka", "/сверка")  # = reconcile.run.COMMANDS (selfcheck)
+PLAN_COMMANDS = ("/reja", "/режа")  # the Director: the month's plans against SAP (plan_facts.py, 02.11)
 
 
 async def _send_pulse_link(telegram_user_id: int, run_id: uuid.UUID) -> str:
@@ -1861,7 +1861,7 @@ async def _handle_employee_message(
     lead_answer = await lead_tracker.take_message(employee, message, run_id)
     if lead_answer is not None:
         return lead_answer
-    # After ✅ / ⛔ on a daily duty: the number done, or why not (duty_tasks.py, 2026-11-03).
+    # After ✅ / ⛔ on a daily duty: the number done, or why not (duty_tasks.py, 2026-11-02).
     duty_answer = await duty_tasks.take_message(employee, message, run_id)
     if duty_answer is not None:
         return duty_answer

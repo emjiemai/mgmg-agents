@@ -1,4 +1,4 @@
-"""Plan vs fact, and the system's check of what people report (2026-11-03, week 3 of automatic delegation).
+"""Plan vs fact, and the system's check of what people report (2026-11-02, week 3 of automatic delegation).
 
 The ЭМЖИЕМ МИЯ document: «ҳар даъво тизимда текширилади» — «Сотдим» → SAP; the Boss's monthly plans (Garmin 70K,
 Primus 45K, …) against what was sold. Where a system has the data, the bot measures it instead of asking:

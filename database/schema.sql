@@ -1427,7 +1427,7 @@ CREATE TABLE IF NOT EXISTS monthly_plans (
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Daily tasks from the duties register (2026-11-03, week 2; integrations/org_bot/duty_tasks.py): one row per duty and
+-- Daily tasks from the duties register (2026-11-02, week 2; integrations/org_bot/duty_tasks.py): one row per duty and
 -- period (a day; a weekday; the week; the month; a deadline's last 7 days), answered on one card per person —
 -- ✅ (with the number when the duty has a target), ⛔ (with the reason), 👎 «фойдасиз». duty_cards: the cards sent;
 -- duty_runs: each step once a day; duty_switch: on / off (no row = off).
@@ -1474,7 +1474,7 @@ CREATE TABLE IF NOT EXISTS duty_switch (
     set_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Week 3 (2026-11-03): plan vs fact and the system's check (integrations/org_bot/plan_facts.py, duty_review.py).
+-- Week 3 (2026-11-02): plan vs fact and the system's check (integrations/org_bot/plan_facts.py, duty_review.py).
 -- sales_facts: every pushed SAP invoice line kept (SAP pushes 14 days; the month adds up here), dollars from the
 -- document's gross total split over its lines; product group from the item master; the salesperson.
 CREATE TABLE IF NOT EXISTS sales_facts (

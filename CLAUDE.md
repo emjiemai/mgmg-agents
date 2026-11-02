@@ -91,8 +91,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **Duties register** (2026-11-02, Boss's T-0051/0054/0055, `duties.py`, spec 32): Google Sheet `DUTIES_SHEET_ID`
   («Вазифалар», «Режалар»), else the Boss's 02.11 example (`SEED`); synced 07:30 + Admin `/vazifalar`; `duty_changes`
   history; each person's duties → `employees.responsibilities` (work AI). `/vazifalar` for all. Role `texnik` added.
-  **Week 2 (03.11, `duty_tasks.py`):** 08:45 one card per person (✅ + number / ⛔ + reason / 👎 фойдасиз), 08:50 IT check,
-  17:30 reminder, 22:00 missed; ⏸/▶️ on /vazifalar (Director, Admin; `duty_switch`, no row = off). **Week 3 (03.11):**
+  **Week 2 (02.11, `duty_tasks.py`):** 08:45 one card per person (✅ + number / ⛔ + reason / 👎 фойдасиз), 08:50 IT check,
+  17:30 reminder, 22:00 missed; ⏸/▶️ on /vazifalar (Director, Admin; `duty_switch`, no row = off). **Week 3 (02.11):**
   `plan_facts.py` (SAP lines → `sales_facts` hourly; $ duties checked in SAP/Billz, typed > fact+10 % = ⚠️; `/reja`
   plans vs fact), `duty_review.py` (Fri 16:30: rules pick duties, AI writes the change, Director ✅/❌, accepted → IT).
   Next: week 4 = everyone connected, tuning, acceptance. Шоҳруҳ = Эшонов Шахзод.

@@ -36,7 +36,7 @@ work AI already reads it, so it answers knowing the person's job. Names are matc
 - Admin Bot: **/vazifalar** — reads the sheet now: counts, the rows to fix (by row number), who isn't in the bot, how to
   connect the sheet (the service account's address). No targets or sums (IT sees no company figures).
 
-## Week 2 — the daily tasks (2026-11-03, `integrations/org_bot/duty_tasks.py`)
+## Week 2 — the daily tasks (2026-11-02, `integrations/org_bot/duty_tasks.py`)
 
 **On / off:** ⏸ / ▶️ on the Director's `/vazifalar` and Admin Bot `/vazifalar` (`duty_switch`; no row = off — the
 other side is told). Nothing goes out on a /dam day off, outside a person's working week, on their excused day, or
@@ -53,11 +53,11 @@ with `BOTS_FROZEN`.
 The Director's `/vazifalar` shows today's progress per person (✅ / жами, 👎). A typed number or reason is taken for 3
 hours after the tap; words without a number, or a question, go on to the usual flow.
 
-## Week 3 — the system's check, plan vs fact, the Friday review (2026-11-03)
+## Week 3 — the system's check, plan vs fact, the Friday review (2026-11-02)
 
 **Sales facts** (`plan_facts.py`, hourly in the API's round): SAP pushes 14 days of invoices; every line is kept in
 `sales_facts`, so the month adds up. Dollars = the invoice's gross total (SAP's local currency is USD) split over its
-lines by their net amounts (checked live 03.11: 102 of 102 invoices add back to their totals); the product group from
+lines by their net amounts (checked live 02.11: 102 of 102 invoices add back to their totals); the product group from
 the item master (Garmin, Tanita, Primus, Parts, Londry); the salesperson from the invoice. People ↔ SAP salespeople by
 name, spelling-tolerant (Ходжиев = Хожиев, Ёрқинов = Ёркинов, Мирпўлатов = Мирпулатов): 8 matched.
 

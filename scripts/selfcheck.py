@@ -1824,9 +1824,9 @@ def test_client_feedback() -> None:
 
 
 def test_plan_facts_and_review() -> None:
-    """Week 3 (2026-11-03): the system checks what people report (SAP, Billz), the month's plans against facts, and
+    """Week 3 (2026-11-02): the system checks what people report (SAP, Billz), the month's plans against facts, and
     the Friday review — rules pick the duties, the AI writes the change, the Director decides."""
-    print("plan vs fact, system check, Friday review (03.11.2026)")
+    print("plan vs fact, system check, Friday review (02.11.2026)")
     import asyncio
     import uuid
 
@@ -1945,9 +1945,9 @@ def test_plan_facts_and_review() -> None:
 
 
 def test_duty_tasks() -> None:
-    """Week 2 (2026-11-03): each day's tasks from the duties register — one card per person at 08:45, ✅ (with the
+    """Week 2 (2026-11-02): each day's tasks from the duties register — one card per person at 08:45, ✅ (with the
     number) / ⛔ (with the reason) / 👎 «фойдасиз», IT's check, 17:30 reminder, 22:00 close, ⏸ / ▶️."""
-    print("daily tasks from the register (03.11.2026)")
+    print("daily tasks from the register (02.11.2026)")
     import asyncio
     import uuid
 

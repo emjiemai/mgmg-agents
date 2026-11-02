@@ -1,4 +1,4 @@
-"""Daily tasks from the duties register — week 2 of automatic delegation (2026-11-03, the Boss's T-0051 / T-0055).
+"""Daily tasks from the duties register — week 2 of automatic delegation (2026-11-02, the Boss's T-0051 / T-0055).
 
 The register (``duties.py``) says who does what and how often; here it becomes each day's work:
 

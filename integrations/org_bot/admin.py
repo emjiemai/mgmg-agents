@@ -1405,7 +1405,7 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
     if action in ("rsh", "rsm", "rsd", "rsok", "rsx"):  # 📊 the report sheet (report_sheet.py, 2026-10-24)
         return await _report_sheet_action(action, target_id, query_id, decided_by, callback, run_id)
 
-    if action == "dsw":  # /vazifalar: the daily cards from the register ⏸ / ▶️ (duty_tasks.py, 2026-11-03)
+    if action == "dsw":  # /vazifalar: the daily cards from the register ⏸ / ▶️ (duty_tasks.py, 2026-11-02)
         from integrations.org_bot import duty_tasks
 
         await duty_tasks.set_switch(target_id == "on", decided_by, True, run_id)
