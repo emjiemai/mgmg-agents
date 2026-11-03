@@ -285,14 +285,23 @@ async def read_sheet(run_id: uuid.UUID | None) -> tuple[list[list[str]] | None, 
 
 async def sync(run_id: uuid.UUID | None = None) -> dict[str, Any]:
     """Read the register (the sheet, or the seed), keep it with its history, refresh everyone's work profile."""
-    rows, plan_rows = await read_sheet(run_id)
-    if rows is None:
+    sheet_error = ""
+    try:
+        rows, plan_rows = await read_sheet(run_id)
+    except Exception as exc:  # noqa: BLE001 — 03.11: the sheet set but unreadable failed every 5 minutes; now the last good register stays
+        sheet_error = " ".join(str(exc).split())[:300] or type(exc).__name__
+        rows = plan_rows = None
+        await log_action(agent=AGENT, action="read_sheet", target_system="google_sheets", status="error", run_id=run_id,
+                         mode="read", error_message=sheet_error)
+    old = {r["row_key"]: r for r in await fetch_all("SELECT * FROM duties WHERE active")}
+    if sheet_error:  # the register as it was last read: nothing added, changed or removed
+        duties, problems, source = [Duty(**{k: r[k] for k in FIELDS if k != "active"}) for r in old.values()], [], "sheet_failed"
+    elif rows is None:
         duties, problems, source = list(SEED), [], "seed"
     else:
         duties, problems = parse(rows)
         source = "sheet"
     people = await fetch_all("SELECT * FROM employees WHERE status = 'active'")
-    old = {r["row_key"]: r for r in await fetch_all("SELECT * FROM duties WHERE active")}
     seen: set[str] = set()
     added = changed = 0
     for d in duties:
@@ -343,11 +352,11 @@ async def sync(run_id: uuid.UUID | None = None) -> dict[str, Any]:
             profiles += 1
     if plan_rows:
         await save_plans(plan_rows)
-    elif rows is None:
+    elif rows is None and not sheet_error:
         await save_plans([list(PLAN_COLUMNS), *[list(p) for p in SEED_PLANS]])
     unmatched = sorted({d.person for d in duties if d.active and match_person(d.person, people) is None})
     counts = {"source": source, "duties": len(seen), "added": added, "changed": changed, "removed": len(removed),
-              "profiles": profiles, "unmatched": len(unmatched), "problems": len(problems)}
+              "profiles": profiles, "unmatched": len(unmatched), "problems": len(problems), "error": sheet_error}
     await log_action(agent=AGENT, action="sync", target_system="postgres", status="success" if not problems else "partial",
                      run_id=run_id, mode="write", payload=counts)
     return {**counts, "problem_list": problems, "unmatched_list": unmatched}
@@ -434,7 +443,8 @@ def admin_text(result: dict[str, Any]) -> str:
     """Admin Bot /vazifalar: the sync's counts and the rows to fix — no targets or sums (IT sees no company figures)."""
     from integrations.google.sheets_client import service_account_email
 
-    src = "Google жадвал" if result["source"] == "sheet" else "намуна (жадвал уланмаган)"
+    src = {"sheet": "Google жадвал", "sheet_failed": "Google жадвал ўқилмади — охирги ўқилган реестр ишлатилмоқда"}.get(
+        result["source"], "намуна (жадвал уланмаган)")
     lines = [f"📋 <b>Вазифалар реестри</b> — манба: {src}",
              f"Вазифалар: {result['duties']} · қўшилди {result['added']}, ўзгарди {result['changed']}, олиб ташланди {result['removed']}",
              f"Профиллар янгиланди: {result['profiles']} киши"]
@@ -442,6 +452,10 @@ def admin_text(result: dict[str, Any]) -> str:
         lines.append("Ботда йўқ: " + ", ".join(escape(n) for n in result["unmatched_list"]))
     if result["problem_list"]:
         lines += ["", "<b>Тузатиш керак:</b>"] + [f"• {escape(p)}" for p in result["problem_list"][:20]]
+    if result.get("error"):
+        lines += ["", f"❌ Google жавоби: <code>{escape(result['error'][:200])}</code>",
+                  "Кўпинча сабаби: жадвал сервис аккаунтга «Редактор» қилиб улашилмаган ёки DUTIES_SHEET_ID нотўғри "
+                  "(манзил сатридаги /d/ ва /edit орасидаги қисм)."]
     if result["source"] != "sheet":
         email = service_account_email()
         lines += ["", "Улаш: бўш Google жадвал очинг, уни "
@@ -451,18 +465,33 @@ def admin_text(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def due(today: date) -> bool:
-    """Once a day, from 07:30 (before the 08:45 tasks of week 2)."""
-    row = await fetch_one("SELECT max(at) AS at FROM duty_changes WHERE change = 'synced'")
-    from integrations.common.timeutil import to_local
+RETRY_MINUTES = 60  # a sheet that couldn't be read is tried again hourly, not every 5 minutes (03.11)
 
-    return row is None or row["at"] is None or to_local(row["at"]).date() < today
+
+async def due(today: date) -> bool:
+    """Once a day, from 07:30 (before the 08:45 tasks); again an hour after a failed read."""
+    from integrations.common.timeutil import now_local, to_local
+
+    row = await fetch_one("SELECT at, after FROM duty_changes WHERE change = 'synced' ORDER BY at DESC LIMIT 1")
+    if row is None or row["at"] is None or to_local(row["at"]).date() < today:
+        return True
+    failed = bool((row["after"] or {}).get("failed")) if isinstance(row["after"], dict) else False
+    return failed and (now_local() - to_local(row["at"])).total_seconds() >= RETRY_MINUTES * 60
 
 
 async def tick(now: Any) -> dict[str, Any] | None:
-    """The API's 5-minute round: the morning sync, from 07:30, once a day."""
+    """The API's 5-minute round: the morning sync, from 07:30, once a day (hourly while the sheet can't be read);
+    the first failure of a day is told to the admin with Google's reason."""
     if (now.hour, now.minute) < (7, 30) or not await due(now.date()):
         return None
+    earlier = await fetch_one(
+        """SELECT count(*) AS n FROM duty_changes WHERE change = 'synced' AND (after ->> 'failed') IS NOT NULL
+             AND (at AT TIME ZONE 'Asia/Tashkent')::date = %s""", (now.date(),))
     result = await sync(uuid.uuid4())
-    await execute("INSERT INTO duty_changes (row_key, change) VALUES ('-', 'synced')")
+    await execute("INSERT INTO duty_changes (row_key, change, after) VALUES ('-', 'synced', %s)",
+                  (json.dumps({"failed": result["error"]}, ensure_ascii=False) if result["error"] else None,))
+    if result["error"] and not (earlier and earlier["n"]):
+        from integrations.org_bot import admin
+
+        await admin.tell_admin(admin_text(result), uuid.uuid4())
     return result

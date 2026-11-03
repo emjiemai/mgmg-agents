@@ -1823,6 +1823,97 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_sap_entry_and_testing() -> None:
+    """03.11.2026 (the owner): «who didn't enter SAP» (/kiritish), safe testing (Admin «/vazifalar sinov», the
+    Director's /tahlil), and an unreadable register sheet no longer retried every 5 minutes."""
+    print("who didn't enter SAP, safe testing, register sheet failures (03.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import admin, duties, duty_review, duty_tasks, ops_manager, sap_entry
+    from integrations.telegram import menus
+
+    people = [{"full_name": "Рустам Ёркинов"}, {"full_name": "Ширин Умматова"}, {"full_name": "Абдурашид Хожиев"},
+              {"full_name": "Шухрат Умаров"}, {"full_name": "Умаров Мурод"}]
+    check("Billz / SAP names as the bot knows the person (Latin, other order, spelling)",
+          [sap_entry.display_name(n, people) for n in ("Rustam Yorkinov", "Shirina Ummatova", "Abdurashid Xadjiev",
+                                                        "Умматова Ширин", "Умаров", "Шавкатов Азиз")],
+          ["Рустам Ёркинов", "Ширин Умматова", "Абдурашид Хожиев", "Ширин Умматова", "Умаров", "Шавкатов Азиз"])
+    checks = [{"missing": [{"seller": "Rustam Yorkinov", "amount": 100}, {"seller": "Rustam Yorkinov", "amount": 50}],
+               "late": [{"cheque": {"seller": "Abdurashid Xadjiev"}}], "amount_diff": [{"cheque": {"seller": "Rustam Yorkinov"}}]}]
+    shop = sap_entry.shop_by_seller(checks, people)
+    check("the shop by seller: missing (with the sum), late, another amount", shop,
+          {"Рустам Ёркинов": {"missing": 2, "missing_sum": 150.0, "late": 0, "amount": 1},
+           "Абдурашид Хожиев": {"missing": 0, "missing_sum": 0.0, "late": 1, "amount": 0}})
+    sales = [{"ObjType": "13", "DocEntry": 1, "DocDate": "2026-10-28", "CreateDate": "2026-11-01", "SlpCode": 5, "CANCELED": "N", "UserSign": 10},
+             {"ObjType": "13", "DocEntry": 1, "DocDate": "2026-10-28", "CreateDate": "2026-11-01", "SlpCode": 5, "CANCELED": "N"},  # 2nd line
+             {"ObjType": "13", "DocEntry": 2, "DocDate": "2026-10-29", "CreateDate": "2026-10-29", "SlpCode": 5, "CANCELED": "N"},
+             {"ObjType": "13", "DocEntry": 3, "DocDate": "2026-10-30", "CreateDate": "2026-10-30", "SlpCode": -1, "CANCELED": "N",
+              "UserSign": 10, "UserName": "Гармин (филиал Абай)"},
+             {"ObjType": "13", "DocEntry": 4, "DocDate": "2026-10-01", "CreateDate": "2026-10-01", "SlpCode": 5, "CANCELED": "N"}]
+    per, no_slp = sap_entry.sap_by_person(sales, {"5": "Ёрқинов Рустам"}, date(2026, 10, 27))
+    check("SAP: per salesperson invoices and late ones (once per document), the longest delay; the period only",
+          per, {"Ёрқинов Рустам": {"docs": 2, "late": 1, "max_days": 4}})
+    check("...no salesperson, by the SAP user who entered it (by name once the gateway sends it)", no_slp, {"Гармин (филиал Абай)": 1})
+    text = sap_entry.report_text(shop, per, no_slp, date(2026, 10, 27), date(2026, 11, 2))
+    check_true("the report: the shop, late invoices, no salesperson, what isn't visible yet",
+               "🔴 Рустам Ёркинов — киритилмаган 2 та (150 сўм), суммаси бошқа 1 та" in text
+               and "🟡 Абдурашид Хожиев — кеч киритилган 1 та" in text and "1 / 2 та кеч, энг кўпи 4 кун" in text
+               and "Гармин (филиал Абай) — 1 та" in text and "омбор кирим / чиқими" in text)
+    check_true("the gateway sends the entering user's and the salesperson's names",
+               'USR."U_NAME" AS "UserName"' in load_source("sap-gateway/src/sales-by-date.js")
+               and 'S."SlpName"' in load_source("sap-gateway/src/sales-by-date.js"))
+    check_true("/kiritish: the Director everyone, a manager his team; in their menus",
+               "sap_entry.build(None, today_local())" in inspect_source(ops_manager)
+               and "sap_entry.build(report_calendar.TEAM_OF[employee[\"role\"]]" in inspect_source(ops_manager)
+               and "kiritish" in dict(menus.DIRECTOR) and "kiritish" in dict(menus.GARMIN_MANAGER))
+
+    # ---- an unreadable register sheet: the last good register stays, Google's reason said, hourly retry
+    saved = [(duties, n, getattr(duties, n)) for n in ("read_sheet", "fetch_all", "fetch_one", "execute", "log_action")]
+    logged, writes = [], []
+    row = {"row_key": duties.SEED[0].key, "employee_id": None, **{k: getattr(duties.SEED[0], k) for k in duties.FIELDS if k != "active"}}
+
+    async def broken(run_id):
+        from integrations.google.sheets_client import SheetsError
+        raise SheetsError("Sheets read failed: HTTP 403 The caller does not have permission")
+
+    async def fake_all(sql, params=None):
+        return [row] if "FROM duties WHERE active" in sql and "employee_id" not in sql.split("WHERE")[1][:40] else []
+
+    async def fake_one(sql, params=None):
+        return None
+
+    async def fake_exec(sql, params=None):
+        writes.append(sql.split()[0])
+
+    async def fake_log(**kw):
+        logged.append(kw)
+
+    duties.read_sheet, duties.fetch_all, duties.fetch_one, duties.execute, duties.log_action = broken, fake_all, fake_one, fake_exec, fake_log
+    try:
+        result = asyncio.run(duties.sync(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("the sheet can't be read: the register as last read, nothing removed", (result["source"], result["removed"], result["duties"]),
+          ("sheet_failed", 0, 1))
+    check_true("...Google's reason kept in the log and shown to IT with what to check",
+               logged[0]["status"] == "error" and "403" in logged[0]["error_message"]
+               and "403" in duties.admin_text({**result, "problem_list": [], "unmatched_list": []})
+               and "Редактор" in duties.admin_text({**result, "problem_list": [], "unmatched_list": []}))
+    check_true("...retried hourly, not every 5 minutes; IT told once a day", duties.RETRY_MINUTES == 60
+               and "failed" in inspect_source(duties.due) and "not (earlier and earlier[\"n\"])" in inspect_source(duties.tick))
+
+    # ---- safe testing
+    check_true("Admin «/vazifalar sinov»: today's card to me only, even while off — nobody else's tasks are made",
+               "only=employee[\"id\"]" in inspect_source(duty_tasks.test_send)
+               and "if only is not None and str(person[\"id\"]) != str(only):" in inspect_source(duty_tasks.generate)
+               and '"sinov"' in inspect_source(admin.handle_admin_message))
+    check_true("the Director's /tahlil: the week's review now, to him only (IT gets no copy)",
+               "/tahlil" in duty_review.COMMANDS and "if not only_chat:" in inspect_source(duty_review.run)
+               and "tahlil" in dict(menus.DIRECTOR))
+
+
 def test_rollout() -> None:
     """Week 4 (2026-11-02): everyone connected, the Boss's acceptance measured, the register's tasks in PULSE's score,
     plan vs fact in PULSE, the Garmin manager's team day."""
@@ -4868,7 +4959,7 @@ def test_command_menus() -> None:
                    *ops_manager.competitors.COMMANDS, *ops_manager.PULSE_COMMANDS, *ops_manager.excused.COMMANDS,
                    *ops_manager.stock_list.COMMANDS, *ops_manager.lead_tracker.COMMANDS,
                    *ops_manager.RECONCILE_COMMANDS, *ops_manager.duties.COMMANDS,
-                   *ops_manager.PLAN_COMMANDS}
+                   *ops_manager.PLAN_COMMANDS, *ops_manager.sap_entry.COMMANDS, *ops_manager.duty_review.COMMANDS}
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES + menus.ACCOUNTING))
@@ -5253,7 +5344,7 @@ def test_own_week_and_team_calendar() -> None:
                and 'prefix == "kr" and not director' in cb)
     check_true("his menu: team calendar, excused days, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, "
                "/ruxsat or /ism", [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "qoldiq", "eski",
-                                                         "raqobat", "vazifalar", "pulse", "bekor"])  # + his duties (02.11)
+                                                         "raqobat", "vazifalar", "kiritish", "pulse", "bekor"])  # + duties, SAP entry
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
     check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
                ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
@@ -10699,6 +10790,7 @@ def main() -> int:
         test_duty_tasks,
         test_plan_facts_and_review,
         test_rollout,
+        test_sap_entry_and_testing,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

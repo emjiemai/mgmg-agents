@@ -196,10 +196,13 @@ async def people_today(day: date) -> list[dict[str, Any]]:
     return [e for e in rows if kpi.works_on(e, day)]
 
 
-async def generate(day: date) -> int:
-    """Today's task instances from the register; how many new."""
+async def generate(day: date, only: Any = None) -> int:
+    """Today's task instances from the register; how many new. ``only``: one person's (a test — nobody else's
+    score, card or 22:00 close is touched)."""
     made = 0
     for person in await people_today(day):
+        if only is not None and str(person["id"]) != str(only):
+            continue
         for d in await fetch_all("SELECT * FROM duties WHERE active AND employee_id = %s AND cadence = ANY(%s)",
                                  (person["id"], list(TASK_CADENCES))):
             span = period(d["cadence"], d["day"], day)
@@ -240,10 +243,12 @@ async def _answer(callback: dict[str, Any], text: str) -> None:
         await bot._answer_callback(callback.get("id", ""), text)  # noqa: SLF001
 
 
-async def send_cards(day: date, run_id: uuid.UUID, *, evening: bool = False) -> dict[str, Any]:
+async def send_cards(day: date, run_id: uuid.UUID, *, evening: bool = False, only: Any = None) -> dict[str, Any]:
     """One card per person (morning: everything due; evening: only those with something still open)."""
     sent, failed, tasks = 0, [], 0
     for person in await people_today(day):
+        if only is not None and str(person["id"]) != str(only):
+            continue
         mine = [t for t in await tasks_for(person["id"], day, open_only=evening) if shown(t, day)]
         if not mine:
             continue
@@ -380,6 +385,18 @@ async def _facts(day: date) -> None:
         await plan_facts.fill_duty_facts(day)
     except Exception as exc:  # noqa: BLE001
         log.warning("Duty facts not filled: {}", type(exc).__name__)
+
+
+async def test_send(employee: dict[str, Any], run_id: uuid.UUID) -> str:
+    """Admin Bot «/vazifalar sinov»: today's card to this one person only — even while the switch is off — and the
+    08:45 IT check as it would read. Their tasks are real (the buttons work); nobody else's are made."""
+    from integrations.org_bot import admin
+
+    day = today_local()
+    await generate(day, only=employee["id"])
+    result = await send_cards(day, run_id, only=employee["id"])
+    await admin.tell_admin("🧪 <b>Синов</b> — карта фақат сизга юборилди.\n\n" + await it_check(day, result, run_id), run_id)
+    return "duty_test_sent" if result["people"] else "duty_test_nothing"
 
 
 async def close_day(day: date) -> int:

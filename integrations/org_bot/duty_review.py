@@ -30,6 +30,7 @@ AGENT = "duty-review"
 log = setup_logging(AGENT)
 
 PREFIX = "dsg"           # dsg:<suggestion id>:y|n
+COMMANDS = ("/tahlil", "/таҳлил")  # the Director: the week's review so far, now (2026-11-03)
 REVIEW_AT = (16, 30)
 FRIDAY = 4
 MIN_DAYS = 3             # a duty is judged on at least this many tasks
@@ -189,8 +190,9 @@ async def suggestions(items: list[dict[str, Any]], run_id: uuid.UUID) -> list[tu
     return [written.get(n, rule_text(d)) for n, d in enumerate(items, start=1)]
 
 
-async def run(day: date, run_id: uuid.UUID) -> dict[str, int]:
-    """The review: stats, flagged duties with suggestions (kept in duty_suggestions), to the Director and IT."""
+async def run(day: date, run_id: uuid.UUID, only_chat: int | None = None) -> dict[str, int]:
+    """The review: stats, flagged duties with suggestions (kept in duty_suggestions), to the Director and IT.
+    ``only_chat``: the Director's «/tahlil» — the review so far, to him only (IT isn't sent a copy)."""
     from integrations.org_bot import admin, plan_facts, store
     from integrations.org_bot.roles import DIRECTOR_ROLE
 
@@ -228,13 +230,15 @@ async def run(day: date, run_id: uuid.UUID) -> dict[str, int]:
     tail = ("\n\n<b>Реестрга таклифлар</b> (қоида танлади, AI ёзди — қабул қилинганини IT реестрда ўзгартиради)\n\n" + body
             if stored else "\n\nБу ҳафта реестрни ўзгартириш таклифи йўқ.")
     async with _bot(run_id) as bot:
-        for boss in await store.active_employees_by_role(DIRECTOR_ROLE):
+        bosses = [{"telegram_user_id": only_chat}] if only_chat else await store.active_employees_by_role(DIRECTOR_ROLE)
+        for boss in bosses:
             try:
                 await bot.send_message(review_text(monday, day, people, plans, False) + connected + tail, chat_id=str(boss["telegram_user_id"]),
                                        reply_markup=keyboard if stored else None)
             except TelegramError as exc:
                 log.warning("Review not delivered: {}", type(exc).__name__)
-    await admin.tell_admin(review_text(monday, day, people, None, True) + connected + tail.replace("<b>Реестрга таклифлар</b>", "<b>Таклифлар</b>"), run_id)
+    if not only_chat:
+        await admin.tell_admin(review_text(monday, day, people, None, True) + connected + tail.replace("<b>Реестрга таклифлар</b>", "<b>Таклифлар</b>"), run_id)
     counts = {"people": len(people), "tasks": len(tasks), "suggestions": len(stored)}
     await log_action(agent=AGENT, action="weekly_review", target_system="telegram", status="success", run_id=run_id,
                      mode="notify", payload=counts)

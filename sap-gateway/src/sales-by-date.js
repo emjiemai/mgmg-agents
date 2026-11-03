@@ -31,7 +31,9 @@ const branch = (objType, header, lines) => `
       H."DocStatus",
       H."CANCELED",
       H."SlpCode",
+      S."SlpName",
       H."UserSign",
+      USR."U_NAME" AS "UserName",
       L."LineNum",
       L."ItemCode",
       L."Dscription",
@@ -46,6 +48,8 @@ const branch = (objType, header, lines) => `
     FROM ${tableRef(header)} H
     INNER JOIN ${tableRef(lines)} L
       ON L."DocEntry" = H."DocEntry"
+    LEFT JOIN ${tableRef('OSLP')} S ON S."SlpCode" = H."SlpCode"
+    LEFT JOIN ${tableRef('OUSR')} USR ON USR."USERID" = H."UserSign"
     WHERE H."CANCELED" = 'N'
       AND (H."DocDate" BETWEEN TO_DATE(?, 'YYYY-MM-DD') AND TO_DATE(?, 'YYYY-MM-DD')
            OR H."CreateDate" BETWEEN TO_DATE(?, 'YYYY-MM-DD') AND TO_DATE(?, 'YYYY-MM-DD'))`;
@@ -60,7 +64,8 @@ const branch = (objType, header, lines) => `
  * GTotalSC / TotalSumSy are the LINE in so'm (with / without VAT, 2026-10-17): DocTotalSy repeats the
  * whole document's total on every line, so adding it up line by line counted a two-line invoice twice.
  * DocTotalSy is the total in SAP's system currency (so'm), CreateTS the
- * entry time (hhmmss), UserSign the SAP user who entered it.
+ * entry time (hhmmss), UserSign the SAP user who entered it — with their name (OUSR.U_NAME, 2026-11-03: «who
+ * didn't enter SAP» names people, not user numbers) and the salesperson's name (OSLP.SlpName).
  */
 export async function getSalesByDate({ from, to, limit = 10000 } = {}) {
   const fromDate = requiredDate(from, 'from');

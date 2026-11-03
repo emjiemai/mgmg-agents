@@ -100,3 +100,14 @@ against the month's pace (green ahead, red behind), the unmeasurable plans said.
 
 Connect the register's Google Sheet (`DUTIES_SHEET_ID`) so heads can fix their rows; the technicians register; Умар
 Хошимов's duties added; ▶️ on `/vazifalar`; then 5 working days in a row at ≥ 90 % — the Boss's acceptance.
+
+## 2026-11-03
+
+- **Safe testing:** Admin Bot `/vazifalar sinov` — today's card to the admin only (their tasks are real; nobody else's
+  are made, so no other score or 22:00 close is touched); the Director's `/tahlil` — the week's review now, to him only.
+- **An unreadable sheet** (03.11: `DUTIES_SHEET_ID` set but every read failed, retried every 5 minutes): the last good
+  register stays (nothing added / removed), Google's reason is logged (`read_sheet`, error) and shown on Admin
+  `/vazifalar`, the read is retried hourly, IT is told once a day.
+- **Who didn't enter SAP** (`sap_entry.py`, `/kiritish`, the Director / the Garmin manager's team): shop cheques by Billz
+  seller (missing / late / another amount), SAP invoices entered late by salesperson, invoices without a salesperson
+  by the SAP user. Warehouse receipts / issues and spare parts used: not pushed by the gateway yet.

@@ -98,6 +98,10 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   **Week 4 (02.11, `rollout.py`):** who is connected + the acceptance condition (≥ 90 % answer the card 5 working days in a
   row) on /vazifalar and Friday; register tasks in PULSE's score; PULSE «Режа ва факт» (Director); Garmin manager's team
   day. Left by hand: connect the sheet, technicians register, Умар Хошимов's duties, ▶️. Шоҳруҳ = Эшонов Шахзод.
+  **03.11:** `/kiritish` (`sap_entry.py`: who didn't enter SAP — Billz cheques by seller, late SAP invoices by salesperson,
+  no salesperson by SAP user; gateway sales tool now sends UserName/SlpName — copy to the gateway PC); Admin
+  `/vazifalar sinov` (card to me only), Director `/tahlil`; unreadable sheet → last register kept, hourly retry, IT told.
+  Test list: `docs/test-checklist-2026-11-03.md`.
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

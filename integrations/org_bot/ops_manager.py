@@ -34,7 +34,7 @@ from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import (
-    admin, agenda, ai_chat, cheques, duties, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, agenda, ai_chat, cheques, duties, duty_review, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, sap_entry, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -352,8 +352,6 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return lead_outcome
 
     # The Friday review's ✅ Қабул / ❌ Рад on a register change (duty_review.py, 2026-11-02).
-    from integrations.org_bot import duty_review
-
     review_outcome = await duty_review.handle_callback(prefix, rest, callback, run_id)
     if review_outcome is not None:
         return review_outcome
@@ -912,6 +910,17 @@ async def _handle_message(message: dict[str, Any], run_id: uuid.UUID, background
         return await lead_tracker.send_director(telegram_user_id, run_id)
     if (message.get("text") or "").strip().lower() in RECONCILE_COMMANDS:  # SAP ↔ 1C ↔ Billz now (02.11)
         return await _start_reconcile(employee, run_id, background)
+    if (message.get("text") or "").strip().lower() in sap_entry.COMMANDS:  # who didn't enter SAP (03.11)
+        await _reply(telegram_user_id, run_id, await sap_entry.build(None, today_local()))
+        return "sap_entry_sent"
+    if (message.get("text") or "").strip().lower() in duty_review.COMMANDS:  # the week's review so far, to him (03.11)
+        await _reply(telegram_user_id, run_id, "Ҳафта таҳлили тайёрланмоқда, бир дақиқа кутинг.")
+        job = (duty_review.run, today_local(), run_id, telegram_user_id)
+        if background is not None:
+            background.add_task(*job)
+        else:
+            await job[0](*job[1:])
+        return "review_asked"
     if (message.get("text") or "").strip().lower() in PLAN_COMMANDS:  # the month's plans against SAP (02.11)
         from integrations.org_bot import plan_facts
 
@@ -1887,6 +1896,9 @@ async def _handle_employee_message(
         return "duties_own_sent"
     if employee.get("role") == leads.SALES_ROLE and text.lower() in lead_tracker.COMMANDS:  # own open leads (28.10)
         return await lead_tracker.send_seller(employee, run_id)
+    if employee.get("role") in report_calendar.TEAM_OF and text.lower() in sap_entry.COMMANDS:  # his team's SAP entry (03.11)
+        await _reply(telegram_user_id, run_id, await sap_entry.build(report_calendar.TEAM_OF[employee["role"]], today_local()))
+        return "sap_entry_sent"
     if employee.get("role") == "garmin_manager" and text.lower() in PULSE_COMMANDS:  # his team's dashboard (2026-10-22)
         return await _send_pulse_link(telegram_user_id, run_id)
     if employee.get("role") == "garmin_manager" and text.lower() in stock_list.COMMANDS:  # every item, for ordering (27.10)

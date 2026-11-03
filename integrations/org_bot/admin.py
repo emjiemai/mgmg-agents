@@ -235,6 +235,17 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         return await db_review.send(run_id)
     if text in LEADS_COMMANDS:
         return await _show_lead_switch(run_id)
+    if text.split()[:1] == ["/vazifalar"] and text.split()[1:2] == ["sinov"]:  # today's card to me only (03.11)
+        from integrations.org_bot import duty_tasks
+
+        me = await store.get_employee_by_telegram_id(sender.get("id"))
+        if not me or me.get("status") != "active":
+            await tell_admin("🧪 Синов учун OPS Manager ботида ходим сифатида рўйхатдан ўтган бўлишингиз керак.", run_id)
+            return "duty_test_no_employee"
+        outcome = await duty_tasks.test_send(me, run_id)
+        if outcome == "duty_test_nothing":
+            await tell_admin("🧪 Бугун сизга реестрдан вазифа тушмади (реестрда вазифангиз йўқ ёки бугун иш куни эмас).", run_id)
+        return outcome
     if text in DUTIES_COMMANDS:
         from integrations.org_bot import duties, duty_tasks
 
