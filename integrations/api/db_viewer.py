@@ -84,6 +84,20 @@ TECHNICAL_TABLES = frozenset({
     "crawl_items", "crawl_runs",           # the lead search index: public news and Telegram posts (2026-10-30)
     "reconcile_runs",                      # the days the 09:00 discrepancy report went out (dates only, 2026-11-02)
 })
+# Columns of open tables that carry company figures (2026-11-03 review): shown as «•••» on /db, not searchable, and
+# never copied to IT's local database (scripts/db-mirror) — B2B sale amounts and what was sold, the typed answers to
+# the lead questions, the work profiles' money targets.
+HIDDEN_COLUMNS: dict[str, frozenset[str]] = {
+    "lead_assignments": frozenset({"sold_amount", "sold_currency", "outcome"}),
+    "lead_checkins": frozenset({"note"}),
+    "employees": frozenset({"responsibilities"}),
+}
+
+
+def hidden(table: str) -> frozenset[str]:
+    return HIDDEN_COLUMNS.get(table, frozenset())
+
+
 # Open for IT until this day only (2026-10-17, the Boss: find and fix the briefs' SAP / Billz / 1C
 # mismatches — docs/access-review-2026-10-07.md §4); closed again by itself after it.
 PLATFORM_OPEN_UNTIL = date(2026, 10, 31)
@@ -212,11 +226,13 @@ async def _relations() -> list[dict[str, Any]]:
     )
 
 
-async def _count(table: str, search: str = "") -> int | None:
+async def _count(table: str, search: str = "", visible: list[str] | None = None) -> int | None:
     query = sql.SQL("SELECT count(*) AS n FROM {} t").format(sql.Identifier(table))
     params: list[Any] = []
     if search:
-        query = query + sql.SQL(" WHERE t::text ILIKE %s")
+        where = (sql.SQL("concat_ws(' ', {})").format(sql.SQL(", ").join(sql.SQL("{}::text").format(sql.Identifier(c)) for c in visible))
+                 if visible else sql.SQL("t::text"))
+        query = query + sql.SQL(" WHERE {} ILIKE %s").format(where)
         params.append(f"%{search}%")
     try:
         rows = await _read(query, params)
@@ -557,8 +573,10 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "", d
 
     query = sql.SQL("SELECT * FROM {} t").format(sql.Identifier(table))
     params: list[Any] = []
-    if search:
-        query = query + sql.SQL(" WHERE t::text ILIKE %s")
+    if search:  # only the columns shown — a hidden figure can't be found by searching for it
+        visible = [c for c in columns if c not in hidden(table)] or columns[:1]
+        query = query + sql.SQL(" WHERE concat_ws(' ', {}) ILIKE %s").format(
+            sql.SQL(", ").join(sql.SQL("{}::text").format(sql.Identifier(c)) for c in visible))
         params.append(f"%{search}%")
     if order:
         query = query + sql.SQL(" ORDER BY {} DESC NULLS LAST").format(sql.Identifier(order))
@@ -570,10 +588,12 @@ async def table_rows(request: Request, table: str, page: int = 1, q: str = "", d
     except Exception as exc:  # noqa: BLE001 — show the error instead of a 500
         log.warning("Reading {} failed: {}", table, exc)
         return _page(table, f"<p><a href='/db'>← Жадваллар</a></p><p>Ўқиб бўлмади: {_e(exc)}</p>")
-    total = await _count(table, search)
+    total = await _count(table, search, [c for c in columns if c not in hidden(table)] or columns[:1])
 
     head = "".join(f"<th>{_e(c)}</th>" for c in columns)
-    body = "".join("<tr>" + "".join(_cell(row.get(c)) for c in columns) + "</tr>" for row in rows)
+    masked = hidden(table)
+    body = "".join("<tr>" + "".join("<td class='null'>•••</td>" if c in masked and row.get(c) is not None
+                                    else _cell(row.get(c)) for c in columns) + "</tr>" for row in rows)
     if not rows:
         body = f"<tr><td class='null' colspan='{max(len(columns), 1)}'>Қатор йўқ</td></tr>"
 

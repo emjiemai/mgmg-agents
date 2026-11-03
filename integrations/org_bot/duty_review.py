@@ -201,7 +201,8 @@ async def run(day: date, run_id: uuid.UUID, only_chat: int | None = None) -> dic
         await plan_facts.fill_duty_facts(day)
     except Exception as exc:  # noqa: BLE001 — the review goes out without the system's facts
         log.warning("Facts not filled: {}", type(exc).__name__)
-    tasks = await week_tasks(monday, day)
+    # A week's / month's task not due yet isn't «not done» (2026-11-03 review): only what's answered or past its end.
+    tasks = [t for t in await week_tasks(monday, day) if not (t["status"] == "open" and t["period_end"] > day)]
     people = person_stats(tasks)
     items = flagged(tasks)
     written = await suggestions(items, run_id)
@@ -238,7 +239,10 @@ async def run(day: date, run_id: uuid.UUID, only_chat: int | None = None) -> dic
             except TelegramError as exc:
                 log.warning("Review not delivered: {}", type(exc).__name__)
     if not only_chat:
-        await admin.tell_admin(review_text(monday, day, people, None, True) + connected + tail.replace("<b>Реестрга таклифлар</b>", "<b>Таклифлар</b>"), run_id)
+        from integrations.org_bot.tone import mask_money
+
+        await admin.tell_admin(mask_money(review_text(monday, day, people, None, True) + connected
+                                          + tail.replace("<b>Реестрга таклифлар</b>", "<b>Таклифлар</b>")), run_id)
     counts = {"people": len(people), "tasks": len(tasks), "suggestions": len(stored)}
     await log_action(agent=AGENT, action="weekly_review", target_system="telegram", status="success", run_id=run_id,
                      mode="notify", payload=counts)
@@ -266,7 +270,8 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
     clicker = await store.get_employee_by_telegram_id((callback.get("from") or {}).get("id"))
     sid, _, choice = rest.partition(":")
     async with _bot(None) as bot:
-        if not (clicker and clicker.get("status") == "active" and clicker.get("role") == DIRECTOR_ROLE and sid.isdigit()):
+        if not (clicker and clicker.get("status") == "active" and clicker.get("role") == DIRECTOR_ROLE and sid.isdigit()
+                and choice in ("y", "n")):
             await bot._answer_callback(callback.get("id", ""), "Рухсат йўқ")  # noqa: SLF001
             return "suggestion_unauthorized"
         row = await fetch_one(
@@ -278,6 +283,8 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
             return "suggestion_already_decided"
         await bot._answer_callback(callback.get("id", ""), "✅ Қабул" if choice == "y" else "❌ Рад")  # noqa: SLF001
     if choice == "y":
-        await admin.tell_admin(f"📋 Директор қабул қилди — реестрда ўзгартиринг:\n<b>{escape(row['person'])}</b> — "
-                               f"«{escape(row['title'])}»\n➜ {escape(row['change'])}", run_id)
+        from integrations.org_bot.tone import mask_money
+
+        await admin.tell_admin(mask_money(f"📋 Директор қабул қилди — реестрда ўзгартиринг:\n<b>{escape(row['person'])}</b> — "
+                                          f"«{escape(row['title'])}»\n➜ {escape(row['change'])}"), run_id)
     return "suggestion_accepted" if choice == "y" else "suggestion_rejected"

@@ -90,3 +90,13 @@ def is_polite(text: str) -> bool:
         if word in _INFORMAL_WORDS or word.endswith(_INFORMAL_ENDINGS):
             return False
     return True
+
+
+_MONEY = __import__("re").compile(
+    r"\$\s?\d(?:[\d\s.,–-]*\d)?|\d(?:[\d\s.,]*\d)?\s?(?:млрд|млн|минг|сўм|сум|so'm|\$|usd|доллар)(?![а-яa-z])", __import__("re").I)
+
+
+def mask_money(text: str) -> str:
+    """Amounts out of a text for IT (the Director's order of 07.10: IT sees no company figures) — «$1 350», «120 млн
+    сўм» → «…»; counts like «3 та» stay (2026-11-03 review)."""
+    return _MONEY.sub("…", text or "")

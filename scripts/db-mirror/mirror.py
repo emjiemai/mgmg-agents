@@ -43,7 +43,7 @@ from psycopg.rows import dict_row
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from integrations.api.db_viewer import TECHNICAL_TABLES  # noqa: E402 — the one list of what IT may see
+from integrations.api.db_viewer import TECHNICAL_TABLES, hidden  # noqa: E402 — the one list of what IT may see
 from integrations.common.config import settings  # noqa: E402
 from integrations.common.logging_setup import setup_logging  # noqa: E402
 
@@ -213,7 +213,7 @@ async def sync_table(remote: psycopg.AsyncConnection, local: psycopg.AsyncConnec
                      check_only: bool) -> dict[str, int]:
     """One table: nothing, the changed slices, or all of it. Returns counts."""
     remote_cols, local_cols = await columns_of(remote, table), set(await columns_of(local, table))
-    columns = [c for c in remote_cols if c in local_cols]
+    columns = [c for c in remote_cols if c in local_cols and c not in hidden(table)]  # figures never copied (03.11)
     key = [c for c in await primary_key(remote, table) if c in local_cols]
     if not columns or not key:
         return {"changed": 0, "slices": 0, "rows": 0, "skipped": 1}
@@ -254,6 +254,7 @@ async def run(check_only: bool = False) -> int:
         if not check_only:
             await prepare_local(local)
         here = set(await tables_of(local))
+        here_cols = {t: set(await columns_of(local, t)) for t in here if hidden(t)}
         churn = await churn_now(remote)
         seen = {} if check_only else {  # _mirror_tables is made by prepare_local above
             r["name"]: (int(r["churn"]), r["checked_at"].timestamp())
@@ -265,6 +266,10 @@ async def run(check_only: bool = False) -> int:
                 if not check_only:  # structure only: rows of the platforms' data never stay here
                     await local.execute(sql.SQL("TRUNCATE {}").format(sql.Identifier(table)))
                 continue
+            if not check_only:  # figures never stay here (db_viewer.HIDDEN_COLUMNS) — also rows copied before 03.11
+                for col in sorted(hidden(table) & here_cols.get(table, set())):
+                    await local.execute(sql.SQL("UPDATE {t} SET {c} = NULL WHERE {c} IS NOT NULL").format(
+                        t=sql.Identifier(table), c=sql.Identifier(col)))
             if quiet(table, churn, seen, time.time()):
                 continue
             counts = await sync_table(remote, local, table, check_only)

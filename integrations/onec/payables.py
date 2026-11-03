@@ -643,7 +643,9 @@ def write_workbook(pairs: list[Match], onec: dict[str, OneCParty], meta: dict[st
                  + (t["sign_1c"] if meta.get("sign_by_1c") else t["sign_guess"]))
     for line in notes:
         ws.append([line])
-    wb.save(out)
+    from integrations.common.excel import as_text
+
+    as_text(wb).save(out)
     return {"matched": len(both), "differ": sum(1 for m in both if reason(m) != "Мос"),
             "only_1c": len(only_1c), "only_sap": len(only_sap)}
 

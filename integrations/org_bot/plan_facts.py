@@ -92,8 +92,19 @@ async def _tool(tool: str) -> list[dict[str, Any]]:
     return [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
 
 
-async def collect() -> int:
-    """Keep the latest pushed invoice lines (a changed document replaces its lines). How many lines are kept now."""
+COLLECT_EVERY = 600.0  # seconds: PULSE refreshes every 5 minutes and /reja may be tapped — the 0.1-CPU database
+_last_collect = -COLLECT_EVERY
+
+
+async def collect(force: bool = False) -> int:
+    """Keep the latest pushed invoice lines (a changed document replaces its lines). How many lines are kept now;
+    -1 when it ran less than COLLECT_EVERY ago (2026-11-03 review: every PULSE refresh rewrote ~130 rows)."""
+    import time
+
+    global _last_collect
+    if not force and time.monotonic() - _last_collect < COLLECT_EVERY:
+        return -1
+    _last_collect = time.monotonic()
     headers, lines, products = await _tool("sales"), await _tool("sales_lines"), await _tool("products")
     if not lines:
         return 0
@@ -258,18 +269,20 @@ def money(v: float | None) -> str:
 
 
 def plans_text(rows: list[dict[str, Any]], day: date) -> str:
-    """/reja: the month's plans and facts (the Director)."""
+    """/reja: the month's plans and facts (the Director). Plan names come from the sheet — escaped."""
     import calendar
+
+    from integrations.telegram.bot import escape
 
     pace = day.day / calendar.monthrange(day.year, day.month)[1]
     lines = [f"🎯 <b>Ойлик режа ва факт</b> · {day:%d.%m} (ой {pace:.0%} ўтди)", ""]
     for r in rows:
         if r["fact"] is None:
-            lines.append(f"▫️ {r['direction']}: режа ${r['plan_text']} — <i>SAP'да алоҳида ҳисобланмайди</i>")
+            lines.append(f"▫️ {escape(r['direction'])}: режа ${escape(r['plan_text'])} — <i>SAP'да алоҳида ҳисобланмайди</i>")
             continue
         mark = "🟢" if r["share"] is not None and r["share"] >= pace else "🔴"
         share = f" ({r['share']:.0%})" if r["share"] is not None else ""
-        lines.append(f"{mark} {r['direction']}: {money(r['fact'])} / ${r['plan_text']}{share}")
+        lines.append(f"{mark} {escape(r['direction'])}: {money(r['fact'])} / ${escape(r['plan_text'])}{share}")
     lines += ["", "<i>Факт — SAP счёт-фактуралари (ҚҚС билан, қайтаришлар айрилган), товар гуруҳи бўйича. 🟢 — ой ўтган "
               "қисмидан олдинда, 🔴 — орқада. Сервис шартномалари ва химикат SAP'да алоҳида гуруҳ эмас.</i>"]
     return "\n".join(lines)

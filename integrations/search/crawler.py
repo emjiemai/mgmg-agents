@@ -222,10 +222,19 @@ async def search(fetched_since: datetime, limit: int = MAX_MATCHES) -> list[RawL
 # ---------------------------------------------------------------------------------------------------- crawling
 
 
+MAX_BYTES = 5_000_000  # a feed / channel page bigger than this is refused (2026-11-03 review: memory on a 512 MB server)
+
+
 async def _get(client: httpx.AsyncClient, url: str) -> str:
-    response = await client.get(url)
-    response.raise_for_status()
-    return response.text
+    """The page as text, read in chunks and stopped past MAX_BYTES."""
+    async with client.stream("GET", url) as response:
+        response.raise_for_status()
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body += chunk
+            if len(body) > MAX_BYTES:
+                raise ValueError(f"page over {MAX_BYTES} bytes")
+        return body.decode(response.encoding or "utf-8", errors="replace")
 
 
 async def crawl(run_id: uuid.UUID | None = None, *, google_news_queries: list[str] | None = None) -> dict[str, int]:

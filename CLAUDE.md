@@ -108,6 +108,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   Primus posting back; `DUTIES_SHEET_ID` accepts a whole link (`sheets_client.sheet_id`).
   **Director's 08:00 trimmed (03.11):** no Billz → SAP PDF, Lead Agent summary or receivables alert (checks still run;
   `BILLZ_SAP_CHECK_TO_DIRECTOR` / `LEAD_AGENT_SUMMARY_ENABLED` / `RECEIVABLES_ALERT_ENABLED` bring them back).
+  **Security review 03.11** (`docs/security-review-2026-11-03.md`): `db_viewer.HIDDEN_COLUMNS` (figures in open tables —
+  also kept out of the local copy), `tone.mask_money` for IT texts, `common/excel.as_text` on every workbook, typed
+  answers only as a reply or soon + short.
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

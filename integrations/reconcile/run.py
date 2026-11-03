@@ -435,7 +435,9 @@ def workbook_bytes(report: core.Report, lang: str = "uz") -> bytes:
     pt = PROBLEM_TEXT.get(lang, PROBLEM_TEXT["uz"])
     table(sheets[7], t["prob_head"], [([p.system, pt[p.kind], p.what, p.detail], True) for p in report.problems], [8, 34, 60, 30])
     out = io.BytesIO()
-    wb.save(out)
+    from integrations.common.excel import as_text
+
+    as_text(wb).save(out)
     return out.getvalue()
 
 

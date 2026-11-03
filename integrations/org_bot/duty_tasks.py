@@ -38,7 +38,10 @@ log = setup_logging(AGENT)
 PREFIX = "dt"            # dt:<instance id>:d|x|u
 SWITCH_PREFIX = "dsw"    # dsw:on / dsw:off (OPS Manager — the Director; Admin Bot — the admin)
 SEND_AT, IT_AT, EVENING_AT, CLOSE_AT = (8, 45), (8, 50), (17, 30), (22, 0)
-ANSWER_HOURS = 3
+ANSWER_HOURS = 3      # a reply to the bot's question counts this long
+QUICK_MINUTES = 30    # an answer that isn't a reply only this soon, and only when it's short (2026-11-03 review:
+#                       a daily report with a number in it, sent within 3 hours, was taken as the duty's number)
+SHORT_NUMBER = re.compile(r"\s*\d+(?:[.,]\d+)?\s*(?:\S+\s*){0,3}")  # «3», «3 та», «8 та қилдим»
 DEADLINE_LEAD_DAYS = 7
 TASK_CADENCES = ("daily", "weekly", "monthly", "deadline")
 WEEKDAY = {"душанба": 0, "сешанба": 1, "чоршанба": 2, "пайшанба": 3, "жума": 4, "шанба": 5, "якшанба": 6}
@@ -318,6 +321,9 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
                     log.warning("Register view not redrawn: {}", type(exc).__name__)
         return "duty_switch_on" if rest == "on" else "duty_switch_off"
     task_id, _, value = rest.partition(":")
+    if value not in ("d", "x", "u"):  # only our three buttons (a forged value never closes a task)
+        await _answer(callback, "Номаълум амал")
+        return "duty_unknown"
     task = await fetch_one("SELECT * FROM duty_tasks WHERE id = %s", (int(task_id),)) if task_id.isdigit() else None
     if task is None or str(task["employee_id"]) != str(clicker["id"]):
         await _answer(callback, "Рухсат йўқ")
@@ -340,7 +346,8 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         return "duty_done"
     ask = (f"«{escape(task['title'])}» — нечта бўлди? Рақам билан ёзинг (мақсад: {escape(aim_text(task['target'], task['unit']))})."
            if kind == "value" else f"«{escape(task['title'])}» — нима сабабдан бўлмади? Бир жумлада ёзинг.")
-    await _send(clicker["telegram_user_id"], ask, run_id)
+    asked = await _send(clicker["telegram_user_id"], ask, run_id)
+    await execute("UPDATE duty_tasks SET asked_message_id = %s WHERE id = %s", (asked, task["id"]))
     return "duty_value_asked" if kind == "value" else "duty_reason_asked"
 
 
@@ -359,15 +366,20 @@ async def take_message(employee: dict[str, Any], message: dict[str, Any], run_id
         return None
     if task is None:
         return None
+    replied = (message.get("reply_to_message") or {}).get("message_id")
+    is_reply = bool(replied) and replied == task.get("asked_message_id")
+    if replied and not is_reply:
+        return None  # a reply to another message (the 16:00 report ask, a task card) is that, not this
+    quick = task.get("asked_at") is not None and (datetime.now(timezone.utc) - task["asked_at"]).total_seconds() <= QUICK_MINUTES * 60
     if task["asked_kind"] == "value":
         value = parse_value(text)
-        if value is None:
-            return None  # words, not a number: the usual flow (the question stays)
+        if value is None or not (is_reply or (quick and len(text) <= 40 and SHORT_NUMBER.fullmatch(text))):
+            return None  # words, a long message or a late one: the usual flow (the question stays)
         await execute("UPDATE duty_tasks SET value = %s, asked_kind = NULL WHERE id = %s", (value, task["id"]))
         await _facts(today_local())  # a typed dollar figure is checked against SAP / Billz at once
         await _send(employee["telegram_user_id"], f"Раҳмат, ёзиб қўйдим: «{escape(task['title'])}» — {value:g}.", run_id)
         return "duty_value_saved"
-    if "?" in text:
+    if ("?" in text and not is_reply) or not (is_reply or (quick and len(text) <= 160 and "ҳисобот" not in text.lower())):
         return None
     await execute("UPDATE duty_tasks SET reason = %s, asked_kind = NULL WHERE id = %s", (text[:300], task["id"]))
     await _send(employee["telegram_user_id"], "Раҳмат, сабабини ёзиб қўйдим.", run_id)

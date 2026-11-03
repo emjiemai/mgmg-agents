@@ -1446,6 +1446,7 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
             await _edit(callback, "🗂 Лидлар жадвали — ўзгартирилмади.", {"inline_keyboard": []}, run_id)
             return "lead_sheet_cancelled"
         await _answer(query_id, "Бажарилмоқда…")
+        await _edit(callback, "🗂 Лидлар жадвали тартибланмоқда…", {"inline_keyboard": []}, run_id)  # a second tap finds no button
         try:
             done = await lead_sheet.archive(run_id)
         except Exception as exc:  # noqa: BLE001

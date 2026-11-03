@@ -112,7 +112,9 @@ def workbook_bytes(items: list[Item], warehouses: dict[str, str], as_of: Any = N
     for n, w in enumerate([50, 16, *[12] * len(used), 12], start=1):
         ws.column_dimensions[ws.cell(row=2, column=n).column_letter].width = w
     out = io.BytesIO()
-    wb.save(out)
+    from integrations.common.excel import as_text
+
+    as_text(wb).save(out)
     return out.getvalue()
 
 

@@ -2303,7 +2303,7 @@ async def pending_lead_question(telegram_user_id: int, within_minutes: int) -> d
     """The latest unanswered typed follow-up asked of this person within ``within_minutes``, with its lead."""
     return await fetch_one(
         """
-        SELECT c.id, c.question, c.question_message_id, a.id AS assignment_id, a.lead_id, a.employee_id,
+        SELECT c.id, c.question, c.question_message_id, c.question_asked_at, a.id AS assignment_id, a.lead_id, a.employee_id,
                l.company_name, l.project_name
         FROM lead_checkins c JOIN lead_assignments a ON a.id = c.assignment_id JOIN leads l ON l.id = a.lead_id
         WHERE c.telegram_user_id = %s AND c.question IS NOT NULL AND c.note IS NULL

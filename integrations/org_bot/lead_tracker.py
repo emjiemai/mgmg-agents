@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from integrations.common.config import settings
@@ -35,6 +35,7 @@ SWITCH_PREFIX = "lsw"  # lsw:on / lsw:off — the Director's (OPS Manager) and t
 TABLE_PREFIX = "lpdf"  # lpdf:<days> — the PDF table
 PREFIXES = (leads.PREFIX, SWITCH_PREFIX, TABLE_PREFIX)
 STATS_DAYS = 30
+QUICK_MINUTES = 30  # a typed answer that isn't a reply to the question counts only this soon, and only short
 
 
 def _bot(run_id: uuid.UUID | None) -> TelegramBot:
@@ -344,6 +345,13 @@ async def take_message(employee: dict[str, Any], message: dict[str, Any], run_id
     if replied and replied != waiting.get("question_message_id"):
         return None
     is_reply = bool(replied)
+    # Not a reply: only soon after the question and short (2026-11-03 review: a daily report with «120 млн» in it,
+    # sent within 3 hours, would have been recorded as a sale).
+    asked_at = waiting.get("question_asked_at")
+    quick = asked_at is not None and (datetime.now(timezone.utc) - asked_at).total_seconds() <= QUICK_MINUTES * 60
+    limit = 80 if waiting["question"] == "sale" else 160  # «2 та кир ювиш машинаси, 120 млн сўм» is ~40
+    if not is_reply and not (quick and len(text) <= limit and "ҳисобот" not in text.lower()):
+        return None
     if waiting["question"] == "sale":
         amount = leads.parse_amount(text)
         if amount is None:

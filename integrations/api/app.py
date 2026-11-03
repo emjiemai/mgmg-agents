@@ -150,7 +150,7 @@ async def _report_close_loop() -> None:
             from integrations.org_bot import duty_review, plan_facts
 
             if _hourly("sales_facts"):
-                await plan_facts.collect()
+                await plan_facts.collect(force=True)
             await duty_review.tick(now_local())
         except Exception as exc:  # noqa: BLE001 — the next round tries again
             log.error("Plan facts / weekly review failed: {}", type(exc).__name__)

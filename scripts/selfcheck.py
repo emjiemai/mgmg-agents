@@ -1823,6 +1823,75 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_security_review_1103() -> None:
+    """The 03.11.2026 security and bug review of 28.10–03.11: figures hidden from IT, formula-safe workbooks, the
+    register never wiped by a broken sheet, the Friday review fair, escaped plan names, a size cap on feeds."""
+    print("security / bug review (03.11.2026)")
+    import asyncio
+    import io
+    import uuid
+
+    from openpyxl import Workbook, load_workbook
+
+    from integrations.api import db_viewer
+    from integrations.common.excel import as_text
+    from integrations.org_bot import duties, duty_review, plan_facts
+    from integrations.org_bot.tone import mask_money
+    from integrations.search import crawler
+
+    check_true("/db and IT's local copy: sale amounts, typed answers and money targets hidden",
+               {"sold_amount", "outcome"} <= db_viewer.hidden("lead_assignments") and "note" in db_viewer.hidden("lead_checkins")
+               and "responsibilities" in db_viewer.hidden("employees")
+               and "concat_ws" in inspect_source(db_viewer) and "•••" in inspect_source(db_viewer)
+               and "c not in hidden(table)" in load_source("scripts/db-mirror/mirror.py")
+               and "SET {c} = NULL" in load_source("scripts/db-mirror/mirror.py"))
+    check("money out of IT's texts, counts kept", [mask_money(t) for t in ("мақсад $1 350 дан $1 000 га", "120 млн сўм", "3 та қўнғироқ")],
+          ["мақсад … дан … га", "… сўм", "3 та қўнғироқ"])
+    check_true("the Friday review's IT copy and an accepted change go through mask_money",
+               inspect_source(duty_review).count("mask_money(") >= 2)
+    wb = Workbook()
+    wb.active.append(["=HYPERLINK(\"http://x\")", "ok"])
+    out = io.BytesIO()
+    as_text(wb).save(out)
+    check("a name like «=HYPERLINK(…)» stays text in every workbook", load_workbook(io.BytesIO(out.getvalue())).active["A1"].data_type, "s")
+    check_true("...used by all three workbooks", all("as_text(wb).save(out)" in load_source(f) for f in (
+        "integrations/reconcile/run.py", "integrations/garmin/stock_list.py", "integrations/onec/payables.py")))
+
+    # ---- a sheet that reads but has no duties never switches the register off
+    saved = [(duties, n, getattr(duties, n)) for n in ("read_sheet", "fetch_all", "fetch_one", "execute", "log_action")]
+    row = {"row_key": duties.SEED[0].key, "employee_id": None, **{k: getattr(duties.SEED[0], k) for k in duties.FIELDS if k != "active"}}
+    writes = []
+
+    async def empty_sheet(run_id):
+        return [list(duties.COLUMNS)], None
+
+    async def fake_all(sql, params=None):
+        return [row] if "FROM duties WHERE active" in sql and "employee_id" not in sql.split("WHERE")[1][:40] else []
+
+    async def nothing(*a, **k):
+        writes.append(a[0].split()[0] if a else "log")
+        return None
+
+    duties.read_sheet, duties.fetch_all, duties.fetch_one, duties.execute, duties.log_action = empty_sheet, fake_all, nothing, nothing, nothing
+    try:
+        result = asyncio.run(duties.sync(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("an emptied tab: the register as last read, nothing removed, the reason said",
+          (result["source"], result["removed"], bool(result["error"])), ("sheet_failed", 0, True))
+    check_true("a person whose duties all left the register loses the register's profile", "SET responsibilities = NULL" in inspect_source(duties.sync))
+
+    check_true("the Friday review doesn't count a task that isn't due yet", 't["period_end"] > day' in inspect_source(duty_review.run))
+    text = plan_facts.plans_text([{"direction": "<b>Химикат & Co</b>", "plan": None, "plan_text": "10000", "fact": None, "share": None}],
+                                 date(2026, 11, 3))
+    check_true("/reja: plan names from the sheet escaped", "&lt;b&gt;Химикат &amp; Co&lt;/b&gt;" in text)
+    check_true("SAP facts collected at most every 10 minutes (PULSE, /reja), hourly from the API's round",
+               plan_facts.COLLECT_EVERY == 600 and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py"))
+    check_true("a news feed over 5 MB is refused (read in chunks)", crawler.MAX_BYTES == 5_000_000
+               and "aiter_bytes" in inspect_source(crawler._get))
+
+
 def test_director_morning_quieter() -> None:
     """03.11.2026 (the owner): the Director doesn't need the Billz → SAP PDF, the Lead Agent's summary and the
     receivables alert at 08:00 — the checks still run and are kept; one setting brings each back."""
@@ -2194,7 +2263,7 @@ def test_plan_facts_and_review() -> None:
     check_true("Fridays 16:30 while the daily tasks are on, once; facts kept hourly; /reja for the Director",
                dr.REVIEW_AT == (16, 30) and dr.FRIDAY == 4 and "duty_tasks.is_on()" in inspect_source(dr.tick)
                and 'claim(now.date(), "review")' in inspect_source(dr.tick)
-               and "plan_facts.collect()" in load_source("integrations/api/app.py") and "duty_review.tick(" in load_source("integrations/api/app.py")
+               and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py") and "duty_review.tick(" in load_source("integrations/api/app.py")
                and "reja" in dict(menus.DIRECTOR) and "/reja" in ops_manager.PLAN_COMMANDS)
     check_true("an accepted change goes to IT to edit the register — the register stays people's document",
                "реестрда ўзгартиринг" in inspect_source(dr.handle_callback))
@@ -2250,7 +2319,9 @@ def test_duty_tasks() -> None:
         if "FROM duty_tasks WHERE id" in sql:
             return dict(task)
         if "asked_kind IS NOT NULL" in sql:
-            return dict(task, asked_kind=pending["kind"]) if pending["kind"] else None
+            return dict(task, asked_kind=pending["kind"], asked_message_id=900,
+                        asked_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+                        - __import__("datetime").timedelta(minutes=pending.get("ago", 2))) if pending["kind"] else None
         return None
 
     async def fake_exec(sql, params=None):
@@ -2294,6 +2365,19 @@ def test_duty_tasks() -> None:
         pending["kind"] = "reason"
         check("a question isn't the reason", asyncio.run(duty_tasks.take_message(emp, {"text": "буни ким қилади?"}, uuid.uuid4())), None)
         check("the reason", asyncio.run(duty_tasks.take_message(emp, {"text": "мижоз телефон кўтармади"}, uuid.uuid4())), "duty_reason_saved")
+        pending["kind"], pending["ago"] = "value", 2
+        long_report = "Бугун 3 та мижоз билан учрашдим, 2 та таклиф юбордим ва омборни текширдим, ҳисобот шу"
+        check("a daily report with a number in it is never taken as the duty's number (03.11 review)",
+              asyncio.run(duty_tasks.take_message(emp, {"text": long_report}, uuid.uuid4())), None)
+        pending["ago"] = 45
+        check("...nor a short number long after the question — unless it's a reply to it",
+              (asyncio.run(duty_tasks.take_message(emp, {"text": "5"}, uuid.uuid4())),
+               asyncio.run(duty_tasks.take_message(emp, {"text": "5", "reply_to_message": {"message_id": 900}}, uuid.uuid4()))),
+              (None, "duty_value_saved"))
+        check("a reply to another message isn't the answer",
+              asyncio.run(duty_tasks.take_message(emp, {"text": "5", "reply_to_message": {"message_id": 1}}, uuid.uuid4())), None)
+        pending["ago"] = 2
+        check("a forged button value is refused", asyncio.run(ops_manager._handle_callback(tap("z"), uuid.uuid4())), "duty_unknown")
         check("👎 «фойдасиз»", asyncio.run(ops_manager._handle_callback(tap("u"), uuid.uuid4())), "duty_useless")
         check("only the Director switches it in OPS Manager", asyncio.run(ops_manager._handle_callback(
             {"id": "q", "from": {"id": 5}, "data": "dsw:on", "message": {}}, uuid.uuid4())), "duty_unauthorized")
@@ -2930,7 +3014,8 @@ def test_lead_tracker() -> None:
                 "role": "operatsion_direktor" if tg == 900 else "b2b_sotuv", "id": f"e{tg}"}
 
     async def waiting(tg, minutes):
-        return {"id": cid, "question": state["question"], "question_message_id": 777, "lead_id": 33, "company_name": "Hilton"}
+        return {"id": cid, "question": state["question"], "question_message_id": 777, "lead_id": 33, "company_name": "Hilton",
+                "question_asked_at": datetime.now(timezone.utc) - timedelta(minutes=state.get("ago", 2))}
 
     def tap(value, who=602):
         return {"id": "q", "from": {"id": who}, "data": f"lq:{cid}:{value}",
@@ -2975,6 +3060,14 @@ def test_lead_tracker() -> None:
                    calls[-1] == ("save_lead_answer", (cid, "2 та кир ювиш машинаси, 120 млн сўм",
                                                       "2 та кир ювиш машинаси, 120 млн сўм", 120e6, "UZS"))
                    and any(c == 900 and "Лид №33 Hilton сотилди" in t and "120 млн сўм" in t for c, t, _ in sent))
+        state["question"] = "sale"
+        check("a daily report with «120 млн» in it isn't recorded as a sale (03.11 review)",
+              go(lead_tracker.take_message(employee, {"text": "Бугунги ҳисобот: Hilton билан учрашдим, 120 млн сўмлик таклиф "
+                                                              "тайёрладим, эртага Hyatt билан гаплашаман, омборни ҳам кўрдим"},
+                                           uuid.uuid4())), None)
+        state["ago"] = 45
+        check("...nor a late short one that isn't a reply", go(lead_tracker.take_message(employee, {"text": "120 млн"}, uuid.uuid4())), None)
+        state["ago"] = 2
         check("«❌ Сотилмади» → the reasons", go(ops_manager._handle_callback(tap("x"), uuid.uuid4())), "lead_reason_asked")
         check_true("...as buttons on the same message", "Нима сабабдан" in edits[-1][0] and "лид эскирган" in str(edits[-1][1]))
         go(ops_manager._handle_callback(tap("r0"), uuid.uuid4()))
@@ -10934,6 +11027,7 @@ def main() -> int:
         test_sap_entry_and_testing,
         test_kpi_simple_and_lead_channels,
         test_director_morning_quieter,
+        test_security_review_1103,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

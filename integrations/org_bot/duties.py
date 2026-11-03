@@ -301,6 +301,13 @@ async def sync(run_id: uuid.UUID | None = None) -> dict[str, Any]:
     else:
         duties, problems = parse(rows)
         source = "sheet"
+        if old and not [d for d in duties if d.active]:
+            # A renamed header or an emptied tab would have switched off every duty (2026-11-03 review): keep the
+            # register as last read and say why, like an unreadable sheet.
+            sheet_error = "; ".join(problems[:3]) or "«Вазифалар» варағида битта ҳам вазифа топилмади"
+            duties, source = [Duty(**{k: r[k] for k in FIELDS if k != "active"}) for r in old.values()], "sheet_failed"
+            await log_action(agent=AGENT, action="read_sheet", target_system="google_sheets", status="error",
+                             run_id=run_id, mode="read", error_message=sheet_error)
     people = await fetch_all("SELECT * FROM employees WHERE status = 'active'")
     seen: set[str] = set()
     added = changed = 0
@@ -350,6 +357,9 @@ async def sync(run_id: uuid.UUID | None = None) -> dict[str, Any]:
             if (person.get("responsibilities") or "") != text:
                 await execute("UPDATE employees SET responsibilities = %s WHERE id = %s", (text, person["id"]))
             profiles += 1
+        elif (person.get("responsibilities") or "").startswith("Лавозими:") or "(реестрдан)" in (person.get("responsibilities") or ""):
+            # every duty of theirs removed from the register: the register's profile goes too (the work AI isn't misled)
+            await execute("UPDATE employees SET responsibilities = NULL WHERE id = %s", (person["id"],))
     if plan_rows:
         await save_plans(plan_rows)
     elif rows is None and not sheet_error:
@@ -453,7 +463,9 @@ def admin_text(result: dict[str, Any]) -> str:
     if result["unmatched_list"]:
         lines.append("Ботда йўқ: " + ", ".join(escape(n) for n in result["unmatched_list"]))
     if result["problem_list"]:
-        lines += ["", "<b>Тузатиш керак:</b>"] + [f"• {escape(p)}" for p in result["problem_list"][:20]]
+        from integrations.org_bot.tone import mask_money
+
+        lines += ["", "<b>Тузатиш керак:</b>"] + [f"• {escape(mask_money(p))}" for p in result["problem_list"][:20]]
     if result.get("error"):
         lines += ["", f"❌ Google жавоби: <code>{escape(result['error'][:200])}</code>",
                   "Кўпинча сабаби: жадвал сервис аккаунтга «Редактор» қилиб улашилмаган ёки DUTIES_SHEET_ID нотўғри "
