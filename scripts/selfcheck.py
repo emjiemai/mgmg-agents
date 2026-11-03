@@ -1823,6 +1823,23 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_director_morning_quieter() -> None:
+    """03.11.2026 (the owner): the Director doesn't need the Billz → SAP PDF, the Lead Agent's summary and the
+    receivables alert at 08:00 — the checks still run and are kept; one setting brings each back."""
+    print("three morning messages off for the Director (03.11.2026)")
+    from integrations.common.config import settings
+
+    check("all three off by default", (settings.billz_sap_check_to_director, settings.lead_agent_summary_enabled,
+                                       settings.receivables_alert_enabled), (False, False, False))
+    billz, lead, recv = (load_source(f"agents/{a}/agent.py") for a in ("billz-sap-check", "lead-agent", "receivables"))
+    check_true("Billz → SAP: still checked and kept, the Garmin manager still told, the Director only when switched on",
+               "([DIRECTOR_ROLE] if settings.billz_sap_check_to_director else [])" in billz and settings.billz_sap_check_roles == "garmin_manager")
+    check_true("the Lead Agent: the sheet and the Primus channel as before, the summary only when switched on",
+               "if settings.lead_agent_summary_enabled:" in lead and 'lead_groups.send("primus"' in lead)
+    check_true("receivables: the snapshot kept (the Director's questions), the alert only when switched on",
+               "elif settings.receivables_alert_enabled:" in recv and "await record_alerts(" in recv)
+
+
 def test_kpi_simple_and_lead_channels() -> None:
     """03.11.2026 (the owner): KPI from the data we have (reports + given tasks); the register's sheet id taken from a
     whole link; leads to channels too, Primus back; the leads sheet archived (not deleted), newest first, given rows green."""
@@ -10916,6 +10933,7 @@ def main() -> int:
         test_rollout,
         test_sap_entry_and_testing,
         test_kpi_simple_and_lead_channels,
+        test_director_morning_quieter,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

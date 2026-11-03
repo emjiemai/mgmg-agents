@@ -99,3 +99,6 @@ invoices are material, add conversion before trusting the total.
 ## Layout (2026-10-26, the owner: "formatting is ugly")
 
 The headline, then «Муддати ўтган: <total>», then «N та ҳисоб-фактура:» and one «• 90+ кун — 6 та» line per age range (one range: «…, ҳаммаси 90+ кун ичида»). Still no per-invoice or per-owner detail (2026-09-22).
+
+
+**2026-11-03:** the 08:00 alert is off (the owner) — `RECEIVABLES_ALERT_ENABLED=true` brings it back; the snapshot is still kept for the Director's questions.

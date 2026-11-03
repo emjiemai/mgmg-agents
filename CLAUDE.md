@@ -106,6 +106,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   **03.11 (2):** leads sheet `lead_sheet.py` (Admin `/lidlar arxiv`: before 31.10 → «Архив» tab, out of the queue; daily
   newest-first sort, № column, given rows green «date · who»); lead channels (`channel_post` binding via channel admins),
   Primus posting back; `DUTIES_SHEET_ID` accepts a whole link (`sheets_client.sheet_id`).
+  **Director's 08:00 trimmed (03.11):** no Billz → SAP PDF, Lead Agent summary or receivables alert (checks still run;
+  `BILLZ_SAP_CHECK_TO_DIRECTOR` / `LEAD_AGENT_SUMMARY_ENABLED` / `RECEIVABLES_ALERT_ENABLED` bring them back).
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

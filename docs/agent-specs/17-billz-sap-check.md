@@ -139,3 +139,6 @@ the stored results are the fallback when Billz can't be read. The morning
 pictures title their Billz → SAP block «DD.MM.YYYY · 08:00 ҳолатига» (19.10.2026):
 the 08:02 Garmin brief listed 11 cheques the shops then entered at 12:05–14:39,
 so the picture and the bot's later answer differed — both were right for their hour.
+
+
+**2026-11-03:** not sent to the Director any more (the owner) — `BILLZ_SAP_CHECK_TO_DIRECTOR=true` brings it back; still run and kept for `/kiritish` and `/farqlar`; the Garmin manager still gets it.

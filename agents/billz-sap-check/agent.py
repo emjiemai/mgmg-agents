@@ -141,7 +141,8 @@ def all_shop_docs(
 
 
 async def _recipients() -> dict[int, dict[str, Any]]:
-    roles = [DIRECTOR_ROLE] + [r.strip() for r in settings.billz_sap_check_roles.split(",") if r.strip()]
+    roles = ([DIRECTOR_ROLE] if settings.billz_sap_check_to_director else []) + [  # not the Director since 03.11
+        r.strip() for r in settings.billz_sap_check_roles.split(",") if r.strip()]
     return {e["telegram_user_id"]: e for role in roles for e in await store.active_employees_by_role(role)}
 
 

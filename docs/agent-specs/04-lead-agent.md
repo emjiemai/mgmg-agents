@@ -304,3 +304,6 @@ word); channels work too — add OPS Manager Bot as a channel administrator who 
 (or `/lidlar_garmin`) in the channel: a channel post has no sender, so the bot checks that the admin or a Director is
 one of the channel's administrators (`getChatAdministrators`). 03.11: no group or channel was bound at all, and the
 Garmin AI bot has never delivered a lead (check its `GARMIN_LEADS_SECRET`).
+
+
+**2026-11-03 (2):** the Director's morning summary is off (the owner) — `LEAD_AGENT_SUMMARY_ENABLED=true` brings it back; leads still go to the sheet and the Primus channel.

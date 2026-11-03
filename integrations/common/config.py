@@ -158,6 +158,12 @@ class Settings(BaseSettings):
     # (e.g. "garmin_manager,buxgalteriya"). The Garmin manager runs the shops
     # (2026-10-14); his morning brief also shows the result while on trial.
     billz_sap_check_roles: str = "garmin_manager"
+    # 2026-11-03 (the owner: «we don't need these 3 briefs in the morning»): the Director no longer gets the Billz → SAP
+    # check, the Lead Agent's summary or the receivables alert at 08:00 — the checks still run and are kept (/kiritish,
+    # /farqlar, /lidlar, his questions). True brings one back.
+    billz_sap_check_to_director: bool = False
+    lead_agent_summary_enabled: bool = False
+    receivables_alert_enabled: bool = False
 
     # --- Garmin competitors (2026-10-19, agents/garmin-competitors) ---
     # Who else sells Garmin in Uzbekistan (OLX, Google) and for how much, to the Garmin manager once a

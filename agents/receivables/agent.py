@@ -292,9 +292,11 @@ async def run(min_days: int = 1, dry_run: bool = False) -> int:
     message_id: int | None = None
     if settings.dry_run:
         print(message)
-    else:
+    elif settings.receivables_alert_enabled:  # off since 03.11 (the owner); the Director asks the bot about debt instead
         ids = await notify_directors(message, agent=AGENT, run_id=run_id)
         message_id = ids[0] if ids else None
+    else:
+        log.info("Receivables alert not sent (RECEIVABLES_ALERT_ENABLED is off) — the snapshot is kept")
 
     await record_alerts(run_id, aging, min_days, message_id)
 

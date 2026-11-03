@@ -967,7 +967,8 @@ async def run(dry_run: bool = False) -> int:
         # failures internally rather than raising, so a broken Telegram
         # destination never makes a run that successfully wrote leads
         # report as a failure.
-        await notify_telegram(new_leads, run_id)
+        if settings.lead_agent_summary_enabled:  # off since 03.11 (the owner): the sheet, the channel and /lidlar carry it
+            await notify_telegram(new_leads, run_id)
 
     return 0
 
