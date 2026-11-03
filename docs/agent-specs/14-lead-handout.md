@@ -154,3 +154,13 @@ python agents/lead-handout/agent.py --checkin --force      # ask about open lead
 - **Pause:** `LEAD_HANDOUT_ENABLED=false` in `mgmg-shared` (`BOTS_FROZEN` stops it too).
 - **No leads handed out:** the sheet needs rows (the Lead Agent writes it only
   with `AGENT_WRITES_ENABLED=true`), and B2B Sotuv needs registered people.
+
+
+## 2026-11-03 — the leads sheet kept readable (`lead_sheet.py`)
+
+- **Admin Bot `/lidlar arxiv`** → counts → ✅: rows added before **31.10** (DeepSeek's first run) are copied to the tab
+  «Архив» and then removed from «Sheet1» (removed only when every row was copied; Google keeps the sheet's history too);
+  the same leads are out of the hand-out queue (`leads.archived_at`), handed-out ones keep their history.
+- **Every morning after the hand-out:** the sheet sorted newest first («date_added», Sheets' own sort — colours and notes
+  move with their rows), each row's lead number in «№», each lead given to B2B Sotuv marked «B2B'га берилди: 03.11 ·
+  Абдукарим Зунунов» and coloured light green. People's own colours elsewhere are left alone.

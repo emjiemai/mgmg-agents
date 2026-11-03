@@ -1509,3 +1509,7 @@ CREATE TABLE IF NOT EXISTS duty_suggestions (
     decided_at  TIMESTAMPTZ,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- The leads sheet kept readable (2026-11-03, lead_sheet.py): leads added before DeepSeek's first run (31.10) moved to
+-- the sheet's «Архив» tab and out of the hand-out queue (never deleted).
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;

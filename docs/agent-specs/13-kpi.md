@@ -1,5 +1,13 @@
 # KPI — the Director's criteria (E1, extended)
 
+> **2026-11-03 — the simple KPI is the default** (the owner: «KPI needs to be calculated using only the data we have —
+> reports and given tasks»). **KPI = 📝 Ҳисобот 50 % + ✅ Топшириқ 50 %**, then + the report bonus − the 22:00 minus (0–100).
+> Reports: sent on its own day (by 22:00) = 1, sent late (the next day, approved) = ½, not sent = 0; excused days and
+> people with reports off aren't asked. Tasks (the task register, by deadline in the month): done by the deadline = 1,
+> done late = ½, not done = 0; cancelled ones out. A part with nothing to count is left out and the other carries the
+> KPI. No rating cards go to the Director on the 1st (they wouldn't count). The Director's six parts below stay
+> available with **`KPI_MODE=full`** in Render (`kpi_score.full_mode()`).
+
 **Code:** `integrations/org_bot/kpi_score.py` (the rules, pure),
 `integrations/org_bot/kpi_flow.py` (commands, buttons, the month),
 `agents/task-tracker/agent.py --monthly` (1st and 5th of the month)

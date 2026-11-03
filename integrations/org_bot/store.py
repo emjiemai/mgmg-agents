@@ -2159,7 +2159,8 @@ async def free_leads() -> list[dict[str, Any]]:
     """Leads nobody has been given yet."""
     return await fetch_all(
         """SELECT l.* FROM leads l
-           WHERE NOT EXISTS (SELECT 1 FROM lead_assignments a WHERE a.lead_id = l.id)"""
+           WHERE l.archived_at IS NULL  -- 03.11: the ones moved to the sheet's «Архив» aren't handed out
+             AND NOT EXISTS (SELECT 1 FROM lead_assignments a WHERE a.lead_id = l.id)"""
     )
 
 

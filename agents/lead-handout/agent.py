@@ -58,6 +58,13 @@ async def run(mode: str, dry_run: bool = False) -> int:
         await (lead_tracker.morning(run_id) if mode == "morning" else lead_tracker.checkin(run_id))
     else:
         log.info("The lead tracker is stopped (/lidlar) — no leads handed out")
+    if mode == "morning" and not settings.dry_run:  # the sheet: newest first, numbers, the given ones green (03.11)
+        from integrations.org_bot import lead_sheet
+
+        try:
+            await lead_sheet.refresh(run_id)
+        except Exception as exc:  # noqa: BLE001 — the hand-out has happened; the sheet is cosmetic
+            log.warning("Leads sheet not refreshed: {}", type(exc).__name__)
     if mode == "morning" and today.weekday() == 0:  # Mondays: the Boss's statistics, on or off
         await lead_tracker.weekly(run_id)
     return 0

@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # The duties register (2026-11-02, integrations/org_bot/duties.py): a Google Sheet shared with the service
     # account (Editor); empty = the Boss's example of 02.11 (duties.SEED) is the register.
     duties_sheet_id: str = ""
+    # KPI (2026-11-03, the owner: «KPI from only the data we have»): "simple" = daily reports 50 % + given tasks 50 %
+    # (on time 1, late ½, not done 0); "full" = the Director's six parts of 30.09 (goals, tasks, ratings, volume,
+    # process, commitment).
+    kpi_mode: str = "simple"
     onec_odata_url: str = ""
     onec_login: str = ""
     onec_password: SecretStr = SecretStr("")

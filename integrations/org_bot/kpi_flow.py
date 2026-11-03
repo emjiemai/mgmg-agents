@@ -491,6 +491,8 @@ async def open_month(month: date, run_id: uuid.UUID) -> None:
     for director in directors:
         try:
             await _send_table(director["telegram_user_id"], month, people, False, run_id)
+            if not kpi_score.full_mode():  # the simple KPI (03.11) has no ratings — no cards that wouldn't count
+                continue
             await _send(
                 director["telegram_user_id"],
                 f"⭐ <b>{kpi_score.month_title(month)}</b>: ҳар бир ходимни 4 мезон бўйича 1–5 баҳоланг "

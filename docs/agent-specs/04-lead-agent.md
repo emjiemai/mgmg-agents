@@ -297,3 +297,10 @@ Bot to it and typing `/lidlar_garmin` or `/lidlar_primus` there (the admin or th
 table `lead_groups`). No group bound → nothing posted (logged). In a group the bot reads only these commands.
 
 **Stopped the same day (2026-10-26, the owner: "stop sending leads to B2B Sotuv"):** Lead Agent leads are no longer posted to any group; `/lidlar_primus` is ignored. The sheet and the Director's summary stay.
+
+
+**2026-11-03:** each new lead goes again to the **Primus** Telegram channel / group (stopped 26.10, back on the owner's
+word); channels work too — add OPS Manager Bot as a channel administrator who may post, then post `/lidlar_primus`
+(or `/lidlar_garmin`) in the channel: a channel post has no sender, so the bot checks that the admin or a Director is
+one of the channel's administrators (`getChatAdministrators`). 03.11: no group or channel was bound at all, and the
+Garmin AI bot has never delivered a lead (check its `GARMIN_LEADS_SECRET`).

@@ -252,6 +252,7 @@ class ReportScore:
     asked: int = 0
     reported: int = 0
     on_time: int = 0
+    same_day: int = 0  # sent on its own day (by the 22:00 deadline) — the simple KPI's «on time» (2026-11-03)
     missed_by_person: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -277,8 +278,10 @@ def score_reports(rows: list[dict[str, Any]]) -> ReportScore:
         submitted = row.get("submitted_at")
         if isinstance(submitted, datetime):
             local = to_local(submitted)
-            if local.date() == row["report_date"] and local.hour < REPORT_ON_TIME_HOUR:
-                score.on_time += 1
+            if local.date() == row["report_date"]:
+                score.same_day += 1
+                if local.hour < REPORT_ON_TIME_HOUR:
+                    score.on_time += 1
     return score
 
 

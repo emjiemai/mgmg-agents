@@ -50,8 +50,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   tables only, safe UPDATE fixes, counts to IT. **Report calendar**: the Director's `/hisobotlar` (PNG).
 - IT's technical report (`agents/tech-report/`, last in the 08:00 job, Admin Bot `/texnik`): connections,
   SAP push, brief delivered, runs/errors, DB size, refused attempts — counts and times only.
-- KPI (the Director's 15 criteria → 6 parts, `docs/agent-specs/13-kpi.md`): `/maqsad` `/maqsadlar`
-  `/kpi` `/baho` (Director), `/kpi` `/natija` (employees); ratings on the 1st, final by the 5th.
+- KPI (`docs/agent-specs/13-kpi.md`): **since 03.11 the simple KPI** (the owner) = reports 50 % (own day 1, late ½,
+  missed 0) + given tasks 50 % (by deadline 1, late ½, not done 0), + bonus − minus, no rating cards; the Director's 15
+  criteria → 6 parts with `KPI_MODE=full`. `/kpi` (Director, employees); final by the 5th.
 - Garmin AI bot (separate repo emjiemai/Garmin-AI-bot, cloned at D:\Garmin-AI-bot) POSTs its leads to
   `/webhooks/garmin-lead/{GARMIN_LEADS_SECRET}` → table `garmin_leads`; Q&A agent `garmin_lidlar`.
 - 1C «Бухгалтерия для Узбекистана» on Clobus, OData read-only (`integrations/onec/`, `docs/agent-specs/16-1c.md`):
@@ -102,6 +103,9 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   no salesperson by SAP user; gateway sales tool now sends UserName/SlpName — copy to the gateway PC); Admin
   `/vazifalar sinov` (card to me only), Director `/tahlil`; unreadable sheet → last register kept, hourly retry, IT told.
   Test list: `docs/test-checklist-2026-11-03.md`.
+  **03.11 (2):** leads sheet `lead_sheet.py` (Admin `/lidlar arxiv`: before 31.10 → «Архив» tab, out of the queue; daily
+  newest-first sort, № column, given rows green «date · who»); lead channels (`channel_post` binding via channel admins),
+  Primus posting back; `DUTIES_SHEET_ID` accepts a whole link (`sheets_client.sheet_id`).
 - **Local DB copy on the IT computer** (2026-10-30, `scripts/db-mirror/`): `mgmg_mirror`, systemd user timer every
   30 min (catches up after sleep), changes only — pg_stat change counters → checksums over 64 PK slices → COPY;
   `agent_actions` by id. Only `db_viewer.TECHNICAL_TABLES` rows (platform tables structure only); production read-only.

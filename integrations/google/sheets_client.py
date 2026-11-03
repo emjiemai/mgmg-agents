@@ -18,11 +18,14 @@ resulting short-lived access token does, and even that is not logged.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
+from typing import Any
 
 import httpx
 import jwt
+from urllib.parse import quote
 
 from integrations.common.config import settings
 from integrations.common.db import audited
@@ -38,6 +41,27 @@ SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
 class SheetsError(RuntimeError):
     """Raised when the Sheets API returns an error the client cannot recover from."""
+
+
+def sheet_id(value: str | None) -> str:
+    """The spreadsheet's id from what was pasted: the id itself, or the whole link
+    (``https://docs.google.com/spreadsheets/d/<id>/edit#gid=0``) — 03.11: a whole link in DUTIES_SHEET_ID made every
+    request a malformed URL (HTTP 400 with Google's HTML page)."""
+    text = (value or "").strip()
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})", text) or re.search(r"([A-Za-z0-9_-]{25,})", text)
+    return m.group(1) if m else text
+
+
+def _error_text(response: httpx.Response) -> str:
+    """Google's error in one line — its JSON message, not an HTML page."""
+    try:
+        body = response.json()
+    except ValueError:
+        return "Google HTML саҳифа қайтарди — сўров манзили нотўғри (жадвал ID сини текширинг)"
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        return str(err.get("message") or err.get("status") or "")[:200]
+    return str(body.get("error_description") or err or "")[:200] if isinstance(body, dict) else ""
 
 
 def service_account_email() -> str:
@@ -65,7 +89,7 @@ class SheetsClient:
     ) -> None:
         self.agent = agent
         self.run_id = run_id
-        self.spreadsheet_id = spreadsheet_id or settings.google_leads_sheet_id
+        self.spreadsheet_id = sheet_id(spreadsheet_id or settings.google_leads_sheet_id)
         self._client: httpx.AsyncClient | None = None
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
@@ -138,7 +162,7 @@ class SheetsClient:
             )
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
-                raise SheetsError(f"Google token exchange failed: HTTP {response.status_code} {response.text[:300]}")
+                raise SheetsError(f"Google token exchange failed: HTTP {response.status_code} {_error_text(response)}")
             body = response.json()
 
         self._access_token = body["access_token"]
@@ -168,7 +192,7 @@ class SheetsClient:
         """
         await self._ensure_token()
         assert self._client is not None
-        url = f"{SHEETS_API_ROOT}/{self.spreadsheet_id}/values/{a1_range}"
+        url = f"{SHEETS_API_ROOT}/{self.spreadsheet_id}/values/{quote(a1_range, safe='!:$')}"
 
         async with audited(
             agent=self.agent,
@@ -183,7 +207,7 @@ class SheetsClient:
             )
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
-                raise SheetsError(f"Sheets read failed: HTTP {response.status_code} {response.text[:300]}")
+                raise SheetsError(f"Sheets read failed: HTTP {response.status_code} {_error_text(response)}")
             body = response.json()
             values = body.get("values", [])
             ctx["payload"]["rows"] = len(values)
@@ -199,7 +223,7 @@ class SheetsClient:
             self._client, "GET", f"{SHEETS_API_ROOT}/{self.spreadsheet_id}",
             params={"fields": "sheets.properties.title"}, headers={"Authorization": f"Bearer {self._access_token}"})
         if response.status_code != 200:
-            raise SheetsError(f"Sheets read failed: HTTP {response.status_code} {response.text[:300]}")
+            raise SheetsError(f"Sheets read failed: HTTP {response.status_code} {_error_text(response)}")
         return [s["properties"]["title"] for s in response.json().get("sheets", [])]
 
     async def add_tab(self, title: str) -> None:
@@ -214,7 +238,43 @@ class SheetsClient:
                 headers={"Authorization": f"Bearer {self._access_token}"})
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
-                raise SheetsError(f"Sheets add tab failed: HTTP {response.status_code} {response.text[:300]}")
+                raise SheetsError(f"Sheets add tab failed: HTTP {response.status_code} {_error_text(response)}")
+
+    async def _post(self, path: str, body: dict[str, Any], action: str, ref: str) -> dict[str, Any]:
+        """One audited write call (values:batchUpdate, :batchUpdate) — the leads sheet's colours and order (03.11)."""
+        await self._ensure_token()
+        assert self._client is not None
+        async with audited(agent=self.agent, action=action, target_system="google_sheets", run_id=self.run_id,
+                           target_ref=ref, mode="write") as ctx:
+            response = await request_with_retry(self._client, "POST", f"{SHEETS_API_ROOT}/{self.spreadsheet_id}{path}",
+                                                json=body, headers={"Authorization": f"Bearer {self._access_token}"})
+            ctx["http_status"] = response.status_code
+            if response.status_code != 200:
+                raise SheetsError(f"Sheets {action} failed: HTTP {response.status_code} {_error_text(response)}")
+            return response.json()
+
+    async def tab_ids(self) -> dict[str, int]:
+        """Tab title → its numeric sheetId (what row moves, sorting and colours need)."""
+        await self._ensure_token()
+        assert self._client is not None
+        response = await request_with_retry(
+            self._client, "GET", f"{SHEETS_API_ROOT}/{self.spreadsheet_id}",
+            params={"fields": "sheets.properties(title,sheetId)"}, headers={"Authorization": f"Bearer {self._access_token}"})
+        if response.status_code != 200:
+            raise SheetsError(f"Sheets read failed: HTTP {response.status_code} {_error_text(response)}")
+        return {x["properties"]["title"]: x["properties"]["sheetId"] for x in response.json().get("sheets", [])}
+
+    async def set_values(self, data: list[tuple[str, list[list[Any]]]]) -> int:
+        """Write several ranges at once (values:batchUpdate, RAW); how many cells changed."""
+        if not data:
+            return 0
+        body = {"valueInputOption": "RAW", "data": [{"range": r, "values": v} for r, v in data]}
+        return int((await self._post("/values:batchUpdate", body, "set_values", f"{len(data)} ranges")).get("totalUpdatedCells") or 0)
+
+    async def batch(self, requests: list[dict[str, Any]], ref: str) -> None:
+        """Structural changes in one call (:batchUpdate): delete rows, sort, colour."""
+        if requests:
+            await self._post(":batchUpdate", {"requests": requests}, "batch_update", ref)
 
     async def append_rows(self, a1_range: str, rows: list[list[str]]) -> int:
         """Append rows to a sheet, after the last row with data.
@@ -235,7 +295,7 @@ class SheetsClient:
 
         await self._ensure_token()
         assert self._client is not None
-        url = f"{SHEETS_API_ROOT}/{self.spreadsheet_id}/values/{a1_range}:append"
+        url = f"{SHEETS_API_ROOT}/{self.spreadsheet_id}/values/{quote(a1_range, safe='!:$')}:append"
 
         async with audited(
             agent=self.agent,
@@ -256,7 +316,7 @@ class SheetsClient:
             )
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
-                raise SheetsError(f"Sheets append failed: HTTP {response.status_code} {response.text[:300]}")
+                raise SheetsError(f"Sheets append failed: HTTP {response.status_code} {_error_text(response)}")
 
         log.info("Sheets: appended {} row(s) to {}", len(rows), a1_range)
         return len(rows)

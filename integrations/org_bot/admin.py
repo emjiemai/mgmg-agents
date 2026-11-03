@@ -233,6 +233,24 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
         from integrations.org_bot import db_review
 
         return await db_review.send(run_id)
+    if text.split()[:1] == ["/lidlar"] and text.split()[1:2] == ["arxiv"]:  # the leads sheet: archive the old (03.11)
+        from integrations.org_bot import lead_sheet
+
+        try:
+            n = await lead_sheet.preview(run_id)
+        except Exception as exc:  # noqa: BLE001
+            await tell_admin(f"Лидлар жадвалини ўқиб бўлмади: {escape(str(exc)[:200])}", run_id)
+            return "lead_sheet_unreadable"
+        text_ = (f"🗂 <b>Лидлар жадвали</b> — {n['rows']} та лид\n"
+                 f"• {lead_sheet.CUTOFF:%d.%m} дан олдин қўшилган: <b>{n['old']}</b> та → «{lead_sheet.ARCHIVE_TAB}» варағига кўчирилади "
+                 f"(ўчирилмайди) ва B2B'га берилмайди\n• Қолади: {n['keep']} та — янгиси тепада, ҳар бирида № рақами\n"
+                 f"• B2B'га берилганлар яшил рангда: {n['given']} та")
+        async with TelegramBot(agent=AGENT, run_id=run_id, bot_token=settings.admin_bot_telegram_bot_token.get_secret_value(),
+                               default_chat_id=settings.admin_bot_telegram_chat_id) as bot:
+            await bot.send_message(text_, reply_markup={"inline_keyboard": [[
+                {"text": "✅ Бажариш", "callback_data": f"{lead_sheet.PREFIX}:go"},
+                {"text": "❌ Бекор", "callback_data": f"{lead_sheet.PREFIX}:no"}]]})
+        return "lead_sheet_preview"
     if text in LEADS_COMMANDS:
         return await _show_lead_switch(run_id)
     if text.split()[:1] == ["/vazifalar"] and text.split()[1:2] == ["sinov"]:  # today's card to me only (03.11)
@@ -1419,6 +1437,24 @@ async def handle_admin_callback(callback: dict[str, Any], run_id: uuid.UUID) -> 
 
     if action in ("rsh", "rsm", "rsd", "rsok", "rsx"):  # 📊 the report sheet (report_sheet.py, 2026-10-24)
         return await _report_sheet_action(action, target_id, query_id, decided_by, callback, run_id)
+
+    if action == "lsa":  # /lidlar arxiv: ✅ / ❌ (lead_sheet.py, 2026-11-03)
+        from integrations.org_bot import lead_sheet
+
+        if target_id != "go":
+            await _answer(query_id, "Бекор қилинди")
+            await _edit(callback, "🗂 Лидлар жадвали — ўзгартирилмади.", {"inline_keyboard": []}, run_id)
+            return "lead_sheet_cancelled"
+        await _answer(query_id, "Бажарилмоқда…")
+        try:
+            done = await lead_sheet.archive(run_id)
+        except Exception as exc:  # noqa: BLE001
+            await _edit(callback, f"🗂 Бажариб бўлмади: {escape(str(exc)[:200])}", {"inline_keyboard": []}, run_id)
+            return "lead_sheet_failed"
+        await _edit(callback, f"🗂 <b>Лидлар жадвали тартибланди</b>\n• «{lead_sheet.ARCHIVE_TAB}» варағига кўчирилди: {done['archived']} та\n"
+                    f"• Қолди: {done['rows']} та, янгиси тепада, № рақамлари билан\n• B2B'га берилганлар яшил: {done['marked']} та",
+                    {"inline_keyboard": []}, run_id)
+        return "lead_sheet_archived"
 
     if action == "dsw":  # /vazifalar: the daily cards from the register ⏸ / ▶️ (duty_tasks.py, 2026-11-02)
         from integrations.org_bot import duty_tasks

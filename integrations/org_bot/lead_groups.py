@@ -3,8 +3,9 @@
 "Leads need to go to two separate groups in Telegram with their details, for Garmin and for Primus, one by one —
 not in one message. I will add OPS Manager to the group."
 
-  * **Binding:** add OPS Manager Bot to the group, then the admin or the Director types there
-    ``/lidlar_garmin`` or ``/lidlar_primus`` (``/lidlar_stop`` unbinds). The bot answers in the group. Commands
+  * **Binding:** add OPS Manager Bot to the group — or to a channel as an administrator who may post — then the
+    admin or the Director types there ``/lidlar_garmin`` or ``/lidlar_primus`` (``/lidlar_stop`` unbinds). In a
+    channel the post has no sender, so the bot checks that the admin or a Director is one of its administrators. The bot answers in the group. Commands
     reach a bot even in privacy mode, so nothing else in the group needs to be read.
   * **Everything else in a group is ignored** — a group is never a chat with the bot: no tasks, reports, AI
     answers or join requests come from it.
@@ -30,8 +31,9 @@ AGENT = "lead-groups"
 log = setup_logging(AGENT)
 
 BUSINESSES = {"garmin": "Garmin", "primus": "Primus"}
-# Primus leads to a group: stopped 2026-10-26 (the owner: "stop sending leads to B2B Sotuv") — Garmin only.
-BIND = {"/lidlar_garmin": "garmin"}
+# Primus leads to a group: stopped 2026-10-26 (the owner: "stop sending leads to B2B Sotuv"), back 2026-11-03 (the
+# owner: "leads are not coming to the two Telegram channels") — both again.
+BIND = {"/lidlar_garmin": "garmin", "/lidlar_primus": "primus"}
 UNBIND = "/lidlar_stop"
 GAP_SECONDS = 3.1
 URGENCY = {"now": "🔥 Иссиқ — ҳозир олмоқчи", "next": "🟡 Илиқ — кейинроқ", "outage": "⚠️ Бот жавоб беролмади — мижоз кутмоқда"}
@@ -102,15 +104,19 @@ def _bot(run_id: uuid.UUID | None) -> TelegramBot:
     return TelegramBot(agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value())
 
 
-async def handle_group_message(message: dict[str, Any], run_id: uuid.UUID) -> str:
-    """A message in a group: only the admin's / the Director's binding commands count; the rest is ignored."""
+async def handle_group_message(message: dict[str, Any], run_id: uuid.UUID, *, channel: bool = False) -> str:
+    """A message in a group, or a post in a channel: only the admin's / the Director's binding commands count; the rest
+    is ignored. A channel post has no sender (it is posted «as the channel», 03.11: why the binding never worked) —
+    there the command counts when the admin or an active Director is one of the channel's administrators."""
     word = command(message.get("text"))
     if word not in BIND and word != UNBIND:
         return "group_ignored"
+    chat = message.get("chat") or {}
     sender = (message.get("from") or {}).get("id")
+    if channel:
+        sender = await _channel_admin(chat.get("id"), run_id)
     if not await _may_bind(sender):
         return "group_ignored"
-    chat = message.get("chat") or {}
     if word == UNBIND:
         await execute("DELETE FROM lead_groups WHERE chat_id = %s", (chat.get("id"),))
         reply = "Бу гуруҳга лидлар энди юборилмайди."
@@ -129,6 +135,22 @@ async def handle_group_message(message: dict[str, Any], run_id: uuid.UUID) -> st
                      target_system="postgres", status="success", run_id=run_id, mode="write",
                      payload={"business": BIND.get(word), "by": sender})
     return "lead_group_set" if word != UNBIND else "lead_group_cleared"
+
+
+async def _channel_admin(chat_id: Any, run_id: uuid.UUID) -> int | None:
+    """The admin's or a Director's Telegram id when they are an administrator of this channel; else None."""
+    try:
+        async with _bot(run_id) as bot:
+            body = await bot._call("getChatAdministrators", {"chat_id": chat_id}, mode="read", target_ref=str(chat_id))  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001 — the bot isn't an admin there, or Telegram refused
+        log.warning("Channel admins not read: {}", type(exc).__name__)
+        return None
+    members = body if isinstance(body, list) else (body or {}).get("result", []) if isinstance(body, dict) else []
+    for member in members:
+        uid = (member.get("user") or {}).get("id")
+        if await _may_bind(uid):
+            return uid
+    return None
 
 
 async def _may_bind(telegram_user_id: int | None) -> bool:

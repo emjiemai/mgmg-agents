@@ -1823,6 +1823,103 @@ def test_client_feedback() -> None:
     check_true("black on white with the required white margin", all(p == qr_card.WHITE for p in quiet))
 
 
+def test_kpi_simple_and_lead_channels() -> None:
+    """03.11.2026 (the owner): KPI from the data we have (reports + given tasks); the register's sheet id taken from a
+    whole link; leads to channels too, Primus back; the leads sheet archived (not deleted), newest first, given rows green."""
+    print("simple KPI, sheet id, lead channels, leads sheet (03.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.google import sheets_client as sc
+    from integrations.org_bot import admin, kpi_flow, kpi_score, lead_groups, lead_sheet, ops_manager, store
+    from integrations.org_bot.task_tracker import ReportScore, TaskScore
+
+    # ---- KPI: reports 50 % + tasks 50 %, on time 1 / late ½ / not 0
+    check_true("the simple KPI is the default; the Director's six parts with KPI_MODE=full",
+               settings.kpi_mode == "simple" and not kpi_score.full_mode() and list(kpi_score.active_parts()) == ["reports", "tasks"])
+    parts = kpi_score.simple_parts(ReportScore(asked=20, reported=18, on_time=10, same_day=16), TaskScore(due=4, on_time=2, late=1))
+    check("reports: 16 on their day + ½ × 2 late of 20 asked; tasks: 2 on time + ½ × 1 late of 4", parts,
+          {"reports": 85.0, "tasks": 62.5})
+    p = kpi_score.EmployeeMonth(employee_id="e", name="Ширин")
+    p.reports, p.tasks, p.penalty, p.bonus = ReportScore(asked=20, reported=18, same_day=16), TaskScore(due=4, on_time=2, late=1), 2, 1
+    q = kpi_score.EmployeeMonth(employee_id="f", name="Отабек")
+    q.reports = ReportScore(asked=10, reported=10, same_day=10)
+    scored = {x.name: x for x in kpi_score.score([p, q])}
+    check("the total: (85 + 62.5) / 2, then +1 −2; no tasks → the reports alone", (round(scored["Ширин"].total, 2), scored["Отабек"].total),
+          (72.75, 100.0))
+    card = kpi_score.card_text(date(2026, 10, 1), scored["Ширин"])
+    check_true("/kpi says where it comes from", "📝 Ҳисобот (50%): <b>85</b> — 16 ўз кунида, 2 кеч, 2 юборилмаган (20 кун)" in card
+               and "✅ Топшириқ (50%): <b>62</b> — 2 ўз вақтида, 1 кеч, 1 бажарилмаган (4 та)" in card)
+    check_true("no rating cards to the Director that wouldn't count", "if not kpi_score.full_mode():" in inspect_source(kpi_flow.open_month))
+
+    # ---- the register's sheet id
+    check("a whole link or the id itself", [sc.sheet_id(v) for v in (
+        "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit#gid=0",
+        " 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit ", "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789")],
+          ["1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"] * 3)
+
+    class R:
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            if self.body is None:
+                raise ValueError("html")
+            return self.body
+
+    check("Google's error in one line, never its HTML page", [sc._error_text(R(b)) for b in (
+        None, {"error": {"message": "The caller does not have permission", "status": "PERMISSION_DENIED"}},
+        {"error": "invalid_grant", "error_description": "Invalid JWT"})],
+          ["Google HTML саҳифа қайтарди — сўров манзили нотўғри (жадвал ID сини текширинг)",
+           "The caller does not have permission", "Invalid JWT"])
+    check_true("Cyrillic tab names are encoded in the URL", "quote(a1_range, safe='!:$')" in load_source("integrations/google/sheets_client.py"))
+
+    # ---- leads to channels; Primus back
+    check("both groups / channels again", lead_groups.BIND, {"/lidlar_garmin": "garmin", "/lidlar_primus": "primus"})
+    calls = []
+
+    async def fake_handle(message, run_id, *, channel=False):
+        calls.append(channel)
+        return "group_ignored"
+
+    saved = lead_groups.handle_group_message
+    lead_groups.handle_group_message = fake_handle
+    try:
+        asyncio.run(ops_manager.handle_update({"channel_post": {"chat": {"id": -1001, "type": "channel"}, "text": "/lidlar_primus"}},
+                                              uuid.uuid4(), None))
+    finally:
+        lead_groups.handle_group_message = saved
+    check_true("a channel's post reaches the binding (it has no sender: the channel's admins are checked)",
+               calls == [True] and "getChatAdministrators" in inspect_source(lead_groups._channel_admin)
+               and 'lead_groups.send("primus"' in load_source("agents/lead-agent/agent.py"))
+
+    # ---- the leads sheet
+    header = list(__import__("integrations.org_bot.leads", fromlist=["x"]).SHEET_COLUMNS)
+    di = header.index("date_added")
+
+    def row(name, added):
+        r = [""] * len(header)
+        r[0], r[di] = name, added
+        return r
+
+    rows = [header, row("A", "2026-10-17"), row("B", "2026-11-01"), row("C", ""), row("D", "2026-10-30"), row("E", "2026-10-31")]
+    plan = lead_sheet.plan(rows, lead_sheet.CUTOFF)
+    check("before DeepSeek (31.10) → the archive; a row without a date stays", (plan["old"], plan["keep"]), ([1, 4], [2, 3, 5]))
+    check("rows removed last first, contiguous ones together", lead_sheet.row_spans([1, 2, 3, 7, 9, 10]), [(9, 11), (7, 8), (1, 4)])
+    check("a row's key as the import makes it", lead_sheet.key_of({"company_name": "Hilton", "track": "equipment_sales"}),
+          "hilton|equipment_sales")
+    src = inspect_source(lead_sheet.archive)
+    check_true("archived, never deleted: copied to «Архив» first, removed only when every row was copied; out of the queue",
+               src.index("append_rows(f\"{ARCHIVE_TAB}!A1\", [rows[i]") < src.index("deleteDimension")
+               and "if copied != len(p[\"old\"])" in src and "l.archived_at IS NULL" in inspect_source(store.free_leads))
+    check_true("every morning: newest first (Sheets' own sort, colours move with rows), the numbers, the given ones green",
+               "sortRange" in inspect_source(lead_sheet.refresh) and "backgroundColor" in inspect_source(lead_sheet.refresh)
+               and "lead_sheet.refresh(run_id)" in load_source("agents/lead-handout/agent.py"))
+    check_true("Admin «/lidlar arxiv»: counts first, ✅ / ❌", '"arxiv"' in inspect_source(admin.handle_admin_message)
+               and 'action == "lsa"' in inspect_source(admin.handle_admin_callback))
+
+
 def test_sap_entry_and_testing() -> None:
     """03.11.2026 (the owner): «who didn't enter SAP» (/kiritish), safe testing (Admin «/vazifalar sinov», the
     Director's /tahlil), and an unreadable register sheet no longer retried every 5 minutes."""
@@ -2943,8 +3040,12 @@ def test_lead_tracker() -> None:
                and "lidlar" in dict(menus.B2B_SALES) and set(menus.EMPLOYEE) <= set(menus.B2B_SALES))
     emp = [{"id": "e1", "full_name": "Алишер", "role": "b2b_sotuv"}]
     lead_rows = [{"employee_id": "e1", "asked": 4, "answered": 3, "closed": 2, "done": 1}]
+    from integrations.common.config import settings as _settings
+
+    _settings.kpi_mode = "full"  # the Director's six parts (KPI_MODE=full); the simple KPI is tested in test_kpi_simple
     month = kpi_score.build(emp, [], [], {}, [], [], date(2026, 10, 1), date(2026, 10, 31), lead_rows=lead_rows)[0]
-    check("the 15:00 answers count in Жараён, as before", round(month.parts["process"]), 75)
+    _settings.kpi_mode = "simple"
+    check("the 15:00 answers count in Жараён, as before (KPI_MODE=full)", round(month.parts["process"]), 75)
     check_true("old 15:00 buttons (ld / lc, before 07.10) still just come off",
                'if prefix in ("ld", "lc"):' in inspect_source(ops_manager._handle_callback))
 
@@ -6900,7 +7001,8 @@ def test_lead_groups() -> None:
           (ignored, stranger, by_admin, by_boss, stop),
           ("group_ignored", "group_ignored", "lead_group_set", "lead_group_set", "lead_group_cleared"))
     check_true("…bound to the right business and told in the group",
-               done[0][1][:2] == ("garmin", -100123) and done[1][1][:2] == ("garmin", -100456) and primus == "group_ignored"
+               done[0][1][:2] == ("garmin", -100123) and done[1][1][:2] == ("garmin", -100456)
+               and primus == "lead_group_set" and done[2][1][:2] == ("primus", -100123)  # Primus back 03.11
                and "Garmin лидлари юборилади" in sent[0][1] and sent[0][0] == "-100123")
 
     # ---- one message per lead, a gap between
@@ -6927,7 +7029,7 @@ def test_lead_groups() -> None:
           (n, [s[1] for s in sent], len(gaps), none), (3, ["a", "b", "c"], 2, 0))
     check_true("wired: the Garmin webhook posts each new lead / added phone; the Lead Agent each new lead",
                'background.add_task(lead_groups.send, "garmin"' in load_source("integrations/api/app.py")
-               and "lead_groups" not in load_source("agents/lead-agent/agent.py")  # Primus / B2B: stopped 26.10
+               and 'lead_groups.send("primus"' in load_source("agents/lead-agent/agent.py")  # stopped 26.10, back 03.11
                and "RETURNING *" in load_source("integrations/garmin/leads.py")
                and "CREATE TABLE IF NOT EXISTS lead_groups" in load_source("database/schema.sql"))
 
@@ -9310,6 +9412,17 @@ def test_verifix() -> None:
 
 
 def test_kpi() -> None:
+    """The Director's six-part KPI (KPI_MODE=full) — the default became the simple KPI on 03.11."""
+    from integrations.common.config import settings as _settings
+
+    _settings.kpi_mode = "full"
+    try:
+        _test_kpi_body()
+    finally:
+        _settings.kpi_mode = "simple"
+
+
+def _test_kpi_body() -> None:
     """The Director's KPI criteria: scoring, the table and card, goals, results, ratings."""
     print("KPI (Director's criteria)")
     import asyncio
@@ -9566,6 +9679,17 @@ def test_garmin_leads() -> None:
 
 
 def test_reports() -> None:
+    """The Director's six-part KPI (KPI_MODE=full) — the default became the simple KPI on 03.11."""
+    from integrations.common.config import settings as _settings
+
+    _settings.kpi_mode = "full"
+    try:
+        _test_reports_body()
+    finally:
+        _settings.kpi_mode = "simple"
+
+
+def _test_reports_body() -> None:
     """The brief as a picture and four reports as PDFs (2026-10-05): templates, values, files."""
     print("report images and PDFs")
     import re
@@ -10791,6 +10915,7 @@ def main() -> int:
         test_plan_facts_and_review,
         test_rollout,
         test_sap_entry_and_testing,
+        test_kpi_simple_and_lead_channels,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

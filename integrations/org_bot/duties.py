@@ -384,7 +384,9 @@ async def save_plans(rows: list[list[str]]) -> None:
 
 
 def sheet_url() -> str:
-    sid = settings.duties_sheet_id.strip()
+    from integrations.google.sheets_client import sheet_id
+
+    sid = sheet_id(settings.duties_sheet_id)
     return f"https://docs.google.com/spreadsheets/d/{sid}" if sid else ""
 
 

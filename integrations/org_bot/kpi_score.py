@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
+from integrations.common.config import settings
 from integrations.org_bot.task_tracker import MONTHS_UZ, ReportScore, TaskScore, score_reports, score_tasks
 from integrations.telegram.bot import escape
 
@@ -52,6 +53,32 @@ PARTS: dict[str, tuple[str, str, int]] = {
     "process": ("🔄", "Жараён", 10),
     "commitment": ("💪", "Садоқат", 10),
 }
+# 2026-11-03 (the owner): «KPI needs to be calculated using only the data we have» — daily reports and given tasks.
+SIMPLE_PARTS: dict[str, tuple[str, str, int]] = {
+    "reports": ("📝", "Ҳисобот", 50),
+    "tasks": ("✅", "Топшириқ", 50),
+}
+
+
+def full_mode() -> bool:
+    """The Director's six parts (KPI_MODE=full); otherwise the simple KPI from reports and tasks."""
+    return settings.kpi_mode.strip().lower() == "full"
+
+
+def active_parts() -> dict[str, tuple[str, str, int]]:
+    return PARTS if full_mode() else SIMPLE_PARTS
+
+
+def simple_parts(reports: ReportScore, tasks: TaskScore) -> dict[str, float | None]:
+    """Reports: sent on its own day by the 22:00 deadline 1, sent late (the next day, approved) ½, not sent 0
+    (excused days aren't asks). Tasks: done by the deadline 1,
+    done late ½, not done 0. A part with nothing to count is left out, the other carries the KPI."""
+    return {
+        "reports": 100 * (reports.same_day + 0.5 * (reports.reported - reports.same_day)) / reports.asked if reports.asked else None,
+        "tasks": 100 * (tasks.on_time + 0.5 * tasks.late) / tasks.due if tasks.due else None,
+    }
+
+
 # The four things the Director marks 1–5: key -> (emoji, label, callback letter).
 RATINGS: dict[str, tuple[str, str, str]] = {
     "performance": ("📊", "Иш самарадорлиги", "p"),
@@ -201,6 +228,13 @@ def score(people: list[EmployeeMonth]) -> list[EmployeeMonth]:
     volumes = [p.volume for p in people if p.volume > 0]
     median = statistics.median(volumes) if volumes else 0
     for p in people:
+        if not full_mode():
+            p.parts = simple_parts(p.reports, p.tasks)
+            weights = {k: SIMPLE_PARTS[k][2] for k, v in p.parts.items() if v is not None}
+            p.total = sum(p.parts[k] * w for k, w in weights.items()) / sum(weights.values()) if weights else None
+            if p.total is not None and (p.penalty or p.bonus):
+                p.total = min(100.0, max(0.0, p.total + p.bonus - p.penalty))
+            continue
         parts: dict[str, float | None] = dict.fromkeys(PARTS)
         if p.goals:
             parts["results"] = 100 * sum(g.done_share for g in p.goals) / len(p.goals)
@@ -300,14 +334,14 @@ def _goal_actual(goal: dict[str, Any], leads: LeadScore | None) -> float | None:
 
 def _parts_line(p: EmployeeMonth) -> str:
     return " · ".join(
-        f"{PARTS[k][0]} {round(v)}" for k, v in p.parts.items() if v is not None
+        f"{active_parts()[k][0]} {round(v)}" for k, v in p.parts.items() if v is not None and k in active_parts()
     ) or "маълумот йўқ"
 
 
 def table_text(month: date, people: list[EmployeeMonth], final: bool) -> str:
     """Everyone's month in one message, best first."""
     head = "📈 <b>KPI — " + month_title(month) + ("</b>" if final else " (ҳозирча)</b>")
-    lines = [head, "<i>" + " · ".join(f"{e} {label}" for e, label, _w in PARTS.values()) + "</i>", ""]
+    lines = [head, "<i>" + " · ".join(f"{e} {label} {w}%" for e, label, w in active_parts().values()) + "</i>", ""]
     measured = [p for p in people if p.total is not None]
     if not measured:
         lines.append("Бу ой учун ҳали ўлчанадиган маълумот йўқ.")
@@ -316,7 +350,7 @@ def table_text(month: date, people: list[EmployeeMonth], final: bool) -> str:
         role = f" ({escape(p.role_label)})" if p.role_label else ""
         lines.append(f"{place}. {grade(p.total)} <b>{escape(p.name)}</b>{role} — <b>{round(p.total)}</b>{penalty_text(p)}")
         lines.append(f"      {_parts_line(p)}")
-    pending = [p.name for p in people if p.total is not None and not p.rating_complete]
+    pending = [p.name for p in people if p.total is not None and not p.rating_complete] if full_mode() else []
     if pending and not final:
         lines += ["", f"<i>⭐ Баҳоланмаган: {escape(', '.join(pending))}</i>"]
     lines += ["", "<i>🟢 80+ · 🟡 60–79 · 🔴 60 дан паст. Батафсил: /kpi</i>"]
@@ -325,7 +359,7 @@ def table_text(month: date, people: list[EmployeeMonth], final: bool) -> str:
 
 # Column headings in the PDF table (integrations/reports/templates/kpi.html).
 PART_SHORT = {"results": "Натижа", "tasks": "Топшириқ", "rating": "Баҳо", "volume": "Ҳажм",
-              "process": "Жараён", "commitment": "Садоқат"}
+              "process": "Жараён", "commitment": "Садоқат", "reports": "Ҳисобот"}
 
 
 def table_view(month: date, people: list[EmployeeMonth], final: bool) -> dict[str, Any]:
@@ -333,19 +367,19 @@ def table_view(month: date, people: list[EmployeeMonth], final: bool) -> dict[st
     measured = [p for p in people if p.total is not None]
     return {
         "month": month_title(month),
-        "status": "якуний" if final else "ҳозирча — раҳбар баҳолари ва натижалар киритилмоқда",
-        "parts": [{"label": label, "short": PART_SHORT[k], "weight": w} for k, (_e, label, w) in PARTS.items()],
+        "status": "якуний" if final else ("ҳозирча — раҳбар баҳолари ва натижалар киритилмоқда" if full_mode() else "ҳозирча"),
+        "parts": [{"label": label, "short": PART_SHORT[k], "weight": w} for k, (_e, label, w) in active_parts().items()],
         "people": [
             {
                 "place": place, "name": p.name, "role": p.role_label, "total": round(p.total),
                 "grade": "high" if p.total >= GREEN else "mid" if p.total >= YELLOW else "low",
-                "parts": [None if p.parts.get(k) is None else round(p.parts[k]) for k in PARTS],
+                "parts": [None if p.parts.get(k) is None else round(p.parts[k]) for k in active_parts()],
                 "penalty": p.penalty,
             }
             for place, p in enumerate(measured, 1)
         ],
         "unmeasured": [p.name for p in people if p.total is None],
-        "pending": [p.name for p in measured if not p.rating_complete] if not final else [],
+        "pending": [p.name for p in measured if not p.rating_complete] if not final and full_mode() else [],
     }
 
 
@@ -369,7 +403,7 @@ def card_text(month: date, p: EmployeeMonth) -> str:
     if p.bonus:
         lines.append(f"🟢 Ҳисоботлар учун: <b>+{p.bonus}</b> балл — жамига қўшилган")
     lines.append("")
-    for key, (emoji, label, weight) in PARTS.items():
+    for key, (emoji, label, weight) in active_parts().items():
         value = p.parts.get(key)
         shown = "—" if value is None else str(round(value))
         lines.append(f"{emoji} {label} ({weight}%): <b>{shown}</b>{_detail(key, p)}")
@@ -383,6 +417,13 @@ def card_text(month: date, p: EmployeeMonth) -> str:
 
 
 def _detail(key: str, p: EmployeeMonth) -> str:
+    if key == "reports" and p.reports.asked:
+        late = p.reports.reported - p.reports.same_day
+        return (f" — {p.reports.same_day} ўз кунида, {late} кеч, {p.reports.asked - p.reports.reported} юборилмаган"
+                f" ({p.reports.asked} кун)")
+    if key == "tasks" and p.tasks.due and not full_mode():
+        missed = p.tasks.due - p.tasks.on_time - p.tasks.late
+        return f" — {p.tasks.on_time} ўз вақтида, {p.tasks.late} кеч, {missed} бажарилмаган ({p.tasks.due} та)"
     if key == "tasks" and p.tasks.due:
         return f" — {p.tasks.on_time}/{p.tasks.due} ўз вақтида"
     if key == "volume":

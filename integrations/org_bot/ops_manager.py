@@ -275,6 +275,10 @@ async def handle_update(update: dict[str, Any], run_id: uuid.UUID, background: B
     if callback:
         return await _handle_callback(callback, run_id, background)
 
+    if update.get("channel_post"):  # a channel: only the lead channels' binding commands (lead_groups.py, 03.11)
+        from integrations.org_bot import lead_groups
+
+        return await lead_groups.handle_group_message(update["channel_post"], run_id, channel=True)
     message = update.get("message")
     if not message:
         return "ignored"

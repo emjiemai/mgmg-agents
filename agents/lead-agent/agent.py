@@ -955,6 +955,13 @@ async def run(dry_run: bool = False) -> int:
             print()
     else:
         await store_new_leads(new_leads, run_id)
+        # Each new lead as its own message to the Primus channel / group (lead_groups.py; back 03.11).
+        try:
+            from integrations.org_bot import lead_groups
+
+            await lead_groups.send("primus", [lead_groups.primus_text(lead) for lead in new_leads], run_id)
+        except Exception as exc:  # noqa: BLE001 — the sheet and the summary matter more than the channel
+            log.error("Leads not posted to the Primus channel: {}", type(exc).__name__)
         # The sheet write is the part that matters and has already happened
         # by this point -- notify_directors() logs and swallows delivery
         # failures internally rather than raising, so a broken Telegram
