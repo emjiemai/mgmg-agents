@@ -742,8 +742,9 @@ def test_brief_rendering() -> None:
     check_true("title and time on one line", "CEO кунлик ҳисоботи" in text.splitlines()[0] and "Тошкент" in text.splitlines()[0])
     check_true("goals and tasks that couldn't be read say so", text.count("маълумот олиб бўлмади") >= 2)
     check_true("a missing feed reads 'маълумот йўқ', never a number", "📈 Кечаги сотув: <i>маълумот йўқ</i>" in text)
-    check_true("all four number lines are there, no «Касса»",
-               all(k in text for k in ("Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар")) and "Касса" not in text)
+    check_true("two number lines: sales and payments — no «Касса» (16.10), no «Захира» / «Мижоз қарзи» (04.11)",
+               all(k in text for k in ("Кечаги сотув", "Бугунги тўловлар"))
+               and not any(k in text for k in ("Касса", "Захира", "Мижоз қарзи")))
 
     aging = ARAging(snapshot_date=date(2026, 9, 25))
     aging.invoices = [
@@ -768,10 +769,13 @@ def test_brief_rendering() -> None:
     check_true("yesterday's sales with the order count, as entered by 08:00",
                "📈 Кечаги сотув: $12,340.00 (3 та буюртма, 08:00 гача SAP'га киритилгани)" in text)
     check_true("unchanged sales show no change", "Кечаги сотув: $12,340.00 (3 та буюртма, 08:00 гача SAP'га киритилгани)\n" in text)
-    check_true("a capped feed is a lower bound", "📦 Захира: камида $120,000.00*" in text)
-    check_true("the lower bound is explained", "рақам тўлиқ эмас" in text)
-    check_true("debt total, overdue part, 90+ marker", "$15,000.00" in text and "муддати ўтгани $5,000.00 (1 та) 🔴" in text)
-    check_true("debt change since the last brief", "кечагига ▲ $2,000.00" in text)
+    check_true("stock and customer debt are not in the brief any more (04.11), though read and stored",
+               "Захира" not in text and "Мижоз қарзи" not in text and "$15,000.00" not in text
+               and brief.five_numbers_json(data)["debt"]["totals"] == {"USD": 1_500_000})
+    capped = brief.BriefData(report_rows=[], sales=Figure(status="ok", totals={"USD": 1_234_000}, count=3, capped=True,
+                                                          as_of=date(2026, 9, 26)))
+    check_true("a capped feed is a lower bound, explained", "камида $12,340.00*" in brief.render(capped)
+               and "рақам тўлиқ эмас" in brief.render(capped))
     check_true("today's approved payments", "💳 Бугунги тўловлар: 2 та — 15" in text and "сўм" in text)
     check_true("an unreadable payment date is said, not guessed", "1 та тасдиқланган сўровда сана аниқ эмас" in text)
     check_true("the brief is Uzbek Cyrillic", latin_words(text, allow={"CEO", "SAP"}) == [])
@@ -1890,6 +1894,238 @@ def test_security_review_1103() -> None:
                plan_facts.COLLECT_EVERY == 600 and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py"))
     check_true("a news feed over 5 MB is refused (read in chunks)", crawler.MAX_BYTES == 5_000_000
                and "aiter_bytes" in inspect_source(crawler._get))
+
+
+def test_task_proof_and_brief_1104() -> None:
+    """04.11.2026 (the owner): finished tasks still red. ✅ was pressed on six day-old cards (03.11) and the proof ask
+    was only an edit of those cards far up the chat, kept 30 minutes — no proof came, nothing closed. Now the ask is a
+    new message under the card, a reply to it (or to the card) is the proof whenever it comes, the others still waiting
+    are named, the next morning says so once; the brief shows «далил кутилмоқда», not red. And the 08:00 brief drops
+    «Захира» and «Мижоз қарзи» (still stored for the analyst)."""
+    print("task proof flow + brief without stock and debt (04.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import morning_notes, ops_manager, store, task_register as tr
+    from integrations.sap.figures import Figure
+    from integrations.sap.models import ARAging, ARInvoice
+
+    # ---- the brief: sales and payments only; the debt still stored
+    brief = load_agent("ceo-daily-brief")
+    aging = ARAging(snapshot_date=date(2026, 11, 4))
+    aging.invoices = [ARInvoice(doc_entry=1, doc_num=1, card_code="C", card_name="A", days_overdue=40, aging_bucket="31_60",
+                                currency="USD", doc_total_tiyin=700_000, balance_due_tiyin=700_000)]
+    data = brief.BriefData(report_rows=[], aging=aging, payments=brief.PaymentsDue(),
+                           sales=Figure(status="ok", totals={"USD": 99_000}, count=1, as_of=date(2026, 11, 3)),
+                           inventory=Figure(status="ok", totals={"USD": 5_000_000}, count=9, as_of=date(2026, 11, 3)))
+    v, text = brief.view(data), brief.render(data)
+    check("the picture: yesterday's sales and today's payments", [f["label"] for f in v["figures"]],
+          ["Кечаги сотув", "Бугунги тўловлар"])
+    check_true("no stock or customer debt in the text, the caption or the foot line",
+               not any(w in t for w in ("Захира", "Мижоз қарзи") for t in (text, brief.caption(data)))
+               and "захира" not in v["foot"] and "қарз" not in v["foot"])
+    check("…the debt is still stored with the brief (the analyst, tomorrow's change)",
+          brief.five_numbers_json(data)["debt"]["totals"], {"USD": 700_000})
+
+    # ---- the brief: ✅ pressed, proof awaited — said, not red
+    day = date(2026, 11, 4)
+    rows, n = brief.task_rows([
+        {"display_name": "Улуғбек", "task_summary": "Солиштириш", "status": "started", "awaiting": "evidence",
+         "due_date": date(2026, 11, 2)},
+        {"display_name": "Шахзод", "task_summary": "Реестр", "status": "sent", "awaiting": None, "due_date": date(2026, 11, 2)},
+    ], day)
+    check("…proof awaited is its own line, not «N кун ўтди»; the untouched one stays red",
+          [(r["what"].split(" · ")[0], r["alert"]) for r in rows], [("2 кун ўтди", True), ("далил кутилмоқда", False)])
+    check("…and isn't counted as overdue", (n["overdue"], n["proof"]), (1, 1))
+    check_true("the brief reads the waiting state", "t.awaiting," in load_source("integrations/org_bot/store.py"))
+
+    # ---- the ask: a new message under the card, which task, what to send, how
+    task = {"id": "t48", "code": "T-2026-11-0048", "task_summary": "<b>SAP</b>, 1C ва Billz солиштириш",
+            "status": "started", "awaiting": "evidence", "telegram_message_id": 555, "director_telegram_user_id": 9}
+    ask = tr.prompt_text(task)
+    check_true("the proof ask names the task and says to reply to it",
+               "T-2026-11-0048" in ask and "SAP, 1C ва Billz солиштириш" in ask and "<b>SAP" not in ask
+               and "жавоб қилиб" in ask and "далилсиз ёпилмайди" in ask)
+    check_true("the reason ask too", "тўсиқ нимада" in tr.prompt_text({**task, "awaiting": "blocker"}))
+    check_true("the card itself says a reply to it works",
+               "шу хабарга жавоб қилиб" in tr.status_line({**task, "awaiting": "evidence"}))
+    check_true("several waiting: the rest named", "Яна 2 та" in tr.waiting_line(["T-1", "T-2"]) and "T-1, T-2" in tr.waiting_line(["T-1", "T-2"]))
+
+    state = {"task": {**task, "awaiting": None}}
+    replies: list = []
+    prompts: list = []
+    consumed: list = []
+    waiting = [{"id": "t48", "code": "T-2026-11-0048"}, {"id": "t51", "code": "T-2026-11-0051"},
+               {"id": "t52", "code": "T-2026-11-0052"}]
+
+    async def await_input(task_id, kind, tg):
+        state["task"] = {**state["task"], "awaiting": kind}
+        return state["task"]
+
+    async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
+        replies.append((chat_id, text, reply_markup, reply_to))
+        return [901]
+
+    async def set_prompt(task_id, message_id):
+        prompts.append((task_id, message_id))
+        state["task"] = {**state["task"], "awaiting_message_id": message_id}
+
+    async def nothing(*a, **k):
+        return None
+
+    saved = [(store, n, getattr(store, n)) for n in ("await_task_input", "set_task_awaiting_message", "task_awaiting_input",
+                                                       "submit_task", "task_with_employee", "set_task_review_message",
+                                                       "tasks_awaiting_evidence")]
+    saved += [(ops_manager, n, getattr(ops_manager, n)) for n in ("_reply", "_answer", "_refresh_task_card",
+                                                                   "_consume_task_input", "TelegramBot")]
+    store.await_task_input, store.set_task_awaiting_message = await_input, set_prompt
+    ops_manager._reply, ops_manager._answer, ops_manager._refresh_task_card = fake_reply, nothing, nothing
+    try:
+        tap = {"id": "q", "data": "taskdone:t48", "from": {"id": 501}, "message": {"message_id": 555, "chat": {"id": 501}}}
+        check("✅ Бажардим: still asks for proof", asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4())), "evidence_asked")
+        chat, said, markup, under = replies[-1]
+        check_true("…in a NEW message under the card, the reply box open, its id kept",
+                   chat == 501 and "T-2026-11-0048" in said and markup.get("force_reply") is True and under == 555
+                   and prompts == [("t48", 901)])
+        replies.clear()
+        block = {**tap, "data": "taskblock:t48"}
+        state["task"] = {**state["task"], "awaiting": None}
+        asyncio.run(ops_manager._handle_callback(block, uuid.uuid4()))
+        check_true("⛔ Тўсиқ бор: the reason asked the same way", replies and "тўсиқ нимада" in replies[-1][1])
+
+        # routing: the store decides by the message replied to (the real query is checked below)
+        async def awaiting(tg, minutes=30, replied_to=None):
+            consumed.append(("asked", replied_to))
+            if replied_to:
+                return state["task"] if replied_to in (555, 901) else None
+            return None  # a plain message hours later: no task waits within 30 minutes
+
+        async def consume(employee, task_, message, run_id):
+            consumed.append(("consumed", task_["code"]))
+            return "task_submitted"
+
+        store.task_awaiting_input, ops_manager._consume_task_input = awaiting, consume
+        state["task"] = {**state["task"], "awaiting": "evidence"}
+        employee = {"telegram_user_id": 501, "full_name": "Улуғбек", "role": "it"}
+        asyncio.run(ops_manager._handle_employee_message(
+            employee, {"message_id": 1000, "text": "тайёр, /farqlar ишлаяпти", "reply_to_message": {"message_id": 901}},
+            uuid.uuid4()))
+        check("a reply to the ask, a day later, is that task's proof", consumed, [("asked", 901), ("consumed", "T-2026-11-0048")])
+        consumed.clear()
+        asyncio.run(ops_manager._handle_employee_message(
+            employee, {"message_id": 1001, "text": "тайёр", "reply_to_message": {"message_id": 555}}, uuid.uuid4()))
+        check("…and so is a reply to the card", consumed, [("asked", 555), ("consumed", "T-2026-11-0048")])
+        consumed.clear()
+        try:
+            asyncio.run(ops_manager._handle_employee_message(
+                employee, {"message_id": 1002, "text": "ҳисобот", "reply_to_message": {"message_id": 7}}, uuid.uuid4()))
+        except Exception:  # noqa: BLE001 — the flows beyond need the database; only the routing matters
+            pass
+        check("a Reply to another message is no task's proof", [c for c in consumed if c[0] == "consumed"], [])
+
+        # the thanks names the other tasks still waiting
+        store.task_awaiting_input = saved[2][2]
+        ops_manager._consume_task_input = saved[-2][2]
+
+        class FakeBot:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return None
+
+            async def send_message(self, text, chat_id=None, reply_markup=None):
+                return [77]
+
+        async def submit(task_id, by, text, msg_id):
+            return {**state["task"], "status": "review", "awaiting": None, "evidence_text": text}
+
+        async def still_waiting(tg):
+            return waiting
+
+        store.submit_task, store.task_with_employee, store.set_task_review_message = submit, nothing, nothing
+        store.tasks_awaiting_evidence, ops_manager.TelegramBot = still_waiting, FakeBot
+        replies.clear()
+        out = asyncio.run(ops_manager._consume_task_input(employee, state["task"], {"message_id": 1003, "text": "тайёр"},
+                                                          uuid.uuid4()))
+        thanks = replies[-1][1]
+        check_true("the proof's thanks names the two others still waiting, not this one",
+                   out == "task_submitted" and "T-2026-11-0048 текширувга юборилди" in thanks
+                   and "Яна 2 та" in thanks and "T-2026-11-0051, T-2026-11-0052" in thanks)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    src = load_source("integrations/org_bot/store.py")
+    reply_query = src[src.index("    if replied_to:"):src.index("async def set_task_awaiting_message")]
+    check_true("the store: a reply matches the card or the ask, with no 30-minute limit; plain messages keep it",
+               "%s IN (t.telegram_message_id, t.awaiting_message_id)" in reply_query
+               and reply_query.index("make_interval") > reply_query.index("    return await fetch_one(\n        \"\"\"\n        SELECT"))
+    check_true("the morning: ✅ before today, no proof, told once per tap",
+               "(t.awaiting_since AT TIME ZONE 'Asia/Tashkent')::date < %s" in src
+               and "(t.proof_reminded_at IS NULL OR t.proof_reminded_at < t.awaiting_since)" in src)
+    schema = load_source("database/schema.sql")
+    check_true("two columns: the ask's message, the morning's reminder",
+               "ADD COLUMN IF NOT EXISTS awaiting_message_id BIGINT" in schema
+               and "ADD COLUMN IF NOT EXISTS proof_reminded_at TIMESTAMPTZ" in schema)
+
+    # ---- the next morning: one line in the morning message, how to send it
+    tracker = load_agent("task-tracker")
+    notes: list = []
+    marked: list = []
+
+    async def none(*a, **k):
+        return []
+
+    async def proof_missing(today):
+        return [{"id": "t48", "code": "T-2026-11-0048", "task_summary": "Солиштириш", "due_date": None,
+                 "assigned_employee_id": "e1", "employee_telegram_user_id": 501, "display_name": "Улуғбек"}]
+
+    async def add_note(who, day_, kind, detail):
+        notes.append((kind, detail))
+
+    async def mark(task_id):
+        marked.append(task_id)
+
+    class QuietBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    saved = [(store, n, getattr(store, n)) for n in ("tasks_needing_reminder", "tasks_newly_overdue", "tasks_proof_missing",
+                                                       "add_morning_note", "mark_proof_reminded")]
+    saved += [(tracker, "today_local", tracker.today_local), (tracker, "_bot", tracker._bot),
+              (tracker.names, "ask_missing_names", tracker.names.ask_missing_names)]
+    store.tasks_needing_reminder = store.tasks_newly_overdue = none
+    store.tasks_proof_missing, store.add_morning_note, store.mark_proof_reminded = proof_missing, add_note, mark
+    tracker.today_local, tracker._bot, tracker.names.ask_missing_names = (lambda: date(2026, 11, 4)), QuietBot, nothing
+    try:
+        asyncio.run(tracker.morning(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("a task without a deadline too: noted as «proof», marked told",
+               notes and notes[0][0] == "task" and notes[0][1]["proof"] is True and notes[0][1]["due"] is None
+               and marked == ["t48"])
+    line = morning_notes.task_line(notes[0][1])
+    check_true("the line: «Бажардим» pressed, no proof — reply to the card",
+               "T-2026-11-0048 «Солиштириш»" in line and "далил келмаган" in line and "картасига жавоб" in line)
+    text = morning_notes.compose("Улуғбек ака", [{"kind": "task", "detail": notes[0][1]}])[0]
+    check("…alone: one polite line with the name, no extra hint", (text.count("\n"), friendly_problems(text, ("Улуғбек ака",
+          "Бажардим", "T-2026-11-0048", "Солиштириш"))), (0, []))
+    soon = {"kind": "task", "detail": {"code": "T-1", "summary": "Нарх", "due": "2026-11-04", "today": "2026-11-04",
+                                       "overdue": False}}
+    check_true("the hint under due tasks says to send the proof too",
+               "«Бажардим» тугмасини босиб, далил юборинг" in morning_notes.compose("Ширин опа", [soon, soon])[0])
 
 
 def test_director_morning_quieter() -> None:
@@ -4469,8 +4705,16 @@ def test_task_register() -> None:
         state["task"] = {**state["task"], "awaiting": kind}
         return state["task"]
 
-    async def awaiting(tg, minutes=30):
+    async def awaiting(tg, minutes=30, replied_to=None):
+        if replied_to and replied_to not in (state["task"].get("telegram_message_id"), state["task"].get("awaiting_message_id")):
+            return None
         return state["task"] if tg == 501 and state["task"].get("awaiting") else None
+
+    async def set_prompt(task_id, message_id):
+        state["task"] = {**state["task"], "awaiting_message_id": message_id}
+
+    async def none_waiting(tg):
+        return []
 
     async def submit(task_id, by, text, msg_id):
         if state["task"].get("awaiting") != "evidence":
@@ -4527,11 +4771,12 @@ def test_task_register() -> None:
 
     saved = [(store, n, getattr(store, n)) for n in ("await_task_input", "task_awaiting_input", "submit_task", "block_task",
                                                        "verify_task", "task_with_employee", "set_task_review_message",
-                                                       "report_for_day")]
+                                                       "report_for_day", "set_task_awaiting_message", "tasks_awaiting_evidence")]
     saved += [(ops_manager, n, getattr(ops_manager, n)) for n in ("_reply", "TelegramBot", "_answer")]
     store.await_task_input, store.task_awaiting_input, store.submit_task = await_input, awaiting, submit
     store.block_task, store.verify_task, store.task_with_employee = block, verify, with_employee
     store.set_task_review_message = store.report_for_day = nothing  # /hisobot: no report today, no database
+    store.set_task_awaiting_message, store.tasks_awaiting_evidence = set_prompt, none_waiting
     ops_manager._reply, ops_manager.TelegramBot, ops_manager._answer = fake_reply, FakeBot, nothing
     employee = {"telegram_user_id": 501, "full_name": "Алишер Каримов", "display_name": "A", "role": "it"}
     try:
@@ -4657,8 +4902,10 @@ def test_review_fixes() -> None:
     # 2: the proof window is short, and a Reply to another message is not proof
     consumed: list = []
 
-    async def awaiting(tg_id, minutes=30):
+    async def awaiting(tg_id, minutes=30, replied_to=None):
         consumed.append(("asked", minutes))
+        if replied_to and replied_to != 5:  # as the store: a Reply to the card (5) is the task's, to anything else not
+            return None
         return {"id": "t1", "awaiting": "evidence", "telegram_message_id": 5}
 
     async def consume(employee, task_, message, run_id):
@@ -6674,7 +6921,7 @@ def test_morning_verifix_and_admin_sheet() -> None:
     check_true("the bonus, the question and task reminders are notes now — none of them sends on its own",
                'add_morning_note(row, today_local(), "bonus"' in bonus_src and "send_message" not in bonus_src
                and 'add_morning_note(person, today, "ask"' in expl_src and "explanations.ask_text(" not in expl_src
-               and tasks_src.count('add_morning_note(_who(task), today, "task"') == 2
+               and tasks_src.count('add_morning_note(_who(task), today, "task"') == 3  # due, overdue, no proof (04.11)
                and "reminder_text(" not in tasks_src and "overdue_employee_text(" not in tasks_src)
     order = [runner.index(a) for a in ("agents/report-bonus", "agents/explanations", "agents/task-tracker/agent.py --morning",
                                        "agents/morning-notes")]
@@ -9858,8 +10105,8 @@ def _test_reports_body() -> None:
     )
     v = brief.view(data)
     by_label = {f["label"]: f for f in v["figures"]}
-    check("the numbers, no «Касса» (the owner, 16.10.2026)", list(by_label),
-          ["Кечаги сотув", "Захира", "Мижоз қарзи", "Бугунги тўловлар"])
+    check("the numbers: sales and payments — no «Касса» (16.10), no «Захира» / «Мижоз қарзи» (04.11)", list(by_label),
+          ["Кечаги сотув", "Бугунги тўловлар"])
     lead = {b["title"]: b for b in v["lead"]}
     check("the brief leads with goals, tasks and reports", list(lead),
           ["Ойлик мақсадлар", "Топшириқлар", "Ҳисобот юбормаганлар"])
@@ -9881,10 +10128,9 @@ def _test_reports_body() -> None:
     settings.company_vision, settings.company_mission = saved_compass
     check_true("nothing sold / no payments: quiet, not shouted",
                by_label["Кечаги сотув"]["tone"] == "quiet" and by_label["Бугунги тўловлар"]["tone"] == "quiet")
-    check_true("unreadable stock says so instead of a number",
-               by_label["Захира"]["tone"] == "muted" and "ўқилмади" in by_label["Захира"]["number"])
-    check_true("overdue debt is the one red figure, with how old",
-               by_label["Мижоз қарзи"]["tone"] == "alert" and "90 кундан" in by_label["Мижоз қарзи"]["sub"])
+    unreadable = brief.view(brief.BriefData(report_rows=[], sales=Figure(status="unknown_format", as_of=date(2026, 10, 5))))
+    check_true("unreadable sales say so instead of a number",
+               unreadable["figures"][0]["tone"] == "muted" and "ўқилмади" in unreadable["figures"][0]["number"])
     blocks = {b["title"]: b for b in v["blocks"] + v["lead"]}
     check("names: five, then '+N'", (len(blocks["Ҳисобот юбормаганлар"]["rows"]), blocks["Ҳисобот юбормаганлар"]["more"]), (5, 2))
     check_true("one shop: its name beside the day, no repeated row",
@@ -10241,7 +10487,7 @@ def test_sap_full_push() -> None:
     data = brief.BriefData(report_rows=[], sales=fig, sales_unit="ҳисоб-фактура")
     five = brief.render_five(data)
     check_true("the brief counts invoices, with no 'камида'",
-               "(2 та ҳисоб-фактура, 08:00 гача SAP'га киритилгани)" in five and "камида" not in five.split("Захира")[0])
+               "(2 та ҳисоб-фактура, 08:00 гача SAP'га киритилгани)" in five and "камида" not in five)
 
     # in so'm when SAP sends it (19.10: "$722" next to Billz's 14,76 млн); a document's total once, not per line
     som_rows = [
@@ -10798,11 +11044,8 @@ def test_sap_freshness() -> None:
     aging.invoices = [ARInvoice(doc_entry=1, doc_num=2150, card_code="C1", card_name="Rich Home", days_overdue=47,
                                 aging_bucket="31_60", currency="USD", doc_total_tiyin=976431, balance_due_tiyin=976431)]
     with_debt = brief.BriefData(report_rows=[], aging=aging, sap_pushed_at=friday)
-    check_true("debt says when it is from", "(03.10 14:13 ҳолатида)" in brief.render(with_debt))
     view = brief.view(with_debt)
     check_true("the picture carries the warning", view["notice"] and "03.10 14:13" in view["notice"])
-    debt_row = next(f for f in view["figures"] if f["label"] == "Мижоз қарзи")
-    check("the picture's debt row says when", (debt_row["sub"], debt_row["sub_alert"]), ("03.10 14:13 ҳолатида", True))
     check_true("the caption warns too", "03.10 14:13" in brief.caption(with_debt))
     check_true("a fresh brief has no warning", brief.view(brief.BriefData(report_rows=[]))["notice"] is None)
 
@@ -10933,15 +11176,10 @@ def test_invoice_as_written() -> None:
     aging = ARAging(snapshot_date=date(2026, 10, 3), invoices=[som])
     switch_day = brief.BriefData(report_rows=[], aging=aging,
                                  previous={"debt": {"status": "ok", "totals": {"USD": 900_000}, "capped": False}})
-    text = plain(brief.render(switch_day))
-    check_true("the brief's debt in so'm, as on the invoices", "🧾 Мижоз қарзи: 124 056 000 сўм" in text)
-    check_true("…no 'change' on the day so'm replaces $", "кечагига" not in text)
-    check("stored with how it was counted", brief.five_numbers_json(switch_day)["debt"]["basis"], "invoice")
-    next_day = brief.BriefData(report_rows=[], aging=aging, previous={"debt": {
-        "status": "ok", "totals": {"UZS": 12_000_000_000}, "capped": False, "basis": "invoice"}})
-    check_true("…compared again from the next day", "кечагига ▲ 4 056 000 сўм" in plain(brief.render(next_day)))
-    debt_row = next(f for f in brief.view(switch_day)["figures"] if f["label"] == "Мижоз қарзи")
-    check("the picture: short so'm", (debt_row["number"], plain(debt_row["unit"])), ("124,06", "млн сўм"))
+    # the brief no longer shows the debt (04.11) — it is still stored, in so'm as on the invoices, with its basis
+    stored = brief.five_numbers_json(switch_day)["debt"]
+    check("stored in so'm, with how it was counted", (stored["totals"], stored["basis"]), ({"UZS": 12405600000}, "invoice"))
+    check_true("…and not shown", "Мижоз қарзи" not in plain(brief.render(switch_day)))
 
     now = datetime.now(TASHKENT)
     rows = [{"doc_num": 2150, "card_name": "Rich Home", "doc_date": date(2026, 8, 17), "days_overdue": 47,
@@ -11028,6 +11266,7 @@ def main() -> int:
         test_kpi_simple_and_lead_channels,
         test_director_morning_quieter,
         test_security_review_1103,
+        test_task_proof_and_brief_1104,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

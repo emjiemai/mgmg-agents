@@ -8,6 +8,21 @@
 Director's questions, and sent if the picture can't be drawn.
 **Source:** A2 "5 рақам дашборди" in the owner's plan (ЭМЖИЕМ AI Агентлар Тизими)
 
+## 2026-11-04: no «Захира», no «Мижоз қарзи»; a ✅ waiting for proof isn't red
+
+The owner: the stock and customer-debt rows aren't needed. The numbers are now
+**yesterday's sales and today's payments** — picture, caption (sales only) and
+text. Both are still read and stored with the brief (`five_numbers_json`,
+`daily_briefs.sections`): the Director's questions and the analyst use them, and
+the receivables agent keeps the debt. The foot line says «сотув — SAP».
+
+**Топшириқлар:** a task whose ✅ Бажардим was pressed but whose proof hasn't come
+(`tasks.awaiting = 'evidence'`) is its own line, «далил кутилмоқда», not red and
+not counted as overdue — the person's step, not the Director's. Why: on 03.11
+six tasks were marked ✅ on day-old cards, the proof ask was missed (an edit far up
+the chat, kept 30 minutes) and the 04.11 brief showed all of them «2 кун ўтди» in
+red. The proof flow itself changed too (`08-task-tracker.md`).
+
 ## 2026-10-16: goals, tasks and reports first; no «Касса»
 
 The owner: the brief is about where the company is going, not money in the
@@ -21,10 +36,11 @@ bank. The picture now reads, top to bottom:
    line has the count, the average and how many are behind. None → "/maqsad
    билан қўйинг".
 3. **Топшириқлар** — open tasks: overdue (N кун ўтди), blocked (тўсиқ),
-   waiting for the Director's check (текширувда), due today; head line: open
-   count, overdue, blocked.
+   ✅ pressed and proof awaited (далил кутилмоқда, not red — 04.11), waiting for
+   the Director's check (текширувда), due today; head line: open count, overdue,
+   blocked.
 4. **Ҳисобот юбормаганлар / Кунлик ҳисоботлар** — as before.
-5. The numbers: yesterday's sales, stock, customer debt, today's payments.
+5. The numbers: yesterday's sales, today's payments (stock and customer debt out since 04.11).
 6. Shops (Billz), attendance (Verifix).
 
 «Касса» is gone from the picture, the caption and the text; it is no longer

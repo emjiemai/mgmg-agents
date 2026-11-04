@@ -22,6 +22,23 @@ too) and a **state**: `sent` Яратилди → `started` Қабул қили�
   short text; the employee's next message within **30 minutes** is taken as it
   (`tasks.awaiting`; never a /command, never a Reply to another message such as
   the 16:00 report ask). Without proof the task stays open.
+- **The ask is a new message (2026-11-04).** On 03.11 six tasks got ✅ on
+  day-old cards; the ask was only an edit of those cards far up the chat, gone
+  after 30 minutes — no proof came, nothing closed, the 04.11 brief showed them
+  red. Now ✅ (and ⛔) also send **a new message under the card**
+  (`task_register.prompt_text`: the code, the task's words, what to send, reply
+  box open — `force_reply`), its id in `tasks.awaiting_message_id`. **A reply to
+  that message or to the card is the task's proof / reason however much later**
+  (`store.task_awaiting_input(..., replied_to=)`); a plain message still only
+  within 30 minutes of the tap. Several ✅ in a row: each proof's thanks names
+  the tasks still waiting (`waiting_line`) — one proof is one task's.
+- **Told the next morning:** ✅ pressed before today and still no proof → one
+  line in the morning message («…«Бажардим» босилган, лекин далил келмаган —
+  топшириқ картасига жавоб қилиб далил юборинг»), once per tap
+  (`tasks.proof_reminded_at`, `store.tasks_proof_missing`). The morning hint
+  under due tasks now says to press «Бажардим» **and send the proof**.
+- In the 08:00 brief such a task reads «далил кутилмоқда» — not red, not
+  counted as overdue (`01-ceo-daily-brief.md`).
 - If the proof card can't reach the assigner (as a file, then as text), the
   task goes back to "send the proof" — never stuck in review with no buttons.
   A file's caption is fitted to 1024 characters without cutting a tag.

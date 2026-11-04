@@ -19,7 +19,7 @@ The 08:00 agents that speak to employees leave a note instead of sending:
 | ---- | ---- | ------ |
 | `bonus` | agents/report-bonus | yesterday's date, the points given (0/1), the month's total, sent / missed / built from messages |
 | `ask` | agents/explanations | «absent» (the days) or «report» (yesterday), the explanation ids |
-| `task` | agents/task-tracker --morning | code, summary, due date, overdue or not |
+| `task` | agents/task-tracker --morning | code, summary, due date, overdue or not; `proof: true` = ✅ pressed before today, no proof yet (04.11 — «…«Бажардим» босилган, лекин далил келмаган — топшириқ картасига жавоб қилиб далил юборинг») |
 
 `run_morning_agents.py`: brief → report-bonus → explanations → task-tracker --morning → **morning-notes** → the rest.
 
@@ -28,7 +28,7 @@ The 08:00 agents that speak to employees leave a note instead of sending:
 `morning_notes.compose(name, notes)` — pure, tested offline:
 - **one thing** → one polite line with the name, as before («Ширин опа, кечаги, 23.10 ҳисоботингиз учун раҳмат…»);
 - **several** → «Ширин опа, хайрли тонг» + the facts as «• …» lines (the point first, then tasks with their codes
-  and words as written, and «бажарилган топшириқда «Бажардим» тугмасини босинг») + **at most one question, last**;
+  and words as written, and «бажарилган топшириқда «Бажардим» тугмасини босиб, далил юборинг» — the proof added 04.11, not under a proof line) + **at most one question, last**;
 - a missed report's «no point» is said **inside** the report question («…келмади, шунинг учун бу сафар балл
   берилмади, сабабини…»), never as its own line;
 - the report question carries **📝 Кечаги ҳисоботни юбориш** (spec 29); no emoji to employees, «сиз» everywhere.

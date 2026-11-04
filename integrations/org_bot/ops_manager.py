@@ -632,7 +632,25 @@ async def _handle_task_done(task_id: str, callback: dict[str, Any], run_id: uuid
         return "already_done"
     await _answer(query_id, "Далил юборинг")
     await _refresh_task_card(task, run_id)
+    await _ask_task_input(task, clicker_id, run_id)
     return "evidence_asked"
+
+
+async def _ask_task_input(task: dict[str, Any], telegram_user_id: int, run_id: uuid.UUID) -> None:
+    """After ✅ / ⛔: the ask as a NEW message under the card; a reply to it is that task's (2026-11-04).
+
+    The edited card alone wasn't seen — a day-old card is far up the chat (03.11: six ✅, no proof, all red).
+    """
+    placeholder = "Тўсиқ сабаби" if task.get("awaiting") == "blocker" else "Далил: фото, файл ёки матн"
+    try:
+        ids = await _reply(telegram_user_id, run_id, task_register.prompt_text(task),
+                           reply_markup={"force_reply": True, "input_field_placeholder": placeholder},
+                           reply_to=task.get("telegram_message_id"))
+    except TelegramError as exc:
+        log.warning("Could not ask for {}'s {}: {}", task_register.code_of(task), task.get("awaiting"), exc)
+        return
+    if ids:
+        await store.set_task_awaiting_message(str(task["id"]), ids[0])
 
 
 async def _handle_task_step(prefix: str, task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -657,6 +675,8 @@ async def _handle_task_step(prefix: str, task_id: str, callback: dict[str, Any],
         return "task_step_refused"
     await _answer(query_id, toast)
     await _refresh_task_card(task, run_id)
+    if prefix == "taskblock":
+        await _ask_task_input(task, clicker_id, run_id)
     if prefix == "taskgo":
         actor = await _actor_display_name(clicker)
         await _tell_assigner(task, f"▶️ {escape(task_register.code_of(task))}: тўсиқ ҳал бўлди, давом этяпти — "
@@ -726,7 +746,13 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
         await _reply(telegram_user_id, run_id, "Далилни текширувга юбориб бўлмади — бироздан кейин қайта юборинг.")
         return "task_review_failed"
     await _refresh_task_card(submitted, run_id)
-    await _reply(telegram_user_id, run_id, f"Раҳмат, {escape(task_register.code_of(submitted))} текширувга юборилди.")
+    thanks = f"Раҳмат, {escape(task_register.code_of(submitted))} текширувга юборилди."
+    # Several ✅ in a row: one proof is one task's — the rest are named, never silently left waiting (04.11).
+    others = [str(t["code"]) for t in await store.tasks_awaiting_evidence(telegram_user_id)
+              if str(t["id"]) != str(submitted["id"]) and t.get("code")]
+    if others:
+        thanks += "\n" + task_register.waiting_line(others)
+    await _reply(telegram_user_id, run_id, thanks)
     await store.set_task_review_message(str(submitted["id"]), review_id)
     return "task_submitted"
 
@@ -1861,10 +1887,11 @@ async def _handle_employee_message(
     # proof or blocker (task_register.py) — a file included.
     first_text = (message.get("text") or message.get("caption") or "").strip()
     if not first_text.startswith("/"):
-        awaiting = await store.task_awaiting_input(telegram_user_id, task_register.AWAIT_MINUTES)
         replied = (message.get("reply_to_message") or {}).get("message_id")
-        # A Reply to another message (the 16:00 report ask) is that, not this task's proof.
-        if awaiting is not None and (not replied or replied == awaiting.get("telegram_message_id")):
+        # A reply to the task's card or to its «send the proof» message is that task's, however much later
+        # (2026-11-04); a Reply to another message (the 16:00 report ask) is not; a plain one only soon after the tap.
+        awaiting = await store.task_awaiting_input(telegram_user_id, task_register.AWAIT_MINUTES, replied_to=replied)
+        if awaiting is not None:
             return await _consume_task_input(employee, awaiting, message, run_id)
     # After «📝 Кечаги ҳисоботни юбориш» the next text is yesterday's report, for approval (late_report.py).
     late = await late_report.take_message(employee, message, run_id, background)

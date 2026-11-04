@@ -8,6 +8,8 @@ reminding so the Director doesn't have to.
       * Employees whose open task is due today or tomorrow get one reminder.
       * Tasks that just went past their deadline: the employee is told once,
         and the Director gets one message listing all of them.
+      * ✅ Бажардим pressed before today and still no proof (2026-11-04): the
+        employee is told once per tap how to send it.
   --weekly (Friday 17:00, with the report reminder)
       * The Director gets the week's scorecard: tasks done on time (A3's И),
         daily reports sent and on time (A1's И), and written permissions.
@@ -73,7 +75,8 @@ def _who(task: dict) -> dict:
 
 
 def _task_detail(task: dict, today, overdue: bool) -> dict:
-    return {"code": task.get("code"), "summary": task.get("task_summary"), "due": task["due_date"].isoformat(),
+    due = task.get("due_date")
+    return {"code": task.get("code"), "summary": task.get("task_summary"), "due": due.isoformat() if due else None,
             "today": today.isoformat(), "overdue": overdue}
 
 
@@ -88,13 +91,25 @@ async def morning(run_id: uuid.UUID) -> None:
 
     due_soon = await store.tasks_needing_reminder(today)
     overdue = await store.tasks_newly_overdue(today)
-    log.info("{} task(s) due soon, {} newly overdue", len(due_soon), len(overdue))
+    proof = await store.tasks_proof_missing(today)  # ✅ pressed, no proof since (2026-11-04)
+    log.info("{} task(s) due soon, {} newly overdue, {} waiting for proof", len(due_soon), len(overdue), len(proof))
     if settings.dry_run:
         for task in due_soon:
             log.info("[dry-run] remind {}: {}", task["display_name"], task["task_summary"][:60])
         for task in overdue:
             log.info("[dry-run] overdue {}: {}", task["display_name"], task["task_summary"][:60])
+        for task in proof:
+            log.info("[dry-run] proof missing {}: {}", task["display_name"], task["task_summary"][:60])
         return
+
+    # ✅ Бажардим without the proof: told once per tap, how to send it (the card itself shows the ask too).
+    for task in proof:
+        try:
+            await store.add_morning_note(_who(task), today, "task", {**_task_detail(task, today, overdue=False), "proof": True})
+        except Exception as exc:  # noqa: BLE001
+            log.error("Proof reminder note not saved: {}", type(exc).__name__)
+            continue
+        await store.mark_proof_reminded(str(task["id"]))
 
     # The employee hears about it in their one morning message (agents/morning-notes, 2026-10-24) — a line each,
     # not a message per task; the task card keeps its buttons.

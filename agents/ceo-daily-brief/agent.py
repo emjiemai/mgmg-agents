@@ -5,10 +5,8 @@ Uzbek Cyrillic like every bot message:
 
     ☀️ CEO кунлик ҳисоботи — 26.09.2026. 08:00 Тошкент
 
-    📊 5 рақам
+    📊 Рақамлар
     📈 Кечаги сотув: $12,340.00 (8 та буюртма)
-    📦 Захира: камида $120,000.00*
-    🧾 Мижоз қарзи: $15,200.00, муддати ўтгани $7,384.36 (16 та)
     💳 Бугунги тўловлар: 2 та — 15 000 000 сўм
 
     🔴 Ҳисобот юбормаганлар (25.09.2026): 1 / 5
@@ -27,6 +25,10 @@ with what the company is working towards instead: the vision and mission
 goals (/maqsad, how far each is against the month's pace), the tasks
 (overdue, blocked, waiting for the Director's check, due today) and the
 daily reports. Cash stays in 1C and the analyst («пул қолдиғи»).
+
+2026-11-04, the owner: «Захира» (stock) and «Мижоз қарзи» (customer debt) are out of the brief too —
+the numbers left are yesterday's sales and today's payments. Both are still read and stored with the
+brief (``five_numbers_json``, ``daily_briefs``) for the analyst; the receivables agent keeps the debt.
 
 Honesty rules, because a wrong number here is worse than none:
   * A SAP feed that hit its push row limit gives a lower bound: "камида",
@@ -473,30 +475,7 @@ def render_five(data: BriefData) -> str:
         sales += f" ({data.sales.count} та {data.sales_unit}, 08:00 гача SAP'га киритилгани)"
     lines.append(f"📈 Кечаги сотув: {sales}")
     lower_bound |= capped
-
-    stock, capped = _figure_value(data.inventory, "inventory", data, what="қолдиқ")
-    if sap_silent(data) and data.inventory is not None and data.inventory.ok:
-        stock += f" <i>({_since(data.sap_pushed_at)} ҳолатида)</i>"
-    lines.append(f"📦 Захира: {stock}")
-    lower_bound |= capped
-
-    if data.aging is None:
-        lines.append("🧾 Мижоз қарзи: <i>маълумот йўқ</i>")
-    else:
-        aging = data.aging
-        open_totals = _totals_by_currency(aging.invoices, overdue_only=False)
-        overdue_totals = _totals_by_currency(aging.invoices, overdue_only=True)
-        debt = escape(_money(open_totals))
-        if data.aging_capped:
-            debt = f"камида {debt}*"
-            lower_bound = True
-        debt += _change("debt", open_totals, data, comparable=not data.aging_capped and _same_debt_basis(data))
-        if overdue_totals:
-            marker = " 🔴" if aging.bucket_totals_tiyin.get("90_plus", 0) > 0 else ""
-            debt += f", муддати ўтгани {escape(_money(overdue_totals))} ({aging.overdue_count} та){marker}"
-        if sap_silent(data):
-            debt += f" <i>({_since(data.sap_pushed_at)} ҳолатида)</i>"
-        lines.append(f"🧾 Мижоз қарзи: {debt}")
+    # «Захира» and «Мижоз қарзи» are out (2026-11-04, the owner) — still stored, see five_numbers_json.
 
     if data.payments is None:
         lines.append("💳 Бугунги тўловлар: <i>маълумот йўқ</i>")
@@ -526,12 +505,6 @@ def _totals_by_currency(invoices: list[ARInvoice], *, overdue_only: bool) -> dic
 def _debt_basis(aging: ARAging) -> str:
     """"invoice" once amounts are the invoices' own (so'm), "local" while they're SAP's USD."""
     return "invoice" if any(i.as_written[1] != i.currency for i in aging.invoices) else "local"
-
-
-def _same_debt_basis(data: BriefData) -> bool:
-    """Yesterday's debt was counted the same way -- the day so'm arrives is not a change."""
-    previous = data.previous.get("debt") or {}
-    return data.aging is not None and previous.get("basis", "local") == _debt_basis(data.aging)
 
 
 def _render_missed_reports(data: BriefData) -> str | None:
@@ -631,7 +604,7 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
 _people_block = brief_parts.people_block
 
 
-FOOT = ("Мақсадлар — /maqsad · топшириқлар ва ҳисоботлар — бот · сотув, захира, қарз — SAP · "
+FOOT = ("Мақсадлар — /maqsad · топшириқлар ва ҳисоботлар — бот · сотув — SAP · "
         "дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.")
 TASK_TEXT = 42  # a task's words shown in a row
 
@@ -689,7 +662,7 @@ def goals_block(data: BriefData) -> dict[str, Any]:
 
 def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Open tasks that need the Director's eye, most urgent first, and the counts."""
-    groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "review": [], "today": []}
+    groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "proof": [], "review": [], "today": []}
     for t in tasks:
         due = t.get("due_date")
         who, text = t.get("display_name") or "", _short(t.get("task_summary") or "")
@@ -697,11 +670,14 @@ def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, An
             groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
         elif t.get("status") == "review":
             groups["review"].append({"who": who, "what": f"текширувда · {text}", "alert": False})
+        elif t.get("awaiting") == "evidence":
+            # ✅ Бажардим pressed, the proof not in yet (2026-11-04): the person's step, not red for the Director.
+            groups["proof"].append({"who": who, "what": f"далил кутилмоқда · {text}", "alert": False})
         elif due is not None and due < day:
             groups["overdue"].append({"who": who, "what": f"{(day - due).days} кун ўтди · {text}", "alert": True})
         elif due == day:
             groups["today"].append({"who": who, "what": f"бугун · {text}", "alert": False})
-    rows = groups["overdue"] + groups["blocked"] + groups["review"] + groups["today"]
+    rows = groups["overdue"] + groups["blocked"] + groups["proof"] + groups["review"] + groups["today"]
     return rows, {k: len(v) for k, v in groups.items()}
 
 
@@ -751,40 +727,11 @@ def view(data: BriefData) -> dict[str, Any]:
     when = f"{WEEKDAYS_UZ[day.weekday()].capitalize()}, {day.day} {MONTHS_UZ[day.month - 1]} {day.year} · {now:%H:%M}"
     lower_bound = False
 
-    # 2-3. sales and stock (SAP)
+    # yesterday's sales (SAP); «Захира» and «Мижоз қарзи» are out (2026-11-04, the owner)
     sales = _figure_row(data.sales, "sales", "Кечаги сотув", "sales", data.sales_unit, data)
-    stock = _figure_row(data.inventory, "inventory", "Захира", "stock", "қолдиқ", data)
-    lower_bound |= sales["lower"] or stock["lower"]
-    if sap_silent(data) and stock["tone"] not in ("muted", "quiet"):
-        stock.update(sub=f"{_since(data.sap_pushed_at)} ҳолатида", sub_dir=None, sub_alert=True)
+    lower_bound |= sales["lower"]
 
-    # 4. customer debt (SAP)
-    debt: dict[str, Any] = {"label": "Мижоз қарзи", "icon": "debt", "tone": "plain", "detail": None, "number": "",
-                            "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
-    if data.aging is None:
-        debt.update(tone="muted", number="маълумот йўқ")
-    else:
-        aging = data.aging
-        open_totals = _totals_by_currency(aging.invoices, overdue_only=False)
-        overdue_totals = _totals_by_currency(aging.invoices, overdue_only=True)
-        number, unit = _split(_money(open_totals, short=True)) if open_totals else ("0", "")
-        debt.update(number=number, unit=unit, lower=data.aging_capped)
-        lower_bound |= data.aging_capped
-        if overdue_totals:
-            debt["detail"] = (f"муддати ўтгани {_money(overdue_totals, short=True).replace(NBSP, ' ')} · "
-                              f"{aging.overdue_count} та · тўлов муддати SAP'да йўқ бўлса {settings.ar_payment_days} кун")
-            debt["tone"] = "alert"
-            old = aging.bucket_counts.get("90_plus", 0)
-            if old:
-                debt.update(sub=f"{old} таси 90 кундан ошган", sub_alert=True)
-        if not debt["sub"]:
-            change = _delta("debt", open_totals, data, comparable=not data.aging_capped and _same_debt_basis(data))
-            if change:
-                debt["sub"], debt["sub_dir"] = change
-        if sap_silent(data):
-            debt.update(sub=f"{_since(data.sap_pushed_at)} ҳолатида", sub_dir=None, sub_alert=True)
-
-    # 5. payments due today (written permissions)
+    # payments due today (written permissions)
     pay: dict[str, Any] = {"label": "Бугунги тўловлар", "icon": "payments", "tone": "plain", "detail": None,
                            "number": "", "unit": "", "lower": False, "sub": None, "sub_dir": None, "sub_alert": False}
     if data.payments is None:
@@ -856,7 +803,7 @@ def view(data: BriefData) -> dict[str, Any]:
         blocks.append(_people_block("Давомат", "people", fmt_date(a.day), summary, tone, rows))
 
     return {"date": fmt_date(day), "when": when, "compass": compass(), "lead": lead,
-            "figures": [sales, stock, debt, pay], "blocks": blocks, "lower_bound": lower_bound,
+            "figures": [sales, pay], "blocks": blocks, "lower_bound": lower_bound,
             "notice": sap_notice(data), "foot": FOOT}
 
 
@@ -886,7 +833,7 @@ def caption(data: BriefData) -> str:
     """The photo's caption: the day, and the numbers a notification can show."""
     v = view(data)
     parts = [f"{f['label']}: {'камида ' if f['lower'] else ''}{f['number']}{(' ' + f['unit']) if f['unit'] else ''}"
-             for f in v["figures"] if f["tone"] != "muted" and f["label"] in ("Кечаги сотув", "Мижоз қарзи")]
+             for f in v["figures"] if f["tone"] != "muted" and f["label"] == "Кечаги сотув"]
     notice = f"\n⚠️ {escape(v['notice'])}" if v.get("notice") else ""
     return f"☀️ <b>CEO кунлик ҳисоботи — {v['date']}</b>\n" + escape(" · ".join(parts)) + notice
 

@@ -732,7 +732,7 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
     """Every unfinished task, oldest deadline first, for the Director's questions."""
     return await fetch_all(
         """
-        SELECT t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker,
+        SELECT t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker, t.awaiting,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
@@ -846,8 +846,25 @@ async def cancel_task_input(task_id: str, telegram_user_id: int) -> dict[str, An
     )
 
 
-async def task_awaiting_input(telegram_user_id: int, minutes: int = 30) -> dict[str, Any] | None:
-    """The task whose proof / blocker this person's next message is — the latest, within ``minutes`` of the tap."""
+async def task_awaiting_input(telegram_user_id: int, minutes: int = 30,
+                               replied_to: int | None = None) -> dict[str, Any] | None:
+    """The task whose proof / blocker this person's message is.
+
+    ``replied_to``: the message it replies to — the task's card or its «send the proof» message makes it that
+    task's, however much later (2026-11-04); a Reply to anything else is no task's. A plain message: the latest
+    tap within ``minutes``.
+    """
+    if replied_to:
+        return await fetch_one(
+            """
+            SELECT t.* FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
+            WHERE e.telegram_user_id = %s AND t.awaiting IS NOT NULL
+              AND t.status IN ('sent', 'started', 'blocked')
+              AND %s IN (t.telegram_message_id, t.awaiting_message_id)
+            ORDER BY t.awaiting_since DESC LIMIT 1
+            """,
+            (telegram_user_id, replied_to),
+        )
     return await fetch_one(
         """
         SELECT t.* FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
@@ -858,6 +875,45 @@ async def task_awaiting_input(telegram_user_id: int, minutes: int = 30) -> dict[
         """,
         (telegram_user_id, minutes),
     )
+
+
+async def set_task_awaiting_message(task_id: str, message_id: int | None) -> None:
+    """The «send the proof / the reason» message sent under the card — a reply to it is that task's."""
+    await execute("UPDATE tasks SET awaiting_message_id = %s WHERE id = %s", (message_id, task_id))
+
+
+async def tasks_awaiting_evidence(telegram_user_id: int) -> list[dict[str, Any]]:
+    """This person's tasks where ✅ was pressed and the proof hasn't come — oldest tap first."""
+    return await fetch_all(
+        """
+        SELECT t.id, t.code FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE e.telegram_user_id = %s AND t.awaiting = 'evidence' AND t.status IN ('sent', 'started', 'blocked')
+        ORDER BY t.awaiting_since
+        """,
+        (telegram_user_id,),
+    )
+
+
+async def tasks_proof_missing(today: date) -> list[dict[str, Any]]:
+    """✅ pressed before today, still no proof, not yet told since that tap — for the morning message (04.11)."""
+    return await fetch_all(
+        """
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
+        FROM tasks t
+        JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.status IN ('sent', 'started', 'blocked') AND t.awaiting = 'evidence'
+          AND (t.awaiting_since AT TIME ZONE 'Asia/Tashkent')::date < %s
+          AND (t.proof_reminded_at IS NULL OR t.proof_reminded_at < t.awaiting_since)
+          AND e.status = 'active'
+        ORDER BY t.awaiting_since
+        """,
+        (today,),
+    )
+
+
+async def mark_proof_reminded(task_id: str) -> None:
+    await execute("UPDATE tasks SET proof_reminded_at = now() WHERE id = %s", (task_id,))
 
 
 async def submit_task(task_id: str, by: str, evidence_text: str, evidence_message_id: int | None) -> dict[str, Any] | None:

@@ -18,6 +18,12 @@ proof → acceptance." So every task the bot carries now has:
 
 - **"Done" needs proof**: ✅ asks for a photo, a file or a short text; the
   next message is the proof (``tasks.awaiting``). Without it nothing closes.
+  2026-11-04: the ask is a NEW message under the card (``prompt_text``) — an
+  edited day-old card far up the chat wasn't seen (03.11: six ✅, no proof, all
+  still red). A reply to that message or to the card is the task's proof however
+  much later; a plain message only within ``AWAIT_MINUTES``. Several waiting:
+  each proof's thanks names the rest (``waiting_line``); ✅ still without proof
+  the next morning — one line in the morning message.
 - ↩️ Қайтариш sends it back to ``started`` — the employee does it again and
   sends new proof;
 - every step is in ``task_events`` (who, when, the blocker or proof text).
@@ -81,10 +87,28 @@ def status_line(task: dict[str, Any]) -> str:
         line += f": {escape(str(task['blocker']))}"
     if task.get("awaiting") == "evidence":
         line = ("✍️ Бажарилганини тасдиқловчи <b>далил</b> юборинг: фото, файл ёки қисқа матн "
-                "(нима қилинди, натижа). Далилсиз топшириқ ёпилмайди.")
+                "(нима қилинди, натижа) — шу хабарга жавоб қилиб. Далилсиз топшириқ ёпилмайди.")
     elif task.get("awaiting") == "blocker":
-        line = "✍️ <b>Тўсиқ нимада?</b> Қисқа ёзинг — топшириқ берган кишига етказилади."
+        line = "✍️ <b>Тўсиқ нимада?</b> Қисқа ёзинг (шу хабарга жавоб қилиб) — топшириқ берган кишига етказилади."
     return line
+
+
+def prompt_text(task: dict[str, Any]) -> str:
+    """The ask after ✅ / ⛔ as a new message under the card (2026-11-04): which task, what to send, how."""
+    code = escape(code_of(task))
+    what = escape(plain(task.get("task_summary"))[:90])
+    if task.get("awaiting") == "blocker":
+        return (f"✍️ <b>{code}</b> «{what}» — <b>тўсиқ нимада?</b> Қисқа ёзинг, шу хабарга жавоб қилиб — "
+                "топшириқ берган кишига етказилади.")
+    return (f"✍️ <b>{code}</b> «{what}» — бажарилганини тасдиқловчи <b>далил</b> юборинг: фото, файл ёки қисқа "
+            "матн (нима қилинди, натижа), шу хабарга жавоб қилиб. Далил келгач топшириқ текширувга ўтади; "
+            "далилсиз ёпилмайди.")
+
+
+def waiting_line(codes: list[str]) -> str:
+    """After one proof, the person's other tasks still waiting for theirs (several ✅ in a row)."""
+    return (f"Яна {len(codes)} та топшириқ далил кутяпти: {escape(', '.join(codes))} — ҳар бирининг "
+            "«далил юборинг» хабарига ёки картасига жавоб қилиб юборинг.")
 
 
 def keyboard(task: dict[str, Any]) -> dict[str, Any]:

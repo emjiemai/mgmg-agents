@@ -482,6 +482,11 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_message_id BIGINT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocker TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS review_message_id BIGINT;
+-- 2026-11-04: after ✅ / ⛔ the bot asks in a NEW message (an edited day-old card wasn't seen: 03.11, six ✅, no
+-- proof); a reply to it or to the card is that task's proof / reason however much later. ✅ without proof by the
+-- next morning: the person is told once in the morning message (proof_reminded_at).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS awaiting_message_id BIGINT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_reminded_at TIMESTAMPTZ;
 
 -- Every step of every task, append-only: who, when, what (and the blocker /
 -- proof text). Holds work content — not in /db.

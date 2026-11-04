@@ -59,6 +59,9 @@ def task_line(d: dict[str, Any]) -> str:
     """A task due soon or just overdue, as one line (the task card itself keeps its buttons)."""
     code = f"{escape(d['code'])} " if d.get("code") else ""
     what = escape(" ".join(str(d.get("summary") or "").split())[:90])
+    if d.get("proof"):  # ✅ pressed, the proof never came (2026-11-04)
+        return (f"{code}«{what}» топшириғида «Бажардим» босилган, лекин далил келмаган — топшириқ картасига жавоб "
+                "қилиб далил юборинг, шунда текширувга ўтади")
     due = _day(d["due"])
     if d.get("overdue"):
         return f"{code}«{what}» топшириғининг муддати ўтди ({due:%d.%m}), директорга хабар берилди"
@@ -104,8 +107,9 @@ def compose(name: str, notes: list[dict[str, Any]]) -> tuple[str, dict[str, Any]
         return f"{name}, {lines[0]}", keyboard, ids
     head = casual(f"{name}, хайрли тонг", keep=keep)
     body = [f"• {line}" for line in lines]
-    if any(n["kind"] == "task" and not n["detail"].get("overdue") for n in notes):
-        body.append(f"• {casual('бажарилган топшириқда «Бажардим» тугмасини босинг', keep=['Бажардим'])}")
+    if any(n["kind"] == "task" and not n["detail"].get("overdue") and not n["detail"].get("proof") for n in notes):
+        # ✅ alone closes nothing — the proof is the step people missed (03.11)
+        body.append(f"• {casual('бажарилган топшириқда «Бажардим» тугмасини босиб, далил юборинг', keep=['Бажардим'])}")
     text = head + "\n" + "\n".join(body)
     if question:
         text += "\n\n" + casual(question, keep=keep)

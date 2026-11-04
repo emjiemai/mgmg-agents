@@ -58,7 +58,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - 1C «Бухгалтерия для Узбекистана» on Clobus, OData read-only (`integrations/onec/`, `docs/agent-specs/16-1c.md`):
   Admin `/1c` check; Q&A `pul_qoldigi` = 1C class-5000 balances (bank / нақд). **No «Касса» in the 08:00
   brief** (the owner, 2026-10-16): it opens with vision/mission (`COMPANY_VISION`/`COMPANY_MISSION`), month
-  goals, tasks and reports, then sales, stock, debt, payments.
+  goals, tasks and reports, then sales and payments — **no «Захира» / «Мижоз қарзи» since 04.11** (the owner; still
+  read and stored for the analyst).
 - Verifix logs in with VERIFIX_LOGIN/PASSWORD/FILIAL_ID (works since 2026-10-01). Most staff are on
   "эркин график" (come when needed / when the Director calls): Admin Bot **`/grafik`** marks them by
   Verifix id (2026-10-03) — never late/absent, the brief only counts them, KPI doesn't penalize them.
@@ -204,6 +205,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   `docs/agent-specs/08-task-tracker.md`): code T-YYYY-MM-NNNN, states sent/started/blocked/review/done/
   cancelled, ✅ needs proof → the assigner accepts or returns; ⛔ with reason; `task_events` history.
   Proof and blocker text reach the assigner (task data — the one exception to the no-relay rule).
+  **04.11:** after ✅ / ⛔ a NEW message under the card asks (an edited day-old card wasn't seen — six ✅ on 03.11,
+  no proof, all red); a reply to it or to the card is the proof any time (`replied_to`), a plain message only
+  within 30 min; ✅ without proof → «далил кутилмоқда» in the brief (not red) + one morning line.
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).
