@@ -546,7 +546,11 @@
     $("rail-leads").hidden = false;
     $("leads-hint").textContent = `${L.period} · ${L.enabled ? "тарқатиш ишлаяпти" : "тарқатиш тўхтатилган"} · /lidlar`;
     const sold = som(L.soldSum);
-    $("leads-sold").textContent = L.sold ? `${sold[0]} ${sold[1]}` : "—";
+    // The head's figure is the sum sold, its unit quiet; nothing sold → no lone «—» (the «Сотилди» tile says 0).
+    const head = $("leads-sold");
+    head.textContent = sold[0];
+    if (sold[1]) head.appendChild(el("small", null, sold[1]));
+    head.parentElement.hidden = !L.sold;
     const figs = $("lead-figs");
     figs.textContent = "";
     figs.appendChild(leadFig("Берилди", L.given, `очиқ: ${L.open}`));
@@ -570,11 +574,16 @@
     });
     const sb = $("lead-sellers");
     sb.textContent = "";
+    const counts = ["Лид", "Боғланди", "Кеч", "Сотди", "Сотмади"];  // the header's words: a phone shows them per count
     L.sellers.forEach((p) => {
       const tr = el("tr");
-      tr.appendChild(el("td", "name", p.name));
-      [p.given, p.contacted + (p.avgDays === null ? "" : ` (${fmt1.format(p.avgDays)} кун)`), p.late, p.sold, p.notSold]
-        .forEach((v) => tr.appendChild(el("td", "num", String(v))));
+      tr.appendChild(el("td", "who", p.name));
+      [p.given, p.contacted, p.late, p.sold, p.notSold].forEach((v, i) => {
+        const td = el("td", "num", String(v));
+        td.dataset.k = counts[i];
+        if (i === 1 && p.avgDays !== null) td.appendChild(el("small", null, ` (${fmt1.format(p.avgDays)} кун)`));
+        tr.appendChild(td);
+      });
       sb.appendChild(tr);
     });
     const body = $("lead-rows");
@@ -584,14 +593,22 @@
       td.colSpan = 7; tr.appendChild(td); body.appendChild(tr);
     }
     L.rows.forEach((r) => {
+      const waiting = r.contacted === "—";
       const tr = el("tr");
       tr.appendChild(el("td", "n", String(r.no)));
-      tr.appendChild(el("td", "name", r.company));
+      tr.appendChild(el("td", "co", r.company));
       tr.appendChild(el("td", "hide-sm", r.seller));
       tr.appendChild(el("td", "hide-sm", r.given));
-      tr.appendChild(el("td", r.late ? "late" : "", r.contacted));
+      tr.appendChild(el("td", r.late ? "when late" : "when", r.contacted));
       tr.appendChild(el("td", `st ${r.status}`, r.state));
       tr.appendChild(el("td", "detail", r.detail || ""));
+      // A phone's second line in place of four columns — who · given, → contacted, the state (late in red); the
+      // pieces wrap whole, so no «·» is left hanging at a line's end.
+      const meta = el("td", "meta");
+      meta.appendChild(el("span", null, `${r.seller} · ${r.given}`));
+      if (!waiting) meta.appendChild(el("span", r.late ? "late" : null, `→ ${r.contacted}`));
+      meta.appendChild(el("span", `st ${r.status}` + (r.late && waiting ? " late" : ""), r.state));
+      tr.appendChild(meta);
       body.appendChild(tr);
     });
   }

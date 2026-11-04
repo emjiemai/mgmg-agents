@@ -2127,6 +2127,25 @@ def test_task_proof_and_brief_1104() -> None:
     check_true("the hint under due tasks says to send the proof too",
                "«Бажардим» тугмасини босиб, далил юборинг" in morning_notes.compose("Ширин опа", [soon, soon])[0])
 
+    # ---- PULSE «Лидлар» on a phone (the owner's screenshot, 04.11): six 41px tiles, two columns side by side,
+    # a cut-off table — the leads' phone rules sat above their base rules and lost; `.rows .name` made cells blocks
+    css, js = load_source("integrations/api/static/pulse.css"), load_source("integrations/api/static/pulse.js")
+    base = css.index(".lead-figs { display: grid; grid-template-columns: repeat(6")
+    check_true("the leads' breakpoints come after their base rules (3 across on tablets, 2 on phones)",
+               css.index(".lead-figs { grid-template-columns: repeat(3,") > base
+               and css.index(".lead-figs { grid-template-columns: repeat(2,") > base
+               and css.index(".lead-split { grid-template-columns: minmax(0, 1fr); }") > css.index(".lead-split { display: grid;")
+               and css.count(".lead-figs { grid-template-columns:") == 2)
+    check_true("the two tables become rows whenever the card is narrower than their columns (container query)",
+               ".leads { container: leads / inline-size; }" in css and "@container leads (max-width: 640px)" in css
+               and '"n co" ". meta" ". detail"' in css and "content: attr(data-k)" in css)
+    leads_js = js[js.index("function renderLeads"):js.index("function renderPlans")]
+    check_true("…cells no longer take the board's `.name` (a block that broke the table); a phone line per lead",
+               'el("td", "name"' not in leads_js and 'el("td", "co"' in leads_js and 'el("td", "who"' in leads_js
+               and 'el("td", "meta")' in leads_js and "td.dataset.k = counts[i]" in leads_js)
+    check_true("nothing sold: no lone «—» in the card's head (the «Сотилди» tile says 0)",
+               "head.parentElement.hidden = !L.sold;" in leads_js and ".leads .price[hidden] { display: none; }" in css)
+
 
 def test_director_morning_quieter() -> None:
     """03.11.2026 (the owner): the Director doesn't need the Billz → SAP PDF, the Lead Agent's summary and the

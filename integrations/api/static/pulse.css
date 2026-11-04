@@ -297,7 +297,6 @@ svg.spark circle { display: none; }
 }
 @media (max-width: 1100px) {
   .screen { grid-template-areas: "t t t t t t t t t t t t" "m m m m m m m m m m m m" "s s s s s s s s s s s s" "b b b b b b b b b b b b" "p p p p p p p p p p p p" "r r r r r r r r r r r r" "l l l l l l l l l l l l"; }
-  .lead-split { grid-template-columns: minmax(0, 1fr); }
   .tape-list { max-height: 420px; }
   .chart { height: 300px; }
 }
@@ -311,8 +310,6 @@ svg.spark circle { display: none; }
   .range button { flex: 1; min-height: 40px; }
   .title { margin-right: auto; }
   .screen { gap: 14px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "t" "m" "s" "p" "b" "r" "l"; }
-  .lead-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .lead-rows .hide-sm { display: none; }
   .tickers { display: flex; overflow-x: auto; gap: 12px; scroll-snap-type: x mandatory; scroll-padding-inline: 16px; scrollbar-width: none; margin: 0 -16px; padding: 2px 16px 4px; }
   .ticker { flex: 0 0 64%; scroll-snap-align: start; }
   .card { padding: 18px 16px; border-radius: 14px; }
@@ -359,6 +356,8 @@ svg.spark.draw { animation: reveal 1100ms cubic-bezier(0.65, 0, 0.35, 1) both; a
 .lead-fig .s { display: block; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
 .lead-fig.bad .v { color: var(--down); }
 .lead-fig.good .v { color: var(--up); }
+.leads .price[hidden] { display: none; }
+.leads .price small { font-size: 14px; font-weight: 400; color: var(--ink-3); margin-left: 3px; }
 .lead-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 22px; margin-top: 18px; }
 .sub-h { font-size: 14px; font-weight: 700; color: var(--ink-2); margin: 18px 0 4px; }
 .lead-split .sub-h { margin-top: 0; }
@@ -368,15 +367,53 @@ svg.spark.draw { animation: reveal 1100ms cubic-bezier(0.65, 0, 0.35, 1) both; a
 .reasons .n { text-align: right; font-weight: 700; }
 .reasons .empty, .lead-rows .empty { color: var(--ink-3); }
 .sellers tbody tr, .lead-rows tbody tr { cursor: default; }
+.sellers .who, .lead-rows .co { font-weight: 700; }
+.sellers td.num small { font-size: 12px; font-weight: 400; color: var(--ink-3); }
 .lead-table { max-height: 520px; overflow: auto; }
 .lead-rows td { font-size: 13px; }
-.lead-rows td.late { color: var(--down); font-weight: 700; }
+.lead-rows td.late, .lead-rows .meta .late { color: var(--down); font-weight: 700; }
 .lead-rows .st { font-weight: 700; white-space: nowrap; }
 .lead-rows .st.done { color: var(--up); }
 .lead-rows .st.dismissed { color: var(--down); }
 .lead-rows .st.new, .lead-rows .st.in_progress { color: var(--ink-2); }
 .lead-rows .detail { color: var(--ink-2); max-width: 26em; }
+.lead-rows td.meta { display: none; }
 .rail-link[hidden], .leads[hidden], .plans[hidden] { display: none; }
+/* The leads' breakpoints sit after their base rules — before 04.11 they were above them and lost, so a phone
+   got six 41px tiles, the two columns side by side and a cut-off table. */
+@media (max-width: 1100px) {
+  .lead-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lead-split { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .lead-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .lead-fig { padding: 11px 12px; }
+}
+/* The two tables turn into rows whenever the card is narrower than their columns — a phone, a tablet (the
+   7-column leads table needs ~620px): a seller is the name, then the five counts under it with their words (two
+   lines on the narrowest phones); a lead is № · company, then who · when · its state in whole pieces, the sum or
+   reason last. Never a table wider than its card. */
+.leads { container: leads / inline-size; }
+@container leads (max-width: 640px) {
+  .sellers, .sellers tbody, .lead-rows, .lead-rows tbody { display: block; }
+  .sellers thead, .lead-rows thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .sellers td, .lead-rows td { padding: 0; border: 0; }
+  .sellers tr { display: grid; grid-template-columns: repeat(auto-fit, minmax(54px, 1fr)); gap: 2px 8px; padding: 11px 0; border-top: 1px solid var(--rule); }
+  .sellers td.who { grid-column: 1 / -1; padding-bottom: 6px; font-size: 14px; }
+  .sellers td.num { text-align: left; white-space: normal; font-size: 15px; font-weight: 700; }
+  .sellers td.num::before { content: attr(data-k); display: block; margin-bottom: 1px; font-size: 11.5px; font-weight: 400; color: var(--ink-3); }
+  .sellers td.num small { display: block; }
+  .lead-table { max-height: none; overflow: visible; }
+  .lead-rows tr { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "n co" ". meta" ". detail"; align-items: baseline; gap: 3px 10px; padding: 11px 0; border-top: 1px solid var(--rule); }
+  .lead-rows td.n { grid-area: n; display: block; width: auto; }
+  .lead-rows td.n::before { content: "№"; }
+  .lead-rows td.co { grid-area: co; font-size: 14px; line-height: 1.3; }
+  .lead-rows td.meta { grid-area: meta; display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 10px; color: var(--ink-3); font-size: 12.5px; }
+  .lead-rows .meta .st.late { color: var(--down); }
+  .lead-rows td.detail { grid-area: detail; max-width: none; }
+  .lead-rows td.hide-sm, .lead-rows td.when, .lead-rows td.st, .lead-rows td.detail:empty { display: none; }
+  .lead-rows td.empty { grid-column: 1 / -1; padding: 12px 0; }
+}
 
 /* ---- plans against SAP (2026-11-02, the Director only) -------------------------------------------------- */
 .plan-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 14px; }

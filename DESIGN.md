@@ -211,6 +211,10 @@ icons, delta and missing-data rules below still hold on PULSE.
   cards (value, ▲▼ %, smooth sparkline), the index card (8 columns: curved cyan line over a gradient) beside the
   sales card (4: purple daily bars on their own so'm scale; one crosshair across both), the board (8) beside the
   tape (4). Avatars are initials on a colour from the person's id. («Бизнеслар» removed 2026-10-23.)
+- **Лидлар card (the Director only):** six figure tiles (3 × 2 on tablets, 2 × 3 on phones); the sellers and
+  every-lead tables become rows when the card is under 640px (container query `leads`): a seller's name over
+  its five counts, each count with its word; a lead's № and company over who · given → contacted · state, the
+  sum or reason last. A table is never wider than its card (2026-11-04).
 - **Words allowed here (the owner, 2026-10-23):** a card title may carry its meaning in brackets in 13px ink-3
   («Индекс (компаниянинг кунлик балли)») and one hint line under it; the tape's marks have a key behind ⓘ.
 - **Motion:** cards rise in (640ms, staggered), lines rise from their floor left to right (1.3s, ease-out cubic,

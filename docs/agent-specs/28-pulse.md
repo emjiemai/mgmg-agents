@@ -52,6 +52,14 @@ the left rail, remembered per device): rounded cards, curved index line over a g
   their drawn icons (attendance / report / tasks; a 0 in red; follows the crosshair), and that day in time order —
   arrived, task received / started / done / accepted, report, explanation, left.
 
+- **Лидлар (the Director only, 2026-10-28):** six figures, why not sold, sellers, every lead. **On a phone (fixed
+  2026-11-04, the owner's screenshot):** the figures 2 × 3 (3 × 2 on a tablet), the reasons above the sellers, and
+  both tables turn into rows when the card is narrower than their columns (a container query at 640px — the
+  7-column table needs ~620px): a seller is the name with the five counts under it, each with its word; a lead
+  is № · company, then who · given → contacted · its state (late in red), then the sum or the reason. Nothing
+  sold → no lone «—» in the card's head. Cause: the leads' phone rules sat above their base rules in
+  `pulse.css` and lost, and the board's `.rows .name` (a block) broke the tables' cells.
+
 A source that can't be read shows «—», never 0. The Garmin manager sees his team and Garmin's sales only.
 
 ## The daily score (score.py)
