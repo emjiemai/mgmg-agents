@@ -146,6 +146,8 @@ at the domain's DNS, `PUBLIC_BASE_URL`, then `/qr` and reprint.)
 - If saving fails, the client sees "Хатолик юз берди, шикоят юборилмади…" (in
   their language) with their text kept, never a lost message dressed as success.
 
+**2026-11-04:** a recipient who blocked OPS Manager Bot is noted (`employees.bot_blocked_at`, cleared when they write again) and named on /texnik («Ботни блоклаганлар»), not counted as an error; a ticket that reached nobody in its department goes to the Director with a note.
+
 ## Switch
 
 `FEEDBACK_ENABLED` (default `true`) — `false` makes `/f` return 404.

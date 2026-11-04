@@ -1896,6 +1896,145 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_billz_speed_and_blocked_1104() -> None:
+    """04.11.2026 (the owner): «SAPga kiritilmagan tovarlar» was answered 10 minutes late — the live Billz → SAP check
+    read 14 days one by one while Billz timed out (3 × 60 s a call). Now past days are kept in memory (one read each,
+    callers at once share it), the live check has 30 s, then the stored check — said as «03.11 чеклари, 04.11 08:02 да
+    текширилган», not as if it were made 03.11. And a person who blocked OPS Manager Bot (a Londry complaint recipient
+    got no ticket for weeks) is named on /texnik instead of a red client-feedback error; nobody in the department got
+    it → the Director."""
+    print("Billz speed, stored-check wording, blocked bot (04.11.2026)")
+    import asyncio
+    import contextlib
+    from datetime import date, datetime
+
+    import httpx
+    from pydantic import SecretStr
+
+    from integrations.billz import client as bz
+    from integrations.common.agent_loader import load_agent
+    from integrations.common.config import settings
+    from integrations.common.timeutil import TASHKENT
+    from integrations.org_bot import analyst, feedback, routes, store, tech_report
+    from integrations.telegram import bot as tg
+
+    reads: list = []
+
+    async def slow_handler(request):
+        if request.url.path == "/v1/auth/login":
+            return httpx.Response(200, json={"data": {"access_token": "A"}})
+        reads.append(request.url.params["start_date"])
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"count": 1, "products_stats_by_date": [{"order_id": "1"}]})
+
+    @contextlib.asynccontextmanager
+    async def no_audit(**kwargs):
+        yield {"payload": {}}
+
+    today, past = date(2026, 11, 4), date(2026, 11, 2)
+
+    async def twice():
+        async with bz.BillzClient(agent="test", transport=httpx.MockTransport(slow_handler)) as c:
+            await asyncio.gather(c.positions_kept(past, today, ["s"]), c.positions_kept(past, today, ["s"]))
+            await c.positions_kept(past, today, ["s"])
+            bz.KEEP_TODAY = 0
+            await c.positions_kept(today, today, ["s"])
+            await c.positions_kept(today, today, ["s"])
+
+    saved = [(bz, "audited", bz.audited), (bz, "PAUSE", bz.PAUSE), (bz, "KEEP_TODAY", bz.KEEP_TODAY),
+             (settings, "billz_secret_token", settings.billz_secret_token), (settings, "billz_enabled", settings.billz_enabled)]
+    bz.audited, bz.PAUSE, settings.billz_secret_token, settings.billz_enabled = no_audit, 0, SecretStr("key"), True
+    bz._kept.clear()
+    try:
+        asyncio.run(twice())
+        check("a past day: read once, also by two callers at the same time", reads.count("2026-11-02"), 1)
+        check("today: read again when its short keep is over", reads.count("2026-11-04"), 2)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        bz._kept.clear()
+        bz._locks.clear()
+    agent_src = inspect_source(load_agent("billz-sap-check").billz_cheques)
+    check_true("the Billz → SAP agent reads through the kept days", "positions_kept" in agent_src)
+
+    class SlowAgent:
+        async def billz_cheques(self, *a):
+            await asyncio.sleep(5)
+
+    import integrations.common.agent_loader as loader
+    saved = [(loader, "load_agent", loader.load_agent), (analyst, "fetch_read_only", analyst.fetch_read_only),
+             (analyst, "LIVE_BILLZ_SECONDS", analyst.LIVE_BILLZ_SECONDS),
+             (settings, "billz_secret_token", settings.billz_secret_token), (settings, "billz_enabled", settings.billz_enabled)]
+
+    async def stored_row(sql, params=None):
+        return [{"check_date": date(2026, 11, 3), "status": "problems", "result": {"missing": []},
+                 "checked_at": datetime(2026, 11, 4, 8, 2, tzinfo=TASHKENT)}]
+
+    loader.load_agent = lambda name: SlowAgent()
+    analyst.fetch_read_only, analyst.LIVE_BILLZ_SECONDS = stored_row, 0.05
+    settings.billz_secret_token, settings.billz_enabled = SecretStr("key"), True
+    try:
+        started = datetime.now()
+        text = asyncio.run(analyst.billz_sap_check({}))
+        check_true("a slow Billz: the stored check within the limit", (datetime.now() - started).total_seconds() < 2)
+        check_true("the stored check says its cheques' day and when it ran",
+                   "cheques of 2026-11-03, made 04.11 08:02" in text and "DAY OF CHEQUES" in text)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("the stored fallback is also used on a timeout", "asyncio.TimeoutError" in inspect_source(analyst.billz_sap_check))
+
+    check_true("Telegram's «blocked» answer is noted on the employee (OPS Manager Bot only)",
+               "_note_blocked" in inspect_source(tg.TelegramBot._call)
+               and "ops_manager_bot_telegram_bot_token" in inspect_source(tg.TelegramBot._note_blocked))
+    from integrations.org_bot import ops_manager
+    check_true("writing to the bot again clears it", "clear_bot_blocked" in inspect_source(ops_manager.handle_update))
+
+    r = tech_report.TechReport(at=datetime(2026, 11, 5, 8, 0, tzinfo=TASHKENT))
+    r.runs = [("client-feedback", 6, 0, None)]
+    r.blocked, r.blocked_sends = [("Умар Хошимов", "Londry")], 2
+    out = tech_report.render(r)
+    check_true("/texnik names who blocked the bot, not a red error",
+               "Ботни блоклаганлар" in out and "Умар Хошимов (Londry)" in out
+               and not any(line.startswith("❌") and "client-feedback" in line for line in out.splitlines()))
+    check_true("blocked sends left out of the errors", "NOT LIKE" in inspect_source(tech_report.gather))
+
+    sent: list = []
+
+    async def send_cards(row, people, text, keyboard, run_id):
+        sent.append([p["telegram_user_id"] for p in people])
+        return [] if len(sent) == 1 else [{"chat": 1, "message": 9}]
+
+    async def none(*a, **k):
+        return None
+
+    async def ticket(*a, **k):
+        return {"id": 7, "code": "T-2026-11-0061", "place": "laundry", "branch": "Юнусобод", "message": "x",
+                "ticket_status": "open"}
+
+    async def people(kind):
+        return [{"telegram_user_id": 5}], False
+
+    async def director(role):
+        return [{"telegram_user_id": 1}]
+
+    saved = [(feedback, "_send_cards", feedback._send_cards), (store, "save_client_feedback", store.save_client_feedback),
+             (store, "open_complaint_ticket", store.open_complaint_ticket), (routes, "recipients", routes.recipients),
+             (store, "active_employees_by_role", store.active_employees_by_role),
+             (store, "set_complaint_cards", store.set_complaint_cards),
+             (store, "mark_client_feedback_sent", store.mark_client_feedback_sent), (settings, "bots_frozen", settings.bots_frozen)]
+    feedback._send_cards, store.save_client_feedback, store.open_complaint_ticket = send_cards, ticket, ticket
+    routes.recipients, store.active_employees_by_role = people, director
+    store.set_complaint_cards, store.mark_client_feedback_sent, settings.bots_frozen = none, none, False
+    try:
+        n = asyncio.run(feedback.submit(feedback.Submission(place="laundry", branch="Юнусобод", message="x", name="",
+                                                            phone="")))
+        check("nobody in the department got it → the Director", (sent, n), ([[5], [1]], 1))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_task_proof_and_brief_1104() -> None:
     """04.11.2026 (the owner): finished tasks still red. ✅ was pressed on six day-old cards (03.11) and the proof ask
     was only an edit of those cards far up the chat, kept 30 minutes — no proof came, nothing closed. Now the ask is a
@@ -11286,6 +11425,7 @@ def main() -> int:
         test_director_morning_quieter,
         test_security_review_1103,
         test_task_proof_and_brief_1104,
+        test_billz_speed_and_blocked_1104,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

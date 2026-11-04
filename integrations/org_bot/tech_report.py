@@ -23,7 +23,7 @@ from integrations.common.config import settings
 from integrations.common.db import fetch_read_only
 from integrations.common.logging_setup import setup_logging
 from integrations.common.timeutil import now_local, to_local
-from integrations.telegram.bot import escape
+from integrations.telegram.bot import BLOCKED, escape
 
 log = setup_logging("tech-report")
 
@@ -83,6 +83,8 @@ class TechReport:
     pending_access: int = 0
     data_access: int = 0  # people given company data through the bot (count only)
     refused: int = 0  # Admin Bot commands from someone else + closed /db tables asked for
+    blocked: list[tuple[str, str]] = field(default_factory=list)  # (name, role label): blocked OPS Manager Bot
+    blocked_sends: int = 0  # sends refused in 24 h because the person blocked the bot (not counted as errors)
 
 
 def _payload(value: Any) -> dict[str, Any]:
@@ -187,18 +189,32 @@ async def gather(now: datetime | None = None) -> TechReport:
 
     for row in await fetch_read_only(
         """SELECT agent, count(*) FILTER (WHERE status = 'success') AS ok,
-                  count(*) FILTER (WHERE status = 'failure') AS failed, max(occurred_at) AS last
+                  count(*) FILTER (WHERE status = 'failure' AND coalesce(error_message, '') NOT LIKE %s) AS failed,
+                  max(occurred_at) AS last
            FROM agent_actions WHERE occurred_at >= %s GROUP BY agent ORDER BY agent""",
-        (since,),
+        (f"%{BLOCKED}%", since),
     ):
         report.runs.append((row["agent"], int(row["ok"]), int(row["failed"]), row["last"]))
     for row in await fetch_read_only(
         """SELECT agent, left(coalesce(error_message, action), 90) AS reason, count(*) AS n
            FROM agent_actions WHERE occurred_at >= %s AND status = 'failure'
+             AND coalesce(error_message, '') NOT LIKE %s
            GROUP BY agent, reason ORDER BY n DESC LIMIT 8""",
-        (since,),
+        (since, f"%{BLOCKED}%"),
     ):
         report.errors.append((row["agent"], row["reason"], int(row["n"])))
+    # Someone who blocked the bot isn't a system error (2026-11-04: client-feedback showed ❌ for weeks) — named.
+    blocked = await fetch_read_only(
+        """SELECT count(*) AS n FROM agent_actions WHERE occurred_at >= %s AND status = 'failure'
+           AND error_message LIKE %s""", (since, f"%{BLOCKED}%"))
+    report.blocked_sends = int(blocked[0]["n"]) if blocked else 0
+    from integrations.org_bot.roles import ROLE_LABELS
+
+    for row in await fetch_read_only(
+        """SELECT full_name, display_name, role FROM employees WHERE status = 'active' AND bot_blocked_at IS NOT NULL
+           ORDER BY bot_blocked_at"""):
+        report.blocked.append(((row["full_name"] or row["display_name"] or "").strip(),
+                               ROLE_LABELS.get(row["role"] or "", row["role"] or "")))
 
     from integrations.backup import dump as backup_dump
 
@@ -295,6 +311,10 @@ def render(r: TechReport) -> str:
             lines.append(f"{'❌' if failed else '✅'} {escape(label)}: {ok} та амал" + (f", {failed} та хато" if failed else "") + when)
     else:
         lines.append("⚠️ 24 соатда ҳеч қандай иш қайд этилмаган")
+    if r.blocked or r.blocked_sends:
+        lines += ["", "<b>Ботни блоклаганлар</b>"]
+        lines += [f"⚠️ {escape(name)} ({escape(role)}) — бот хабарлари етмайди, ботни қайта очиб /start босиши керак"
+                  for name, role in r.blocked] or [f"⚠️ {r.blocked_sends} та хабар етмади: олувчи ботни блоклаган"]
     if r.errors:
         lines += ["", "<b>Хатолар</b>"]
         lines += [f"• {escape(AGENT_LABELS.get(a, a))}: {escape(reason)} ×{n}" for a, reason, n in r.errors]

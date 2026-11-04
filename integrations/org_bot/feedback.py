@@ -45,6 +45,7 @@ from integrations.common.timeutil import to_local
 from integrations.common.config import settings
 from integrations.common.timeutil import now_local
 from integrations.org_bot import routes, store
+from integrations.org_bot.roles import DIRECTOR_ROLE
 from integrations.telegram.bot import TelegramBot, TelegramError
 from integrations.telegram.bot import escape
 
@@ -250,6 +251,12 @@ async def submit(sub: Submission) -> int:
         text += "\n\n<i>Бу бўлимда ҳозир ҳеч ким рўйхатдан ўтмаган — шунинг учун сизга келди.</i>"
     run_id = uuid.uuid4()
     cards = await _send_cards(ticket, people, text, ticket_keyboard(ticket), run_id)
+    if not cards and not fell_back:
+        # Nobody in the department got it (2026-11-04: they had blocked the bot) — the Director, not silence.
+        fell_back = True
+        text = ticket_text(ticket) + "\n\n<i>Бўлимдаги ходимларга етмади (ботни блоклаган) — шунинг учун сизга келди.</i>"
+        cards = await _send_cards(ticket, await store.active_employees_by_role(DIRECTOR_ROLE), text,
+                                  ticket_keyboard(ticket), run_id)
     if cards:
         await store.set_complaint_cards(row["id"], cards)
         await store.mark_client_feedback_sent(row["id"], cards[0]["message"])

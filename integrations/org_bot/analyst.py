@@ -50,6 +50,7 @@ AGENT = "ops-manager-bot"
 log = setup_logging("analyst")
 
 TOOL_CHARS = 30000  # one tool's answer, at most (the rest is cut, and the model is told)
+LIVE_BILLZ_SECONDS = 30  # billz_sap_check: longer than this, the stored 08:00 check answers instead
 MAX_CALLS_PER_ROUND = 6
 MAX_DAYS = 92  # longest period one BILLZ / Verifix / 1C call may cover
 
@@ -987,7 +988,10 @@ async def billz_sap_check(args: dict[str, Any]) -> str:
             agent = load_agent("billz-sap-check")
             day = _today()
             start = day - timedelta(days=sap_check.WINDOW_DAYS - 1)
-            cheques, unkeyed, _shops = await agent.billz_cheques(start, day, uuid.uuid4())
+            # At most LIVE_BILLZ_SECONDS (2026-11-04: a slow Billz held the answer 10 minutes); past days come from
+            # memory (BillzClient.positions_kept), so a normal read is only today's.
+            cheques, unkeyed, _shops = await asyncio.wait_for(
+                agent.billz_cheques(start, day, uuid.uuid4()), LIVE_BILLZ_SECONDS)
             if not unkeyed:
                 sales, lines = await agent._sap_rows("sales"), await agent._sap_rows("sales_lines")
                 checked = agent.compare(cheques, sales, lines, day, sap_check.warehouse_map(settings.billz_sap_warehouses))
@@ -997,17 +1001,19 @@ async def billz_sap_check(args: dict[str, Any]) -> str:
                 head += ("Cheques of the last 14 days; today's may still be entered into SAP this evening "
                          "(the shop often enters the day's sales at 18:00–20:00).")
                 return "\n".join([head, *_check_lines(day, checked.status, sap_check.summary(checked))])
-        except Exception as exc:  # noqa: BLE001 — the stored results instead
+        except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001 — the stored results instead
             log.warning("Live Billz → SAP check failed: {}", type(exc).__name__)
     rows = await fetch_read_only(
         "SELECT check_date, status, result, checked_at FROM billz_sap_checks ORDER BY check_date DESC LIMIT 7")
     if not rows:
         return "The Billz → SAP check has no results yet."
-    lines = ["Billz couldn't be read now — the STORED Billz → SAP checks (each made at 08:00 of the next day; "
-             "a cheque entered after that still shows as missing here), newest first:"]
+    lines = ["Billz couldn't be read now — the STORED Billz → SAP checks, newest first. Each line starts with the DAY "
+             "OF CHEQUES it checked; 'made' is when the check ran (08:00 of the next day). Say both, e.g. «03.11 "
+             "чеклари, 04.11 08:02 да текширилган»; a cheque entered into SAP after 'made' still shows as missing here:"]
     for r in rows:
         res = r["result"] if isinstance(r["result"], dict) else json.loads(r["result"] or "{}")
-        lines += _check_lines(r["check_date"], r["status"], res)
+        made = to_local(r["checked_at"]).strftime("%d.%m %H:%M") if r.get("checked_at") else "?"
+        lines += _check_lines(f"cheques of {r['check_date']}, made {made}", r["status"], res)
     return "\n".join(lines)
 
 async def company_data(args: dict[str, Any]) -> str:

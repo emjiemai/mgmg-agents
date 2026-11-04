@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import date
 from typing import Any
@@ -42,6 +43,9 @@ BASE_URL = "https://api-admin.billz.ai"  # the documented production server
 PAGE = 100
 MAX_PAGES = 50
 PAUSE = 0.6  # seconds between pages: the documented limit is 2 requests/second
+KEEP_PAST, KEEP_TODAY, KEEP_DAYS = 3 * 3600, 120, 20  # positions_kept: seconds a day is kept; days held at most
+_kept: dict[tuple[date, str], tuple[float, list[dict[str, Any]]]] = {}
+_locks: dict[tuple[date, str], asyncio.Lock] = {}
 
 
 class BillzError(RuntimeError):
@@ -159,6 +163,24 @@ class BillzClient:
              "detalization": "day", "detalization_by_position": "true"},
             "products_stats_by_date",
         )
+
+    async def positions_kept(self, day: date, today: date, shop_ids: list[str]) -> list[dict[str, Any]]:
+        """``positions`` kept in memory (2026-11-04: the live Billz → SAP check read 14 days one by one, each call
+        up to 3 × 60 s when Billz was slow — answers came 10 minutes late). A past day barely changes, so it is
+        kept 3 h; today 2 min. Callers asking the same day at once share one read."""
+        key = (day, ",".join(sorted(shop_ids)))
+        ttl = KEEP_TODAY if day >= today else KEEP_PAST
+        async with _locks.setdefault(key, asyncio.Lock()):
+            kept = _kept.get(key)
+            if kept and time.monotonic() - kept[0] < ttl:
+                return kept[1]
+            await asyncio.sleep(PAUSE)  # the 2 requests/second limit, between one day's read and the next
+            rows = await self.positions(day, shop_ids)
+            _kept[key] = (time.monotonic(), rows)
+        for old in [k for k in _kept if (today - k[0]).days > KEEP_DAYS]:
+            _kept.pop(old, None)
+            _locks.pop(old, None)
+        return rows
 
     async def products(self, start: date, end: date, shop_ids: list[str]) -> list[dict[str, Any]]:
         """Sales per product over the period, all shops together (shop_ids is required here)."""

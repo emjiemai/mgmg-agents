@@ -20,7 +20,7 @@ from typing import Any, Literal
 import httpx
 
 from integrations.common.config import settings
-from integrations.common.db import audited, log_action
+from integrations.common.db import audited, execute, log_action
 from integrations.common.http import request_with_retry
 from integrations.common.logging_setup import setup_logging
 
@@ -43,6 +43,9 @@ MEDIA_METHODS: dict[str, tuple[str, str]] = {
     "audio": ("sendAudio", "audio"), "document": ("sendDocument", "document"),
     "animation": ("sendAnimation", "animation"), "video_note": ("sendVideoNote", "video_note"),
 }
+
+BLOCKED = "bot was blocked by the user"  # Telegram's 403 description
+
 
 class TelegramError(RuntimeError):
     """Raised when the Telegram Bot API rejects a request."""
@@ -451,8 +454,22 @@ class TelegramBot:
             ctx["http_status"] = response.status_code
             body = response.json()
             if not body.get("ok"):
-                raise TelegramError(f"Telegram {method} failed: {body.get('description', response.text[:300])}")
+                description = str(body.get("description") or response.text[:300])
+                if BLOCKED in description and payload.get("chat_id"):
+                    await self._note_blocked(payload["chat_id"])
+                raise TelegramError(f"Telegram {method} failed: {description}")
             return body.get("result")
+
+    async def _note_blocked(self, chat_id: Any) -> None:
+        """The person blocked OPS Manager Bot (2026-11-04: a Londry ticket recipient never got one card): noted
+        on the employee, so IT's /texnik names them; cleared when they write to the bot again."""
+        if self._bot_token != settings.ops_manager_bot_telegram_bot_token.get_secret_value():
+            return
+        try:
+            await execute("UPDATE employees SET bot_blocked_at = now() WHERE telegram_user_id = %s "
+                          "AND bot_blocked_at IS NULL", (int(chat_id),))
+        except Exception as exc:  # noqa: BLE001 — the send already failed; this note must not hide why
+            log.warning("Blocked-bot note not saved: {}", type(exc).__name__)
 
 
 def escape(text: str | None) -> str:

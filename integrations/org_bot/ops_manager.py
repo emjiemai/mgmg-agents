@@ -272,6 +272,12 @@ async def handle_update(update: dict[str, Any], run_id: uuid.UUID, background: B
         A short outcome string, for the webhook route's response body.
     """
     callback = update.get("callback_query")
+    sender = ((callback or update.get("message") or {}).get("from") or {}).get("id")
+    if sender:
+        try:
+            await store.clear_bot_blocked(int(sender))  # they're back: no longer listed as blocked on /texnik
+        except Exception as exc:  # noqa: BLE001 — a note, never a reason to drop the update
+            log.warning("Blocked-bot note not cleared: {}", type(exc).__name__)
     if callback:
         return await _handle_callback(callback, run_id, background)
 

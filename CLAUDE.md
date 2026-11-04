@@ -50,6 +50,10 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
   tables only, safe UPDATE fixes, counts to IT. **Report calendar**: the Director's `/hisobotlar` (PNG).
 - IT's technical report (`agents/tech-report/`, last in the 08:00 job, Admin Bot `/texnik`): connections,
   SAP push, brief delivered, runs/errors, DB size, refused attempts — counts and times only.
+  **04.11:** people who blocked OPS Manager Bot (`employees.bot_blocked_at`, set from Telegram's 403, cleared when they
+  write) are named there, not counted as errors; a complaint nobody in its department got → the Director. Billz cheques
+  of past days kept in memory 3 h (`BillzClient.positions_kept`); the analyst's live Billz → SAP check has 30 s, then
+  the stored one («03.11 чеклари, 04.11 08:02 да текширилган»).
 - KPI (`docs/agent-specs/13-kpi.md`): **since 03.11 the simple KPI** (the owner) = reports 50 % (own day 1, late ½,
   missed 0) + given tasks 50 % (by deadline 1, late ½, not done 0), + bonus − minus, no rating cards; the Director's 15
   criteria → 6 parts with `KPI_MODE=full`. `/kpi` (Director, employees); final by the 5th.

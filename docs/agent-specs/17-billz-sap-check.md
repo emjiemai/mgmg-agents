@@ -141,4 +141,6 @@ the 08:02 Garmin brief listed 11 cheques the shops then entered at 12:05–14:39
 so the picture and the bot's later answer differed — both were right for their hour.
 
 
+**2026-11-04 (speed):** a past day's Billz cheques are kept in the API's memory 3 h (today 2 min; same-day callers share one read, `BillzClient.positions_kept`), so a live check reads only today; the analyst's live check has 30 s (`LIVE_BILLZ_SECONDS`), then the stored check, which states the cheques' day and when it ran («03.11 чеклари, 04.11 08:02 да текширилган»).
+
 **2026-11-03:** not sent to the Director any more (the owner) — `BILLZ_SAP_CHECK_TO_DIRECTOR=true` brings it back; still run and kept for `/kiritish` and `/farqlar`; the Garmin manager still gets it.

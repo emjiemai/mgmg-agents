@@ -3296,3 +3296,16 @@ async def latest_open_relay(telegram_user_id: int, minutes: int) -> dict[str, An
         """SELECT * FROM pending_relays WHERE employee_telegram_user_id = %s AND resolved_at IS NULL
              AND created_at > now() - make_interval(mins => %s) ORDER BY created_at DESC LIMIT 1""",
         (telegram_user_id, minutes))
+
+
+async def clear_bot_blocked(telegram_user_id: int) -> None:
+    """They wrote to OPS Manager Bot, so it isn't blocked (any more) — set by ``TelegramBot._note_blocked``."""
+    await execute("UPDATE employees SET bot_blocked_at = NULL WHERE telegram_user_id = %s AND bot_blocked_at IS NOT NULL",
+                  (telegram_user_id,))
+
+
+async def bot_blocked_employees() -> list[dict[str, Any]]:
+    """Active people who blocked OPS Manager Bot: nothing the bot sends reaches them."""
+    return await fetch_all(
+        """SELECT full_name, display_name, role, bot_blocked_at FROM employees
+           WHERE status = 'active' AND bot_blocked_at IS NOT NULL ORDER BY bot_blocked_at""")

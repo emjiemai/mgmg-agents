@@ -1137,6 +1137,8 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS data_access TEXT[] NOT NULL DEFAU
 -- The language the AI answers this person in (2026-10-10): 'uz' (Uzbek
 -- Cyrillic, the rule) or 'ru' — set by the admin, never guessed.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uz';
+-- 2026-11-04: Telegram said "bot was blocked by the user" (OPS Manager Bot); cleared when they write again.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS bot_blocked_at TIMESTAMPTZ;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS media_count INTEGER NOT NULL DEFAULT 0;
 -- Reports close at 22:00 (2026-10-15, the Director); an ask still open then gets minus KPI
 -- points (REPORT_MISS_PENALTY) and the person is told — once (penalized_at).

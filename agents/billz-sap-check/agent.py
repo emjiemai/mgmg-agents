@@ -42,7 +42,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from integrations.billz import sap_check
-from integrations.billz.client import PAUSE, BillzClient
+from integrations.billz.client import BillzClient
 from integrations.common.config import settings
 from integrations.common.db import close_pool, execute, fetch_all, fetch_one, log_action
 from integrations.common.logging_setup import setup_logging
@@ -95,9 +95,9 @@ async def billz_cheques(
         shops = [s for s in await client.shops() if s.get("id") and not s.get("deleted_at")]
         shop_ids = [str(s["id"]) for s in shops]
         day = start
+        today = today_local()
         while day <= end and shop_ids:
-            await asyncio.sleep(PAUSE)
-            found, without_id = sap_check.cheques_from_billz(await client.positions(day, shop_ids), day)
+            found, without_id = sap_check.cheques_from_billz(await client.positions_kept(day, today, shop_ids), day)
             cheques += found
             if without_id:
                 unkeyed[day] = without_id
