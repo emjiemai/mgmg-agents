@@ -10,8 +10,9 @@ Two pages, one per business, each behind its own printed QR code — the
 address decides the business; the client picks the branch with one of two
 big buttons at the top (required; ``?branch=abay`` preselects it):
 
-    /f          Londry — the address on the first printed card; keep it
-    /f/garmin   Garmin
+    /f              Londry Юнусобод — the first printed card (it hangs there); keep it
+    /f/vuzgorodok   Londry Вузгородок (2026-11-05) — the branch set, no buttons
+    /f/garmin       Garmin (the client picks Абай / Минор)
 
 Three languages: Uzbek Cyrillic (the default), Russian and English (Uzbek
 Latin dropped 2026-09-28). The page opens in the phone's language when it
@@ -49,6 +50,14 @@ from integrations.org_bot.feedback import BRANCHES, DEFAULT_LANG, PLACES
 
 # Each business's page. "/f" is printed on Londry's cards and can't move.
 PAGES: dict[str, str] = {"laundry": "/f", "garmin": "/f/garmin"}
+# Londry: one page per branch, the branch already set (2026-11-05, the owner: tourists don't know which branch they
+# are in). The printed /f card hangs in Юнусобод, so /f is Юнусобод's; Вузгородок got its own page and card.
+BRANCH_PAGES: dict[str, str] = {"yunusobod": "/f", "vuzgorodok": "/f/vuzgorodok"}
+
+
+def path_of(place: str, fixed: str | None = None) -> str:
+    """The page's address: a branch's own page, else the business's."""
+    return BRANCH_PAGES.get(fixed or "", PAGES[place])
 assert set(PAGES) == set(PLACES)
 
 log = setup_logging("feedback-page")
@@ -239,9 +248,9 @@ def _e(value: str) -> str:
     return html.escape(value or "", quote=True)
 
 
-def _link(place: str, lang: str) -> str:
-    """A business's page in a given language."""
-    return f"{PAGES[place]}?lang={lang}"
+def _link(place: str, lang: str, fixed: str | None = None) -> str:
+    """A business's (or branch's) page in a given language."""
+    return f"{path_of(place, fixed)}?lang={lang}"
 
 
 def lang_from(requested: str | None, accept_language: str | None) -> str:
@@ -271,11 +280,12 @@ def lang_from(requested: str | None, accept_language: str | None) -> str:
     return DEFAULT_LANG
 
 
-def _page(body: str, lang: str, place: str, status: int = 200) -> HTMLResponse:
+def _page(body: str, lang: str, place: str, status: int = 200, fixed: str | None = None) -> HTMLResponse:
     t = TEXTS[lang]
+    brand = BRANCH_LABELS[lang][fixed] if fixed else PLACES[place]
     switcher = "".join(
         f"<span aria-current='true'>{_e(TEXTS[code]['switch'])}</span>" if code == lang
-        else f"<a href='{_e(_link(place, code))}' hreflang='{TEXTS[code]['html_lang']}' lang='{TEXTS[code]['html_lang']}'>"
+        else f"<a href='{_e(_link(place, code, fixed))}' hreflang='{TEXTS[code]['html_lang']}' lang='{TEXTS[code]['html_lang']}'>"
              f"{_e(TEXTS[code]['switch'])}</a>"
         for code in TEXTS
     )
@@ -283,8 +293,8 @@ def _page(body: str, lang: str, place: str, status: int = 200) -> HTMLResponse:
         f"<!doctype html><html lang='{t['html_lang']}'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<meta name='theme-color' content='#d71920'>"
-        f"<title>{_e(t['title'])} · {_e(PLACES[place])}</title><style>{_CSS}</style></head><body>"
-        f"<header><div class='wrap'><div class='top'><span class='brand' lang='en'>{_e(PLACES[place])}</span>"
+        f"<title>{_e(t['title'])} · {_e(brand)}</title><style>{_CSS}</style></head><body>"
+        f"<header><div class='wrap'><div class='top'><span class='brand' lang='en'>{_e(brand)}</span>"
         f"<nav>{switcher}</nav></div><h1>{_e(t['title'])}</h1><p>{_e(t['intro'])}</p></div></header>"
         f"<main><div class='sheet'>{body}</div></main></body></html>",
         status_code=status,
@@ -305,7 +315,8 @@ def _error(key: str, lang: str, box: bool = False) -> str:
 
 
 def form_html(
-    values: dict[str, str] | None = None, error: str | None = None, lang: str = DEFAULT_LANG, place: str = "laundry"
+    values: dict[str, str] | None = None, error: str | None = None, lang: str = DEFAULT_LANG, place: str = "laundry",
+    fixed: str | None = None,
 ) -> str:
     """The form, keeping what was typed when something needs fixing.
 
@@ -314,6 +325,7 @@ def form_html(
         error: An error key; its text is shown next to the field it is about.
         lang: The page's language.
         place: Whose page this is; the form posts back to it.
+        fixed: The branch this page belongs to (Londry's per-branch pages): no buttons, the branch is sent hidden.
     """
     t = TEXTS[lang]
     values = values or {}
@@ -331,11 +343,14 @@ def form_html(
         f"{' checked' if key == chosen else ''}><span>{_e(BRANCH_LABELS[lang][key])}</span></label>"
         for key in BRANCHES[place]
     )
-    return (
-        f"<form method='post' action='{PAGES[place]}' novalidate>"
-        f"<input type='hidden' name='lang' value='{lang}'>"
+    branch_part = (
+        f"<input type='hidden' name='branch' value='{fixed}'>" if fixed else
         f"<fieldset class='group'{invalid('branch')}><legend>{_e(t['branch'])}</legend>"
         f"<div class='choices'>{branches}</div>{err('branch')}</fieldset>"
+    )
+    return (
+        f"<form method='post' action='{path_of(place, fixed)}' novalidate>"
+        f"<input type='hidden' name='lang' value='{lang}'>{branch_part}"
         "<div class='group'>"
         f"<label class='label' for='m'>{_e(t['message'])}</label>"
         f"<textarea id='m' name='message' maxlength='{feedback.MESSAGE_MAX}' required{invalid('message')} "
@@ -354,13 +369,13 @@ def form_html(
     )
 
 
-def thanks_html(contact_given: bool, lang: str = DEFAULT_LANG, place: str = "laundry") -> str:
+def thanks_html(contact_given: bool, lang: str = DEFAULT_LANG, place: str = "laundry", fixed: str | None = None) -> str:
     t = TEXTS[lang]
     follow_up = f"<p>{_e(t['follow_up'])}</p>" if contact_given else ""
     return (
         f"<div class='done' role='status'><div class='mark'>{_ICONS['check']}</div>"
         f"<h2>{_e(t['thanks'])}</h2><p>{_e(t['sent'])}</p>{follow_up}"
-        f"<a class='again' href='{_e(_link(place, lang))}'>{_e(t['again'])}</a></div>"
+        f"<a class='again' href='{_e(_link(place, lang, fixed))}'>{_e(t['again'])}</a></div>"
     )
 
 
@@ -381,26 +396,32 @@ def _allowed(address: str) -> bool:
     return True
 
 
-def _show_form(request: Request, place: str, lang: str | None) -> Response:
+def _show_form(request: Request, place: str, lang: str | None, fixed: str | None = None) -> Response:
     if not settings.feedback_enabled:
         return Response(status_code=404)
     chosen = lang_from(lang, request.headers.get("accept-language"))
     # A branch's own printed code may carry ?branch=…; it just preselects the button.
     branch = request.query_params.get("branch", "")
     values = {"branch": branch} if branch in BRANCHES[place] else {}
-    return _page(form_html(values, lang=chosen, place=place), chosen, place)
+    return _page(form_html(values, lang=chosen, place=place, fixed=fixed), chosen, place, fixed=fixed)
 
 
 @router.get("", response_class=HTMLResponse)
 async def laundry_form(request: Request, lang: str | None = None) -> Response:
-    """Londry's page — the address on the printed Londry card."""
-    return _show_form(request, "laundry", lang)
+    """Londry Юнусобод's page — the address on the printed Londry card, which hangs there."""
+    return _show_form(request, "laundry", lang, fixed="yunusobod")
 
 
 @router.get("/garmin", response_class=HTMLResponse)
 async def garmin_form(request: Request, lang: str | None = None) -> Response:
     """Garmin's page."""
     return _show_form(request, "garmin", lang)
+
+
+@router.get("/vuzgorodok", response_class=HTMLResponse)
+async def vuzgorodok_form(request: Request, lang: str | None = None) -> Response:
+    """Londry Вузгородок's own page and card (2026-11-05)."""
+    return _show_form(request, "laundry", lang, fixed="vuzgorodok")
 
 
 @router.get("/{other}", include_in_schema=False)
@@ -411,7 +432,12 @@ async def other_link(other: str) -> Response:
 
 @router.post("", response_class=HTMLResponse)
 async def laundry_submit(request: Request) -> Response:
-    return await _submit(request, "laundry")
+    return await _submit(request, "laundry", fixed="yunusobod")
+
+
+@router.post("/vuzgorodok", response_class=HTMLResponse)
+async def vuzgorodok_submit(request: Request) -> Response:
+    return await _submit(request, "laundry", fixed="vuzgorodok")
 
 
 @router.post("/garmin", response_class=HTMLResponse)
@@ -419,29 +445,32 @@ async def garmin_submit(request: Request) -> Response:
     return await _submit(request, "garmin")
 
 
-async def _submit(request: Request, place: str) -> Response:
+async def _submit(request: Request, place: str, fixed: str | None = None) -> Response:
     """Take one complaint for ``place``: validate, store, send to the Director, say thanks."""
     if not settings.feedback_enabled:
         return Response(status_code=404)
 
     body = (await request.body())[:20_000].decode("utf-8", errors="replace")
     form = {key: values[0] for key, values in parse_qs(body, keep_blank_values=True).items()}
+    if fixed:
+        form["branch"] = fixed  # the page's own branch, whatever was posted
     lang = lang_from(form.get("lang"), request.headers.get("accept-language"))
 
     if form.get("website"):  # the hidden field: only bots fill it
         log.info("Feedback honeypot hit — dropped")
-        return _page(thanks_html(contact_given=False, lang=lang, place=place), lang, place)
+        return _page(thanks_html(contact_given=False, lang=lang, place=place, fixed=fixed), lang, place, fixed=fixed)
 
     submission, error = feedback.clean({**form, "lang": lang, "place": place})
     if error:
-        return _page(form_html(form, error, lang, place), lang, place, status=400)
+        return _page(form_html(form, error, lang, place, fixed), lang, place, status=400, fixed=fixed)
 
     if not _allowed(_client_address(request)):
-        return _page(form_html(form, "rate", lang, place), lang, place, status=429)
+        return _page(form_html(form, "rate", lang, place, fixed), lang, place, status=429, fixed=fixed)
 
     try:
         await feedback.submit(submission)
     except Exception as exc:  # noqa: BLE001 — the client must see a clear page, not a stack trace
         log.error("Could not store client complaint: {}", exc)
-        return _page(form_html(form, "failed", lang, place), lang, place, status=503)
-    return _page(thanks_html(contact_given=not submission.anonymous, lang=lang, place=place), lang, place)
+        return _page(form_html(form, "failed", lang, place, fixed), lang, place, status=503, fixed=fixed)
+    return _page(thanks_html(contact_given=not submission.anonymous, lang=lang, place=place, fixed=fixed), lang, place,
+                 fixed=fixed)

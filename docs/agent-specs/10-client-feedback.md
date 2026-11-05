@@ -148,6 +148,8 @@ at the domain's DNS, `PUBLIC_BASE_URL`, then `/qr` and reprint.)
 
 **2026-11-04:** a recipient who blocked OPS Manager Bot is noted (`employees.bot_blocked_at`, cleared when they write again) and named on /texnik («Ботни блоклаганлар»), not counted as an error; a ticket that reached nobody in its department goes to the Director with a note.
 
+**2026-11-05:** Londry has a page per branch, the branch set and no buttons: `/f` = Юнусобод (the printed card hangs there), `/f/vuzgorodok` = Вузгородок (new card). `/qr` sends three cards. Garmin keeps one page with Абай / Минор.
+
 ## Switch
 
 `FEEDBACK_ENABLED` (default `true`) — `false` makes `/f` return 404.

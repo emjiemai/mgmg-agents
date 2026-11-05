@@ -354,9 +354,9 @@ async def _send_qr(run_id: uuid.UUID) -> str:
     import tempfile
     from pathlib import Path
 
-    from integrations.api.feedback_page import PAGES
+    from integrations.api.feedback_page import BRANCH_PAGES, PAGES
     from integrations.org_bot import qr_card  # local import: Pillow only when needed
-    from integrations.org_bot.feedback import PLACES
+    from integrations.org_bot.feedback import BRANCHES, PLACES
 
     async with TelegramBot(
         agent=AGENT,
@@ -368,12 +368,15 @@ async def _send_qr(run_id: uuid.UUID) -> str:
             await bot.send_message("Сервер манзили номаълум — Render'да PUBLIC_BASE_URL ни белгиланг.")
             return "qr_no_url"
         folder = Path(tempfile.mkdtemp(prefix="mgmg-qr-"))
-        for place, business in PLACES.items():
-            url = f"{settings.public_url}{PAGES[place]}"
-            path = folder / f"qr-shikoyat-{business.lower()}.png"
+        cards = [(place, f"{business} {BRANCHES[place][branch]}", BRANCH_PAGES[branch], f"{business}-{branch}")
+                 for place, business in PLACES.items() if place == "laundry" for branch in BRANCH_PAGES]
+        cards += [(place, business, PAGES[place], business) for place, business in PLACES.items() if place != "laundry"]
+        for place, label, page, name in cards:  # Londry: a card per branch (2026-11-05); Garmin: one
+            url = f"{settings.public_url}{page}"
+            path = folder / f"qr-shikoyat-{name.lower()}.png"
             path.write_bytes(qr_card.card_png(url, place))
             await bot.send_document(
-                str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=f"{business}: {escape(url)}"
+                str(path), chat_id=settings.admin_bot_telegram_chat_id, caption=f"{label}: {escape(url)}"
             )
     return "qr_sent"
 

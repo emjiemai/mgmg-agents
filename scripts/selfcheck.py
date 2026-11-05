@@ -1724,7 +1724,7 @@ def test_client_feedback() -> None:
         page = client.get("/f")
         check_true("/f (on the printed Londry card) is Londry's form",
                    page.status_code == 200 and "Шикоятни юбориш" in page.text and "action='/f'" in page.text
-                   and ">Londry<" in page.text and "Garmin" not in page.text)
+                   and ">Londry Юнусобод<" in page.text and "Garmin" not in page.text)
         garmin = client.get("/f/garmin")
         check_true("/f/garmin is Garmin's form, posting back to itself",
                    garmin.status_code == 200 and "action='/f/garmin'" in garmin.text and ">Garmin<" in garmin.text
@@ -1740,29 +1740,35 @@ def test_client_feedback() -> None:
                    and "name='lang' value='ru'" in ru.text)
         en = client.get("/f/garmin", headers={"Accept-Language": "en-GB,en;q=0.9"})
         check_true("an English phone gets English", "lang='en'" in en.text and ">Send complaint<" in en.text)
-        check_true("Londry's page: Londry Юнусобод and Londry Вузгородок buttons",
-                   "value='yunusobod'" in page.text and "value='vuzgorodok'" in page.text and "Londry Юнусобод" in page.text
-                   and "value='abay'" not in page.text)
+        # 05.11.2026 (the owner: tourists don't know the branch): a page per Londry branch, the branch already set.
+        vuz = client.get("/f/vuzgorodok")
+        check_true("/f is Юнусобод's page: the branch set, no buttons",
+                   "name='branch' value='yunusobod'" in page.text and "type='radio'" not in page.text
+                   and "Қайси филиал?" not in page.text)
+        check_true("/f/vuzgorodok: Вузгородок's own page, posting to itself",
+                   vuz.status_code == 200 and "name='branch' value='vuzgorodok'" in vuz.text
+                   and "action='/f/vuzgorodok'" in vuz.text and ">Londry Вузгородок<" in vuz.text
+                   and "type='radio'" not in vuz.text and "/f/vuzgorodok?lang=ru" in vuz.text)
         check_true("Garmin's page: Абай and Минор buttons",
                    "value='abay'" in garmin.text and "value='minor'" in garmin.text and "value='yunusobod'" not in garmin.text)
         pre = client.get("/f/garmin?branch=abay")
         check_true("?branch=abay preselects it", "value='abay' required checked" in pre.text)
-        no_branch = client.post("/f", data={"message": "Машина ишламаяпти"})
-        check_true("no branch picked: asked, beside the buttons, text kept",
-                   no_branch.status_code == 400 and "Филиални танланг" in no_branch.text and "Машина ишламаяпти" in no_branch.text)
-        en_branch = client.get("/f?lang=en")
-        check_true("branch names in English", "Londry Yunusobod" in en_branch.text and "Which branch?" in en_branch.text)
+        no_branch = client.post("/f/garmin", data={"message": "Соат ишламаяпти"})
+        check_true("Garmin, no branch picked: asked, beside the buttons, text kept",
+                   no_branch.status_code == 400 and "Филиални танланг" in no_branch.text and "Соат ишламаяпти" in no_branch.text)
+        en_branch = client.get("/f/vuzgorodok?lang=en")
+        check_true("branch names in English", "Londry Vuzgorodok" in en_branch.text)
         uz = client.get("/f", headers={"Accept-Language": "uz-Latn-UZ"})
         check_true("an Uzbek phone gets Cyrillic", "Шикоятни юбориш" in uz.text)
         for other in ("/f/laundry", "/f/cafe"):
             moved = client.get(other, follow_redirects=False)
             check_true(f"{other} goes to Londry's page", moved.status_code == 301 and moved.headers["location"] == "/f")
 
-        ok = client.post("/f", data={"branch": "vuzgorodok", "message": "Машина ишламаяпти", "phone": "+998901234567"})
+        ok = client.post("/f/vuzgorodok", data={"branch": "yunusobod", "message": "Машина ишламаяпти", "phone": "+998901234567"})
         check_true("a complaint is thanked", ok.status_code == 200 and "Раҳмат" in ok.text)
         ok_garmin = client.post("/f/garmin", data={"branch": "minor", "message": "Соат синди", "place": "laundry"})
         check_true("...on Garmin's page too", ok_garmin.status_code == 200 and "Раҳмат" in ok_garmin.text)
-        check("each goes to the Director with its page's business (a posted place is ignored) and branch",
+        check("each goes with its page's business and branch (a posted place or other branch is ignored)",
               [(s.place, s.branch) for s in submitted], [("laundry", "vuzgorodok"), ("garmin", "minor")])
 
         bad = client.post("/f/garmin", data={"branch": "minor", "message": "Ёмон", "phone": "12"})
@@ -1894,6 +1900,49 @@ def test_security_review_1103() -> None:
                plan_facts.COLLECT_EVERY == 600 and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py"))
     check_true("a news feed over 5 MB is refused (read in chunks)", crawler.MAX_BYTES == 5_000_000
                and "aiter_bytes" in inspect_source(crawler._get))
+
+
+def test_londry_branch_qr_1105() -> None:
+    """05.11.2026 (the owner): /qr gives a card per Londry branch — /f (Юнусобод, the printed one) and /f/vuzgorodok —
+    plus Garmin's."""
+    print("Londry: a QR card per branch (05.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.org_bot import admin, qr_card
+
+    sent: list = []
+
+    class FakeBot:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def send_document(self, path, chat_id=None, caption=""):
+            sent.append(caption)
+
+        async def send_message(self, *a, **k):
+            sent.append("message")
+
+    saved = [(admin, "TelegramBot", admin.TelegramBot), (qr_card, "card_png", qr_card.card_png)]
+    admin.TelegramBot, qr_card.card_png = FakeBot, lambda url, place: b"png"
+    original_url = type(settings).public_url
+    type(settings).public_url = property(lambda self: "https://x.test")
+    try:
+        asyncio.run(admin._send_qr(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        type(settings).public_url = original_url
+    check("three cards: Londry Юнусобод (/f), Londry Вузгородок, Garmin", sent,
+          ["Londry Юнусобод: https://x.test/f", "Londry Вузгородок: https://x.test/f/vuzgorodok",
+           "Garmin: https://x.test/f/garmin"])
 
 
 def test_file_as_task_proof_1105() -> None:
@@ -11482,6 +11531,7 @@ def main() -> int:
         test_task_proof_and_brief_1104,
         test_billz_speed_and_blocked_1104,
         test_file_as_task_proof_1105,
+        test_londry_branch_qr_1105,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

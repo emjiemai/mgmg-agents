@@ -135,6 +135,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   (already printed — never move it), `/f/garmin` = Garmin. The only choice on
   the page is the **branch** (required, 2026-10-04): Londry Юнусобод /
   Вузгородок, Garmin Абай / Минор (`feedback.BRANCHES`; `?branch=` preselects).
+  **Londry: a page per branch since 05.11** (tourists don't know the branch): `/f` = Юнусобод (branch set, no buttons),
+  `/f/vuzgorodok` = Вузгородок; `/qr` → three cards (`feedback_page.BRANCH_PAGES`).
   Complaints are **tickets for the department, not the Boss** (2026-10-13, `routes.py`): Londry → Londry
   role, Garmin → Garmin сотув; ✅ Ҳал бўлди + reason code; "ҳал бўлдими?" hourly 09–20, max 3. No Uzbek Latin.
   "Director" = the owner = the Boss (2026-10-13). Positions = the roles people register with.
