@@ -1278,6 +1278,9 @@ CREATE INDEX IF NOT EXISTS idx_explanations_open ON explanations (telegram_user_
 ALTER TABLE employee_files DROP CONSTRAINT IF EXISTS employee_files_purpose_check;
 ALTER TABLE employee_files ADD CONSTRAINT employee_files_purpose_check
     CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation'));  -- explanation: 2026-10-22
+ALTER TABLE employee_files DROP CONSTRAINT IF EXISTS employee_files_purpose_check;
+ALTER TABLE employee_files ADD CONSTRAINT employee_files_purpose_check
+    CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation', 'task'));  -- task: a task's proof, 2026-11-05
 
 -- Report bonus (2026-10-22, the owner): each morning a Garmin сотув person whose report of yesterday they sent
 -- themselves gets +REPORT_BONUS_POINTS (1) KPI; a missed one is told politely no point was given. bonus_at = told, once.

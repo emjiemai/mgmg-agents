@@ -345,6 +345,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_data_access_close(rest, callback, run_id)
     if prefix == "fp":
         return await _handle_file_purpose(rest, callback, run_id, background)
+    if prefix == "fpt":
+        return await _handle_file_proof(rest, callback, run_id)
     if prefix == "chq":
         return await _handle_cheque_button(rest, callback, run_id)
     if prefix in ("rpe", "rpd", "rpdy", "rpn"):
@@ -1580,11 +1582,41 @@ async def _ask_file_purpose(employee: dict[str, Any], message: dict[str, Any], k
                                             report_media.file_of(message))
     report = await store.report_for_day(telegram_user_id, today_local())
     waiting = await _waiting_explanations(telegram_user_id)
+    try:
+        proof = await store.tasks_awaiting_proof(telegram_user_id)
+    except Exception as exc:  # noqa: BLE001 — without it the question still goes, just without the task button
+        log.warning("Tasks awaiting proof not read: {}", type(exc).__name__)
+        proof = []
     await _reply(
         telegram_user_id, run_id, report_tools.ask_purpose_text(kind),
-        report_tools.purpose_keyboard(str(held["id"]), report is not None, explanation=bool(waiting)),
+        report_tools.purpose_keyboard(str(held["id"]), report is not None, explanation=bool(waiting), proof=bool(proof)),
     )
     return "file_purpose_asked"
+
+
+async def _handle_file_proof(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """A held file is a waiting task's proof: it goes to the one who assigned it, like a reply to the card."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    file_id, _, task_id = rest.rpartition(":")
+    task = next((t for t in await store.tasks_awaiting_proof(clicker_id) if str(t["id"]) == task_id), None) \
+        if clicker_id else None
+    held = await store.get_employee_file(file_id, clicker_id) if task else None
+    employee = await store.get_employee_by_telegram_id(clicker_id) if held else None
+    if task is None or held is None or employee is None:
+        await _answer(query_id, "Аллақачон ҳал қилинган")
+        return "file_proof_stale"
+    await _answer(query_id, "OK")
+    message = callback.get("message") or {}
+    if message.get("message_id"):
+        await _edit_lead_message(clicker_id, message["message_id"],
+                                 f"{escape(task_register.code_of(task))} далили сифатида юборилди.", {"inline_keyboard": []},
+                                 run_id)
+    await store.resolve_employee_file(file_id, clicker_id, "task")
+    # The original message, as if it had been sent as a reply to the card (copyMessage needs its id).
+    original = {"message_id": held["message_id"], held["kind"]: {"file_id": held.get("file_id")},
+                "caption": held.get("caption")}
+    return await _consume_task_input(employee, task, original, run_id)
 
 
 async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid.UUID,
@@ -1598,6 +1630,19 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
     if not file_id or purpose is None or clicker_id is None:
         await _answer(query_id, "Номаълум амал")
         return "unrecognized"
+    if purpose == "task":  # which task it proves: one waiting → that one; several → pick (2026-11-05)
+        tasks = await store.tasks_awaiting_proof(clicker_id)
+        if not tasks:
+            await _answer(query_id, "Далил кутаётган топшириқ йўқ")
+            return "no_task_waiting"
+        if len(tasks) == 1:
+            return await _handle_file_proof(f"{file_id}:{tasks[0]['id']}", callback, run_id)
+        await _answer(query_id, "OK")
+        message = callback.get("message") or {}
+        if message.get("message_id"):
+            await _edit_lead_message(clicker_id, message["message_id"], "Қайси топшириқнинг далили?",
+                                     report_tools.proof_tasks_keyboard(file_id, tasks), run_id)
+        return "proof_task_asked"
     held = await store.resolve_employee_file(file_id, clicker_id, purpose)
     if held is None:
         await _answer(query_id, "Аллақачон ҳал қилинган")

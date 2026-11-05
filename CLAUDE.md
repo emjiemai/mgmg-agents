@@ -212,6 +212,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   **04.11:** after ✅ / ⛔ a NEW message under the card asks (an edited day-old card wasn't seen — six ✅ on 03.11,
   no proof, all red); a reply to it or to the card is the proof any time (`replied_to`), a plain message only
   within 30 min; ✅ without proof → «далил кутилмоқда» in the brief (not red) + one morning line.
+  **05.11:** a file sent on its own → «нима учун?» offers «топшириқ далили» (pick the task) — same as a reply.
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).

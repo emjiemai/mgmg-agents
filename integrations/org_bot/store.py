@@ -3309,3 +3309,18 @@ async def bot_blocked_employees() -> list[dict[str, Any]]:
     return await fetch_all(
         """SELECT full_name, display_name, role, bot_blocked_at FROM employees
            WHERE status = 'active' AND bot_blocked_at IS NOT NULL ORDER BY bot_blocked_at""")
+
+
+async def tasks_awaiting_proof(telegram_user_id: int) -> list[dict[str, Any]]:
+    """This person's tasks where ✅ was pressed and the proof is still awaited, oldest first (2026-11-05)."""
+    return await fetch_all(
+        """SELECT t.* FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
+           WHERE e.telegram_user_id = %s AND t.awaiting = 'evidence' AND t.status IN ('sent', 'started', 'blocked')
+           ORDER BY t.awaiting_since""", (telegram_user_id,))
+
+
+async def get_employee_file(file_id: str, telegram_user_id: int) -> dict[str, Any] | None:
+    """A held file of this person, not settled yet, within a day."""
+    return await fetch_one(
+        """SELECT * FROM employee_files WHERE id = %s AND telegram_user_id = %s AND resolved_at IS NULL
+           AND created_at > now() - interval '24 hours'""", (file_id, telegram_user_id))

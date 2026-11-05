@@ -1896,6 +1896,61 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_file_as_task_proof_1105() -> None:
+    """05.11.2026 (the owner): a PDF sent on its own closed none of six tasks waiting for proof — the «what is it
+    for?» question had no task option. Now it offers «топшириқ далили» while ✅ waits; several tasks → pick one; the
+    file then goes to the assigner exactly like a reply to the card."""
+    print("a file as a task's proof (05.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import ops_manager, report_tools, store
+
+    kb = report_tools.purpose_keyboard("F", True, proof=True)
+    check_true("«топшириқ далили» offered while proof is awaited",
+               kb["inline_keyboard"][0][0] == {"text": "топшириқ далили", "callback_data": "fp:F:t"})
+    check_true("not offered otherwise", "fp:F:t" not in str(report_tools.purpose_keyboard("F", True)))
+    tasks = [{"id": "a1", "code": "T-2026-11-0051", "task_summary": "ўрганиш"},
+             {"id": "b2", "code": "T-2026-11-0056", "task_summary": "Медиа файл"}]
+    edits, consumed = [], []
+
+    async def awaiting(uid):
+        return tasks
+
+    async def held(fid, uid):
+        return {"id": fid, "message_id": 77, "kind": "document", "file_id": "X", "caption": None}
+
+    async def employee(uid):
+        return {"telegram_user_id": uid, "status": "active"}
+
+    async def nothing(*a, **k):
+        return None
+
+    async def edit(uid, mid, text, kb, run_id):
+        edits.append((text, kb))
+
+    async def consume(emp, task, message, run_id):
+        consumed.append((task["id"], message))
+        return "task_submitted"
+
+    saved = [(store, n, getattr(store, n)) for n in ("tasks_awaiting_proof", "get_employee_file", "get_employee_by_telegram_id",
+                                                     "resolve_employee_file")] + \
+            [(ops_manager, n, getattr(ops_manager, n)) for n in ("_answer", "_edit_lead_message", "_consume_task_input")]
+    store.tasks_awaiting_proof, store.get_employee_file, store.get_employee_by_telegram_id = awaiting, held, employee
+    store.resolve_employee_file, ops_manager._answer, ops_manager._edit_lead_message = nothing, nothing, edit
+    ops_manager._consume_task_input = consume
+    cb = {"id": "q", "from": {"id": 5}, "message": {"message_id": 9}}
+    try:
+        out = asyncio.run(ops_manager._handle_file_purpose("F:t", cb, uuid.uuid4()))
+        check("several waiting → which one?", (out, "fpt:F:b2" in str(edits[-1][1])), ("proof_task_asked", True))
+        out = asyncio.run(ops_manager._handle_callback({**cb, "data": "fpt:F:b2"}, uuid.uuid4(), None))
+        check("the picked task gets the file as its proof",
+              (out, consumed[-1]), ("task_submitted", ("b2", {"message_id": 77, "document": {"file_id": "X"}, "caption": None})))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_billz_speed_and_blocked_1104() -> None:
     """04.11.2026 (the owner): «SAPga kiritilmagan tovarlar» was answered 10 minutes late — the live Billz → SAP check
     read 14 days one by one while Billz timed out (3 × 60 s a call). Now past days are kept in memory (one read each,
@@ -11426,6 +11481,7 @@ def main() -> int:
         test_security_review_1103,
         test_task_proof_and_brief_1104,
         test_billz_speed_and_blocked_1104,
+        test_file_as_task_proof_1105,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

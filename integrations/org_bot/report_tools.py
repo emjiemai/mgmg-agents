@@ -30,7 +30,7 @@ KINDS = {
     "photo": "расм", "video": "видео", "document": "файл", "audio": "аудио", "voice": "овозли хабар",
     "animation": "анимация", "video_note": "видео хабар",
 }
-PURPOSES = {"r": "report", "d": "director", "x": "cancelled", "e": "explanation"}
+PURPOSES = {"r": "report", "d": "director", "x": "cancelled", "e": "explanation", "t": "task"}
 
 
 def file_kind(message: dict[str, Any]) -> str | None:
@@ -38,10 +38,13 @@ def file_kind(message: dict[str, Any]) -> str | None:
     return next((kind for kind in KINDS if message.get(kind)), None)
 
 
-def purpose_keyboard(file_id: str, report_today: bool, explanation: bool = False) -> dict[str, Any]:
-    """What the file is for: today's report (only when one is asked today), the explanation asked this
-    morning (only while one waits, 2026-10-22), the Director, or nothing."""
+def purpose_keyboard(file_id: str, report_today: bool, explanation: bool = False, proof: bool = False) -> dict[str, Any]:
+    """What the file is for: a task's proof (only while ✅ waits for one, 2026-11-05), today's report (only when
+    one is asked today), the explanation asked this morning (only while one waits, 2026-10-22), the Director,
+    or nothing."""
     first = []
+    if proof:
+        first.append({"text": "топшириқ далили", "callback_data": f"fp:{file_id}:t"})
     if report_today:
         first.append({"text": "бугунги ҳисобот", "callback_data": f"fp:{file_id}:r"})
     if explanation:
@@ -124,3 +127,10 @@ def deleted_text() -> str:
 
 def too_late_text() -> str:
     return casual("фақат бугунги ҳисоботни ўзгартириш мумкин")
+
+
+def proof_tasks_keyboard(file_id: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Which waiting task the file proves (2026-11-05: a PDF sent on its own closed nothing — six tasks waited)."""
+    rows = [[{"text": f"{t.get('code') or ''} · {str(t.get('task_summary') or '')[:40]}",
+              "callback_data": f"fpt:{file_id}:{t['id']}"}] for t in tasks[:8]]
+    return {"inline_keyboard": rows + [[{"text": "бекор қилиш", "callback_data": f"fp:{file_id}:x"}]]}
