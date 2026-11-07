@@ -1,0 +1,13 @@
+aiogram==3.31.0
+SQLAlchemy[asyncio]==2.1.8
+aiosqlite==0.22.1
+asyncpg==0.32.0
+pydantic==2.13.5
+pydantic-settings==2.16.2
+httpx==0.28.1
+loguru==0.7.3
+PyYAML==6.0.3
+tzdata==2026.6
+# tests
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
