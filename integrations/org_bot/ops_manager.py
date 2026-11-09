@@ -1611,8 +1611,8 @@ async def _handle_file_proof(rest: str, callback: dict[str, Any], run_id: uuid.U
     """A held file is a waiting task's proof: it goes to the one who assigned it, like a reply to the card."""
     query_id = callback.get("id", "")
     clicker_id = (callback.get("from") or {}).get("id")
-    file_id, _, task_id = rest.rpartition(":")
-    task = next((t for t in await store.tasks_awaiting_proof(clicker_id) if str(t["id"]) == task_id), None) \
+    file_id, _, key = rest.rpartition(":")
+    task = next((t for t in await store.tasks_awaiting_proof(clicker_id) if report_tools.proof_key(t) == key), None) \
         if clicker_id else None
     held = await store.get_employee_file(file_id, clicker_id) if task else None
     employee = await store.get_employee_by_telegram_id(clicker_id) if held else None
@@ -1649,7 +1649,7 @@ async def _handle_file_purpose(rest: str, callback: dict[str, Any], run_id: uuid
             await _answer(query_id, "Далил кутаётган топшириқ йўқ")
             return "no_task_waiting"
         if len(tasks) == 1:
-            return await _handle_file_proof(f"{file_id}:{tasks[0]['id']}", callback, run_id)
+            return await _handle_file_proof(f"{file_id}:{report_tools.proof_key(tasks[0])}", callback, run_id)
         await _answer(query_id, "OK")
         message = callback.get("message") or {}
         if message.get("message_id"):

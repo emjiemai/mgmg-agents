@@ -161,3 +161,5 @@ counts only the role held now. Removal already did this (2026-10-14).
 **2026-11-05:** a file sent without replying to the card: the «нима учун?» question offers «топшириқ далили» while ✅ waits (one task → it; several → pick), then the same review as a reply to the card (`_handle_file_proof`).
 
 **2026-11-09 — shared tasks:** copies with the same assigner and `source_message_id` are one shared task: the brief groups them (one row, the furthest state, «+N»), overdue/due-soon notices skip a copy while another copy awaits proof or is in review, the review card names the others (`task_register.shared_line`), and accepting one closes the rest (`store.close_shared_copies`, completion time of the accepted one; each colleague told).
+
+**2026-11-09 fix:** the task-pick buttons carry the task code without «T-» (`report_tools.proof_key`) — file id + task id exceeded Telegram's 64-byte `callback_data` limit.

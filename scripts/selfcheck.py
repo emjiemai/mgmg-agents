@@ -2038,8 +2038,10 @@ def test_file_as_task_proof_1105() -> None:
     check_true("«топшириқ далили» offered while proof is awaited",
                kb["inline_keyboard"][0][0] == {"text": "топшириқ далили", "callback_data": "fp:F:t"})
     check_true("not offered otherwise", "fp:F:t" not in str(report_tools.purpose_keyboard("F", True)))
-    tasks = [{"id": "a1", "code": "T-2026-11-0051", "task_summary": "ўрганиш"},
-             {"id": "b2", "code": "T-2026-11-0056", "task_summary": "Медиа файл"}]
+    # Real-length ids (09.11: file id + task id made 77-byte buttons — Telegram refused the list, limit 64).
+    file_id = str(uuid.UUID(int=1))
+    tasks = [{"id": str(uuid.UUID(int=2)), "code": "T-2026-11-0051", "task_summary": "ўрганиш"},
+             {"id": str(uuid.UUID(int=3)), "code": "T-2026-11-0056", "task_summary": "Медиа файл"}]
     edits, consumed = [], []
 
     async def awaiting(uid):
@@ -2069,11 +2071,17 @@ def test_file_as_task_proof_1105() -> None:
     ops_manager._consume_task_input = consume
     cb = {"id": "q", "from": {"id": 5}, "message": {"message_id": 9}}
     try:
-        out = asyncio.run(ops_manager._handle_file_purpose("F:t", cb, uuid.uuid4()))
-        check("several waiting → which one?", (out, "fpt:F:b2" in str(edits[-1][1])), ("proof_task_asked", True))
-        out = asyncio.run(ops_manager._handle_callback({**cb, "data": "fpt:F:b2"}, uuid.uuid4(), None))
+        out = asyncio.run(ops_manager._handle_file_purpose(f"{file_id}:t", cb, uuid.uuid4()))
+        picked = f"fpt:{file_id}:2026-11-0056"
+        check("several waiting → which one?", (out, picked in str(edits[-1][1])), ("proof_task_asked", True))
+        datas = [b["callback_data"] for row in edits[-1][1]["inline_keyboard"] for b in row]
+        datas += [b["callback_data"] for row in report_tools.purpose_keyboard(file_id, True, True, True)["inline_keyboard"]
+                  for b in row]
+        check_true("every button's data fits Telegram's 64 bytes", all(len(d.encode()) <= 64 for d in datas))
+        out = asyncio.run(ops_manager._handle_callback({**cb, "data": picked}, uuid.uuid4(), None))
         check("the picked task gets the file as its proof",
-              (out, consumed[-1]), ("task_submitted", ("b2", {"message_id": 77, "document": {"file_id": "X"}, "caption": None})))
+              (out, consumed[-1]), ("task_submitted", (tasks[1]["id"], {"message_id": 77, "document": {"file_id": "X"},
+                                                                         "caption": None})))
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)

@@ -129,8 +129,17 @@ def too_late_text() -> str:
     return casual("фақат бугунги ҳисоботни ўзгартириш мумкин")
 
 
+def proof_key(task: dict[str, Any]) -> str:
+    """A task's short key on a button: its code without «T-» («2026-11-0048»), else its id."""
+    code = str(task.get("code") or "")
+    return code.removeprefix("T-") if code else str(task["id"])
+
+
 def proof_tasks_keyboard(file_id: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
-    """Which waiting task the file proves (2026-11-05: a PDF sent on its own closed nothing — six tasks waited)."""
+    """Which waiting task the file proves (2026-11-05: a PDF sent on its own closed nothing — six tasks waited).
+
+    The button carries the task's code without «T-» (2026-11-09: file id + task id was 77 bytes — Telegram refused
+    the whole list, BUTTON_DATA_INVALID; its limit is 64)."""
     rows = [[{"text": f"{t.get('code') or ''} · {str(t.get('task_summary') or '')[:40]}",
-              "callback_data": f"fpt:{file_id}:{t['id']}"}] for t in tasks[:8]]
+              "callback_data": f"fpt:{file_id}:{proof_key(t)}"}] for t in tasks[:8]]
     return {"inline_keyboard": rows + [[{"text": "бекор қилиш", "callback_data": f"fp:{file_id}:x"}]]}
