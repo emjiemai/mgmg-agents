@@ -215,6 +215,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   no proof, all red); a reply to it or to the card is the proof any time (`replied_to`), a plain message only
   within 30 min; ✅ without proof → «далил кутилмоқда» in the brief (not red) + one morning line.
   **05.11:** a file sent on its own → «нима учун?» offers «топшириқ далили» (pick the task) — same as a reply.
+  **09.11 — shared tasks:** one message to several people = one task (copies share `source_message_id`): brief shows it once
+  (furthest state, «+N»), no overdue noise while a copy awaits proof / is in review, accepting one closes all (`close_shared_copies`).
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).
@@ -290,5 +292,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   arriving, the gateway's HANA user lacks SELECT on them). Customers' phone / address: the owner to decide (personal
   data rule — server in Uzbekistan + masking before AI, not met today).
 - 1C OData «410 Gone» (20.10): re-enabled in Clobus by the owner (29.10).
+- **Verifix licence (09.11):** since 07.11 the API answers 401 «Нет лицензии для входа в систему» — attendance missing from the
+  brief/PULSE until the licence is renewed (owner / Verifix).
 - `GOOGLE_REVIEW_URLS` not set yet (each branch's Google Business "Get more reviews" link).
 - `PERMISSION_APPROVAL_TIERS` not set. Employees' written duties (SOPs) not given yet.

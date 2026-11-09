@@ -1902,6 +1902,85 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_shared_tasks_1109() -> None:
+    """09.11.2026 (the owner): one task sent to three people (T-0048 IT, T-0049 Шахзод, T-0050 Зайнабхон) — done by
+    one, yet the others' copies stayed red in the brief. A task sent to several people at once is one shared task:
+    the brief shows it once, in the state of the copy furthest along; overdue / due-soon notices skip it while a
+    colleague's proof is awaited or in review; accepting one copy closes the others and tells their people."""
+    print("shared tasks (09.11.2026)")
+    import asyncio
+    import uuid
+    from datetime import date
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import ops_manager, store, task_register
+
+    brief = load_agent("ceo-daily-brief")
+    day = date(2026, 11, 9)
+    tasks = [
+        {"id": "1", "director_telegram_user_id": 9, "source_message_id": 3814, "display_name": "Улуғбек Исоқов",
+         "task_summary": "Солиштириш", "status": "started", "awaiting": "evidence", "due_date": date(2026, 11, 2)},
+        {"id": "2", "director_telegram_user_id": 9, "source_message_id": 3814, "display_name": "Эшонов Шахзод",
+         "task_summary": "Солиштириш", "status": "sent", "awaiting": None, "due_date": date(2026, 11, 2)},
+        {"id": "3", "director_telegram_user_id": 9, "source_message_id": 3814, "display_name": "Нажотова Зайнабхон",
+         "task_summary": "Солиштириш", "status": "sent", "awaiting": None, "due_date": date(2026, 11, 2)},
+        {"id": "4", "director_telegram_user_id": 9, "source_message_id": 3696, "display_name": "Абдукарим Зунунов",
+         "task_summary": "Мижоз", "status": "sent", "awaiting": None, "due_date": date(2026, 10, 31)},
+    ]
+    rows, n = brief.task_rows(tasks, day)
+    check("one row per shared task; its copies not red while the proof is awaited",
+          [(r["who"], r["what"].split(" · ")[0], r["alert"]) for r in rows],
+          [("Абдукарим Зунунов", "9 кун ўтди", True), ("Улуғбек Исоқов +2", "далил кутилмоқда", False)])
+    check("open counts tasks, not copies", (n["open"], n["overdue"]), (2, 1))
+    for name in ("tasks_newly_overdue", "tasks_needing_reminder"):
+        check_true(f"{name} skips a shared task a colleague has done", "s.awaiting = 'evidence'" in inspect_source(getattr(store, name)))
+
+    others = [{"display_name": "Эшонов Шахзод"}, {"display_name": "Нажотова Зайнабхон"}]
+    check_true("the review card says accepting closes the others' copies",
+               "Эшонов Шахзод, Нажотова Зайнабхон нусхаси ҳам ёпилади" in task_register.shared_line(others)
+               and task_register.shared_line([]) == "")
+
+    told, refreshed, closed = [], [], []
+    leader = {"id": "1", "code": "T-2026-11-0048", "director_telegram_user_id": 9, "source_message_id": 3814,
+              "task_summary": "Солиштириш", "status": "done", "completed_at": None, "evidence_text": "файл"}
+
+    async def verify(task_id, clicker, accept, by):
+        return leader
+
+    async def with_employee(task_id):
+        return {"1": {"display_name": "Улуғбек Исоқов", "employee_telegram_user_id": 1},
+                "2": {"display_name": "Эшонов Шахзод", "employee_telegram_user_id": 2}}.get(task_id)
+
+    async def close_copies(task, by):
+        closed.append(task["code"])
+        return [{"id": "2", "code": "T-2026-11-0049"}]
+
+    async def nothing(*a, **k):
+        return None
+
+    async def reply(uid, run_id, text, *a, **k):
+        told.append((uid, text))
+
+    async def refresh(task, run_id, full=None):
+        refreshed.append(task["id"])
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("verify_task", "task_with_employee", "close_shared_copies")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_answer", "_reply", "_refresh_task_card")]
+    store.verify_task, store.task_with_employee, store.close_shared_copies = verify, with_employee, close_copies
+    ops_manager._answer, ops_manager._reply, ops_manager._refresh_task_card = nothing, reply, refresh
+    try:
+        out = asyncio.run(ops_manager._handle_task_verify(True, "1", {"id": "q", "from": {"id": 9}}, uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("accepting one copy closes the others", (out, closed, refreshed), ("task_closed", ["T-2026-11-0048"], ["1", "2"]))
+    check_true("the colleague is told who did it",
+               any(uid == 2 and "T-2026-11-0049 ёпилди" in text and "Улуғбек Исоқов" in text for uid, text in told))
+    check_true("close_shared_copies: same message, same assigner, open copies, the leader's completion time",
+               all(part in inspect_source(store.close_shared_copies)
+                   for part in ("source_message_id = %s", "id <> %s", "COALESCE(%s, now())", "'review'")))
+
+
 def test_londry_branch_qr_1105() -> None:
     """05.11.2026 (the owner): /qr gives a card per Londry branch — /f (Юнусобод, the printed one) and /f/vuzgorodok —
     plus Garmin's."""
@@ -11532,6 +11611,7 @@ def main() -> int:
         test_billz_speed_and_blocked_1104,
         test_file_as_task_proof_1105,
         test_londry_branch_qr_1105,
+        test_shared_tasks_1109,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

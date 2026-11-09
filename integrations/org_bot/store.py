@@ -680,6 +680,9 @@ async def tasks_needing_reminder(today: date) -> list[dict[str, Any]]:
         WHERE t.status IN ('sent', 'started', 'blocked') AND t.reminded_at IS NULL
           AND t.due_date BETWEEN %s AND %s::date + 1
           AND e.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
+                          AND s.source_message_id = t.source_message_id AND s.id <> t.id
+                          AND (s.status = 'review' OR s.awaiting = 'evidence'))  -- a shared task's colleague did it
         ORDER BY t.due_date, t.created_at
         """,
         (today, today),
@@ -701,6 +704,9 @@ async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
         JOIN employees e ON e.id = t.assigned_employee_id
         WHERE t.status IN ('sent', 'started', 'blocked') AND t.overdue_notified_at IS NULL
           AND t.due_date < %s AND e.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
+                          AND s.source_message_id = t.source_message_id AND s.id <> t.id
+                          AND (s.status = 'review' OR s.awaiting = 'evidence'))  -- a shared task's colleague did it
         ORDER BY t.director_telegram_user_id, t.due_date
         """,
         (today,),
@@ -732,7 +738,8 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
     """Every unfinished task, oldest deadline first, for the Director's questions."""
     return await fetch_all(
         """
-        SELECT t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker, t.awaiting,
+        SELECT t.id, t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker, t.awaiting,
+               t.director_telegram_user_id, t.source_message_id,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
@@ -976,6 +983,45 @@ async def verify_task(task_id: str, verifier_telegram_user_id: int, accept: bool
     if row is not None:
         await log_task_event(task_id, "closed" if accept else "returned", by)
     return row
+
+
+async def open_shared_copies(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """The other people's copies of a task sent to several people at once, still open (2026-11-09: one shared task —
+    T-0048 for IT, T-0049 for Шахзод, T-0050 for Зайнабхон from one message of the Boss)."""
+    if not task.get("source_message_id") or not task.get("director_telegram_user_id"):
+        return []
+    return await fetch_all(
+        """
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id,
+               COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
+        FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id
+        WHERE t.director_telegram_user_id = %s AND t.source_message_id = %s AND t.id <> %s
+          AND t.status IN ('sent', 'started', 'blocked', 'review')
+        ORDER BY t.code
+        """,
+        (task["director_telegram_user_id"], task["source_message_id"], task["id"]),
+    )
+
+
+async def close_shared_copies(task: dict[str, Any], by: str) -> list[dict[str, Any]]:
+    """The assigner accepted one copy of a shared task: every other copy is closed by the same proof (same time, so
+    the KPI counts it on time when that one was)."""
+    if not task.get("source_message_id") or not task.get("director_telegram_user_id"):
+        return []
+    rows = await fetch_all(
+        """
+        UPDATE tasks SET status = 'done', verified_at = now(), completed_at = COALESCE(%s, now()), completed_by = %s,
+                         awaiting = NULL, awaiting_since = NULL
+        WHERE director_telegram_user_id = %s AND source_message_id = %s AND id <> %s
+          AND status IN ('sent', 'started', 'blocked', 'review')
+        RETURNING *
+        """,
+        (task.get("completed_at"), f"{task.get('code') or ''} орқали", task["director_telegram_user_id"],
+         task["source_message_id"], task["id"]),
+    )
+    for row in rows:
+        await log_task_event(str(row["id"]), "closed", by, f"{task.get('code') or ''} орқали (умумий топшириқ)")
+    return rows
 
 
 async def reopen_submission(task_id: str) -> dict[str, Any] | None:

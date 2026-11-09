@@ -159,6 +159,14 @@ def review_caption(task: dict[str, Any], who: str, status: str = "") -> str:
     return fit(head, str(task.get("evidence_text") or ""))
 
 
+def shared_line(others: list[dict[str, Any]]) -> str:
+    """On the assigner's review card when the task went to several people (2026-11-09): accepting closes theirs too."""
+    if not others:
+        return ""
+    names = ", ".join(escape(str(o.get("display_name") or "")) for o in others)
+    return f"👥 Умумий топшириқ — қабул қилсангиз {names} нусхаси ҳам ёпилади."
+
+
 def blocked_text(task: dict[str, Any], who: str) -> str:
     return (f"⛔ <b>{escape(code_of(task))} — тўсиқ бор</b>\n{sanitize_model_html(task['task_summary'])}\n"
             f"— {escape(who)}\n\n<b>Сабаби:</b> {escape(str(task.get('blocker') or ''))}")

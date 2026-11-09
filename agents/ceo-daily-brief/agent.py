@@ -660,25 +660,40 @@ def goals_block(data: BriefData) -> dict[str, Any]:
     return _people_block("Ойлик мақсадлар", "goal", month, summary, "alert" if behind else "ok", rows)
 
 
+def shared_tasks(tasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Copies of one task sent to several people at once, together (2026-11-09: T-0048/0049/0050 were one job — the
+    copies of those who didn't send the proof showed red although it was done)."""
+    groups: dict[Any, list[dict[str, Any]]] = {}
+    for i, t in enumerate(tasks):
+        key = ((t.get("director_telegram_user_id"), t["source_message_id"]) if t.get("source_message_id")
+               else ("one", t.get("id") or i))
+        groups.setdefault(key, []).append(t)
+    return list(groups.values())
+
+
 def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Open tasks that need the Director's eye, most urgent first, and the counts."""
+    """Open tasks that need the Director's eye, most urgent first, and the counts — a shared task once, in the state
+    of the copy furthest along (in review > proof awaited > blocked > overdue > today)."""
     groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "proof": [], "review": [], "today": []}
-    for t in tasks:
+    shared = shared_tasks(tasks)
+    for copies in shared:
+        t = copies[0]
         due = t.get("due_date")
-        who, text = t.get("display_name") or "", _short(t.get("task_summary") or "")
-        if t.get("status") == "blocked":
-            groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
-        elif t.get("status") == "review":
+        who = (t.get("display_name") or "") + (f" +{len(copies) - 1}" if len(copies) > 1 else "")
+        text = _short(t.get("task_summary") or "")
+        if any(c.get("status") == "review" for c in copies):
             groups["review"].append({"who": who, "what": f"текширувда · {text}", "alert": False})
-        elif t.get("awaiting") == "evidence":
+        elif any(c.get("awaiting") == "evidence" for c in copies):
             # ✅ Бажардим pressed, the proof not in yet (2026-11-04): the person's step, not red for the Director.
             groups["proof"].append({"who": who, "what": f"далил кутилмоқда · {text}", "alert": False})
+        elif any(c.get("status") == "blocked" for c in copies):
+            groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
         elif due is not None and due < day:
             groups["overdue"].append({"who": who, "what": f"{(day - due).days} кун ўтди · {text}", "alert": True})
         elif due == day:
             groups["today"].append({"who": who, "what": f"бугун · {text}", "alert": False})
     rows = groups["overdue"] + groups["blocked"] + groups["proof"] + groups["review"] + groups["today"]
-    return rows, {k: len(v) for k, v in groups.items()}
+    return rows, {**{k: len(v) for k, v in groups.items()}, "open": len(shared)}
 
 
 def tasks_block(data: BriefData) -> dict[str, Any]:
@@ -686,7 +701,7 @@ def tasks_block(data: BriefData) -> dict[str, Any]:
     if data.tasks is None:
         return _people_block("Топшириқлар", "task", None, "", "warn", [], "маълумот олиб бўлмади")
     rows, n = task_rows(data.tasks, today_local())
-    parts = [f"{len(data.tasks)} та очиқ"]
+    parts = [f"{n['open']} та очиқ"]
     for key, word in (("overdue", "ўтган"), ("blocked", "тўсиқ")):
         if n[key]:
             parts.append(f"{n[key]} {word}")

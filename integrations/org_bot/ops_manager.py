@@ -720,6 +720,10 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
     if submitted is None:
         return "task_input_stale"
     review = task_register.review_text(submitted, who)
+    others = await store.open_shared_copies(submitted)
+    shared = task_register.shared_line(others)
+    if shared:
+        review += f"\n\n{shared}"
     keyboard = task_register.review_keyboard(str(submitted["id"]))
     assigner = str(submitted["director_telegram_user_id"])
     review_id = None
@@ -732,7 +736,7 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
                 result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
                     "copyMessage",
                     {"chat_id": assigner, "from_chat_id": str(telegram_user_id), "message_id": message.get("message_id"),
-                     "caption": task_register.review_caption(submitted, who), "parse_mode": "HTML",
+                     "caption": task_register.review_caption(submitted, who, shared), "parse_mode": "HTML",
                      "reply_markup": keyboard},
                     mode="notify", target_ref=assigner,
                 )
@@ -795,6 +799,15 @@ async def _handle_task_verify(accept: bool, task_id: str, callback: dict[str, An
         note = (f"✅ {code} қабул қилинди, раҳмат." if accept
                 else f"↩️ {code} қайтарилди: қайта бажариб, ✅ Бажардим орқали янги далил юборинг.")
         await _reply(full["employee_telegram_user_id"], run_id, note)
+    if accept:
+        # One task sent to several people is one shared task (2026-11-09): the others' copies close with it.
+        for copy in await store.close_shared_copies(task, clicker.get("username") or str(clicker_id)):
+            await _refresh_task_card(copy, run_id)
+            mate = await store.task_with_employee(str(copy["id"]))
+            if mate:
+                await _reply(mate["employee_telegram_user_id"], run_id,
+                             f"✅ {escape(task_register.code_of(copy))} ёпилди: умумий топшириқни {escape(who)} бажарди "
+                             f"({code}), раҳмат.")
     return "task_closed" if accept else "task_returned"
 
 
