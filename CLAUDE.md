@@ -257,8 +257,8 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **Analyst SQL, schema first (2026-11-09, spec 19):** typed `analyst.*` views + `sql_catalog.py` in the prompt; the
   AI writes one SELECT (`query_db`) → `sql_guard` (sqlglot) → `db.fetch_analyst` as `mgmg_analyst_director` /
   `mgmg_analyst_sap` (NOLOGIN, SELECT on those views only), READ ONLY, 4 s, ≤ 200 rows, prepared; logs counts only.
-  New SAP data / bot tables = add a view + its CATALOG entry (selfcheck compares them). Plan for the six owner
-  documents of 04–07.11: `docs/plans/2026-11-09-new-specs-plan.md`.
+  New SAP data / bot tables = add a view + its CATALOG entry (selfcheck compares them). Plan for the owner
+  documents of 04–07.11 (HARI excluded — Шахзод's own project, own Render Blueprint): `docs/plans/2026-11-09-new-specs-plan.md`.
 - **The Director's questions go to the analyst** (2026-10-07, `docs/agent-specs/19-director-analyst.md`):
   the AI looks things up itself with read-only tools (SAP pushed data, 1C balances/turnovers by
   counterparty, BILLZ, Verifix, the bot's records) and **never asks "which system?"**; debt = SAP

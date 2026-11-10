@@ -46,7 +46,7 @@ is started (A1 and A3 are measured automatically every Friday).
 
 ## Planned (2026-11-09)
 
-- Six new owner documents (agents catalogue, HARI HR + 150 scenarios, AI phone operator, AIPRO procurement, OMAI warehouse): order of work and the owner's decisions in `docs/plans/2026-11-09-new-specs-plan.md`.
+- The owner documents of 04–07.11 (agents catalogue, AI phone operator, AIPRO procurement, OMAI warehouse; HARI = Шахзод's separate project, own Render Blueprint): order of work and the owner's decisions in `docs/plans/2026-11-09-new-specs-plan.md`.
 
 ## Added 2026-11-02
 
