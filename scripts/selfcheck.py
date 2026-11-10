@@ -28,6 +28,8 @@ os.environ["DATABASE_URL"] = "postgresql://selfcheck@127.0.0.1:9/no-database-in-
 for _key in ("BILLZ_SECRET_TOKEN", "ONEC_ODATA_URL", "ONEC_LOGIN", "ONEC_PASSWORD", "VERIFIX_LOGIN",
              "VERIFIX_PASSWORD", "OPENROUTER_API_KEY"):
     os.environ[_key] = ""
+# The Director's early analyst start (2026-11-09) only where a test turns it on with fakes.
+os.environ["OPS_ROUTER_SPECULATIVE"] = "false"
 
 # ...and it fails at once rather than after the pool's 10 s wait per call (the run had grown past 10 minutes).
 from integrations.common import db as _db  # noqa: E402
@@ -1900,6 +1902,322 @@ def test_security_review_1103() -> None:
                plan_facts.COLLECT_EVERY == 600 and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py"))
     check_true("a news feed over 5 MB is refused (read in chunks)", crawler.MAX_BYTES == 5_000_000
                and "aiter_bytes" in inspect_source(crawler._get))
+
+
+def test_analyst_sql_1109() -> None:
+    """09.11.2026 (the owner): «send the AI the database's structure, not the data; let it fetch only the rows it
+    needs». The analyst gets the analyst.* views' schema and writes one read-only SELECT (query_db), checked by
+    sql_guard and run as a role that can read nothing else; the slow view is fixed; Director questions start the
+    analyst while the router still decides."""
+    print("schema-first SQL for the analyst (09.11.2026)")
+    import asyncio
+    import contextlib
+    import re as _re
+    import uuid
+    from pathlib import Path
+
+    from integrations.common import db, translit
+    from integrations.common.config import settings
+    from integrations.org_bot import analyst, ops_manager, sql_catalog, sql_guard
+
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    allowed = sql_catalog.allowed_views(None)
+
+    def rejected(sql: str, views=allowed) -> bool:
+        try:
+            sql_guard.validate(sql, views)
+        except sql_guard.SqlRejected:
+            return True
+        return False
+
+    bad = {
+        "a write": "DELETE FROM tasks", "an update": "UPDATE tasks SET status = 'done'",
+        "DDL": "DROP VIEW analyst.sap_stock", "two statements": "SELECT 1 FROM analyst.sap_stock; DELETE FROM tasks",
+        "a write hidden in a CTE": "WITH d AS (DELETE FROM tasks RETURNING *) SELECT * FROM d",
+        "SELECT INTO": "SELECT * INTO t FROM analyst.sap_stock", "FOR UPDATE": "SELECT * FROM analyst.sap_stock FOR UPDATE",
+        "COPY": "COPY tasks TO STDOUT", "EXPLAIN": "EXPLAIN ANALYZE SELECT 1", "SET": "SET ROLE mgmg",
+        "a comment": "SELECT 1 FROM analyst.sap_stock -- ; DROP", "a block comment": "SELECT /* x */ 1 FROM analyst.sap_stock",
+        "dollar quoting": "SELECT $$a$$ FROM analyst.sap_stock", "pg_sleep": "SELECT pg_sleep(5)",
+        "qualified pg_sleep": "SELECT pg_catalog.pg_sleep(5)", "dblink": "SELECT dblink('a', 'b')",
+        "lo_import": "SELECT lo_import('/etc/passwd')", "current_setting": "SELECT current_setting('x')",
+        "set_config": "SELECT set_config('a', 'b', true)", "pg_read_file": "SELECT pg_read_file('x')",
+        "a function not on the list": "SELECT md5(card_name) FROM analyst.sap_customers",
+        "a public table": "SELECT * FROM employees", "a public schema table": "SELECT * FROM public.tasks",
+        "the raw snapshots": "SELECT raw FROM sap_gateway_snapshots", "the catalog": "SELECT * FROM pg_catalog.pg_roles",
+        "information_schema": "SELECT * FROM information_schema.tables", "a system column": "SELECT ctid FROM analyst.sap_stock",
+        "a table function": "SELECT * FROM generate_series(1, 3)", "three-part name": "SELECT * FROM a.b.c",
+        "a CTE named like a view": "WITH sap_stock AS (SELECT 1) SELECT * FROM sap_stock",
+        "a recursive CTE (memory)": "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT * FROM r",
+        "another schema's function": "SELECT evil.name_key('x') FROM analyst.sap_stock",
+        "too long": "SELECT 1 FROM analyst.sap_stock WHERE item_code = '" + "x" * 4100 + "'",
+        "empty": "  ;  ",
+    }
+    for label, sql in bad.items():
+        check_true(f"sql_guard refuses {label}", rejected(sql))
+    good = [
+        "SELECT sum(signed_total_som) FROM analyst.sap_sales_docs WHERE doc_date >= '2026-11-01';",
+        "SELECT card_name, sum(open_som) FROM sap_ap_open GROUP BY 1 ORDER BY 2 DESC LIMIT 10",
+        "WITH x AS (SELECT item_code, sum(on_hand) q FROM analyst.sap_stock WHERE NOT is_dummy GROUP BY 1) "
+        "SELECT * FROM x ORDER BY q DESC LIMIT 5",
+        "SELECT card_name FROM analyst.sap_customers WHERE name_key LIKE '%' || analyst.name_key('Хилтон') || '%'",
+        "SELECT card_name, analyst.similarity(name_key, analyst.name_key('Hilton')) s FROM analyst.sap_customers "
+        "ORDER BY s DESC LIMIT 5",
+        "SELECT slp_name, count(*) FILTER (WHERE doc_kind = 'invoice'), rank() OVER (ORDER BY count(*) DESC) "
+        "FROM analyst.sap_sales_docs GROUP BY slp_name",
+        "SELECT date_trunc('month', doc_date), to_char(doc_date, 'DD.MM'), coalesce(sum(total_som), 0) "
+        "FROM analyst.sap_sales_docs GROUP BY 1, 2",
+        "SELECT s.item_code, p.group_name FROM analyst.sap_stock s JOIN analyst.sap_products p USING (item_code)",
+    ]
+    for sql in good:
+        check_true(f"sql_guard lets through: {sql[:60]}…", not rejected(sql))
+    check("the checked query keeps its text, drops the trailing ';' and names its views",
+          (lambda c: (c.sql.endswith("'2026-11-01'"), c.views))(sql_guard.validate(good[0], allowed)),
+          (True, ["sap_sales_docs"]))
+
+    sap = sql_catalog.allowed_views({"sap", "1c"})
+    check_true("accounting with SAP: the SAP views, never tasks or reports",
+               "sap_sales_docs" in sap and "ar_open" in sap and not {"bot_tasks", "bot_daily_reports"} & sap)
+    check_true("accounting asking for tasks is refused", rejected("SELECT * FROM analyst.bot_tasks", sap))
+    check("no SAP access → no views, no role", (sql_catalog.allowed_views({"1c"}), sql_catalog.role_for({"1c"})),
+          (frozenset(), None))
+    check("roles: the Director's and SAP's", (sql_catalog.role_for(None), sql_catalog.role_for({"sap"})),
+          ("mgmg_analyst_director", "mgmg_analyst_sap"))
+    check_true("the Garmin manager gets no query_db (no sap scope)", not sql_catalog.allowed_views({"sap_garmin", "billz"}))
+    check_true("the catalog block is the same text every time (provider caching), with no figures or dates",
+               sql_catalog.render(None) == sql_catalog.render(None)
+               and not _re.search(r"\b20\d\d-\d\d-\d\d\b(?!')", sql_catalog.render(None).replace("'2026-11-08'", "")))
+    check_true("…and SAP access doesn't see the Director's views",
+               "bot_tasks" in sql_catalog.render(None) and "bot_tasks" not in sql_catalog.render({"sap"}))
+
+    def view_columns(view: str) -> list[str]:
+        body = schema.split(f"CREATE OR REPLACE VIEW analyst.{view} AS", 1)[1].split("\nFROM ", 1)[0]
+        return _re.findall(r"\bAS ([a-z_]+)\s*(?:,|$)", body, _re.M)
+
+    for view in sql_catalog.CATALOG:
+        check(f"catalog = schema columns: analyst.{view}", sql_catalog.columns(view), view_columns(view))
+    grants = schema.split("CREATE ROLE mgmg_analyst_sap NOLOGIN", 1)[1]
+    sap_grant = grants.split("GRANT SELECT ON analyst.sap_sales_docs", 1)[1].split("TO mgmg_analyst_sap", 1)[0]
+    check_true("every SAP view is granted to the SAP role, the Director's views only to the Director",
+               all(f"analyst.{v}" in "analyst.sap_sales_docs" + sap_grant
+                   for v, (who, _, _) in sql_catalog.CATALOG.items() if who == "sap")
+               and "bot_" not in sap_grant
+               and "GRANT SELECT ON analyst.bot_tasks, analyst.bot_daily_reports TO mgmg_analyst_director" in grants)
+    check_true("the roles block can't stop the start-up (exception → notice)",
+               "RAISE NOTICE 'analyst roles not set up" in schema and "WITH INHERIT FALSE, SET TRUE" in schema)
+    latest = schema.split("CREATE OR REPLACE VIEW v_sap_gateway_latest AS", 1)[1].split(";", 1)[0]
+    check_true("v_sap_gateway_latest joins each kind's max day (no per-row subquery)",
+               "JOIN (SELECT tool, max(snapshot_date)" in latest and "s2.tool = s.tool" not in latest)
+
+    fn = schema.split("CREATE OR REPLACE FUNCTION analyst.name_key", 1)[1].split("$$;", 1)[0]
+    sql_steps = [fn.index("'" + a.replace("'", "''") + "', '" + b + "')") for a, b in translit.SKELETON_PAIRS]
+    check_true("name_key's replace steps = translit.skeleton's, in the same order", sql_steps == sorted(sql_steps)
+               and len(_re.findall(r"(?<!regexp_)replace\(", fn)) == len(translit.SKELETON_PAIRS) and "'(^| )ye', '\\1e'" in fn)
+    check_true("name_key's translate = translit.skeleton's",
+               f"'{translit.SKELETON_FROM}', '{translit.SKELETON_TO}'" in fn)
+    check("one skeleton for both scripts", [translit.skeleton(x) for x in ("Хилтон Ташкент", "Xilton  Tashkent!",
+                                                                          "Ғайрат Ўролов", "G'ayrat O‘rolov", "Shakhzod")],
+          ["hilton tashkent", "hilton tashkent", "gayrat urolov", "gayrat urolov", "shahzod"])
+    check("what a Russian keyboard swaps is one name (қ/к, ў/у, дж/ж, е/ye) — as plan_facts.fold",
+          [translit.skeleton(x) for x in ("Ёрқинов", "Ёркинов", "Мирпўлатов", "Мирпулатов", "Ходжиев", "Хожиев",
+                                          "Yevroosiyo", "Евроосиё", "Qurilish", "Курилиш")],
+          ["yorkinov", "yorkinov", "mirpulatov", "mirpulatov", "hojiev", "hojiev", "evroosiyo", "evroosiyo",
+           "kurilish", "kurilish"])
+
+    names = [t["function"]["name"] for t in analyst.tools_for(None, sql=True)]
+    check_true("query_db offered only when the database is ready",
+               "query_db" in names and "query_db" not in [t["function"]["name"] for t in analyst.tools_for(None)])
+    check_true("…to SAP access, not to 1C-only access",
+               "query_db" in [t["function"]["name"] for t in analyst.tools_for({"sap"}, sql=True)]
+               and "query_db" not in [t["function"]["name"] for t in analyst.tools_for({"1c"}, sql=True)])
+    check("tool output capped at 12k characters (was 30k)", analyst.TOOL_CHARS, 12000)
+
+    import psycopg
+    calls: list = []
+
+    class UndefinedColumn(psycopg.errors.UndefinedColumn):
+        pass
+
+    async def fake_fetch(sql, role, timeout, max_rows):
+        calls.append((sql, role))
+        if "bogus" in sql:
+            raise UndefinedColumn('column "bogus" does not exist')
+        return ["doc_kind", "sum"], [("invoice", 200), ("credit_note", -100)], False
+
+    saved = [(analyst, "fetch_analyst", analyst.fetch_analyst)]
+    analyst.fetch_analyst = fake_fetch
+
+    async def run(scope, sqls):
+        state: dict = {}
+        analyst._sql_scope.set((scope,))
+        analyst._sql_state.set(state)
+        outs = [await analyst.query_db({"sql": q}) for q in sqls]
+        return outs, state
+
+    try:
+        outs, state = asyncio.run(run(None, ["SELECT doc_kind, sum(total_som) FROM analyst.sap_sales_docs GROUP BY 1"]))
+        check("a result comes back as a small table", outs[0], "doc_kind | sum\ninvoice | 200\ncredit_note | -100")
+        check("…run as the Director's role", calls[-1][1], "mgmg_analyst_director")
+        check_true("the state keeps counts and view names only — never the SQL or the rows",
+                   set(state) <= {"calls", "errors", "rejected", "rows", "ms", "views", "sqlstate"}
+                   and state["rows"] == 2 and state["views"] == ["sap_sales_docs"])
+        outs, state = asyncio.run(run({"sap"}, ["SELECT * FROM analyst.bot_tasks",
+                                                "SELECT bogus FROM analyst.sap_stock",
+                                                "SELECT item_code FROM analyst.sap_stock"]))
+        check_true("a refused query comes back with the reason, to fix once", outs[0].startswith("REJECTED:")
+                   and "bot_tasks" in outs[0])
+        check_true("an SQL error comes back with the server's message and the view's columns",
+                   outs[1].startswith("SQL ERROR 42703") and "analyst.sap_stock: item_code, item_name" in outs[1])
+        check_true("after two failures: use the other tools", "failed twice" in outs[2] and state["errors"] == 2)
+        outs, _ = asyncio.run(run({"1c"}, ["SELECT 1 FROM analyst.sap_stock"]))
+        check_true("no SAP access → query_db not in their access", "not in this person's access" in outs[0])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("more rows than shown are flagged, never presented as the whole",
+          analyst.sql_table(["a"], [("x" * 50,)] * 3, False, max_chars=110).splitlines()[-1][:16], "[2 of 3 rows sho")
+
+    executed: list = []
+
+    class Cur:
+        description = [type("D", (), {"name": "n"})()]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def execute(self, sql, params=None, prepare=None):
+            executed.append((sql, params, prepare))
+
+        async def fetchmany(self, n):
+            return [(1,)] * 3
+
+    class Conn:
+        def transaction(self, force_rollback=False):
+            executed.append(("transaction", force_rollback, None))
+            return contextlib.nullcontext()
+
+        def cursor(self, row_factory=None):
+            return Cur()
+
+    class Tx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *a):
+            return None
+
+    class Pool:
+        @contextlib.asynccontextmanager
+        async def connection(self):
+            yield Conn()
+
+    async def pool():
+        return Pool()
+
+    Conn.transaction = lambda self, force_rollback=False: (executed.append(("transaction", force_rollback, None)), Tx())[1]
+    saved_pool = db.get_pool
+    db.get_pool = pool
+    try:
+        cols, rows, more = asyncio.run(db.fetch_analyst("SELECT n FROM x WHERE a LIKE '%b%'", "mgmg_analyst_sap",
+                                                        max_rows=2))
+        refused = False
+        try:
+            asyncio.run(db.fetch_analyst("SELECT 1", "mgmg"))
+        except ValueError:
+            refused = True
+    finally:
+        db.get_pool = saved_pool
+    sqls = [e[0] for e in executed]
+    check("fetch_analyst: rollback-only transaction, READ ONLY, the role, analyst path, timeouts, then the query",
+          sqls[:5], ["transaction", "SET TRANSACTION READ ONLY", "SET LOCAL ROLE mgmg_analyst_sap",
+                     "SET LOCAL search_path = analyst, pg_catalog", "SET LOCAL statement_timeout = '4s'"])
+    check_true("…always rolled back, as a prepared statement (the server refuses a second one), % kept literal",
+               executed[0][1] is True
+               and executed[-1] == ("SELECT * FROM (SELECT n FROM x WHERE a LIKE '%%b%%') AS q LIMIT 3", (), True))
+    check("…at most max_rows (limited by the server too), the rest flagged", (cols, len(rows), more), (["n"], 2, True))
+    check_true("views rebuilt on every start, so a changed column can't stop the start-up",
+               "DROP VIEW IF EXISTS analyst.%I CASCADE" in schema
+               and schema.index("DROP VIEW IF EXISTS analyst.%I") < schema.index("CREATE OR REPLACE VIEW analyst.sap_sales_docs"))
+    render = sql_catalog.render(None)
+    check_true("the catalog states the real windows and the traps the 09.11 review found",
+               "last 14 days" in render and "~45 days" not in render.split("payments ~45 days")[0]
+               and "BEFORE a whole-document discount" in render and "NOT is_faulty" in render
+               and "NEVER add the two together" in render and "auto_built" in render)
+    check_true("…only the analyst roles", refused)
+
+    for text, expected in (("Hilton qarzi qancha?", True), ("кечаги сотув", True), ("сколько долг", True),
+                           ("Шахзодга ҳисоботни тайёрлашни топширинг", False), ("/kpi", False)):
+        check(f"looks like a question: {text}", ops_manager.looks_like_question(text), expected)
+
+    started, cancelled, answered = [], [], []
+
+    async def slow_answer(question, history, run_id):
+        started.append(question)
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(question)
+            raise
+        return analyst.Answer(text="x")
+
+    class FakeAI:
+        result: dict = {}
+
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def complete_json(self, system, user):
+            await asyncio.sleep(0.05)
+            return dict(FakeAI.result)
+
+    async def nothing(*a, **k):
+        return None
+
+    async def empty(*a, **k):
+        return []
+
+    async def roster():
+        return [], {}
+
+    async def answer_q(director, slug, question, run_id, history="", *, reply_to=None, precomputed=None):
+        answered.append(precomputed is not None and (await precomputed).text)
+
+    from integrations.org_bot import store
+    patches = [(ops_manager, "_speculative_answer", slow_answer), (ops_manager, "OpenRouterClient", FakeAI),
+               (ops_manager, "_roster", roster), (ops_manager, "_answer_question", answer_q),
+               (ops_manager, "_propose_task", nothing), (store, "log_conversation_turn", nothing),
+               (store, "recent_conversation", empty), (settings, "ops_router_speculative", True),
+               (settings, "ops_analyst_enabled", True)]
+    saved = [(o, n, getattr(o, n)) for o, n, _ in patches]
+    for o, n, v in patches:
+        setattr(o, n, v)
+    try:
+        FakeAI.result = {"target_type": "employee", "target_role": "it", "task_summary": "ҳисобот", "target_employee": None}
+        asyncio.run(ops_manager._dispatch_director_task(1, "Алишер кеча қанча сотганини ёзиб юборсин", 7, uuid.uuid4()))
+        check("a task that looked like a question: the early analyst started, then was cancelled",
+              (len(started), len(cancelled)), (1, 1))
+        FakeAI.result = {"target_type": "agent", "target_agent": "xodimlar_kpi", "task_summary": "", "target_employee": None}
+        slow_answer_fast = slow_answer
+
+        async def quick(question, history, run_id):
+            started.append(question)
+            return analyst.Answer(text="early")
+
+        ops_manager._speculative_answer = quick
+        asyncio.run(ops_manager._dispatch_director_task(1, "Hilton qarzi qancha?", 8, uuid.uuid4()))
+        check("a question: the answer started early is the one sent", answered, ["early"])
+        del slow_answer_fast
+    finally:
+        for o, n, v in saved:
+            setattr(o, n, v)
 
 
 def test_shared_tasks_1109() -> None:
@@ -8980,7 +9298,8 @@ def test_data_access() -> None:
                and "supplier_debt_compare" not in names({"sap"}))
     check_true("never attendance or the bot's own records for an employee — whatever is given",
                not {"attendance", "company_data"} & set(names({"sap", "1c", "billz"})))
-    check("the Director keeps every tool", len(analyst.tools_for(None)), len(analyst.TOOLS))
+    check("the Director keeps every tool (query_db once the database is ready, 09.11)",
+          (len(analyst.tools_for(None)), len(analyst.tools_for(None, sql=True))), (len(analyst.TOOLS) - 1, len(analyst.TOOLS)))
     check_true("every tool says which systems it reads", set(analyst.TOOL_SYSTEMS) == analyst.TOOL_NAMES)
     refused = asyncio.run(analyst.run_tool("attendance", {}, allowed={"billz_sales"}))
     check_true("a tool outside the grant is refused in code, whatever the model asks", "not in this person's access" in refused)
@@ -11620,6 +11939,7 @@ def main() -> int:
         test_file_as_task_proof_1105,
         test_londry_branch_qr_1105,
         test_shared_tasks_1109,
+        test_analyst_sql_1109,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

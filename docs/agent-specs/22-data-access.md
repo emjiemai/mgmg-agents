@@ -90,3 +90,9 @@ attendance or the bot's records), a sneaked tool call refused in code, the
 employee's prompt and Russian, routing (analyst vs work AI), the admin
 flow, the database guard, the technical report's count; `test_employee_change_fields`: every
 logged field is allowed by the schema, a failed press answers 200.
+
+**2026-11-09 — query_db (schema-first SQL):** a person given SAP gets query_db over the SAP views only
+(`mgmg_analyst_sap` — never `bot_tasks` / `bot_daily_reports`, attendance or the bot's records); 1C and Billz stay
+live tools; the Garmin manager has no query_db (garmin_sap keeps his Garmin-warehouse filter). The Director's role
+reads every analyst view.
+

@@ -602,12 +602,13 @@ CREATE TABLE IF NOT EXISTS sap_gateway_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_sap_gateway_snapshots_tool ON sap_gateway_snapshots (tool, snapshot_date DESC);
 
+-- Each kind's latest day by a join to its max (2026-11-09): the correlated subquery ran once per row — a GROUP BY over
+-- the view took 1.3 s (25 calls, up to 4.2 s), one kind 125 ms; the join takes 6 ms / 2 ms. Same columns.
 CREATE OR REPLACE VIEW v_sap_gateway_latest AS
 SELECT s.*
 FROM sap_gateway_snapshots s
-WHERE s.snapshot_date = (
-    SELECT max(snapshot_date) FROM sap_gateway_snapshots s2 WHERE s2.tool = s.tool
-);
+JOIN (SELECT tool, max(snapshot_date) AS latest FROM sap_gateway_snapshots GROUP BY tool) m
+  ON m.tool = s.tool AND s.snapshot_date = m.latest;
 
 -- Complete pushes (2026-10-03): gateway tools without the 100-row cap
 -- (docs/sap-gateway-tools.md) send more kinds of data into the same table
@@ -1524,3 +1525,453 @@ CREATE TABLE IF NOT EXISTS duty_suggestions (
 -- the sheet's «Архив» tab and out of the hand-out queue (never deleted).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 ALTER TABLE duty_tasks ADD COLUMN IF NOT EXISTS asked_message_id BIGINT;  -- the «нечта?» / «нима сабаб?» question (03.11)
+
+-- ============================================================================
+-- Schema-first SQL for the analyst (2026-11-09, the owner: "send the AI the structure, not the data, and fetch only
+-- the rows it asks for"). Typed, question-shaped views over the latest SAP push and the bot's own records, read by
+-- the analyst's query_db tool (integrations/org_bot/sql_catalog.py, sql_guard.py, db.fetch_analyst) as a NOLOGIN
+-- role that may SELECT these views and nothing else, in a READ ONLY transaction with a 4 s timeout. Amounts keep their
+-- unit in the column name: _usd = SAP's local currency (USD), _som = its system currency (UZS), _doc = the document's
+-- own currency (doc_currency). SAP dates arrive as 'YYYY-MM-DD HH:MM:SS.nnnnnnnnn' text — the date part is taken,
+-- never a timestamp cast (it would shift the day). Plain views: ≤ 2k rows per kind, milliseconds.
+-- ============================================================================
+CREATE SCHEMA IF NOT EXISTS analyst;
+-- The views are rebuilt on every start (nothing depends on them; the grants below are applied again), so a changed
+-- column never stops the start-up — CREATE OR REPLACE VIEW refuses renamed or reordered columns.
+DO $$
+DECLARE v record;
+BEGIN
+    FOR v IN SELECT table_name FROM information_schema.views WHERE table_schema = 'analyst' LOOP
+        EXECUTE format('DROP VIEW IF EXISTS analyst.%I CASCADE', v.table_name);
+    END LOOP;
+END $$;
+
+-- A number / a date from a SAP text field, or NULL when it isn't one (a stray value must not fail the whole query).
+CREATE OR REPLACE FUNCTION analyst.num(v text) RETURNS numeric LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN v ~ '^\s*-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\s*$' THEN v::numeric END
+$$;
+CREATE OR REPLACE FUNCTION analyst.day(v text) RETURNS date LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN v ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN left(v, 10)::date END
+$$;
+-- A name in one Latin skeleton, so «Хилтон», «Hilton» and «Xilton» match (2026-11-09): Cyrillic → Latin, Uzbek-Latin
+-- x/kh → h, and the letters a Russian keyboard swaps folded together (қ = к = q, ў = у = o', дж = ж, word-initial
+-- ye = е: «Ёрқинов» = «Ёркинов», «Мирпўлатов» = «Мирпулатов», «Ходжиев» = «Хожиев» — as plan_facts.fold).
+-- Lossy on purpose; mirrored by integrations/common/translit.skeleton (selfcheck keeps the two identical).
+CREATE OR REPLACE FUNCTION analyst.name_key(v text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT btrim(regexp_replace(regexp_replace(regexp_replace(
+        translate(
+            replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(
+                lower(coalesce(v, '')),
+                'kh', 'h'), 'dj', 'j'), 'o''', 'u'), 'oʻ', 'u'), 'o‘', 'u'), 'o’', 'u'), 'дж', 'j'),
+                'ш', 'sh'), 'щ', 'sh'), 'ч', 'ch'), 'ё', 'yo'), 'ю', 'yu'), 'я', 'ya'), 'ц', 'ts'),
+            'абвгдежзийклмнопрстуфхҳыэўғқxqъь', 'abvgdejziyklmnoprstufhhieugkhk'),
+        '[^a-z0-9 ]', '', 'g'), '(^| )ye', '\1e', 'g'), '\s+', ' ', 'g'))
+$$;
+
+CREATE OR REPLACE VIEW analyst.sap_sales_docs AS
+SELECT coalesce(s.raw->>'ObjType', '13') AS obj_type,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN 'credit_note' ELSE 'invoice' END AS doc_kind,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN -1 ELSE 1 END AS sign,
+       analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       analyst.day(s.raw->>'DocDueDate') AS due_date,
+       analyst.day(s.raw->>'CreateDate') AS created_on,
+       analyst.num(s.raw->>'CreateTS')::int AS create_ts,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       analyst.num(s.raw->>'SlpCode')::int AS slp_code,
+       s.raw->>'SlpName' AS slp_name,
+       s.raw->>'UserName' AS user_name,
+       s.raw->>'DocCur' AS doc_currency,
+       analyst.num(s.raw->>'DocTotal') AS total_usd,
+       analyst.num(s.raw->>'DocTotalSy') AS total_som,
+       analyst.num(s.raw->>'DocTotalFC') AS total_doc,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN -1 ELSE 1 END * analyst.num(s.raw->>'DocTotalSy') AS signed_total_som,
+       CASE WHEN s.raw->>'DocStatus' = 'O' THEN 'open' ELSE 'closed' END AS doc_status,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'sales';
+
+CREATE OR REPLACE VIEW analyst.sap_sales_lines AS
+SELECT coalesce(s.raw->>'ObjType', '13') AS obj_type,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN 'credit_note' ELSE 'invoice' END AS doc_kind,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN -1 ELSE 1 END AS sign,
+       analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.num(s.raw->>'LineNum')::int AS line_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       analyst.day(s.raw->>'CreateDate') AS created_on,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       analyst.num(s.raw->>'SlpCode')::int AS slp_code,
+       s.raw->>'SlpName' AS slp_name,
+       s.raw->>'UserName' AS user_name,
+       s.raw->>'ItemCode' AS item_code,
+       s.raw->>'Dscription' AS item_name,
+       analyst.name_key(s.raw->>'Dscription') AS item_key,
+       s.raw->>'CodeBars' AS barcode,
+       s.raw->>'WhsCode' AS whs_code,
+       analyst.num(s.raw->>'Quantity') AS quantity,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN -1 ELSE 1 END * analyst.num(s.raw->>'Quantity') AS signed_quantity,
+       analyst.num(s.raw->>'Price') AS price,
+       s.raw->>'LineCurrency' AS line_currency,
+       analyst.num(s.raw->>'LineTotal') AS line_usd,
+       analyst.num(s.raw->>'GTotalSC') AS line_som_gross,
+       analyst.num(s.raw->>'TotalSumSy') AS line_som_net,
+       CASE WHEN s.raw->>'ObjType' = '14' THEN -1 ELSE 1 END * analyst.num(s.raw->>'GTotalSC') AS signed_line_som_gross,
+       analyst.num(s.raw->>'DocTotalSy') AS doc_total_som,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'sales_lines';
+
+CREATE OR REPLACE VIEW analyst.sap_payments_in AS
+SELECT analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       s.raw->>'DocCurr' AS doc_currency,
+       analyst.num(s.raw->>'DocTotal') AS total_usd,
+       analyst.num(s.raw->>'DocTotalSy') AS total_som,
+       analyst.num(s.raw->>'DocTotalFC') AS total_doc,
+       analyst.num(s.raw->>'CashSum') AS cash_usd,
+       analyst.num(s.raw->>'TrsfrSum') AS transfer_usd,
+       analyst.num(s.raw->>'CheckSum') AS cheque_usd,
+       analyst.num(s.raw->>'CreditSum') AS card_usd,
+       s.raw->>'Comments' AS comments,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'payments';
+
+CREATE OR REPLACE VIEW analyst.sap_payments_out AS
+SELECT analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       s.raw->>'DocCurr' AS doc_currency,
+       analyst.num(s.raw->>'DocTotal') AS total_usd,
+       analyst.num(s.raw->>'DocTotalSy') AS total_som,
+       analyst.num(s.raw->>'DocTotalFC') AS total_doc,
+       analyst.num(s.raw->>'CashSum') AS cash_usd,
+       analyst.num(s.raw->>'TrsfrSum') AS transfer_usd,
+       analyst.num(s.raw->>'CheckSum') AS cheque_usd,
+       analyst.num(s.raw->>'CreditSum') AS card_usd,
+       s.raw->>'Comments' AS comments,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'payments_out';
+
+CREATE OR REPLACE VIEW analyst.sap_ap_open AS
+SELECT analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       s.raw->>'NumAtCard' AS supplier_ref,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       analyst.day(s.raw->>'DocDueDate') AS due_date,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       s.raw->>'LicTradNum' AS inn,
+       s.raw->>'DocCur' AS doc_currency,
+       analyst.num(s.raw->>'DocTotal') AS total_usd,
+       analyst.num(s.raw->>'PaidToDate') AS paid_usd,
+       analyst.num(s.raw->>'DocTotal') - coalesce(analyst.num(s.raw->>'PaidToDate'), 0) AS open_usd,
+       analyst.num(s.raw->>'DocTotalSy') AS total_som,
+       analyst.num(s.raw->>'PaidSys') AS paid_som,
+       analyst.num(s.raw->>'DocTotalSy') - coalesce(analyst.num(s.raw->>'PaidSys'), 0) AS open_som,
+       analyst.num(s.raw->>'DocTotalFC') AS total_doc,
+       analyst.num(s.raw->>'PaidFC') AS paid_doc,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'ap_open';
+
+CREATE OR REPLACE VIEW analyst.sap_supplier_balances AS
+SELECT s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       s.raw->>'LicTradNum' AS inn,
+       s.raw->>'CardType' AS card_type,
+       s.raw->>'Currency' AS currency,
+       analyst.num(s.raw->>'Balance') AS balance_usd,
+       analyst.num(s.raw->>'BalanceSys') AS balance_som,
+       analyst.num(s.raw->>'BalanceFC') AS balance_fc,
+       analyst.num(s.raw->>'Balance') < 0 AS we_owe,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'supplier_balances';
+
+CREATE OR REPLACE VIEW analyst.sap_customers AS
+SELECT s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       s.raw->>'LicTradNum' AS inn,
+       analyst.num(s.raw->>'GroupCode')::int AS group_code,
+       s.raw->>'GroupName' AS group_name,
+       s.raw->>'Currency' AS currency,
+       analyst.num(s.raw->>'Balance') AS balance_usd,
+       analyst.num(s.raw->>'BalanceSys') AS balance_som,
+       analyst.num(s.raw->>'CreditLine') AS credit_line,
+       analyst.num(s.raw->>'SlpCode')::int AS slp_code,
+       s.raw->>'City' AS city,
+       analyst.day(s.raw->>'CreateDate') AS created_on,
+       analyst.day(s.raw->>'UpdateDate') AS updated_on,
+       coalesce(s.raw->>'validFor', 'Y') <> 'N' AND coalesce(s.raw->>'frozenFor', 'N') <> 'Y' AS active,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'customers';
+
+CREATE OR REPLACE VIEW analyst.sap_products AS
+SELECT s.raw->>'ItemCode' AS item_code,
+       s.raw->>'ItemName' AS item_name,
+       analyst.name_key(s.raw->>'ItemName') AS item_key,
+       analyst.num(s.raw->>'ItmsGrpCod')::int AS group_code,
+       s.raw->>'ItmsGrpNam' AS group_name,
+       s.raw->>'CodeBars' AS barcode,
+       s.raw->>'InvntryUom' AS uom,
+       analyst.num(s.raw->>'OnHand') AS on_hand,
+       analyst.num(s.raw->>'IsCommited') AS committed,
+       analyst.num(s.raw->>'OnOrder') AS on_order,
+       analyst.num(s.raw->>'MinLevel') AS min_level,
+       analyst.num(s.raw->>'MaxLevel') AS max_level,
+       analyst.num(s.raw->>'AvgPrice') AS avg_price_usd,
+       analyst.num(s.raw->>'LastPurPrc') AS last_purchase_price,
+       analyst.day(s.raw->>'LastPurDat') AS last_purchase_date,
+       s.raw->>'InvntItem' = 'Y' AS inventory_item,
+       s.raw->>'SellItem' = 'Y' AS sellable,
+       s.raw->>'PrchseItem' = 'Y' AS purchasable,
+       coalesce(s.raw->>'validFor', 'Y') <> 'N' AND coalesce(s.raw->>'frozenFor', 'N') <> 'Y' AS active,
+       (s.raw->>'ItemName' ~* '^\s*dummy' OR s.raw->>'ItemCode' ~* '^[0-9]{3}-M[0-9]') AS is_dummy,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'products';
+
+CREATE OR REPLACE VIEW analyst.sap_stock AS
+SELECT s.raw->>'ItemCode' AS item_code,
+       s.raw->>'ItemName' AS item_name,
+       analyst.name_key(s.raw->>'ItemName') AS item_key,
+       s.raw->>'WhsCode' AS whs_code,
+       s.raw->>'WhsName' AS whs_name,
+       analyst.num(s.raw->>'OnHand') AS on_hand,
+       analyst.num(s.raw->>'AvgPrice') AS avg_price_usd,
+       analyst.num(s.raw->>'StockValue') AS stock_value_usd,
+       (s.raw->>'ItemName' ~* '^\s*dummy' OR s.raw->>'ItemCode' ~* '^[0-9]{3}-M[0-9]') AS is_dummy,
+       coalesce(lower(s.raw->>'WhsName') ~ '(faulty|брак|brak|nosoz|носоз|defect)', false) AS is_faulty,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'stock_items';
+
+CREATE OR REPLACE VIEW analyst.sap_stock_by_warehouse AS
+SELECT s.raw->>'WhsCode' AS whs_code,
+       s.raw->>'WhsName' AS whs_name,
+       analyst.num(s.raw->>'Items')::int AS items,
+       analyst.num(s.raw->>'OnHand') AS on_hand,
+       analyst.num(s.raw->>'StockValue') AS stock_value_usd,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'stock_value';
+
+CREATE OR REPLACE VIEW analyst.sap_item_sales_90d AS
+SELECT s.raw->>'ItemCode' AS item_code,
+       s.raw->>'WhsCode' AS whs_code,
+       analyst.num(s.raw->>'Days')::int AS days,
+       analyst.num(s.raw->>'Quantity') AS quantity_sold,
+       analyst.num(s.raw->>'LineTotal') AS line_usd,
+       analyst.day(s.raw->>'LastSold') AS last_sold,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'item_sales_90d';
+
+CREATE OR REPLACE VIEW analyst.sap_po_open AS
+SELECT analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.num(s.raw->>'LineNum')::int AS line_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       analyst.day(s.raw->>'DocDueDate') AS due_date,
+       analyst.day(s.raw->>'ShipDate') AS ship_date,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       s.raw->>'ItemCode' AS item_code,
+       s.raw->>'Dscription' AS item_name,
+       s.raw->>'WhsCode' AS whs_code,
+       analyst.num(s.raw->>'Quantity') AS quantity,
+       analyst.num(s.raw->>'OpenQty') AS open_qty,
+       analyst.num(s.raw->>'Price') AS price,
+       s.raw->>'Currency' AS line_currency,
+       analyst.num(s.raw->>'LineTotal') AS line_usd,
+       s.raw->>'DocCur' AS doc_currency,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'po_open';
+
+CREATE OR REPLACE VIEW analyst.sap_orders_open AS
+SELECT analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       analyst.day(s.raw->>'DocDueDate') AS due_date,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       analyst.num(s.raw->>'SlpCode')::int AS slp_code,
+       s.raw->>'DocCur' AS doc_currency,
+       analyst.num(s.raw->>'DocTotal') AS total_usd,
+       analyst.num(s.raw->>'DocTotalSy') AS total_som,
+       analyst.num(s.raw->>'DocTotalFC') AS total_doc,
+       s.raw->>'Comments' AS comments,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'orders';
+
+CREATE OR REPLACE VIEW analyst.sap_service_calls AS
+SELECT analyst.num(s.raw->>'callID')::bigint AS call_id,
+       s.raw->>'subject' AS subject,
+       s.raw->>'status' AS status,
+       s.raw->>'priority' AS priority,
+       s.raw->>'callType' AS call_type,
+       s.raw->>'problemTyp' AS problem_type,
+       s.raw->>'origin' AS origin,
+       analyst.day(s.raw->>'createDate') AS created_on,
+       analyst.day(s.raw->>'closeDate') AS closed_on,
+       s.raw->>'customer' AS customer_code,
+       s.raw->>'custmrName' AS customer_name,
+       analyst.name_key(s.raw->>'custmrName') AS name_key,
+       s.raw->>'itemCode' AS item_code,
+       s.raw->>'itemName' AS item_name,
+       s.raw->>'manufSN' AS serial,
+       s.raw->>'internalSN' AS internal_serial,
+       s.raw->>'TechnicianName' AS technician_name,
+       s.raw->>'AssigneeName' AS assignee_name,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'service_calls';
+
+CREATE OR REPLACE VIEW analyst.sap_equipment AS
+SELECT analyst.num(s.raw->>'insID')::bigint AS ins_id,
+       s.raw->>'customer' AS customer_code,
+       s.raw->>'custmrName' AS customer_name,
+       analyst.name_key(s.raw->>'custmrName') AS name_key,
+       s.raw->>'itemCode' AS item_code,
+       s.raw->>'itemName' AS item_name,
+       s.raw->>'manufSN' AS serial,
+       s.raw->>'internalSN' AS internal_serial,
+       s.raw->>'status' AS status,
+       analyst.day(s.raw->>'createDate') AS created_on,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'equipment';
+
+CREATE OR REPLACE VIEW analyst.sap_service_contracts AS
+SELECT analyst.num(s.raw->>'ContractID')::bigint AS contract_id,
+       s.raw->>'CstmrCode' AS customer_code,
+       s.raw->>'CstmrName' AS customer_name,
+       analyst.name_key(s.raw->>'CstmrName') AS name_key,
+       s.raw->>'CntrcType' AS contract_type,
+       s.raw->>'Status' AS status,
+       analyst.day(s.raw->>'StartDate') AS start_date,
+       analyst.day(s.raw->>'EndDate') AS end_date,
+       analyst.day(s.raw->>'TermDate') AS term_date,
+       s.raw->>'Descriptio' AS description,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'service_contracts';
+
+CREATE OR REPLACE VIEW analyst.sap_warehouses AS
+SELECT s.raw->>'WhsCode' AS whs_code,
+       s.raw->>'WhsName' AS whs_name,
+       s.raw->>'Inactive' = 'Y' AS inactive,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'warehouses';
+
+CREATE OR REPLACE VIEW analyst.sap_sales_people AS
+SELECT analyst.num(s.raw->>'SlpCode')::int AS slp_code,
+       s.raw->>'SlpName' AS slp_name,
+       analyst.name_key(s.raw->>'SlpName') AS name_key,
+       analyst.num(s.raw->>'GroupCode')::int AS group_code,
+       coalesce(s.raw->>'Active', 'Y') = 'Y' AS active,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'sales_people';
+
+CREATE OR REPLACE VIEW analyst.ar_open AS
+SELECT a.doc_entry AS doc_entry,
+       a.doc_num AS doc_num,
+       a.card_code AS card_code,
+       a.card_name AS card_name,
+       analyst.name_key(a.card_name) AS name_key,
+       a.doc_date AS doc_date,
+       a.due_date AS due_date,
+       a.days_overdue AS days_overdue,
+       a.aging_bucket AS aging_bucket,
+       (a.balance_due_tiyin / 100.0)::numeric(18,2) AS balance_local,
+       a.currency AS local_currency,
+       CASE WHEN a.doc_currency IS NOT NULL AND a.doc_total_fc_tiyin - coalesce(a.paid_fc_tiyin, 0) > 0
+            THEN ((a.doc_total_fc_tiyin - coalesce(a.paid_fc_tiyin, 0)) / 100.0)::numeric(18,2) END AS balance_as_written,
+       CASE WHEN a.doc_currency IS NOT NULL AND a.doc_total_fc_tiyin - coalesce(a.paid_fc_tiyin, 0) > 0
+            THEN a.doc_currency END AS written_currency,
+       a.sales_person_name AS sales_person_name,
+       a.division AS division,
+       a.captured_at AS captured_at
+FROM v_ar_aging_latest a;
+
+CREATE OR REPLACE VIEW analyst.sales_month AS
+SELECT f.day AS day,
+       f.obj_type AS obj_type,
+       f.doc_entry AS doc_entry,
+       f.line_num AS line_num,
+       f.slp_code AS slp_code,
+       f.item_code AS item_code,
+       f.item_group AS item_group,
+       f.wh AS whs_code,
+       f.amount_usd AS amount_usd,
+       f.amount_som AS amount_som
+FROM sales_facts f;
+
+-- The bot's own records, Director only (no message texts: reports and proofs stay with their own tools).
+CREATE OR REPLACE VIEW analyst.bot_tasks AS
+SELECT t.code AS code,
+       t.task_summary AS summary,
+       t.status AS status,
+       t.awaiting AS awaiting,
+       t.due_date AS due_date,
+       (t.created_at AT TIME ZONE 'Asia/Tashkent')::date AS created_on,
+       (t.completed_at AT TIME ZONE 'Asia/Tashkent')::date AS completed_on,
+       (t.verified_at AT TIME ZONE 'Asia/Tashkent')::date AS accepted_on,
+       COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS assignee,
+       e.role AS assignee_role,
+       t.director_telegram_user_id::text || ':' || t.source_message_id::text AS shared_key,
+       t.status IN ('sent', 'started', 'blocked', 'review') AS is_open
+FROM tasks t LEFT JOIN employees e ON e.id = t.assigned_employee_id;
+
+CREATE OR REPLACE VIEW analyst.bot_daily_reports AS
+SELECT r.report_date AS report_date,
+       COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS person,
+       r.role AS role,
+       r.status AS status,
+       r.auto_built AS auto_built,
+       (r.submitted_at AT TIME ZONE 'Asia/Tashkent') AS submitted_at,
+       r.late_decision AS late_decision,
+       coalesce(e.status = 'active', false) AS person_active
+FROM daily_reports r LEFT JOIN employees e ON e.id = r.employee_id;
+
+-- Trigram similarity for names (pg_trgm, a trusted extension) inside the analyst schema, so the analyst role finds it
+-- on its search_path; never fatal — without it name search falls back to LIKE on name_key.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA analyst;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm not installed: %', SQLERRM;
+END $$;
+
+-- The roles query_db runs as: SELECT on these views only — no public tables, no writes (also READ ONLY per query).
+-- mgmg_analyst_sap: the SAP views (accounting with SAP access); mgmg_analyst_director: everything here. The app role
+-- may SET ROLE to them but doesn't inherit them. Never fatal: without the roles query_db is simply not offered.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mgmg_analyst_sap') THEN
+        CREATE ROLE mgmg_analyst_sap NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mgmg_analyst_director') THEN
+        CREATE ROLE mgmg_analyst_director NOLOGIN;
+    END IF;
+    EXECUTE format('GRANT mgmg_analyst_sap TO %I WITH INHERIT FALSE, SET TRUE', current_user);
+    EXECUTE format('GRANT mgmg_analyst_director TO %I WITH INHERIT FALSE, SET TRUE', current_user);
+    GRANT USAGE ON SCHEMA analyst TO mgmg_analyst_sap, mgmg_analyst_director;
+    GRANT SELECT ON analyst.sap_sales_docs, analyst.sap_sales_lines, analyst.sap_payments_in, analyst.sap_payments_out,
+                    analyst.sap_ap_open, analyst.sap_supplier_balances, analyst.sap_customers, analyst.sap_products,
+                    analyst.sap_stock, analyst.sap_stock_by_warehouse, analyst.sap_item_sales_90d, analyst.sap_po_open,
+                    analyst.sap_orders_open, analyst.sap_service_calls, analyst.sap_equipment,
+                    analyst.sap_service_contracts, analyst.sap_warehouses, analyst.sap_sales_people, analyst.ar_open,
+                    analyst.sales_month
+        TO mgmg_analyst_sap, mgmg_analyst_director;
+    GRANT SELECT ON analyst.bot_tasks, analyst.bot_daily_reports TO mgmg_analyst_director;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'analyst roles not set up: %', SQLERRM;
+END $$;

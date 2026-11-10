@@ -18,3 +18,4 @@ weasyprint==70.0
 pypdfium2==5.14.0
 # Excel workbooks (scripts/ap_reconcile.py: supplier debt 1C vs SAP)
 openpyxl==3.1.5
+sqlglot==25.34.1  # the analyst's SQL validator (org_bot/sql_guard.py), pure Python

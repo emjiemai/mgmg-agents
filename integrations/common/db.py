@@ -140,6 +140,73 @@ async def fetch_read_only(query: str, params: Any = None, timeout: str = "10s") 
                 return await cur.fetchall()
 
 
+ANALYST_ROLES = frozenset({"mgmg_analyst_director", "mgmg_analyst_sap"})  # = org_bot.sql_catalog.ROLES
+_analyst_ready: dict[str, Any] = {"value": None, "at": 0.0}
+
+
+async def fetch_analyst(
+    sql: str, role: str, timeout: str = "4s", max_rows: int = 200
+) -> tuple[list[str], list[tuple[Any, ...]], bool]:
+    """Run the analyst's one validated SELECT (org_bot/sql_guard.py) as a role that may read only analyst.* views.
+
+    READ ONLY, SET LOCAL ROLE to a NOLOGIN role granted SELECT on the analyst views alone, search_path = analyst, a
+    short statement / lock timeout, the row limit applied BY THE SERVER (09.11 review: a client cursor loaded a whole
+    runaway join into the 512 MB app before fetchmany), and the transaction is always rolled back. Sent as a prepared
+    statement so the server itself refuses a second statement; '%' is doubled so LIKE patterns aren't read as
+    placeholders. The role switch rests on sql_guard's function allow-list (see sql_guard's docstring).
+
+    Returns:
+        ``(column names, at most max_rows rows as tuples, True if there were more)``.
+
+    Raises:
+        psycopg.Error: the server's error (sqlstate, message, hint) — the caller hands it back to the model.
+    """
+    if role not in ANALYST_ROLES:
+        raise ValueError(f"not an analyst role: {role!r}")
+    if not (timeout[:-1].isdigit() and timeout.endswith("s")):
+        raise ValueError(f"timeout must look like '4s', got {timeout!r}")
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        async with conn.transaction(force_rollback=True):
+            async with conn.cursor(row_factory=psycopg.rows.tuple_row) as cur:
+                await cur.execute("SET TRANSACTION READ ONLY")
+                await cur.execute(f"SET LOCAL ROLE {role}")
+                await cur.execute("SET LOCAL search_path = analyst, pg_catalog")
+                await cur.execute(f"SET LOCAL statement_timeout = '{timeout}'")
+                await cur.execute("SET LOCAL lock_timeout = '1s'")
+                await cur.execute("SET LOCAL work_mem = '8MB'")
+                await cur.execute("SET LOCAL jit = off")
+                # prepare=True: a prepared statement — the server refuses "SELECT …; DELETE …" (checked 09.11:
+                # bound-but-empty parameters alone still ran both).
+                limited = f"SELECT * FROM ({sql}) AS q LIMIT {int(max_rows) + 1}"
+                await cur.execute(limited.replace("%", "%%"), (), prepare=True)
+                names = [d.name for d in (cur.description or [])]
+                rows = await cur.fetchmany(max_rows + 1)
+    return names, rows[:max_rows], len(rows) > max_rows
+
+
+async def analyst_sql_ready() -> bool:
+    """True when the analyst schema and the roles query_db runs as exist and the app may switch to them.
+
+    Created by database/schema.sql at start-up; on a database where they couldn't be (no CREATEROLE), query_db is
+    simply not offered. A «no» is checked again after 10 minutes; a «yes» is kept.
+    """
+    now = time.monotonic()
+    if _analyst_ready["value"] is True or (_analyst_ready["value"] is False and now - _analyst_ready["at"] < 600):
+        return bool(_analyst_ready["value"])
+    try:
+        row = await fetch_one(
+            """SELECT to_regnamespace('analyst') IS NOT NULL
+                      AND bool_and(pg_has_role(current_user, r.oid, 'SET')) AND count(*) = 2 AS ready
+               FROM pg_roles r WHERE r.rolname IN ('mgmg_analyst_director', 'mgmg_analyst_sap')""")
+        ready = bool(row and row.get("ready"))
+    except Exception as exc:  # noqa: BLE001 — not ready is the safe answer
+        log.warning("Analyst SQL readiness not checked: {}", type(exc).__name__)
+        ready = False
+    _analyst_ready.update(value=ready, at=now)
+    return ready
+
+
 async def fetch_one(query: str, params: Any = None) -> dict[str, Any] | None:
     """Run a SELECT and return the first row, or None.
 

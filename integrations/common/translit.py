@@ -80,3 +80,26 @@ def name_to_cyrillic(name: str) -> str:
     if _LATIN.search(name) and not _CYRILLIC.search(name):
         return latin_to_cyrillic(name)
     return name
+
+
+# One Latin skeleton for names in either script (2026-11-09): the analyst's SQL matches «Хилтон», «Hilton» and
+# «Xilton» with it, and folds what a Russian keyboard swaps (қ = к = q, ў = у = o', дж = ж, word-initial ye = е).
+# The same steps as database/schema.sql analyst.name_key — selfcheck keeps the two identical.
+SKELETON_PAIRS: tuple[tuple[str, str], ...] = (
+    ("kh", "h"), ("dj", "j"), ("o'", "u"), ("oʻ", "u"), ("o‘", "u"), ("o’", "u"), ("дж", "j"),
+    ("ш", "sh"), ("щ", "sh"), ("ч", "ch"), ("ё", "yo"), ("ю", "yu"), ("я", "ya"), ("ц", "ts"),
+)
+SKELETON_FROM = "абвгдежзийклмнопрстуфхҳыэўғқxqъь"
+SKELETON_TO = "abvgdejziyklmnoprstufhhieugkhk"
+_SKELETON_TABLE = {ord(c): (SKELETON_TO[i] if i < len(SKELETON_TO) else None) for i, c in enumerate(SKELETON_FROM)}
+
+
+def skeleton(text: str | None) -> str:
+    """«Хилтон Ташкент», «Xilton  Tashkent!» → «hilton tashkent»: lower, Cyrillic → Latin, x/kh → h, қ/q → k,
+    ў/o' → u, дж → j, word-initial ye → e, only a-z 0-9."""
+    value = (text or "").lower()
+    for a, b in SKELETON_PAIRS:
+        value = value.replace(a, b)
+    value = re.sub(r"[^a-z0-9 ]", "", value.translate(_SKELETON_TABLE))
+    value = re.sub(r"(^| )ye", r"\1e", value)
+    return re.sub(r"\s+", " ", value).strip()

@@ -39,7 +39,7 @@ from typing import Any, Awaitable, Callable
 
 from integrations.ai.openrouter_client import OpenRouterClient
 from integrations.common.config import settings
-from integrations.common.db import fetch_read_only
+from integrations.common.db import analyst_sql_ready, fetch_analyst, fetch_read_only
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
@@ -49,7 +49,8 @@ from integrations.org_bot.prompt import GUARDRAILS
 AGENT = "ops-manager-bot"
 log = setup_logging("analyst")
 
-TOOL_CHARS = 30000  # one tool's answer, at most (the rest is cut, and the model is told)
+TOOL_CHARS = 12000  # one tool's answer, at most (the rest is cut, and the model is told); 30k → 12k on 09.11: the
+# answer round's time grows with the prompt (10–20k chars ≈ 7 s, 30–40k ≈ 17 s, measured)
 LIVE_BILLZ_SECONDS = 30  # billz_sap_check: longer than this, the stored 08:00 check answers instead
 MAX_CALLS_PER_ROUND = 6
 MAX_DAYS = 92  # longest period one BILLZ / Verifix / 1C call may cover
@@ -123,6 +124,12 @@ def _fn(name: str, description: str, properties: dict[str, Any], required: tuple
 _DATE = {"type": "string", "description": "YYYY-MM-DD"}
 
 TOOLS: list[dict] = [
+    _fn("query_db", "Run ONE read-only SQL SELECT over the analyst.* views described in the system prompt and get "
+        "back only the rows asked for (at most 200). The first choice for SAP questions — sales, payments, debts, "
+        "stock, products, suppliers, orders, service — and, for the Director, tasks and report states. Aggregate "
+        "in SQL. A rejected query or an SQL error comes back with the reason and the view's columns: fix it once.",
+        {"sql": {"type": "string", "description": "one SELECT over analyst.* views"},
+         "purpose": {"type": "string", "description": "a few words: what this query finds"}}, ("sql",)),
     _fn("data_sources", "Which systems are connected and how fresh their data is. Cheap; call it when unsure "
         "where something lives or whether a system works.", {}),
     _fn("sap_receivables", "Customer debt from SAP: every open A/R invoice with balance, days unpaid, customer, "
@@ -221,6 +228,7 @@ TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 # some systems gets only the tools whose systems are all among them. None =
 # the Director's only (other people's attendance, tasks, KPI, complaints).
 TOOL_SYSTEMS: dict[str, set[str] | None] = {
+    "query_db": {"sap"},  # the views follow the asker's scope (sql_catalog.allowed_views): SAP views, or all for the Director
     "data_sources": set(),
     "sap_receivables": {"sap"},
     "sap_records": {"sap"},
@@ -239,11 +247,15 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
 }
 
 
-def tools_for(scope: set[str] | None) -> list[dict]:
-    """The tools offered: all of them for the Director (scope None), else only the granted systems'."""
+def tools_for(scope: set[str] | None, sql: bool = False) -> list[dict]:
+    """The tools offered: all of them for the Director (scope None), else only the granted systems'.
+
+    ``sql``: query_db is offered (the setting is on and the database has the analyst views and roles).
+    """
+    tools = [t for t in TOOLS if sql or t["function"]["name"] != "query_db"]
     if scope is None:
-        return TOOLS
-    return [t for t in TOOLS if (need := TOOL_SYSTEMS.get(t["function"]["name"])) is not None and need <= scope]
+        return tools
+    return [t for t in tools if (need := TOOL_SYSTEMS.get(t["function"]["name"])) is not None and need <= scope]
 
 
 _DIRECTOR_ROLE = """# ROLE
@@ -398,6 +410,8 @@ class Answer:
     files: list[tuple[bytes, str]] = field(default_factory=list)  # (content, filename) sent after the text
     # A report's own files (employee_files rows: photo, video, voice…) sent after the text, as they were (2026-10-22)
     media: list[dict[str, Any]] = field(default_factory=list)
+    # query_db's counts for the audit row (2026-11-09): calls, errors, rows, ms, views — never the SQL or the rows
+    sql: dict[str, Any] = field(default_factory=dict)
 
 
 # Files a tool made during one answer (the workbook), picked up by ``answer``.
@@ -410,6 +424,12 @@ _lang: ContextVar[str] = ContextVar("analyst_lang", default="uz")
 # The report files an answer will send, and whose reports this asker may see (None = the Director, everyone).
 _media: ContextVar[list[dict[str, Any]] | None] = ContextVar("analyst_media", default=None)
 _report_roles: ContextVar[tuple[str, ...] | None] = ContextVar("analyst_report_roles", default=None)
+# query_db within one answer (2026-11-09): the asker's scope (None = the Director) and a shared, mutated state —
+# the tools of a round run as separate tasks, so a plain ContextVar.set inside one wouldn't reach the next round.
+_sql_scope: ContextVar[tuple[set[str] | None] | None] = ContextVar("analyst_sql_scope", default=None)
+_sql_state: ContextVar[dict[str, Any] | None] = ContextVar("analyst_sql_state", default=None)
+SQL_MAX_ERRORS = 2  # a query rejected / failing twice in one answer → the other tools
+SQL_MAX_CHARS = 8000
 MEDIA_PER_ANSWER = 10
 REPORT_DAYS_MAX = 14
 
@@ -1163,7 +1183,96 @@ async def old_stock_tool(args: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _cell(value: Any) -> str:
+    """One value of query_db's table: numbers without exponents, dates as ISO, empty for NULL."""
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+    if hasattr(value, "is_finite"):  # Decimal
+        if not value.is_finite():
+            return str(value)
+        return format(value.normalize(), "f") if value == value.to_integral() else format(value, "f")
+    if isinstance(value, (datetime, date)):
+        return value.isoformat(sep=" ", timespec="minutes") if isinstance(value, datetime) else value.isoformat()
+    return str(value).replace("\n", " ").replace("|", "/")
+
+
+def sql_table(names: list[str], rows: list[tuple[Any, ...]], more: bool, max_chars: int = SQL_MAX_CHARS) -> str:
+    """query_db's result for the model: a header and one line per row, cut at ``max_chars`` with a note."""
+    if not rows:
+        return "0 rows."
+    lines = [" | ".join(names)]
+    used = len(lines[0])
+    shown = 0
+    for row in rows:
+        line = " | ".join(_cell(v) for v in row)
+        if used + len(line) + 1 > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+        shown += 1
+    if shown < len(rows) or more:
+        total = f"more than {len(rows)}" if more else str(len(rows))
+        lines.append(f"[{shown} of {total} rows shown — aggregate (GROUP BY / SUM) or filter; never present this part "
+                     "as the whole]")
+    return "\n".join(lines)
+
+
+async def query_db(args: dict[str, Any]) -> str:
+    """One read-only SELECT over the asker's analyst.* views (2026-11-09, «schema first, then rows»).
+
+    Checked by sql_guard, run by db.fetch_analyst as a role that can read nothing else. A refusal or an SQL error
+    goes back to the model with the reason and the view's columns, once; after ``SQL_MAX_ERRORS`` the model is told
+    to use the other tools. Logs and the audit row keep counts only — never the SQL (it can hold names the Director
+    typed) or the rows (the Director's order of 07.10.2026: IT sees no company figures).
+    """
+    import psycopg
+
+    from integrations.org_bot import sql_catalog, sql_guard
+
+    holder = _sql_scope.get()
+    scope = holder[0] if holder else set()
+    state = _sql_state.get()
+    if state is None:
+        state = {}
+    allowed, role = sql_catalog.allowed_views(scope), sql_catalog.role_for(scope)
+    if not allowed or role is None:
+        return "query_db is not in this person's access — say so; use the tools you have."
+    if state.get("errors", 0) >= SQL_MAX_ERRORS:
+        return "query_db already failed twice in this question — answer with the other tools now."
+    state["calls"] = state.get("calls", 0) + 1
+    try:
+        checked = sql_guard.validate(str(args.get("sql") or ""), allowed)
+    except sql_guard.SqlRejected as exc:
+        state["errors"] = state.get("errors", 0) + 1
+        state["rejected"] = state.get("rejected", 0) + 1
+        return f"REJECTED: {exc}. Fix the query and call query_db again (one retry)."
+    started = time.monotonic()
+    try:
+        names, rows, more = await fetch_analyst(checked.sql, role, settings.analyst_sql_timeout,
+                                                settings.analyst_sql_max_rows)
+    except psycopg.Error as exc:
+        state["errors"] = state.get("errors", 0) + 1
+        state["sqlstate"] = exc.sqlstate or type(exc).__name__
+        diag = getattr(exc, "diag", None)
+        message = (getattr(diag, "message_primary", None) or str(exc)).strip()[:300]
+        hint = (getattr(diag, "message_hint", None) or "").strip()[:200]
+        cols = "; ".join(f"analyst.{v}: {', '.join(sql_catalog.columns(v))}" for v in checked.views)
+        log.warning("query_db failed: {} ({} view(s))", exc.sqlstate or type(exc).__name__, len(checked.views))
+        return (f"SQL ERROR {exc.sqlstate or ''}: {message}" + (f" HINT: {hint}" if hint else "")
+                + (f"\nColumns — {cols}" if cols else "") + "\nFix the query and call query_db again (one retry).")
+    ms = int((time.monotonic() - started) * 1000)
+    state["rows"] = state.get("rows", 0) + len(rows)
+    state["ms"] = state.get("ms", 0) + ms
+    state.setdefault("views", [])
+    state["views"] += [v for v in checked.views if v not in state["views"]]
+    log.info("query_db ok: {} row(s) in {} ms from {} view(s)", len(rows), ms, len(checked.views))
+    return sql_table(names, rows, more)
+
+
 HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
+    "query_db": query_db,
     "data_sources": data_sources,
     "sap_receivables": sap_receivables,
     "sap_records": sap_records,
@@ -1222,6 +1331,18 @@ def build_user_message(question: str, history: str, today: date, hint: str | Non
     return "\n\n".join(parts)
 
 
+async def _sql_ready(scope: set[str] | None) -> bool:
+    """query_db can run for this asker: they have views (Director or SAP access) and the database is set up."""
+    from integrations.org_bot import sql_catalog
+
+    if not sql_catalog.allowed_views(scope):
+        return False
+    try:
+        return await analyst_sql_ready()
+    except Exception:  # noqa: BLE001 — without it the old tools answer
+        return False
+
+
 async def answer(
     question: str, history: str, run_id: uuid.UUID, hint: str | None = None, *,
     employee: dict[str, Any] | None = None, scope: set[str] | None = None,
@@ -1245,13 +1366,20 @@ async def answer(
         asker = "employee"
     else:
         scope, lang, system, asker = None, "uz", ANALYST_SYSTEM_PROMPT, "Director"
-    tools = tools_for(scope)
+    sql_on = bool(settings.analyst_sql_enabled) and await _sql_ready(scope)
+    if sql_on:
+        from integrations.org_bot import sql_catalog
+
+        system = system + "\n\n" + sql_catalog.render(scope)  # the same text per asker: the provider caches it
+    tools = tools_for(scope, sql=sql_on)
     allowed = None if scope is None else {t["function"]["name"] for t in tools}
     messages: list[dict] = [
         {"role": "system", "content": system},
         {"role": "user", "content": build_user_message(question, history, _today(), hint, asker)},
     ]
     result = Answer(text="")
+    _sql_scope.set((scope,))
+    _sql_state.set(result.sql)
     _files.set(result.files)
     _kind_cache.set({})
     _media.set(result.media)

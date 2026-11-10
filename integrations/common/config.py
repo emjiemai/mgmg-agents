@@ -218,6 +218,14 @@ class Settings(BaseSettings):
     # answer. Rounds = how many times it may look something up per question.
     ops_analyst_enabled: bool = True
     ops_analyst_max_rounds: int = 6
+    # Schema first, then rows (2026-11-09): the analyst gets the analyst.* views' structure and writes one read-only
+    # SELECT (query_db) instead of reading whole SAP kinds. Off = the old tools only. Rows / time per query are capped.
+    analyst_sql_enabled: bool = True
+    analyst_sql_timeout: str = "4s"
+    analyst_sql_max_rows: int = 200
+    # A Director's message that looks like a question starts the analyst while the router still decides (2026-11-09:
+    # the router took ~8 s before every answer); its answer is dropped if the router says it is a task.
+    ops_router_speculative: bool = True
     # Cheque photos (2026-10-14, org_bot/cheques.py): a photo the Director sends
     # is read by the AI; a cheque with every detail goes to these roles
     # (comma-separated role slugs) with the photo, otherwise the bot asks him.

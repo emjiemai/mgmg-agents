@@ -20,7 +20,7 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 | E1 | KPI per employee — the Director's 15 criteria as 6 parts (goals/OKR, tasks, rating, volume, process, commitment) | `/maqsad` `/kpi` `/natija` `/baho` · 1st: ratings · final by the 5th | Director, HR, each employee (own card) | `MONTHLY_KPI_ENABLED` |
 | — | Receivables alert (overdue debt by age) — complete, paid part taken off (gateway `get_open_invoices`, 2026-10-03) | 08:00 daily | Director | — |
 | F2 | Lead Agent: tender and lead search (Londry, Garmin/Tanita), to the leads sheet — **own search index since 30.10** (Uzbek news RSS, Telegram channels, Google News; DeepSeek + Exa web search every 3 days; paid APIs weekly backup) | 08:00 daily (resumed 2026-09-30); index every 3 h | Director (summary) + Google leads sheet | `LEAD_AGENT_ENABLED` (**true**) |
-| — | Q&A — the Director asks anything about the company; since 2026-10-07 the **analyst** looks it up itself across SAP, 1C (balances, turnovers, by counterparty), BILLZ, Verifix and the bot's records with read-only tools, never asks "which system?" (`19-director-analyst.md`); since 2026-10-10 it knows the company (`knowledge.py`) and, when it doesn't understand, asks one question with the likely meanings as buttons | on question | Director | `OPS_ANALYST_ENABLED` (true) |
+| — | Q&A — the Director asks anything about the company; since 2026-10-07 the **analyst** looks it up itself across SAP, 1C (balances, turnovers, by counterparty), BILLZ, Verifix and the bot's records with read-only tools, never asks "which system?" (`19-director-analyst.md`); since 2026-10-10 it knows the company (`knowledge.py`) and, when it doesn't understand, asks one question with the likely meanings as buttons; **since 2026-11-09 schema-first SQL** — typed `analyst.*` views, one read-only SELECT per lookup (`query_db`, locked by sql_guard + a read-only role), the analyst starts while the router decides | on question | Director | `OPS_ANALYST_ENABLED` (true), `ANALYST_SQL_ENABLED` (true) |
 | — | IT's technical report — connections (SAP push, 1C, BILLZ, Verifix, AI), brief delivered, runs and errors, DB size, the last backup copy, refused attempts, who blocked the bot (by name, 2026-11-04 — not an error); **no figures** (the Director's order of 07.10.2026) | 08:00 (after the other agents) · `/texnik` | admin (IT) | — |
 | — | **Brief vs SAP check** (2026-10-15) — every SAP kind and every brief line checked; causes and the to-do list in `docs/sap-data-check-2026-10-15.md` | — | IT, accounting | — |
 | — | **Garmin manager** (2026-10-14) — every Garmin complaint; SAP + Billz + Garmin data through the bot (by role); a Garmin morning brief picture (`23-garmin-manager.md`; four figures, no stock since 19.10, every «Garmin» warehouse) | 08:00 (after the Billz → SAP check) · on question | Garmin manager | role `garmin_manager` |
@@ -43,6 +43,10 @@ plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board fo
 only H0 has been running long enough to call proven; the rest are in their
 first weeks — the plan asks for each one's И to be measured before the next
 is started (A1 and A3 are measured automatically every Friday).
+
+## Planned (2026-11-09)
+
+- Six new owner documents (agents catalogue, HARI HR + 150 scenarios, AI phone operator, AIPRO procurement, OMAI warehouse): order of work and the owner's decisions in `docs/plans/2026-11-09-new-specs-plan.md`.
 
 ## Added 2026-11-02
 

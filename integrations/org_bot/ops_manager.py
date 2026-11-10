@@ -1146,7 +1146,8 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
         # Which tools ran and how many rounds — never the question or the figures (the order of 07.10.2026).
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="success",
                          run_id=run_id, mode="read",
-                         payload={"systems": sorted(scope), "tools": result.tools, "rounds": result.rounds})
+                         payload={"systems": sorted(scope), "tools": result.tools, "rounds": result.rounds,
+                                  "sql": result.sql})
         await _answer_reply(telegram_user_id, run_id, answer, reply_to)
         await _send_files(telegram_user_id, run_id, result.files, reply_to)
         await _send_media(telegram_user_id, run_id, result.media, reply_to)
@@ -2170,8 +2171,14 @@ async def _dispatch_director_task(
     """
     await store.log_conversation_turn(director_telegram_user_id, "director", raw_message)
 
+    speculative: asyncio.Task | None = None
     try:
         history = format_history(await store.recent_conversation(director_telegram_user_id))
+        if settings.ops_router_speculative and settings.ops_analyst_enabled and looks_like_question(raw_message):
+            # Start the analyst now (2026-11-09): the router took ~8 s before every answer. Its answer is used only
+            # if the router says "agent"; a task, a clarification or a refusal cancels it.
+            speculative = asyncio.create_task(_speculative_answer(raw_message, history, run_id))
+            speculative.add_done_callback(_retrieved)
         roster_lines, roster = await _roster()
         async with OpenRouterClient(
             agent=AGENT,
@@ -2220,8 +2227,9 @@ async def _dispatch_director_task(
                 due_date, person,
             )
         elif target_type == "agent":
+            precomputed, speculative = speculative, None
             await _answer_question(director_telegram_user_id, target_agent, raw_message, run_id, history,
-                                   reply_to=source_message_id)
+                                   reply_to=source_message_id, precomputed=precomputed)
         elif target_type == "clarify":
             await _ask_clarification(director_telegram_user_id, task_summary, clarify_options(result), run_id,
                                      reply_to=source_message_id)
@@ -2257,6 +2265,38 @@ async def _dispatch_director_task(
             status="failure", run_id=run_id, error_message=str(exc), mode="write",
         )
         await _safe_notify_failure(director_telegram_user_id, run_id)
+    finally:
+        if speculative is not None:  # not a question after all (or a failure): its answer is never sent
+            speculative.cancel()
+
+
+# A message that probably asks for data (2026-11-09): a «?», a question word, or a data word — Uzbek Cyrillic and
+# Latin, Russian. Only decides whether the analyst starts early; the router still decides what the message is.
+_QUESTION = re.compile(
+    r"(?<!\w)(қанча|канча|нечта|неча|ким|қайси|кайси|қачон|қаер|нима|борми|қандай|"
+    r"qancha|nechta|necha|kim|qaysi|qachon|qayer|nima|bormi|qanday|"
+    r"сколько|кто|какой|какая|какие|когда|где|почему|есть ли|"
+    r"сотув|савдо|қарз|карз|қолдиқ|колдик|тўлов|тушум|остат|долг|продаж|выручк|"
+    r"sotuv|savdo|qarz|qoldiq|to'lov|tushum)", re.I)
+
+
+def looks_like_question(text: str | None) -> bool:
+    t = (text or "").strip()
+    if not t or t.startswith("/") or len(t) > 500:
+        return False
+    return "?" in t or bool(_QUESTION.search(t))
+
+
+def _retrieved(task: asyncio.Task) -> None:
+    """A dropped early answer's error is read here, so asyncio doesn't warn «exception never retrieved»."""
+    if not task.cancelled() and task.exception() is not None:
+        log.info("Early analyst answer failed ({}) — the normal path answers", type(task.exception()).__name__)
+
+
+async def _speculative_answer(question: str, history: str, run_id: uuid.UUID) -> Any:
+    from integrations.org_bot import analyst
+
+    return await analyst.answer(question, history, run_id)
 
 
 async def _ask_clarification(director_id: int, question: str, options: list[str], run_id: uuid.UUID,
@@ -2890,7 +2930,7 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
 
 async def _answer_question(
     director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = "", *,
-    reply_to: int | None = None,
+    reply_to: int | None = None, precomputed: asyncio.Task | None = None,
 ) -> None:
     """A Director's question: the analyst looks it up across every system (analyst.py).
 
@@ -2902,7 +2942,9 @@ async def _answer_question(
 
         hint = f"{agent_slug} ({AGENT_LABELS.get(agent_slug, agent_slug)})"
         try:
-            result = await analyst.answer(question, history, run_id, hint=hint)
+            # Started while the router decided (looks_like_question), else now.
+            result = await (precomputed if precomputed is not None else analyst.answer(question, history, run_id,
+                                                                                        hint=hint))
         except Exception as exc:  # noqa: BLE001 — the old path still answers
             log.error("Analyst failed ({}), answering from {} alone", type(exc).__name__, agent_slug)
             await log_action(
@@ -2914,7 +2956,8 @@ async def _answer_question(
                 log.info("Analyst answered in {} round(s) using {}", result.rounds, ", ".join(result.tools) or "no tools")
                 await log_action(
                     agent=AGENT, action="analyst_answer", target_system="openrouter", status="success",
-                    run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools},
+                    run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools,
+                                                         "early": precomputed is not None, "sql": result.sql},
                 )
                 await _reply_and_log(director_id, run_id, sanitize_model_html(result.text), reply_to)
                 await _send_files(director_id, run_id, result.files, reply_to)

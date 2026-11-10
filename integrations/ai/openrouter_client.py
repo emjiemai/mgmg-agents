@@ -75,6 +75,22 @@ async def describe_openrouter_key() -> str:
     )
 
 
+def usage_counts(body: dict) -> dict[str, int]:
+    """The call's token counts for the audit row (2026-11-09) — counts only, never content: prompt, completion,
+    cached (did the provider reuse the prompt's start?) and reasoning (time the model spent thinking)."""
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, value in (("prompt_tokens", usage.get("prompt_tokens")),
+                       ("completion_tokens", usage.get("completion_tokens")),
+                       ("cached_tokens", (usage.get("prompt_tokens_details") or {}).get("cached_tokens")),
+                       ("reasoning_tokens", (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"))):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = int(value)
+    return out
+
+
 class OpenRouterError(RuntimeError):
     """Raised when OpenRouter returns an unrecoverable error."""
 
@@ -279,6 +295,7 @@ class OpenRouterClient:
                     f"HTTP {response.status_code} {response.text[:300]}"
                 )
             body = response.json()
+            ctx["payload"].update(usage_counts(body))
             choices = body.get("choices", [])
             if not choices:
                 raise OpenRouterError(f"{self.provider} returned no choices: {body}")
@@ -358,7 +375,9 @@ class OpenRouterClient:
             ctx["http_status"] = response.status_code
             if response.status_code != 200:
                 raise OpenRouterError(f"{self.provider} completion failed: HTTP {response.status_code} {response.text[:300]}")
-            choices = response.json().get("choices", [])
+            body = response.json()
+            ctx["payload"].update(usage_counts(body))
+            choices = body.get("choices", [])
             if not choices:
                 raise OpenRouterError(f"{self.provider} returned no choices")
             message = choices[0].get("message", {}) or {}
