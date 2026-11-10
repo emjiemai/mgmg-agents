@@ -50,13 +50,13 @@ CHECKS: tuple[Check, ...] = (
     Check("removed_open_tasks", "ўчирилган ходимларнинг очиқ топшириқлари", "tasks",
           "SELECT count(*) AS n FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id "
           "WHERE e.status = 'revoked' AND t.status IN ('sent', 'started', 'blocked', 'review')",
-          "UPDATE tasks t SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL FROM employees e "
+          "UPDATE tasks t SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL, proposed_due = NULL FROM employees e "
           "WHERE e.id = t.assigned_employee_id AND e.status = 'revoked' "
           "AND t.status IN ('sent', 'started', 'blocked', 'review')"),
     Check("old_role_open_tasks", "роли ўзгарган ходимда аввалги ролдаги очиқ топшириқлар", "tasks",
           "SELECT count(*) AS n FROM tasks t JOIN employees e ON e.id = t.assigned_employee_id "
           "WHERE e.status = 'active' AND t.target_role <> e.role AND t.status IN ('sent', 'started', 'blocked', 'review')",
-          "UPDATE tasks t SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL FROM employees e "
+          "UPDATE tasks t SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL, proposed_due = NULL FROM employees e "
           "WHERE e.id = t.assigned_employee_id AND e.status = 'active' AND t.target_role <> e.role "
           "AND t.status IN ('sent', 'started', 'blocked', 'review')"),
     Check("duplicate_open_tasks", "бир ходимда бир хил очиқ топшириқ икки марта", "tasks",

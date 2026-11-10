@@ -325,6 +325,14 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_complaint_button(prefix, rest, callback, run_id)
     if prefix == "dispatchrole":
         return await _handle_dispatch_role(rest, callback, run_id)
+    if prefix == "tdpri":
+        return await _handle_draft_priority(rest, callback, run_id)
+    if prefix == "taskres":
+        return await _handle_reschedule_open(rest, callback, run_id)
+    if prefix in ("tdp", "tdpx"):
+        return await _handle_reschedule_pick(prefix, rest, callback, run_id)
+    if prefix in ("tdpa", "tdpr"):
+        return await _handle_reschedule_decision(prefix == "tdpa", rest, callback, run_id)
     if prefix == "taskdue":
         return await _handle_task_due(rest, callback, run_id)
     if prefix == "tdt":
@@ -398,7 +406,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
     return "unrecognized"
 
 
-def _task_card_text(task_summary: str, raw_message: str | None = None, due_date: date | None = None, code: str = "") -> str:
+def _task_card_text(task_summary: str, raw_message: str | None = None, due_date: date | None = None, code: str = "",
+                    priority: int | None = None) -> str:
     """The base text/caption every task card starts with — recomputed (not
     stored) so edits can append a status line without needing to fetch or
     guess the message's current content.
@@ -411,6 +420,9 @@ def _task_card_text(task_summary: str, raw_message: str | None = None, due_date:
     "the AI's phrasing is confusing", not just a formatting nicety.
     """
     text = f"📋 <b>Янги топшириқ{' · ' + escape(code) if code else ''}</b>\n\n{sanitize_model_html(task_summary)}"
+    urgency = task_register.priority_line({"priority": priority})
+    if urgency:  # P1 / P3 / P4 shown; the default P2 says nothing new (2026-11-10)
+        text = text.replace("</b>\n\n", f"</b>\n{urgency}\n\n", 1)
     if raw_message and raw_message.strip() and raw_message.strip() != task_summary.strip():
         text += f"\n\n<i>Директордан:</i>\n{escape(raw_message.strip())}"
     deadline = task_tracker.deadline_line(due_date, today_local())
@@ -592,13 +604,14 @@ async def _refresh_task_card(task: dict[str, Any], run_id: uuid.UUID, full: dict
     if full.get("has_media"):
         # A file's caption: at most 1024 characters — the summary shortened, never cut inside a tag.
         code = task_register.code_of(full)
-        head = f"📋 <b>Янги топшириқ{' · ' + escape(code) if code else ''}</b>\n\n"
+        urgency = task_register.priority_line(full)
+        head = f"📋 <b>Янги топшириқ{' · ' + escape(code) if code else ''}</b>\n" + (f"{urgency}\n" if urgency else "") + "\n"
         deadline = task_tracker.deadline_line(full.get("due_date"), today_local())
         tail = (f"\n\n{deadline}" if deadline else "") + f"\n\n{status}"
         text = task_register.fit(head, task_register.plain(full["task_summary"]), tail)
     else:
         text = (_task_card_text(full["task_summary"], full.get("raw_message"), full.get("due_date"),
-                                task_register.code_of(full)) + "\n\n" + status)
+                                task_register.code_of(full), full.get("priority")) + "\n\n" + status)
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
@@ -650,7 +663,8 @@ async def _ask_task_input(task: dict[str, Any], telegram_user_id: int, run_id: u
 
     The edited card alone wasn't seen — a day-old card is far up the chat (03.11: six ✅, no proof, all red).
     """
-    placeholder = "Тўсиқ сабаби" if task.get("awaiting") == "blocker" else "Далил: фото, файл ёки матн"
+    placeholder = {"blocker": "Тўсиқ сабаби", "reschedule": "Муддат нега етмаяпти"}.get(
+        task.get("awaiting") or "", "Далил: фото, файл ёки матн")
     try:
         ids = await _reply(telegram_user_id, run_id, task_register.prompt_text(task),
                            reply_markup={"force_reply": True, "input_field_placeholder": placeholder},
@@ -693,12 +707,126 @@ async def _handle_task_step(prefix: str, task_id: str, callback: dict[str, Any],
     return outcome
 
 
+async def _handle_reschedule_open(task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """📅 Муддатни узайтириш (2026-11-10): the employee is offered three new dates under the card."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    task = await store.task_with_employee(task_id) if clicker_id else None
+    if (task is None or task.get("employee_telegram_user_id") != clicker_id or task.get("status") not in
+            ("sent", "started", "blocked") or not task.get("due_date") or task.get("proposed_due")
+            or task.get("awaiting") not in (None, "reschedule")):
+        await _answer(query_id, "Бу топшириқда бу амал мумкин эмас")
+        return "reschedule_refused"
+    await _answer(query_id, "Қачонгача?")
+    text, keyboard = task_register.reschedule_choices(task, today_local())
+    await _reply(clicker_id, run_id, text, reply_markup=keyboard, reply_to=task.get("telegram_message_id"))
+    return "reschedule_offered"
+
+
+async def _handle_reschedule_pick(prefix: str, rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """A new date picked (the reason is asked next) or ↩️ Бекор."""
+    query_id = callback.get("id", "")
+    clicker_id = (callback.get("from") or {}).get("id")
+    message = callback.get("message") or {}
+
+    async def settle(text: str) -> None:
+        if message.get("message_id") and clicker_id:
+            await _edit_lead_message(clicker_id, message["message_id"], text, {"inline_keyboard": []}, run_id)
+
+    if prefix == "tdpx":
+        await _answer(query_id, "Бекор қилинди")
+        await settle("📅 Муддат ўзгармайди.")
+        return "reschedule_cancelled"
+    task_id, _, days = rest.rpartition(":")
+    current = await store.task_with_employee(task_id) if task_id and clicker_id else None
+    if current is None or not days.isdigit() or int(days) not in task_register.RESCHEDULE_DAYS:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    wanted = task_register.new_due(current.get("due_date"), today_local(), int(days))
+    task = await store.ask_reschedule(task_id, clicker_id, wanted)
+    if task is None:
+        await _answer(query_id, "Бу топшириқда бу амал мумкин эмас")
+        return "reschedule_refused"
+    await _answer(query_id, f"{wanted:%d.%m}")
+    await settle(f"📅 Янги муддат: <b>{wanted:%d.%m}</b> — сабабини пастдаги хабарга жавоб қилиб ёзинг.")
+    await _refresh_task_card(task, run_id)
+    await _ask_task_input(task, clicker_id, run_id)
+    return "reschedule_reason_asked"
+
+
+async def _handle_reschedule_decision(accept: bool, task_id: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """✅ Розиман / ❌ Йўқ — only the one who assigned the task; the employee is told either way."""
+    query_id = callback.get("id", "")
+    clicker = callback.get("from") or {}
+    clicker_id = clicker.get("id")
+    before = await store.task_with_employee(task_id) if clicker_id else None
+    task = (await store.decide_reschedule(task_id, clicker_id, accept, clicker.get("username") or str(clicker_id))
+            if before else None)
+    message = callback.get("message") or {}
+    if task is None:
+        # Say why, and take the buttons away (2026-11-10 review: «аллақачон ҳал қилинган» was shown although
+        # nothing had been decided).
+        state = (before or {}).get("status")
+        why = ("топшириқ текширувга ўтган" if state == "review" else "топшириқ ёпилган" if state in ("done", "cancelled")
+               else "сўров аллақачон ҳал қилинган")
+        await _answer(query_id, why.capitalize())
+        if message.get("message_id") and clicker_id and before and before.get("director_telegram_user_id") == clicker_id:
+            await _edit_lead_message(clicker_id, message["message_id"],
+                                     f"📅 <b>{escape(task_register.code_of(before))}</b> — {why}.",
+                                     {"inline_keyboard": []}, run_id)
+        return "reschedule_closed"
+    await _answer(query_id, "Муддат ўзгарди" if accept else "Муддат ўзгармади")
+    code = escape(task_register.code_of(task))
+    if message.get("message_id"):
+        verdict = (f"✅ Розилик берилди — янги муддат {task['due_date']:%d.%m}." if accept
+                   else f"❌ Рад этилди — муддат {before['due_date']:%d.%m} қолди.")
+        await _edit_lead_message(clicker_id, message["message_id"], f"📅 <b>{code}</b> — {verdict}",
+                                 {"inline_keyboard": []}, run_id)
+    await _refresh_task_card(task, run_id)
+    note = (f"✅ {code}: янги муддатга розилик берилди — {task['due_date']:%d.%m}." if accept
+            else f"❌ {code}: муддат ўзгармади — {before['due_date']:%d.%m}. Улгуриш қийин бўлса, ⛔ Тўсиқ бор орқали ёзинг.")
+    try:
+        await _reply(before["employee_telegram_user_id"], run_id, note, reply_to=before.get("telegram_message_id"))
+    except TelegramError as exc:
+        log.warning("Could not tell {} the deadline decision: {}", task_register.code_of(task), exc)
+    if accept:  # a shared task: every copy gets the new deadline (one message to several people = one task)
+        for copy in await store.move_shared_copies(task, clicker.get("username") or str(clicker_id)):
+            await _refresh_task_card(copy, run_id)
+            mate = await store.task_with_employee(str(copy["id"]))
+            if mate:
+                try:
+                    await _reply(mate["employee_telegram_user_id"], run_id,
+                                 f"📅 {escape(task_register.code_of(copy))}: умумий топшириқнинг янги муддати — "
+                                 f"{task['due_date']:%d.%m}.", reply_to=mate.get("telegram_message_id"))
+                except TelegramError as exc:
+                    log.warning("Could not tell a colleague the new deadline: {}", type(exc).__name__)
+    return "rescheduled" if accept else "reschedule_rejected"
+
+
 async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], message: dict[str, Any],
                               run_id: uuid.UUID) -> str:
     """The message right after ✅ (proof) or ⛔ (reason): saved on the task, sent to the one who assigned it."""
     telegram_user_id = employee["telegram_user_id"]
     who = names.person_name(employee)
     by = employee.get("telegram_username") or str(telegram_user_id)
+    if task.get("awaiting") == "reschedule":
+        reason = (message.get("text") or message.get("caption") or "").strip()[:task_register.BLOCKER_MAX]
+        if not reason:
+            await _reply(telegram_user_id, run_id, "Муддат нега етмаётганини қисқа матн билан ёзинг.")
+            return "reschedule_needs_text"
+        asked = await store.submit_reschedule(str(task["id"]), by, reason)
+        if asked is None:
+            return "task_input_stale"
+        await _refresh_task_card(asked, run_id)
+        await _reply(telegram_user_id, run_id, f"📨 {escape(task_register.code_of(asked))}: янги муддат сўрови топшириқ "
+                                               "берган кишига юборилди — жавоб келгач хабар бераман.")
+        try:
+            await _reply(asked["director_telegram_user_id"], run_id,
+                         task_register.reschedule_request_text(asked, who, reason),
+                         reply_markup=task_register.reschedule_keyboard(str(asked["id"])))
+        except TelegramError as exc:
+            log.warning("Could not send {}'s deadline request: {}", task_register.code_of(asked), exc)
+        return "reschedule_asked"
     if task.get("awaiting") == "blocker":
         reason = (message.get("text") or message.get("caption") or "").strip()[:task_register.BLOCKER_MAX]
         if not reason:
@@ -2187,7 +2315,7 @@ async def _dispatch_director_task(
             # if the router says "agent"; a task, a clarification or a refusal cancels it. The status line under the
             # question shows what it is doing meanwhile (progress.py, 10.11).
             progress = Progress(director_telegram_user_id, run_id, source_message_id)
-            await progress.start()
+            progress.begin()  # sent in the background — never holds up the analyst or the router
             speculative = asyncio.create_task(_speculative_answer(raw_message, history, run_id, progress))
             speculative.add_done_callback(_retrieved)
         roster_lines, roster = await _roster()
@@ -2457,11 +2585,12 @@ async def _propose_task(
         has_media=has_media,
         candidate_ids=[str(p["id"]) for p in ordered],
         selected_ids=sorted(suggested),
+        priority=task_register.guess_priority(f"{raw_message} {task_summary}"),
     )
     picked = [p for p in ordered if str(p["id"]) in suggested]
     message_ids = await _reply(
-        director_id, run_id, task_picker.card_text(task_summary, raw_message, picked, note),
-        task_picker.keyboard(str(draft["id"]), ordered, suggested),
+        director_id, run_id, task_picker.card_text(task_summary, raw_message, picked, note, draft.get("priority")),
+        task_picker.keyboard(str(draft["id"]), ordered, suggested, draft.get("priority")),
     )
     await store.set_task_draft_message(str(draft["id"]), message_ids[-1] if message_ids else None)
     await store.log_conversation_turn(director_id, "bot", "Топшириқ тайёр — кимга юборишни белгиланг.")
@@ -2502,12 +2631,38 @@ async def _handle_draft_toggle(rest: str, callback: dict[str, Any], run_id: uuid
     selected = {str(i) for i in draft["selected_ids"]}
     await _edit_draft_card(
         callback,
-        task_picker.card_text(draft["task_summary"], draft["raw_message"], [p for p in people if str(p["id"]) in selected]),
-        task_picker.keyboard(str(draft["id"]), people, selected),
+        task_picker.card_text(draft["task_summary"], draft["raw_message"], [p for p in people if str(p["id"]) in selected],
+                              priority=draft.get("priority")),
+        task_picker.keyboard(str(draft["id"]), people, selected, draft.get("priority")),
         run_id,
     )
     await _answer(query_id, "")
     return "draft_toggled"
+
+
+async def _handle_draft_priority(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The Director tapped P1–P4 on a task card (2026-11-10)."""
+    query_id = callback.get("id", "")
+    draft_id, _, value = rest.rpartition(":")
+    clicker_id = (callback.get("from") or {}).get("id")
+    if not draft_id or value not in ("1", "2", "3", "4") or clicker_id is None:
+        await _answer(query_id, "Номаълум амал")
+        return "unrecognized"
+    draft = await store.set_task_draft_priority(draft_id, clicker_id, int(value))
+    if draft is None:
+        await _answer(query_id, "Бу топшириқ аллақачон ҳал қилинган")
+        return "draft_closed"
+    people = await _draft_people(draft)
+    selected = {str(i) for i in draft["selected_ids"]}
+    await _edit_draft_card(
+        callback,
+        task_picker.card_text(draft["task_summary"], draft["raw_message"], [p for p in people if str(p["id"]) in selected],
+                              priority=draft["priority"]),
+        task_picker.keyboard(str(draft["id"]), people, selected, draft["priority"]),
+        run_id,
+    )
+    await _answer(query_id, task_register.priority_label(draft["priority"]))
+    return "draft_priority"
 
 
 async def _handle_draft_send(rest: str, callback: dict[str, Any], run_id: uuid.UUID) -> str:
@@ -2594,6 +2749,12 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
             existing = next((t for t in await store.open_tasks_of(str(employee["id"]))
                              if task_register.same_task(t, draft)), None)
             if existing is not None:
+                # Given again as more urgent (2026-11-10 review): the open task takes the higher priority.
+                wanted = int(draft.get("priority") or task_register.DEFAULT_PRIORITY)
+                if wanted < int(existing.get("priority") or task_register.DEFAULT_PRIORITY):
+                    await store.set_task_priority(str(existing["id"]), wanted)
+                    existing["priority"] = wanted
+                    await _refresh_task_card(existing, run_id)
                 try:
                     await bot.send_message(task_register.repeated_text(existing), chat_id=str(employee["telegram_user_id"]),
                                            reply_to_message_id=existing.get("telegram_message_id"))
@@ -2615,6 +2776,7 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
                 task_summary=draft["task_summary"],
                 has_media=draft["has_media"],
                 due_date=due_date,
+                priority=int(draft.get("priority") or task_register.DEFAULT_PRIORITY),
             )
             if task is None:
                 continue  # already sent (a duplicate tap or webhook delivery)
@@ -2626,7 +2788,8 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
                             "chat_id": str(employee["telegram_user_id"]),
                             "from_chat_id": str(director_id),
                             "message_id": draft["source_message_id"],
-                            "caption": _task_card_text(draft["task_summary"], due_date=due_date, code=task_register.code_of(task)),
+                            "caption": _task_card_text(draft["task_summary"], due_date=due_date, code=task_register.code_of(task),
+                                                       priority=task.get("priority")),
                             "parse_mode": "HTML",
                             "reply_markup": task_register.keyboard(task),
                         },
@@ -2636,7 +2799,8 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
                     message_id = result.get("message_id") if result else None
                 else:
                     ids = await bot.send_message(
-                        _task_card_text(draft["task_summary"], draft["raw_message"], due_date, task_register.code_of(task)),
+                        _task_card_text(draft["task_summary"], draft["raw_message"], due_date, task_register.code_of(task),
+                                        task.get("priority")),
                         chat_id=str(employee["telegram_user_id"]),
                         reply_markup=task_register.keyboard(task),
                     )
@@ -2698,6 +2862,12 @@ async def _handle_task_due(rest: str, callback: dict[str, Any], run_id: uuid.UUI
             except TelegramError as exc:
                 log.warning("Could not send the deadline to {}: {}", task.get("display_name"), exc)
 
+    # Redraw the employees' cards: the deadline line and «📅 Муддатни узайтириш» appear (2026-11-10 review).
+    for task in updated:
+        try:
+            await _refresh_task_card(task, run_id)
+        except TelegramError as exc:
+            log.warning("Could not redraw the card of {}: {}", task_register.code_of(task), exc)
     log.info("Deadline {} set on {} task(s) from message {}", due, len(updated), source_message_id)
     return "task_due_set"
 

@@ -476,6 +476,9 @@ UPDATE tasks SET code = 'T-' || to_char(created_at AT TIME ZONE 'Asia/Tashkent',
 WHERE code IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_code ON tasks (code);
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS awaiting TEXT CHECK (awaiting IN ('evidence', 'blocker'));
+-- 'reschedule' (2026-11-10): the next message is the reason for a new deadline.
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_awaiting_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_awaiting_check CHECK (awaiting IN ('evidence', 'blocker', 'reschedule'));
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS awaiting_since TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_text TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_message_id BIGINT;
@@ -504,7 +507,16 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events (task_id, at);
 -- the person is reminded on the existing card.
 ALTER TABLE task_events DROP CONSTRAINT IF EXISTS task_events_event_check;
 ALTER TABLE task_events ADD CONSTRAINT task_events_event_check CHECK (event IN (
-    'created', 'accepted', 'blocked', 'unblocked', 'submitted', 'closed', 'returned', 'cancelled', 'repeated'));
+    'created', 'accepted', 'blocked', 'unblocked', 'submitted', 'closed', 'returned', 'cancelled', 'repeated',
+    'reschedule_asked', 'rescheduled', 'reschedule_refused'));  -- a new deadline asked / given / refused (10.11)
+-- Task improvements (2026-11-10, the owner's МИЯ document §5.2 and the agents catalogue): priority P1–P4 (1 =
+-- шошилинч, 2 = муҳим — the default, 3 = оддий, 4 = кутиши мумкин); a new deadline the employee asked for, waiting
+-- for the assigner's ✅ / ❌ (proposed_due), and how many times the deadline was moved (reschedules).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority SMALLINT NOT NULL DEFAULT 2;
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_priority_check;
+ALTER TABLE tasks ADD CONSTRAINT tasks_priority_check CHECK (priority BETWEEN 1 AND 4);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proposed_due DATE;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reschedules INTEGER NOT NULL DEFAULT 0;
 
 DROP INDEX IF EXISTS idx_tasks_open;
 CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started', 'blocked', 'review');
@@ -1067,6 +1079,7 @@ CREATE TABLE IF NOT EXISTS task_drafts (
     message_id                 BIGINT,
     created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS priority SMALLINT NOT NULL DEFAULT 2;  -- P1–P4 picked on the card (10.11)
 
 -- ---------------------------------------------------------------------------
 -- director_clarifications — OPS Manager Bot's question back when it didn't
@@ -1927,7 +1940,10 @@ SELECT t.code AS code,
        COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS assignee,
        e.role AS assignee_role,
        t.director_telegram_user_id::text || ':' || t.source_message_id::text AS shared_key,
-       t.status IN ('sent', 'started', 'blocked', 'review') AS is_open
+       t.status IN ('sent', 'started', 'blocked', 'review') AS is_open,
+       t.priority AS priority,
+       t.reschedules AS reschedules,
+       t.proposed_due AS proposed_due
 FROM tasks t LEFT JOIN employees e ON e.id = t.assigned_employee_id;
 
 CREATE OR REPLACE VIEW analyst.bot_daily_reports AS

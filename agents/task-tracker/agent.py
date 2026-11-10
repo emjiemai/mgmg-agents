@@ -141,9 +141,33 @@ async def morning(run_id: uuid.UUID) -> None:
             for task in tasks:
                 await store.mark_task_overdue_notified(str(task["id"]))
 
+        # Escalation (2026-11-10): the person's department manager hears of their overdue tasks too, unless they gave
+        # them (report_calendar.TEAM_OF: today the Garmin manager for Garmin сотув).
+        for manager_id, tasks in (await managers_overdue(overdue)).items():
+            try:
+                await bot.send_message(task_tracker.overdue_director_text(tasks), chat_id=str(manager_id))
+            except TelegramError as exc:
+                log.warning("Could not send the overdue list to a department manager: {}", type(exc).__name__)
+
     # Anyone the bot still has no real name for (joined before names were
     # asked, or never answered): one question each, once (names.py).
     await names.ask_missing_names(run_id)
+
+
+async def managers_overdue(overdue: list[dict]) -> dict[int, list[dict]]:
+    """The overdue tasks each department manager should see: their team's, not the ones they assigned themselves."""
+    from integrations.org_bot.report_calendar import TEAM_OF
+
+    out: dict[int, list[dict]] = defaultdict(list)
+    for manager_role, team in TEAM_OF.items():
+        tasks = [t for t in overdue if t.get("employee_role") in team]
+        if not tasks:
+            continue
+        for manager in await store.active_employees_by_role(manager_role):
+            mine = [t for t in tasks if t.get("director_telegram_user_id") != manager["telegram_user_id"]]
+            if mine:
+                out[int(manager["telegram_user_id"])].extend(mine)
+    return dict(out)
 
 
 async def weekly(run_id: uuid.UUID, force: bool = False) -> None:

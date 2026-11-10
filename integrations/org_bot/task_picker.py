@@ -34,10 +34,14 @@ def candidates(people: list[dict[str, Any]], suggested_ids: set[str]) -> list[di
     return sorted(people, key=key)
 
 
-def card_text(task_summary: str, raw_message: str, picked: list[dict[str, Any]], note: str = "") -> str:
-    """The card the Director confirms: the task, and who is ticked now."""
+def card_text(task_summary: str, raw_message: str, picked: list[dict[str, Any]], note: str = "",
+              priority: int | None = None) -> str:
+    """The card the Director confirms: the task, its priority, and who is ticked now."""
+    from integrations.org_bot.task_register import priority_label
+
     who = ", ".join(escape(names.person_name(p)) for p in picked) or "ҳеч ким"
-    lines = ["📋 <b>Топшириқ — кимга юборилсин?</b>", "", sanitize_model_html(task_summary)]
+    lines = ["📋 <b>Топшириқ — кимга юборилсин?</b>", "", sanitize_model_html(task_summary), "",
+             f"Устуворлик: <b>{priority_label(priority)}</b>"]
     if note:
         lines += ["", f"<i>{escape(note)}</i>"]
     if raw_message.strip() and raw_message.strip() != task_summary.strip():
@@ -46,14 +50,18 @@ def card_text(task_summary: str, raw_message: str, picked: list[dict[str, Any]],
     return "\n".join(lines)
 
 
-def keyboard(draft_id: str, people: list[dict[str, Any]], selected: set[str]) -> dict[str, Any]:
-    """A tick-box per person (two to a row), then Send / Cancel."""
+def keyboard(draft_id: str, people: list[dict[str, Any]], selected: set[str], priority: int | None = None) -> dict[str, Any]:
+    """A tick-box per person (two to a row), the priority P1–P4 (2026-11-10), then Send / Cancel."""
+    from integrations.org_bot.task_register import DEFAULT_PRIORITY, PRIORITIES
     buttons = [
         {"text": f"{'✅' if str(p['id']) in selected else '▫️'} {names.person_name(p)}",
          "callback_data": f"tdt:{draft_id}:{i}"}
         for i, p in enumerate(people)
     ]
     rows = [buttons[i:i + PER_ROW] for i in range(0, len(buttons), PER_ROW)]
+    current = int(priority or DEFAULT_PRIORITY)
+    rows.append([{"text": f"{'• ' if n == current else ''}{icon} P{n}", "callback_data": f"tdpri:{draft_id}:{n}"}
+                 for n, (icon, _word) in PRIORITIES.items()])
     count = sum(1 for p in people if str(p["id"]) in selected)
     rows.append([
         {"text": f"📨 Юбориш ({count})", "callback_data": f"tds:{draft_id}"},

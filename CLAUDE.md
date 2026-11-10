@@ -217,6 +217,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   **05.11:** a file sent on its own → «нима учун?» offers «топшириқ далили» (pick the task) — same as a reply.
   **09.11 — shared tasks:** one message to several people = one task (copies share `source_message_id`): brief shows it once
   (furthest state, «+N»), no overdue noise while a copy awaits proof / is in review, accepting one closes all (`close_shared_copies`).
+  **10.11:** priority P1–P4 (Director's card row, guessed from his words; brief P1 first), «📅 Муддатни узайтириш» (employee
+  asks +1/+2/+7 days + reason → assigner ✅/❌), overdue lists also to the department manager (TEAM_OF). Analyst status
+  line `progress.py` (what it is really doing, deleted before the answer).
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).

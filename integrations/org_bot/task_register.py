@@ -53,6 +53,34 @@ BLOCKER_MAX = 500
 CAPTION_MAX = 1024  # Telegram's limit for a photo / file caption
 AWAIT_MINUTES = 30  # after ✅ / ⛔, only a message within this long is taken as the proof / reason
 
+# Priority (2026-11-10, the owner's МИЯ document §5.2): 1 шошилинч — today, money or a client at stake; 2 муҳим — this
+# week (the default); 3 оддий — within two weeks; 4 кутиши мумкин — no deadline.
+PRIORITIES = {1: ("🔴", "Шошилинч"), 2: ("🟠", "Муҳим"), 3: ("🟢", "Оддий"), 4: ("⚪", "Кутиши мумкин")}
+DEFAULT_PRIORITY = 2
+_URGENT = re.compile(r"шошилинч|зудлик|тезда|тезроқ|ҳозироқ|бугуноқ|срочн|немедленн|shoshilinch|zudlik|tezda|tezroq|"
+                     r"hoziroq|bugunoq|urgent", re.I)
+_CAN_WAIT = re.compile(r"кутиши мумкин|шошилмасдан|шошилинч эмас|вақт бўлганда|не срочн|bo'sh vaqt|shoshilmasdan", re.I)
+RESCHEDULE_DAYS = (1, 2, 7)  # the employee's choices for a new deadline: +1, +2 days, +1 week
+
+
+def guess_priority(text: str | None) -> int:
+    """The Director's own words decide the starting priority (one tap changes it on the card): «шошилинч», «тезда»,
+    «срочно» → 1; «кутиши мумкин», «шошилмасдан» → 4; otherwise 2."""
+    if _CAN_WAIT.search(text or ""):
+        return 4
+    return 1 if _URGENT.search(text or "") else DEFAULT_PRIORITY
+
+
+def priority_label(priority: int | None) -> str:
+    icon, word = PRIORITIES.get(int(priority or DEFAULT_PRIORITY), PRIORITIES[DEFAULT_PRIORITY])
+    return f"{icon} {word}"
+
+
+def priority_line(task: dict[str, Any]) -> str:
+    """On the employee's card: only when it isn't the default (P2 says nothing new)."""
+    priority = int(task.get("priority") or DEFAULT_PRIORITY)
+    return "" if priority == DEFAULT_PRIORITY else f"<b>{priority_label(priority)}</b>"
+
 
 def plain(html_text: str | None) -> str:
     """AI-written card text without its tags, on one line — safe to cut and escape."""
@@ -90,6 +118,10 @@ def status_line(task: dict[str, Any]) -> str:
                 "(нима қилинди, натижа) — шу хабарга жавоб қилиб. Далилсиз топшириқ ёпилмайди.")
     elif task.get("awaiting") == "blocker":
         line = "✍️ <b>Тўсиқ нимада?</b> Қисқа ёзинг (шу хабарга жавоб қилиб) — топшириқ берган кишига етказилади."
+    elif task.get("awaiting") == "reschedule":
+        line = "✍️ <b>Нега муддат етмаяпти?</b> Қисқа ёзинг (шу хабарга жавоб қилиб) — топшириқ берган кишига боради."
+    elif task.get("proposed_due") and status in ("sent", "started", "blocked"):
+        line += f" · 📅 янги муддат сўралди: {task['proposed_due']:%d.%m}, жавоб кутилмоқда"
     return line
 
 
@@ -100,6 +132,10 @@ def prompt_text(task: dict[str, Any]) -> str:
     if task.get("awaiting") == "blocker":
         return (f"✍️ <b>{code}</b> «{what}» — <b>тўсиқ нимада?</b> Қисқа ёзинг, шу хабарга жавоб қилиб — "
                 "топшириқ берган кишига етказилади.")
+    if task.get("awaiting") == "reschedule":
+        new = task.get("proposed_due")
+        return (f"✍️ <b>{code}</b> «{what}» — янги муддат <b>{new:%d.%m}</b>. <b>Нега етмаяпти?</b> Қисқа ёзинг, шу "
+                "хабарга жавоб қилиб — топшириқ берган киши розилик берса, муддат ўзгаради.")
     return (f"✍️ <b>{code}</b> «{what}» — бажарилганини тасдиқловчи <b>далил</b> юборинг: фото, файл ёки қисқа "
             "матн (нима қилинди, натижа), шу хабарга жавоб қилиб. Далил келгач топшириқ текширувга ўтади; "
             "далилсиз ёпилмайди.")
@@ -119,13 +155,48 @@ def keyboard(task: dict[str, Any]) -> dict[str, Any]:
         return {"inline_keyboard": [[{"text": "↩️ Бекор қилиш", "callback_data": f"taskx:{task_id}"}]]}
     done = {"text": "✅ Бажардим", "callback_data": f"taskdone:{task_id}"}
     block = {"text": "⛔ Тўсиқ бор", "callback_data": f"taskblock:{task_id}"}
+    # A new deadline can be asked when there is one and no answer to an earlier ask is pending (2026-11-10).
+    later = ([[{"text": "📅 Муддатни узайтириш", "callback_data": f"taskres:{task_id}"}]]
+             if task.get("due_date") and not task.get("proposed_due") else [])
     if status == "sent":
-        return {"inline_keyboard": [[{"text": "▶️ Қабул қилдим", "callback_data": f"taskstart:{task_id}"}], [block, done]]}
+        return {"inline_keyboard": [[{"text": "▶️ Қабул қилдим", "callback_data": f"taskstart:{task_id}"}], [block, done]]
+                + later}
     if status == "started":
-        return {"inline_keyboard": [[block, done]]}
+        return {"inline_keyboard": [[block, done]] + later}
     if status == "blocked":
-        return {"inline_keyboard": [[{"text": "▶️ Давом эттирдим", "callback_data": f"taskgo:{task_id}"}, done]]}
+        return {"inline_keyboard": [[{"text": "▶️ Давом эттирдим", "callback_data": f"taskgo:{task_id}"}, done]] + later}
     return {"inline_keyboard": []}
+
+
+def new_due(due: Any, today: Any, days: int) -> Any:
+    """The deadline asked for: ``days`` after the current one, or after today when it has already passed."""
+    from datetime import timedelta
+
+    return max(due or today, today) + timedelta(days=days)
+
+
+def reschedule_choices(task: dict[str, Any], today: Any) -> tuple[str, dict[str, Any]]:
+    """«Қачонгача?» and the three dates as buttons (+ cancel)."""
+    task_id = str(task["id"])
+    buttons = [{"text": f"{new_due(task.get('due_date'), today, d):%d.%m}" + (" (+1 ҳафта)" if d == 7 else f" (+{d} кун)"),
+                "callback_data": f"tdp:{task_id}:{d}"} for d in RESCHEDULE_DAYS]
+    text = (f"📅 <b>{escape(code_of(task))}</b> — ҳозирги муддат {task['due_date']:%d.%m}. Қачонгача узайтирилсин?"
+            if task.get("due_date") else f"📅 <b>{escape(code_of(task))}</b> — қачонгача?")
+    return text, {"inline_keyboard": [buttons, [{"text": "↩️ Бекор", "callback_data": f"tdpx:{task_id}"}]]}
+
+
+def reschedule_request_text(task: dict[str, Any], who: str, reason: str) -> str:
+    """To the one who assigned it: who asks, from which date to which, why; the second ask is marked."""
+    times = int(task.get("reschedules") or 0)
+    again = f"\n⚠️ Бу топшириқ муддати аввал {times} марта узайтирилган." if times else ""
+    return (f"📅 <b>{escape(code_of(task))} — муддатни узайтириш сўралди</b>\n{sanitize_model_html(task['task_summary'])}"
+            f"\n— {escape(who)}\n\n{task['due_date']:%d.%m} → <b>{task['proposed_due']:%d.%m}</b>\n<b>Сабаби:</b> "
+            f"{escape(reason)}{again}")
+
+
+def reschedule_keyboard(task_id: str) -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": "✅ Розиман", "callback_data": f"tdpa:{task_id}"},
+                                 {"text": "❌ Йўқ, муддат ўзгармайди", "callback_data": f"tdpr:{task_id}"}]]}
 
 
 def review_keyboard(task_id: str) -> dict[str, Any]:

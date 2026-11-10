@@ -606,8 +606,9 @@ def test_org_bot() -> None:
     draft_id = "11111111-2222-3333-4444-555555555555"
     kb = task_picker.keyboard(draft_id, ordered, {"c"})
     flat = [b for row in kb["inline_keyboard"] for b in row]
-    check("ticked and unticked people, then Send (count) and Cancel",
-          [b["text"] for b in flat], ["✅ Бобур", "▫️ Шерзод", "▫️ Алишер", "📨 Юбориш (1)", "❌ Бекор"])
+    check("ticked and unticked people, the priority row (10.11), then Send (count) and Cancel",
+          [b["text"] for b in flat], ["✅ Бобур", "▫️ Шерзод", "▫️ Алишер", "🔴 P1", "• 🟠 P2", "🟢 P3", "⚪ P4",
+                                      "📨 Юбориш (1)", "❌ Бекор"])
     check_true("every button fits 64 bytes", all(len(b["callback_data"].encode()) <= 64 for b in flat))
     check("a tick-box reads back", task_picker.parse_toggle(flat[2]["callback_data"].split(":", 1)[1]), (draft_id, 2))
     check("a broken one doesn't", task_picker.parse_toggle("x"), None)
@@ -1904,6 +1905,170 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_task_improvements_1110() -> None:
+    """10.11.2026 (the owner's МИЯ document §5.2 + the agents catalogue): priority P1–P4 on the Director's card and the
+    employee's; «📅 Муддатни узайтириш» — a new date + reason, the assigner ✅ / ❌, the second ask marked; overdue
+    tasks also to the person's department manager; the brief puts P1 first and shows pending deadline asks."""
+    print("task improvements: priority, new deadline, escalation (10.11.2026)")
+    import asyncio
+    import uuid
+    from datetime import date
+    from pathlib import Path
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import ops_manager, store, task_picker, task_register
+
+    for text, expected in (("Хилтонга таклифни тезда юборинг", 1), ("срочно позвоните клиенту", 1),
+                           ("шошилмасдан ҳисоботни тайёрланг", 4), ("омборни санаб чиқинг", 2)):
+        check(f"priority from the Director's words: {text}", task_register.guess_priority(text), expected)
+    check("the employee's card: P1 shown, the default P2 silent",
+          (task_register.priority_line({"priority": 1}), task_register.priority_line({"priority": 2})),
+          ("<b>🔴 Шошилинч</b>", ""))
+    check_true("…on the card text", "🔴 Шошилинч" in ops_manager._task_card_text("Таклиф", priority=1)
+               and "Шошилинч" not in ops_manager._task_card_text("Таклиф"))
+    draft_id = str(uuid.UUID(int=5))
+    people = [{"id": uuid.UUID(int=6), "full_name": "Эшонов Шахзод", "role": "it"}]
+    kb = task_picker.keyboard(draft_id, people, set(), 1)
+    row = kb["inline_keyboard"][-2]
+    check("the Director's card: a P1–P4 row, the current one marked", [b["text"] for b in row],
+          ["• 🔴 P1", "🟠 P2", "🟢 P3", "⚪ P4"])
+    check_true("…and its priority line", "Устуворлик: <b>🔴 Шошилинч</b>" in task_picker.card_text("x", "x", [], priority=1))
+
+    task_id = str(uuid.UUID(int=7))
+    today = date(2026, 11, 10)
+    task = {"id": task_id, "code": "T-2026-11-0060", "task_summary": "Солиштириш", "status": "started",
+            "due_date": date(2026, 11, 8), "reschedules": 0, "proposed_due": None}
+    buttons = [b for r in task_register.keyboard(task)["inline_keyboard"] for b in r]
+    check_true("📅 Муддатни узайтириш on a card with a deadline", any(b["callback_data"] == f"taskres:{task_id}" for b in buttons))
+    check_true("…not while an earlier ask waits, nor without a deadline",
+               "taskres" not in str(task_register.keyboard({**task, "proposed_due": date(2026, 11, 12)}))
+               and "taskres" not in str(task_register.keyboard({**task, "due_date": None})))
+    text, choices = task_register.reschedule_choices(task, today)
+    check("the choices count from today when the deadline has passed (+1, +2 days, +1 week)",
+          [b["callback_data"] for b in choices["inline_keyboard"][0]],
+          [f"tdp:{task_id}:1", f"tdp:{task_id}:2", f"tdp:{task_id}:7"])
+    check_true("…labelled with the dates", "11.11 (+1 кун)" in str(choices) and "17.11 (+1 ҳафта)" in str(choices))
+    datas = [b["callback_data"] for r in choices["inline_keyboard"] + kb["inline_keyboard"]
+             + task_register.reschedule_keyboard(task_id)["inline_keyboard"] for b in r]
+    check_true("every new button fits Telegram's 64 bytes", all(len(d.encode()) <= 64 for d in datas))
+    asked = {**task, "proposed_due": date(2026, 11, 12), "reschedules": 1}
+    request = task_register.reschedule_request_text(asked, "Эшонов Шахзод", "SAP маълумоти келмади")
+    check_true("the assigner sees from → to, the reason, and that it was moved before",
+               "08.11 → <b>12.11</b>" in request and "SAP маълумоти келмади" in request and "1 марта" in request)
+
+    calls: list = []
+
+    async def with_employee(tid):
+        return {**task, "employee_telegram_user_id": 50, "telegram_message_id": 900, "director_telegram_user_id": 9}
+
+    async def ask(tid, uid, new):
+        calls.append(("ask", uid, new))
+        return {**task, "awaiting": "reschedule", "proposed_due": new}
+
+    async def submit(tid, by, reason):
+        calls.append(("submit", reason))
+        return {**asked, "director_telegram_user_id": 9}
+
+    async def decide(tid, uid, accept, by):
+        calls.append(("decide", uid, accept))
+        return {**task, "due_date": date(2026, 11, 12)} if accept else dict(task)
+
+    async def reply(uid, run_id, text, reply_markup=None, reply_to=None):
+        calls.append(("reply", uid, text[:40], bool(reply_markup)))
+        return [1]
+
+    async def nothing(*a, **k):
+        calls.append(("other",))
+        return None
+
+    saved = [(store, n, getattr(store, n)) for n in ("task_with_employee", "ask_reschedule", "submit_reschedule",
+                                                     "decide_reschedule")] + \
+            [(ops_manager, n, getattr(ops_manager, n)) for n in ("_answer", "_reply", "_refresh_task_card",
+                                                                 "_edit_lead_message", "_ask_task_input")]
+    store.task_with_employee, store.ask_reschedule, store.submit_reschedule = with_employee, ask, submit
+    store.decide_reschedule = decide
+    ops_manager._answer, ops_manager._reply, ops_manager._refresh_task_card = nothing, reply, nothing
+    ops_manager._edit_lead_message, ops_manager._ask_task_input = nothing, nothing
+    saved_today = ops_manager.today_local
+    ops_manager.today_local = lambda: today
+    cb = {"id": "q", "from": {"id": 50}, "message": {"message_id": 3}}
+    try:
+        out1 = asyncio.run(ops_manager._handle_reschedule_open(task_id, cb, uuid.uuid4()))
+        out2 = asyncio.run(ops_manager._handle_reschedule_pick("tdp", f"{task_id}:2", cb, uuid.uuid4()))
+        out3 = asyncio.run(ops_manager._consume_task_input({"telegram_user_id": 50, "full_name": "Эшонов Шахзод"},
+                                                           {**task, "awaiting": "reschedule"},
+                                                           {"text": "SAP маълумоти келмади"}, uuid.uuid4()))
+        out4 = asyncio.run(ops_manager._handle_reschedule_decision(True, task_id, {"id": "q", "from": {"id": 9},
+                                                                                  "message": {"message_id": 4}},
+                                                                   uuid.uuid4()))
+        stranger = asyncio.run(ops_manager._handle_reschedule_open(task_id, {"id": "q", "from": {"id": 51}}, uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        ops_manager.today_local = saved_today
+    check("the flow: offered → date picked → reason sent → accepted", (out1, out2, out3, out4),
+          ("reschedule_offered", "reschedule_reason_asked", "reschedule_asked", "rescheduled"))
+    check_true("the date asked is +2 days from today (the deadline had passed)", ("ask", 50, date(2026, 11, 12)) in calls)
+    check_true("the assigner gets the ask with ✅ / ❌", any(c[0] == "reply" and c[1] == 9 and c[3] for c in calls))
+    check_true("the decision is the assigner's, and the employee is told",
+               ("decide", 9, True) in calls and any(c[0] == "reply" and c[1] == 50 and "розилик" in c[2] for c in calls))
+    check("someone else's task: no new deadline", stranger, "reschedule_refused")
+    check_true("a shared task's other copies take the new deadline on ✅ (one message = one task)",
+               "move_shared_copies" in inspect_source(ops_manager._handle_reschedule_decision)
+               and "source_message_id = %s AND id <> %s" in inspect_source(store.move_shared_copies))
+    check_true("the Director can decide while proof is awaited; leaving the open states clears the ask",
+               inspect_source(store.decide_reschedule).count("IS DISTINCT FROM 'reschedule'") == 2
+               and "proposed_due = NULL" in inspect_source(store.submit_task)
+               and "proposed_due = NULL" in inspect_source(store.verify_task))
+    check_true("one ask per shared task, never over a pending proof / blocker ask",
+               "one ask per shared task" in inspect_source(store.ask_reschedule)
+               and "t.awaiting IS NULL OR t.awaiting = 'reschedule'" in inspect_source(store.ask_reschedule))
+    check_true("a later deadline (taskdue) redraws the cards, so 📅 appears",
+               "_refresh_task_card" in inspect_source(ops_manager._handle_task_due))
+
+    brief = load_agent("ceo-daily-brief")
+    rows, n = brief.task_rows([
+        {"id": "1", "display_name": "A", "task_summary": "оддий", "status": "started", "due_date": date(2026, 11, 1),
+         "priority": 3},
+        {"id": "2", "display_name": "B", "task_summary": "шошилинч", "status": "started", "due_date": date(2026, 11, 2),
+         "priority": 1},
+        {"id": "3", "display_name": "C", "task_summary": "кўчириш", "status": "started", "due_date": date(2026, 11, 3),
+         "priority": 2, "proposed_due": date(2026, 11, 12)},
+    ], today)
+    check("the brief: P1 first (🔴), a pending deadline ask shown for the Director's decision",
+          [(r["who"], r["what"].split(" · ")[0]) for r in rows],
+          [("B", "8 кун ўтди"), ("A", "9 кун ўтди"), ("C", "7 кун ўтди")])
+    check_true("…the ask row says how late it is and the date asked", "7 кун ўтди · янги муддат сўралди 12.11" in rows[2]["what"]
+               and rows[2]["alert"])
+    check_true("…its text marked 🔴", rows[0]["what"].endswith("🔴 шошилинч"))
+    rows2, n2 = brief.task_rows([{"id": "9", "display_name": "D", "task_summary": "x", "status": "review",
+                                  "due_date": date(2026, 11, 1), "proposed_due": date(2026, 11, 12)}], today)
+    check("a task in review with an old ask shows «текширувда», not a red ask", rows2[0]["what"].split(" · ")[0], "текширувда")
+
+    tracker = load_agent("task-tracker")
+
+    async def managers(role):
+        return [{"telegram_user_id": 300}] if role == "garmin_manager" else []
+
+    saved_role = store.active_employees_by_role
+    store.active_employees_by_role = managers
+    try:
+        out = asyncio.run(tracker.managers_overdue([
+            {"id": "a", "employee_role": "garmin_sotuv", "director_telegram_user_id": 9},
+            {"id": "b", "employee_role": "garmin_sotuv", "director_telegram_user_id": 300},
+            {"id": "c", "employee_role": "it", "director_telegram_user_id": 9}]))
+    finally:
+        store.active_employees_by_role = saved_role
+    check("escalation: the Garmin manager hears of his team's overdue tasks he didn't give",
+          {k: [t["id"] for t in v] for k, v in out.items()}, {300: ["a"]})
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("schema: priority 1–4, the reschedule wait, the new task events",
+               "CHECK (priority BETWEEN 1 AND 4)" in schema
+               and "CHECK (awaiting IN ('evidence', 'blocker', 'reschedule'))" in schema
+               and "'reschedule_asked', 'rescheduled', 'reschedule_refused'" in schema
+               and "ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS priority" in schema)
+
+
 def test_progress_line_1110() -> None:
     """10.11.2026 (the owner): answers still take 10–30 s — show what the analyst is really doing meanwhile, in plain
     words. One silent message under the question, changed as the tools run, deleted before the answer."""
@@ -1956,12 +2121,13 @@ def test_progress_line_1110() -> None:
 
     async def run():
         p = progress.Progress(1, uuid.uuid4(), reply_to=9)
-        await p.start()
-        progress.MIN_GAP = 60
-        await p.update("⏳ too soon")
-        progress.MIN_GAP = 0
-        await p.update("⏳ A")
-        await p.update("⏳ A")
+        p.begin()  # in the background
+        await asyncio.sleep(0)
+        progress.MIN_GAP = 0.05
+        await p.update("⏳ B")
+        await p.update("⏳ C")  # within the gap: waits, the newest wins (09.11 review: it used to be dropped)
+        await asyncio.sleep(0.12)
+        await p.update("⏳ C")
         await p.done()
         await p.done()
 
@@ -1969,8 +2135,30 @@ def test_progress_line_1110() -> None:
         asyncio.run(run())
     finally:
         progress.TelegramBot, progress.MIN_GAP = saved
-    check("silent, under the question; throttled; no repeats; deleted once",
-          calls, [("send", progress.START, True, 9), ("edit", "⏳ A"), ("deleteMessage", 55)])
+    check("silent, under the question; a step within the gap waits (newest wins); no repeats; deleted once",
+          calls, [("send", progress.START, True, 9), ("edit", "⏳ C"), ("deleteMessage", 55)])
+
+    class SlowBot(FakeBot):
+        async def _edit_message(self, chat_id, message_id, text):
+            raise RuntimeError("429")
+
+    calls.clear()
+    progress.TelegramBot = SlowBot
+
+    async def failing():
+        p = progress.Progress(1, uuid.uuid4())
+        await p.start()
+        progress.MIN_GAP = 0
+        await p.update("⏳ X")
+        await p.update("⏳ Y")
+        await p.done()
+
+    try:
+        asyncio.run(failing())
+    finally:
+        progress.TelegramBot, progress.MIN_GAP = saved
+    check("a failed edit turns the line off for the question; the delete is still tried",
+          [c[0] for c in calls], ["send", "deleteMessage"])
 
 
 def test_analyst_sql_1109() -> None:
@@ -12010,6 +12198,7 @@ def main() -> int:
         test_shared_tasks_1109,
         test_analyst_sql_1109,
         test_progress_line_1110,
+        test_task_improvements_1110,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

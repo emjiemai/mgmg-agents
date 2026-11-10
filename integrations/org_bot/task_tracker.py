@@ -161,7 +161,8 @@ def overdue_director_text(tasks: list[dict[str, Any]]) -> str:
     lines = [f"⚠️ <b>Муддати ўтган топшириқлар: {len(tasks)} та</b>"]
     for task in tasks[:15]:
         lines.append(
-            f"• {_h(task.get('display_name') or '—')} — {_h(_short(task['task_summary']))} "
+            f"• {'🔴 ' if int(task.get('priority') or 2) == 1 else ''}{_h(task.get('display_name') or '—')} — "
+            f"{_h(_short(task['task_summary']))} "
             f"<i>({fmt_day(task['due_date'])})</i>"
         )
     if len(tasks) > 15:

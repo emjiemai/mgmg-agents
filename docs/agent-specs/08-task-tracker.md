@@ -163,3 +163,17 @@ counts only the role held now. Removal already did this (2026-10-14).
 **2026-11-09 — shared tasks:** copies with the same assigner and `source_message_id` are one shared task: the brief groups them (one row, the furthest state, «+N»), overdue/due-soon notices skip a copy while another copy awaits proof or is in review, the review card names the others (`task_register.shared_line`), and accepting one closes the rest (`store.close_shared_copies`, completion time of the accepted one; each colleague told).
 
 **2026-11-09 fix:** the task-pick buttons carry the task code without «T-» (`report_tools.proof_key`) — file id + task id exceeded Telegram's 64-byte `callback_data` limit.
+
+**2026-11-10 — priority, new deadline, escalation:**
+- Priority `tasks.priority` 1–4 (🔴 Шошилинч, 🟠 Муҳим = default, 🟢 Оддий, ⚪ Кутиши мумкин): P1–P4 row on the Director's
+  send card (`tdpri:`), preset by `task_register.guess_priority` from his words; card line when ≠ P2; brief sorts P1 first
+  (🔴); the overdue list marks P1.
+- New deadline: «📅 Муддатни узайтириш» (`taskres:`, only with a deadline and no pending ask) → +1 / +2 / +7 days from
+  max(deadline, today) (`tdp:` / `tdpx:`) → the reason (`awaiting='reschedule'`, a reply) → the assigner's card with
+  from → to, the reason, «аввал N марта» (`tdpa:` ✅ / `tdpr:` ❌, only the assigner) → ✅ sets `due_date`, counts
+  `reschedules`, resets the reminder and overdue notice; ❌ keeps it; the employee is told. Events `reschedule_asked`,
+  `rescheduled`, `reschedule_refused`. The brief shows a pending ask (red) until decided.
+- Escalation: the morning overdue list also goes to the employee's department manager (`report_calendar.TEAM_OF`),
+  without the tasks that manager gave himself.
+- Still to come: «who can help» on ⛔ (a who-helps-with-what list), deputies.
+

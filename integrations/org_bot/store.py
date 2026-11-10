@@ -100,7 +100,7 @@ async def change_employee_role(employee_id: str, role: str, changed_by: str) -> 
     after = await fetch_one("UPDATE employees SET role = %s, work_days = NULL WHERE id = %s RETURNING *", (role, employee_id))
     await log_employee_change(employee_id, "role", before["role"], role, changed_by)
     cancelled = await fetch_all(
-        """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL
+        """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL, proposed_due = NULL
            WHERE assigned_employee_id = %s AND status IN ('sent', 'started', 'blocked', 'review') RETURNING id""",
         (employee_id,),
     )
@@ -362,7 +362,7 @@ async def revoke_employee(employee_id: str, revoked_by: str) -> dict[str, Any] |
     await execute("UPDATE employee_files SET resolved_at = now(), purpose = 'cancelled' "
                   "WHERE telegram_user_id = %s AND resolved_at IS NULL", (tg,))
     cancelled = await fetch_all(
-        """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL
+        """UPDATE tasks SET status = 'cancelled', awaiting = NULL, awaiting_since = NULL, proposed_due = NULL
            WHERE assigned_employee_id = %s AND status IN ('sent', 'started', 'blocked', 'review') RETURNING id""",
         (employee_id,),
     )
@@ -576,6 +576,7 @@ async def create_task(
     task_summary: str,
     has_media: bool = False,
     due_date: date | None = None,
+    priority: int = 2,
 ) -> dict[str, Any] | None:
     """Create one task-dispatch row (one per recipient employee).
 
@@ -606,8 +607,9 @@ async def create_task(
         """
         INSERT INTO tasks
             (director_telegram_user_id, source_message_id, raw_message,
-             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media, due_date, code)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+             target_type, target_role, target_agent, assigned_employee_id, task_summary, has_media, due_date, priority,
+             code)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 'T-' || to_char(now() AT TIME ZONE 'Asia/Tashkent', 'YYYY-MM') || '-'
                      || lpad(nextval('task_code_seq')::text, 4, '0'))
         ON CONFLICT ON CONSTRAINT uq_task_dispatch DO NOTHING
@@ -624,6 +626,7 @@ async def create_task(
             task_summary,
             has_media,
             due_date,
+            priority if priority in (1, 2, 3, 4) else 2,
         ),
     )
     if row is not None:
@@ -695,10 +698,11 @@ async def mark_task_reminded(task_id: str) -> None:
 
 
 async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
-    """Open tasks past their deadline whose overdue notice hasn't gone out."""
+    """Open tasks past their deadline whose overdue notice hasn't gone out (with the person's role, for their
+    department manager — 2026-11-10)."""
     return await fetch_all(
         """
-        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id,
+        SELECT t.*, e.telegram_user_id AS employee_telegram_user_id, e.role AS employee_role,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
@@ -739,7 +743,7 @@ async def open_tasks_with_names(limit: int = 60) -> list[dict[str, Any]]:
     return await fetch_all(
         """
         SELECT t.id, t.code, t.task_summary, t.status, t.due_date, t.created_at, t.blocker, t.awaiting,
-               t.director_telegram_user_id, t.source_message_id,
+               t.director_telegram_user_id, t.source_message_id, t.priority, t.proposed_due,
                COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS display_name, e.role
         FROM tasks t
         JOIN employees e ON e.id = t.assigned_employee_id
@@ -831,7 +835,8 @@ async def await_task_input(task_id: str, kind: str, telegram_user_id: int) -> di
     """The employee tapped ✅ or ⛔: their next message is the proof / the blocker. Only their own open task."""
     return await fetch_one(
         """
-        UPDATE tasks t SET awaiting = %s, awaiting_since = now()
+        UPDATE tasks t SET awaiting = %s, awaiting_since = now(),
+                           proposed_due = CASE WHEN t.awaiting = 'reschedule' THEN NULL ELSE t.proposed_due END
         FROM employees e
         WHERE t.id = %s AND e.id = t.assigned_employee_id AND e.telegram_user_id = %s
           AND t.status IN ('sent', 'started', 'blocked')
@@ -841,10 +846,85 @@ async def await_task_input(task_id: str, kind: str, telegram_user_id: int) -> di
     )
 
 
+async def ask_reschedule(task_id: str, telegram_user_id: int, new_due: date) -> dict[str, Any] | None:
+    """The employee picked a new deadline (2026-11-10): the next message is the reason. Only their own open task with a
+    deadline, and not while an earlier ask still waits for the assigner."""
+    return await fetch_one(
+        """
+        UPDATE tasks t SET awaiting = 'reschedule', awaiting_since = now(), proposed_due = %s
+        FROM employees e
+        WHERE t.id = %s AND e.id = t.assigned_employee_id AND e.telegram_user_id = %s
+          AND t.status IN ('sent', 'started', 'blocked') AND t.due_date IS NOT NULL
+          AND (t.proposed_due IS NULL OR t.awaiting = 'reschedule')
+          AND (t.awaiting IS NULL OR t.awaiting = 'reschedule')
+          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
+                          AND s.source_message_id = t.source_message_id AND s.source_message_id <> 0
+                          AND s.id <> t.id AND s.proposed_due IS NOT NULL
+                          AND s.status IN ('sent', 'started', 'blocked'))  -- one ask per shared task
+        RETURNING t.*
+        """,
+        (new_due, task_id, telegram_user_id),
+    )
+
+
+async def submit_reschedule(task_id: str, by: str, reason: str) -> dict[str, Any] | None:
+    """The reason came: the ask now waits for the one who assigned it (proposed_due kept, awaiting cleared)."""
+    row = await fetch_one(
+        """UPDATE tasks SET awaiting = NULL, awaiting_since = NULL
+           WHERE id = %s AND awaiting = 'reschedule' AND proposed_due IS NOT NULL RETURNING *""",
+        (task_id,),
+    )
+    if row is not None:
+        await log_task_event(task_id, "reschedule_asked", by, f"{row['due_date']} → {row['proposed_due']}: {reason}")
+    return row
+
+
+async def decide_reschedule(task_id: str, assigner_telegram_user_id: int, accept: bool, by: str) -> dict[str, Any] | None:
+    """✅ the new deadline is the deadline (reminders and the overdue notice may go again, counted as a move) / ❌ it
+    stays. Once, only by the one who assigned it."""
+    if accept:
+        query = """UPDATE tasks t SET due_date = t.proposed_due, proposed_due = NULL, reschedules = t.reschedules + 1,
+                                      reminded_at = NULL, overdue_notified_at = NULL
+                   WHERE t.id = %s AND t.director_telegram_user_id = %s AND t.proposed_due IS NOT NULL
+                     AND t.awaiting IS DISTINCT FROM 'reschedule' AND t.status IN ('sent', 'started', 'blocked')
+                   RETURNING t.*, (SELECT due_date FROM tasks o WHERE o.id = t.id) AS old_due"""
+    else:
+        query = """UPDATE tasks t SET proposed_due = NULL
+                   WHERE t.id = %s AND t.director_telegram_user_id = %s AND t.proposed_due IS NOT NULL
+                     AND t.awaiting IS DISTINCT FROM 'reschedule' AND t.status IN ('sent', 'started', 'blocked')
+                   RETURNING t.*"""
+    row = await fetch_one(query, (task_id, assigner_telegram_user_id))
+    if row is not None:
+        await log_task_event(task_id, "rescheduled" if accept else "reschedule_refused", by,
+                             str(row["due_date"]) if accept else None)
+    return row
+
+
+async def move_shared_copies(task: dict[str, Any], by: str) -> list[dict[str, Any]]:
+    """A shared task's new deadline for every other open copy (09.11 rule: one message to several people = one task)."""
+    if not task.get("source_message_id") or not task.get("director_telegram_user_id"):
+        return []
+    rows = await fetch_all(
+        """UPDATE tasks SET due_date = %s, reminded_at = NULL, overdue_notified_at = NULL, proposed_due = NULL
+           WHERE director_telegram_user_id = %s AND source_message_id = %s AND id <> %s
+             AND status IN ('sent', 'started', 'blocked') RETURNING *""",
+        (task["due_date"], task["director_telegram_user_id"], task["source_message_id"], task["id"]),
+    )
+    for r in rows:
+        await log_task_event(str(r["id"]), "rescheduled", by, f"{task['due_date']} ({task.get('code') or ''} орқали)")
+    return rows
+
+
+async def set_task_priority(task_id: str, priority: int) -> None:
+    await execute("UPDATE tasks SET priority = %s WHERE id = %s AND status IN ('sent', 'started', 'blocked', 'review')",
+                  (priority, task_id))
+
+
 async def cancel_task_input(task_id: str, telegram_user_id: int) -> dict[str, Any] | None:
     return await fetch_one(
         """
-        UPDATE tasks t SET awaiting = NULL, awaiting_since = NULL
+        UPDATE tasks t SET awaiting = NULL, awaiting_since = NULL,
+                           proposed_due = CASE WHEN t.awaiting = 'reschedule' THEN NULL ELSE t.proposed_due END
         FROM employees e
         WHERE t.id = %s AND e.id = t.assigned_employee_id AND e.telegram_user_id = %s AND t.awaiting IS NOT NULL
         RETURNING t.*
@@ -927,7 +1007,7 @@ async def submit_task(task_id: str, by: str, evidence_text: str, evidence_messag
     """Done, with proof: waits for the one who assigned it (status 'review'). Once."""
     row = await fetch_one(
         """
-        UPDATE tasks SET status = 'review', completed_at = now(), completed_by = %s, evidence_text = %s,
+        UPDATE tasks SET status = 'review', completed_at = now(), completed_by = %s, evidence_text = %s, proposed_due = NULL,
                          evidence_message_id = %s, awaiting = NULL, awaiting_since = NULL
         WHERE id = %s AND status IN ('sent', 'started', 'blocked') AND awaiting = 'evidence'
         RETURNING *
@@ -972,7 +1052,7 @@ async def unblock_task(task_id: str, telegram_user_id: int, by: str) -> dict[str
 async def verify_task(task_id: str, verifier_telegram_user_id: int, accept: bool, by: str) -> dict[str, Any] | None:
     """The one who assigned it accepts (closed) or returns it (back to the employee). Once, only them."""
     if accept:
-        query = """UPDATE tasks SET status = 'done', verified_at = now()
+        query = """UPDATE tasks SET status = 'done', verified_at = now(), proposed_due = NULL
                    WHERE id = %s AND director_telegram_user_id = %s AND status = 'review' RETURNING *"""
     else:
         # Back with the employee: its reminder and overdue notice may go out again.
@@ -1011,6 +1091,7 @@ async def close_shared_copies(task: dict[str, Any], by: str) -> list[dict[str, A
     rows = await fetch_all(
         """
         UPDATE tasks SET status = 'done', verified_at = now(), completed_at = COALESCE(%s, now()), completed_by = %s,
+                         proposed_due = NULL,
                          awaiting = NULL, awaiting_since = NULL
         WHERE director_telegram_user_id = %s AND source_message_id = %s AND id <> %s
           AND status IN ('sent', 'started', 'blocked', 'review')
@@ -2612,17 +2693,28 @@ async def create_task_draft(
     has_media: bool,
     candidate_ids: list[str],
     selected_ids: list[str],
+    priority: int = 2,
 ) -> dict[str, Any] | None:
     """Hold a Director's task until they confirm who gets it."""
     return await fetch_one(
         """
         INSERT INTO task_drafts (director_telegram_user_id, source_message_id, raw_message, task_summary, role_slug,
-                                 due_date, has_media, candidate_ids, selected_ids)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::uuid[], %s::uuid[])
+                                 due_date, has_media, candidate_ids, selected_ids, priority)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::uuid[], %s::uuid[], %s)
         RETURNING *
         """,
         (director_telegram_user_id, source_message_id, raw_message, task_summary, role_slug, due_date, has_media,
-         candidate_ids, selected_ids),
+         candidate_ids, selected_ids, priority),
+    )
+
+
+async def set_task_draft_priority(draft_id: str, director_telegram_user_id: int, priority: int) -> dict[str, Any] | None:
+    """The Director tapped P1–P4 on the card (2026-11-10); only an open draft of theirs, within a day."""
+    return await fetch_one(
+        """UPDATE task_drafts SET priority = %s
+           WHERE id = %s AND director_telegram_user_id = %s AND status = 'open' AND created_at > now() - interval '24 hours'
+           RETURNING *""",
+        (priority, draft_id, director_telegram_user_id),
     )
 
 

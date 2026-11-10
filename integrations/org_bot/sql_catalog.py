@@ -130,7 +130,8 @@ CATALOG: dict[str, tuple[str, str, tuple[tuple[str, str], ...]]] = {
         ("code", "T-YYYY-MM-NNNN"), ("summary", ""), ("status", "sent/started/blocked/review/done/cancelled"),
         ("awaiting", "'evidence' = done, proof not sent yet"), ("due_date", ""), ("created_on", ""),
         ("completed_on", ""), ("accepted_on", ""), ("assignee", ""), ("assignee_role", ""), ("shared_key", ""),
-        ("is_open", ""))),
+        ("is_open", ""), ("priority", "1 шошилинч, 2 муҳим, 3 оддий, 4 кутиши мумкин"),
+        ("reschedules", "times the deadline was moved"), ("proposed_due", "new deadline asked, waiting for a decision"))),
     "bot_daily_reports": ("director", "Daily reports by person and day (states only, not the text).", (
         ("report_date", ""), ("person", ""), ("role", ""), ("status", "asked = not sent / submitted / excused"),
         ("auto_built", "true = put together by the bot from the chat at 22:00, not sent by the person"),
