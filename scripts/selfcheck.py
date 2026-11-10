@@ -1904,6 +1904,75 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_progress_line_1110() -> None:
+    """10.11.2026 (the owner): answers still take 10–30 s — show what the analyst is really doing meanwhile, in plain
+    words. One silent message under the question, changed as the tools run, deleted before the answer."""
+    print("the analyst's status line (10.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import analyst, progress
+
+    check("a SAP sales query names what it reads",
+          progress.steps_text([("query_db", {"sql": "SELECT sum(signed_total_som) FROM analyst.sap_sales_docs"})]),
+          "⏳ SAP'дан сотувни қидиряпман…")
+    check("two systems at once", progress.steps_text([("onec_balances", {}), ("billz_sales", {})]),
+          "⏳ 1C'дан қолдиқларни оляпман ва дўконлар савдосини Billz'дан оляпман…")
+    check("the same step twice is said once, more than two → «ва бошқаларни»",
+          progress.steps_text([("attendance", {}), ("attendance", {}), ("onec_balances", {}), ("billz_sales", {}),
+                               ("company_data", {})]),
+          "⏳ Verifix'дан давоматни текширяпман ва 1C'дан қолдиқларни оляпман ва бошқаларни…")
+    check("the analyst reads the tools' arguments as the model sent them (JSON text)",
+          analyst.progress_steps([{"function": {"name": "query_db",
+                                                "arguments": '{"sql": "SELECT * FROM analyst.sap_stock"}'}}]),
+          "⏳ SAP'дан омбор қолдиғини қидиряпман…")
+    check_true("every tool has its words", all(t["function"]["name"] in progress.TOOL_WORDS
+                                               or t["function"]["name"] == "query_db" for t in analyst.TOOLS))
+
+    calls: list = []
+
+    class FakeBot:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def send_message(self, text, chat_id=None, disable_notification=False, reply_to_message_id=None):
+            calls.append(("send", text, disable_notification, reply_to_message_id))
+            return [55]
+
+        async def _edit_message(self, chat_id, message_id, text):
+            calls.append(("edit", text))
+
+        async def _call(self, method, payload, mode=None, target_ref=None):
+            calls.append((method, payload["message_id"]))
+
+    saved = progress.TelegramBot, progress.MIN_GAP
+    progress.TelegramBot = FakeBot
+
+    async def run():
+        p = progress.Progress(1, uuid.uuid4(), reply_to=9)
+        await p.start()
+        progress.MIN_GAP = 60
+        await p.update("⏳ too soon")
+        progress.MIN_GAP = 0
+        await p.update("⏳ A")
+        await p.update("⏳ A")
+        await p.done()
+        await p.done()
+
+    try:
+        asyncio.run(run())
+    finally:
+        progress.TelegramBot, progress.MIN_GAP = saved
+    check("silent, under the question; throttled; no repeats; deleted once",
+          calls, [("send", progress.START, True, 9), ("edit", "⏳ A"), ("deleteMessage", 55)])
+
+
 def test_analyst_sql_1109() -> None:
     """09.11.2026 (the owner): «send the AI the database's structure, not the data; let it fetch only the rows it
     needs». The analyst gets the analyst.* views' schema and writes one read-only SELECT (query_db), checked by
@@ -2153,7 +2222,7 @@ def test_analyst_sql_1109() -> None:
 
     started, cancelled, answered = [], [], []
 
-    async def slow_answer(question, history, run_id):
+    async def slow_answer(question, history, run_id, progress=None):
         started.append(question)
         try:
             await asyncio.sleep(5)
@@ -2187,7 +2256,7 @@ def test_analyst_sql_1109() -> None:
     async def roster():
         return [], {}
 
-    async def answer_q(director, slug, question, run_id, history="", *, reply_to=None, precomputed=None):
+    async def answer_q(director, slug, question, run_id, history="", *, reply_to=None, precomputed=None, progress=None):
         answered.append(precomputed is not None and (await precomputed).text)
 
     from integrations.org_bot import store
@@ -2207,7 +2276,7 @@ def test_analyst_sql_1109() -> None:
         FakeAI.result = {"target_type": "agent", "target_agent": "xodimlar_kpi", "task_summary": "", "target_employee": None}
         slow_answer_fast = slow_answer
 
-        async def quick(question, history, run_id):
+        async def quick(question, history, run_id, progress=None):
             started.append(question)
             return analyst.Answer(text="early")
 
@@ -4880,10 +4949,10 @@ def test_analyst() -> None:
     async def from_agent(director_id, slug, question, run_id, history="", reply_to=None):
         old_path.append(slug)
 
-    async def good(question, history, run_id, hint=None):
+    async def good(question, history, run_id, hint=None, **kw):
         return analyst.Answer(text="1C бўйича ...", tools=["onec_balances"], rounds=2)
 
-    async def bad(question, history, run_id, hint=None):
+    async def bad(question, history, run_id, hint=None, **kw):
         raise RuntimeError("no tools on this model")
 
     async def no_log(**kwargs):
@@ -5017,7 +5086,7 @@ def test_analyst() -> None:
         async def send_message(self, text, chat_id=None, reply_markup=None):
             uploads.append(("text", text))
 
-    async def with_file(question, history, run_id, hint=None):
+    async def with_file(question, history, run_id, hint=None, **kw):
         return analyst.Answer(text="1C ва SAP ...", tools=["supplier_debt_compare"], rounds=2,
                               files=[(b"PK..", "kreditorlik-1C-SAP-2026-10-10.xlsx")])
 
@@ -9360,7 +9429,7 @@ def test_data_access() -> None:
     sent: list = []
     work_ai: list = []
 
-    async def fake_answer(question, history, run_id, hint=None, *, employee=None, scope=None):
+    async def fake_answer(question, history, run_id, hint=None, *, employee=None, scope=None, progress=None):
         asked.append((question, employee["telegram_user_id"], sorted(scope)))
         return analyst.Answer(text="Ответ", tools=["onec_balances"], rounds=2, files=[(b"PK", "x-RU.xlsx")])
 
@@ -11940,6 +12009,7 @@ def main() -> int:
         test_londry_branch_qr_1105,
         test_shared_tasks_1109,
         test_analyst_sql_1109,
+        test_progress_line_1110,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

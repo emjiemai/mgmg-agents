@@ -33,6 +33,7 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
+from integrations.org_bot.progress import Progress
 from integrations.org_bot import (
     admin, agenda, ai_chat, cheques, duties, duty_review, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, sap_entry, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
@@ -1139,7 +1140,13 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
         history = "\n".join(f"{'Employee' if t['role'] == 'employee' else 'You'}: {t['content']}"
                              for t in await store.recent_ai_turns(telegram_user_id, AI_MEMORY_TURNS))
         await store.log_ai_turn(telegram_user_id, "employee", text)
-        result = await analyst.answer(with_quote(text, quoted), history, run_id, employee=employee, scope=scope)
+        progress = Progress(telegram_user_id, run_id, reply_to)
+        await progress.start()
+        try:
+            result = await analyst.answer(with_quote(text, quoted), history, run_id, employee=employee, scope=scope,
+                                          progress=progress)
+        finally:
+            await progress.done()
         answer = sanitize_model_html(result.text.strip()) or (
             "Не удалось найти ответ, попробуйте спросить иначе." if ru else ai_chat.clean_answer(""))
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
@@ -2172,12 +2179,16 @@ async def _dispatch_director_task(
     await store.log_conversation_turn(director_telegram_user_id, "director", raw_message)
 
     speculative: asyncio.Task | None = None
+    progress: Progress | None = None
     try:
         history = format_history(await store.recent_conversation(director_telegram_user_id))
         if settings.ops_router_speculative and settings.ops_analyst_enabled and looks_like_question(raw_message):
             # Start the analyst now (2026-11-09): the router took ~8 s before every answer. Its answer is used only
-            # if the router says "agent"; a task, a clarification or a refusal cancels it.
-            speculative = asyncio.create_task(_speculative_answer(raw_message, history, run_id))
+            # if the router says "agent"; a task, a clarification or a refusal cancels it. The status line under the
+            # question shows what it is doing meanwhile (progress.py, 10.11).
+            progress = Progress(director_telegram_user_id, run_id, source_message_id)
+            await progress.start()
+            speculative = asyncio.create_task(_speculative_answer(raw_message, history, run_id, progress))
             speculative.add_done_callback(_retrieved)
         roster_lines, roster = await _roster()
         async with OpenRouterClient(
@@ -2228,8 +2239,9 @@ async def _dispatch_director_task(
             )
         elif target_type == "agent":
             precomputed, speculative = speculative, None
+            given, progress = progress, None
             await _answer_question(director_telegram_user_id, target_agent, raw_message, run_id, history,
-                                   reply_to=source_message_id, precomputed=precomputed)
+                                   reply_to=source_message_id, precomputed=precomputed, progress=given)
         elif target_type == "clarify":
             await _ask_clarification(director_telegram_user_id, task_summary, clarify_options(result), run_id,
                                      reply_to=source_message_id)
@@ -2268,6 +2280,8 @@ async def _dispatch_director_task(
     finally:
         if speculative is not None:  # not a question after all (or a failure): its answer is never sent
             speculative.cancel()
+        if progress is not None:
+            await progress.done()
 
 
 # A message that probably asks for data (2026-11-09): a «?», a question word, or a data word — Uzbek Cyrillic and
@@ -2293,10 +2307,10 @@ def _retrieved(task: asyncio.Task) -> None:
         log.info("Early analyst answer failed ({}) — the normal path answers", type(task.exception()).__name__)
 
 
-async def _speculative_answer(question: str, history: str, run_id: uuid.UUID) -> Any:
+async def _speculative_answer(question: str, history: str, run_id: uuid.UUID, progress: Any = None) -> Any:
     from integrations.org_bot import analyst
 
-    return await analyst.answer(question, history, run_id)
+    return await analyst.answer(question, history, run_id, progress=progress)
 
 
 async def _ask_clarification(director_id: int, question: str, options: list[str], run_id: uuid.UUID,
@@ -2930,7 +2944,7 @@ async def _handle_dispatch_role(rest: str, callback: dict[str, Any], run_id: uui
 
 async def _answer_question(
     director_id: int, agent_slug: str, question: str, run_id: uuid.UUID, history: str = "", *,
-    reply_to: int | None = None, precomputed: asyncio.Task | None = None,
+    reply_to: int | None = None, precomputed: asyncio.Task | None = None, progress: Progress | None = None,
 ) -> None:
     """A Director's question: the analyst looks it up across every system (analyst.py).
 
@@ -2941,10 +2955,13 @@ async def _answer_question(
         from integrations.org_bot import analyst
 
         hint = f"{agent_slug} ({AGENT_LABELS.get(agent_slug, agent_slug)})"
+        if progress is None:
+            progress = Progress(director_id, run_id, reply_to)
+            await progress.start()
         try:
             # Started while the router decided (looks_like_question), else now.
             result = await (precomputed if precomputed is not None else analyst.answer(question, history, run_id,
-                                                                                        hint=hint))
+                                                                                        hint=hint, progress=progress))
         except Exception as exc:  # noqa: BLE001 — the old path still answers
             log.error("Analyst failed ({}), answering from {} alone", type(exc).__name__, agent_slug)
             await log_action(
@@ -2959,11 +2976,13 @@ async def _answer_question(
                     run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools,
                                                          "early": precomputed is not None, "sql": result.sql},
                 )
+                await progress.done()  # the answer is the last message, not the status line
                 await _reply_and_log(director_id, run_id, sanitize_model_html(result.text), reply_to)
                 await _send_files(director_id, run_id, result.files, reply_to)
                 await _send_media(director_id, run_id, result.media, reply_to)
                 return
             log.warning("Analyst returned nothing, answering from {} alone", agent_slug)
+        await progress.done()
     await _answer_from_agent(director_id, agent_slug, question, run_id, history, reply_to=reply_to)
 
 

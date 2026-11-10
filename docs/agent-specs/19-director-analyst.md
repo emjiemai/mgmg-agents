@@ -178,3 +178,4 @@ The owner: don't send the AI whole data sets — send the structure and let it f
   (3) `sales_facts` keeps lines of an invoice cancelled after it was collected (plan_facts.collect deletes only
   documents still pushed) — to fix in plan_facts.
 
+**Status line (2026-11-10, `progress.py`):** one silent message under the question («⏳ Саволни тушуняпман…»), edited from the tools each round actually calls (query_db by the views its SQL reads), «⏳ Топганларимни жамлаб, жавобни ёзяпман…» after the lookups, deleted before the answer; ≤ 1 edit / 1.5 s; Telegram failures ignored. Started with the early (speculative) analyst; deleted if the router says it was a task.

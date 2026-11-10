@@ -1331,6 +1331,31 @@ def build_user_message(question: str, history: str, today: date, hint: str | Non
     return "\n\n".join(parts)
 
 
+def progress_steps(calls: list[dict]) -> str:
+    """The status line for a round's tool calls (progress.steps_text over their names and arguments)."""
+    from integrations.org_bot.progress import steps_text
+
+    parsed = []
+    for c in calls:
+        fn = c.get("function") or {}
+        try:
+            args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else fn.get("arguments")
+        except (TypeError, ValueError):
+            args = {}
+        parsed.append((str(fn.get("name") or ""), args))
+    return steps_text(parsed)
+
+
+async def _say(progress: Any, text: str) -> None:
+    """Show a step on the question's status message, if there is one; never fails the answer."""
+    if progress is None:
+        return
+    try:
+        await progress.update(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _sql_ready(scope: set[str] | None) -> bool:
     """query_db can run for this asker: they have views (Director or SAP access) and the database is set up."""
     from integrations.org_bot import sql_catalog
@@ -1345,7 +1370,7 @@ async def _sql_ready(scope: set[str] | None) -> bool:
 
 async def answer(
     question: str, history: str, run_id: uuid.UUID, hint: str | None = None, *,
-    employee: dict[str, Any] | None = None, scope: set[str] | None = None,
+    employee: dict[str, Any] | None = None, scope: set[str] | None = None, progress: Any = None,
 ) -> Answer:
     """Look things up with the tools until the model answers; at most ``ops_analyst_max_rounds`` rounds.
 
@@ -1403,6 +1428,7 @@ async def answer(
             # The round's lookups run together, not one after another (2026-10-21: answers took 1–2 minutes);
             # the results go back in the order they were asked.
             ran = calls[:MAX_CALLS_PER_ROUND]
+            await _say(progress, progress_steps(ran))  # what it is really looking up now (progress.py, 10.11)
             contents = await asyncio.gather(*(run_tool(str((c.get("function") or {}).get("name") or ""),
                                                        (c.get("function") or {}).get("arguments"), allowed) for c in ran))
             for call, content in zip(ran, contents):
@@ -1411,6 +1437,9 @@ async def answer(
             for call in calls[MAX_CALLS_PER_ROUND:]:
                 messages.append({"role": "tool", "tool_call_id": call.get("id") or "",
                                  "content": "Skipped: too many lookups at once — ask again for what's still needed."})
+            from integrations.org_bot.progress import WRITING
+
+            await _say(progress, WRITING)
         messages.append({"role": "user", "content": "That's enough looking up — answer now from what you found."})
         reply = await ai.chat(messages, None)
         result.text = reply.get("content") or ""
