@@ -31,6 +31,7 @@ MAX_STEPS = 2  # tools named at once («X ва Y»)
 
 START = "⏳ Саволни тушуняпман…"
 WRITING = "⏳ Топганларимни жамлаб, жавобни ёзяпман…"
+CHECKING = "⏳ Жавобни текширяпман…"  # the spelling check before sending (answer_polish.py)
 
 # What each tool does, as the step's words.
 TOOL_WORDS: dict[str, str] = {

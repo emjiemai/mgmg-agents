@@ -30,6 +30,7 @@ for _key in ("BILLZ_SECRET_TOKEN", "ONEC_ODATA_URL", "ONEC_LOGIN", "ONEC_PASSWOR
     os.environ[_key] = ""
 # The Director's early analyst start (2026-11-09) only where a test turns it on with fakes.
 os.environ["OPS_ROUTER_SPECULATIVE"] = "false"
+os.environ["ANSWER_CHECK_ENABLED"] = "false"  # the answer's spelling check calls the AI (11.11): only with fakes
 
 # ...and it fails at once rather than after the pool's 10 s wait per call (the run had grown past 10 minutes).
 from integrations.common import db as _db  # noqa: E402
@@ -1903,6 +1904,75 @@ def test_security_review_1103() -> None:
                plan_facts.COLLECT_EVERY == 600 and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py"))
     check_true("a news feed over 5 MB is refused (read in chunks)", crawler.MAX_BYTES == 5_000_000
                and "aiter_bytes" in inspect_source(crawler._get))
+
+
+def test_answer_polish_1111() -> None:
+    """11.11.2026 (the owner): the brain (DeepSeek) answers, a small fast model fixes the spelling — and code makes
+    sure it never changes a figure, a name, a tag or the layout; otherwise, or on any failure, the original goes."""
+    print("answer spelling check (11.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings
+    from integrations.org_bot import answer_polish
+
+    original = "Кечаги сотув: <b>44 796 000 сўм</b>\n• Garmin Минор — 27 340 000 сўм\n• Рустам Ёрқинов — 15 та чек"
+    fixed = "Кечаги сотув: <b>44 796 000 сўм</b>\n• Garmin Минор — 27 340 000 сўм\n• Рустам Ёрқинов — 15 та чек."
+    check("a spelling / punctuation fix passes", answer_polish.why_not(original, fixed), None)
+    for label, bad, reason in (
+        ("a changed figure", original.replace("44 796 000", "44 976 000"), "digits"),
+        ("a changed Latin name", original.replace("Garmin", "Garmіn"), "latin"),
+        ("a changed person's name", original.replace("Ёрқинов", "Ёркинов"), "names"),
+        ("a lost tag", original.replace("<b>", "").replace("</b>", ""), "tags"),
+        ("lines merged", original.replace("\n", " "), "lines"),
+        ("text added", original + " яна савол бўлса, ёзинг, раҳмат, кунингиз яхши ўтсин, хайр!", "length"),
+        ("nothing back", "  ", "empty"),
+    ):
+        check(f"kept the original: {label}", answer_polish.why_not(original, bad), reason)
+
+    class FakeAI:
+        reply = fixed
+        delay = 0.0
+
+        def __init__(self, **kw):
+            FakeAI.model = kw.get("model_override")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def complete(self, system, user):
+            await asyncio.sleep(FakeAI.delay)
+            return FakeAI.reply
+
+    async def no_log(**k):
+        return None
+
+    saved = [(answer_polish, "OpenRouterClient", answer_polish.OpenRouterClient), (answer_polish, "log_action", answer_polish.log_action),
+             (answer_polish, "LIMIT", answer_polish.LIMIT), (settings, "answer_check_enabled", settings.answer_check_enabled)]
+    answer_polish.OpenRouterClient, answer_polish.log_action, answer_polish.LIMIT = FakeAI, no_log, 0.2
+    settings.answer_check_enabled = True
+    try:
+        good = asyncio.run(answer_polish.polish(original, uuid.uuid4()))
+        FakeAI.reply = original.replace("44 796 000", "44 976 000")
+        guarded = asyncio.run(answer_polish.polish(original, uuid.uuid4()))
+        FakeAI.reply, FakeAI.delay = fixed, 0.5
+        slow = asyncio.run(answer_polish.polish(original, uuid.uuid4()))
+        settings.answer_check_enabled = False
+        off = asyncio.run(answer_polish.polish(original, uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("the fixed text is sent when it keeps every fact", good, fixed)
+    check("a changed figure → the original is sent", guarded, original)
+    check("too slow → the original is sent", slow, original)
+    check("switched off → the original", off, original)
+    from integrations.org_bot import ops_manager
+    check_true("both answer paths use the check, the status line says so",
+               "answer_polish.polish" in inspect_source(ops_manager._answer_question)
+               and "answer_polish.polish" in inspect_source(ops_manager._answer_data_question_now))
 
 
 def test_task_improvements_1110() -> None:
@@ -12202,6 +12272,7 @@ def main() -> int:
         test_analyst_sql_1109,
         test_progress_line_1110,
         test_task_improvements_1110,
+        test_answer_polish_1111,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

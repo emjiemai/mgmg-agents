@@ -179,3 +179,5 @@ The owner: don't send the AI whole data sets — send the structure and let it f
   documents still pushed) — to fix in plan_facts.
 
 **Status line (2026-11-10, `progress.py`):** one silent message under the question («⏳ Саволни тушуняпман…»), edited from the tools each round actually calls (query_db by the views its SQL reads), «⏳ Топганларимни жамлаб, жавобни ёзяпман…» after the lookups, deleted before the answer; ≤ 1 edit / 1.5 s; Telegram failures ignored. Started with the early (speculative) analyst; deleted if the router says it was a task.
+
+**Spelling check (2026-11-11, `answer_polish.py`):** after the brain (`OPS_MANAGER_BOT_MODEL`) answers, `ANSWER_CHECK_MODEL` fixes spelling only; `why_not` keeps the original if digits (in order), Latin words, capitalised words, tags or line count differ or the length moves > 15 %; 6 s limit; audit `answer_check` {changed, kept_original, ms}.

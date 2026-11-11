@@ -226,6 +226,10 @@ class Settings(BaseSettings):
     # A Director's message that looks like a question starts the analyst while the router still decides (2026-11-09:
     # the router took ~8 s before every answer); its answer is dropped if the router says it is a task.
     ops_router_speculative: bool = True
+    # The last look at an analyst answer (2026-11-11, answer_polish.py): a small fast model fixes spelling only; code
+    # keeps the original if any figure, name, tag or line changed. Empty model or off = answers go as written.
+    answer_check_enabled: bool = True
+    answer_check_model: str = "google/gemini-3.8-flash"
     # Cheque photos (2026-10-14, org_bot/cheques.py): a photo the Director sends
     # is read by the AI; a cheque with every detail goes to these roles
     # (comma-separated role slugs) with the photo, otherwise the bot asks him.

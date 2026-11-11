@@ -33,7 +33,8 @@ from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
 from integrations.garmin import competitors, stock_list
 from integrations.google.sheets_client import SheetsClient, SheetsError
-from integrations.org_bot.progress import Progress
+from integrations.org_bot import answer_polish
+from integrations.org_bot.progress import CHECKING, Progress
 from integrations.org_bot import (
     admin, agenda, ai_chat, cheques, duties, duty_review, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, sap_entry, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
@@ -1273,10 +1274,13 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
         try:
             result = await analyst.answer(with_quote(text, quoted), history, run_id, employee=employee, scope=scope,
                                           progress=progress)
+            answer = sanitize_model_html(result.text.strip()) or (
+                "Не удалось найти ответ, попробуйте спросить иначе." if ru else ai_chat.clean_answer(""))
+            if result.text.strip():
+                await progress.update(CHECKING)
+                answer = await answer_polish.polish(answer, run_id, "ru" if ru else "uz")  # spelling only (11.11)
         finally:
             await progress.done()
-        answer = sanitize_model_html(result.text.strip()) or (
-            "Не удалось найти ответ, попробуйте спросить иначе." if ru else ai_chat.clean_answer(""))
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
         # Which tools ran and how many rounds — never the question or the figures (the order of 07.10.2026).
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="success",
@@ -3146,8 +3150,10 @@ async def _answer_question(
                     run_id=run_id, mode="read", payload={"rounds": result.rounds, "tools": result.tools,
                                                          "early": precomputed is not None, "sql": result.sql},
                 )
+                await progress.update(CHECKING)
+                text = await answer_polish.polish(sanitize_model_html(result.text), run_id)  # spelling only (11.11)
                 await progress.done()  # the answer is the last message, not the status line
-                await _reply_and_log(director_id, run_id, sanitize_model_html(result.text), reply_to)
+                await _reply_and_log(director_id, run_id, text, reply_to)
                 await _send_files(director_id, run_id, result.files, reply_to)
                 await _send_media(director_id, run_id, result.media, reply_to)
                 return
