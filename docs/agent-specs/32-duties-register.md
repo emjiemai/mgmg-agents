@@ -111,3 +111,5 @@ Connect the register's Google Sheet (`DUTIES_SHEET_ID`) so heads can fix their r
 - **Who didn't enter SAP** (`sap_entry.py`, `/kiritish`, the Director / the Garmin manager's team): shop cheques by Billz
   seller (missing / late / another amount), SAP invoices entered late by salesperson, invoices without a salesperson
   by the SAP user. Warehouse receipts / issues and spare parts used: not pushed by the gateway yet.
+
+**2026-11-11 — cancelled invoices:** `plan_facts.collect` removes kept `sales_facts` documents dated inside the push window (13 days from SAP's last send) that the push no longer carries (cancelled in SAP); nothing is removed when the push is empty.

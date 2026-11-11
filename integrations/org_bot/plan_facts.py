@@ -92,6 +92,18 @@ async def _tool(tool: str) -> list[dict[str, Any]]:
     return [r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"] or "{}") for r in rows]
 
 
+PUSH_WINDOW_SAFE_DAYS = 13  # SAP pushes invoices dated / entered in the last 14 days; one day's margin
+
+
+def gone_documents(kept: list[dict[str, Any]], pushed: set[tuple[str, str]], start: date) -> list[tuple[str, str]]:
+    """Documents kept in ``sales_facts`` that are dated inside the push window but no longer pushed: cancelled (or
+    deleted) in SAP — the gateway sends only CANCELED = 'N' (2026-11-10 review: a cancelled invoice stayed in the
+    month's sales for good)."""
+    gone = {(str(r["obj_type"]), str(r["doc_entry"])) for r in kept
+            if r.get("day") is not None and r["day"] >= start} - pushed
+    return sorted(gone)
+
+
 COLLECT_EVERY = 600.0  # seconds: PULSE refreshes every 5 minutes and /reja may be tapped — the 0.1-CPU database
 _last_collect = -COLLECT_EVERY
 
@@ -110,6 +122,19 @@ async def collect(force: bool = False) -> int:
         return 0
     groups = {str(p.get("ItemCode")): str(p.get("ItmsGrpNam") or "") for p in products}
     facts = lines_to_facts(headers, lines, groups)
+    # Cancelled documents leave the push: drop their kept lines — only inside the window the push covers, measured
+    # from the day SAP last sent, so a stale or failed push never removes anything.
+    pushed = {(str(r.get("ObjType") or "13"), str(r.get("DocEntry"))) for r in headers + lines if r.get("DocEntry")}
+    sent = await fetch_one("SELECT (max(captured_at) AT TIME ZONE 'Asia/Tashkent')::date AS d "
+                           "FROM v_sap_gateway_latest WHERE tool = 'sales_lines'")
+    if pushed and sent and sent.get("d"):
+        start = sent["d"] - timedelta(days=PUSH_WINDOW_SAFE_DAYS)
+        kept = await fetch_all("SELECT DISTINCT obj_type, doc_entry, day FROM sales_facts WHERE day >= %s", (start,))
+        gone = gone_documents(kept, pushed, start)
+        for doc in gone:
+            await execute("DELETE FROM sales_facts WHERE obj_type = %s AND doc_entry = %s", doc)
+        if gone:
+            log.info("Sales facts: {} cancelled document(s) removed", len(gone))
     for doc in {(f["obj_type"], f["doc_entry"]) for f in facts}:
         await execute("DELETE FROM sales_facts WHERE obj_type = %s AND doc_entry = %s", doc)
     for f in facts:

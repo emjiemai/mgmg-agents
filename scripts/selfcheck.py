@@ -1906,6 +1906,28 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_sales_facts_cancelled_1111() -> None:
+    """11.11.2026 (review of 09–10.11): an invoice cancelled after it was collected stayed in sales_facts — the month's
+    sales and plan vs fact — for good, since the gateway sends only CANCELED = 'N'. Now a kept document dated inside
+    the push window but no longer pushed is removed; outside the window (left by age) it stays."""
+    print("sales facts: cancelled invoices drop out (11.11.2026)")
+    from datetime import date
+
+    from integrations.org_bot import plan_facts
+
+    kept = [{"obj_type": "13", "doc_entry": "100", "day": date(2026, 11, 9)},   # still pushed
+            {"obj_type": "13", "doc_entry": "101", "day": date(2026, 11, 8)},   # cancelled since
+            {"obj_type": "14", "doc_entry": "101", "day": date(2026, 11, 8)},   # a credit note with the same number
+            {"obj_type": "13", "doc_entry": "50", "day": date(2026, 10, 20)}]   # left the window by age: kept
+    pushed = {("13", "100"), ("14", "101")}
+    check("only the cancelled document inside the window goes",
+          plan_facts.gone_documents(kept, pushed, date(2026, 10, 29)), [("13", "101")])
+    check("nothing pushed → nothing judged (the caller skips)", plan_facts.gone_documents([], set(), date(2026, 10, 29)), [])
+    src = inspect_source(plan_facts.collect)
+    check_true("collect removes them only with a non-empty push, from the day SAP last sent",
+               "if pushed and sent" in src and "max(captured_at)" in src and "gone_documents" in src)
+
+
 def test_answer_polish_1111() -> None:
     """11.11.2026 (the owner): the brain (DeepSeek) answers, a small fast model fixes the spelling — and code makes
     sure it never changes a figure, a name, a tag or the layout; otherwise, or on any failure, the original goes."""
@@ -12273,6 +12295,7 @@ def main() -> int:
         test_progress_line_1110,
         test_task_improvements_1110,
         test_answer_polish_1111,
+        test_sales_facts_cancelled_1111,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

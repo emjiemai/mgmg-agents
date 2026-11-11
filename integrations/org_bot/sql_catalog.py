@@ -122,7 +122,8 @@ CATALOG: dict[str, tuple[str, str, tuple[tuple[str, str], ...]]] = {
         ("balance_as_written", "open amount as on the invoice"), ("written_currency", ""),
         ("sales_person_name", ""), ("division", ""), ("captured_at", ""))),
     "sales_month": ("sap", "Sales lines kept beyond the 14-day window, signed, one row per line; amounts = the "
-                    "document's total (with VAT, after discounts) shared over its lines. Complete from 01.11.2026; "
+                    "document's total (with VAT, after discounts) shared over its lines; an invoice cancelled in SAP drops out. "
+                    "Complete from 01.11.2026; "
                     "October only from about 19.10 — say so for earlier dates.", (
         ("day", ""), ("obj_type", ""), ("doc_entry", ""), ("line_num", ""), ("slp_code", ""), ("item_code", ""),
         ("item_group", ""), ("whs_code", ""), ("amount_usd", ""), ("amount_som", ""))),
