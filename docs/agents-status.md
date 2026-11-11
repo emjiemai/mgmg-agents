@@ -3,7 +3,7 @@
 Status against the owner's plan (*ЭМЖИЕМ AI Агентлар Тизими*, 21 agents).
 Everything runs through the same engine: two Telegram bots (OPS Manager Bot
 for everyone, Admin Bot for the admin) on the always-on `mgmg-api` service,
-plus scheduled jobs at 08:00, 16:00 and 17:00. Last updated 2026-10-03. Board for the Director: `docs/board/` (SVG, drag into Figma).
+plus scheduled jobs at 08:00, 16:00 and 17:00 (started from mgmg-api's own loop since 2026-11-11 — no Render crons). Last updated 2026-10-03. Board for the Director: `docs/board/` (SVG, drag into Figma).
 
 ## Working
 

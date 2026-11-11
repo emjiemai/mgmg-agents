@@ -62,7 +62,7 @@ Full status, and the agents still waiting: `docs/agents-status.md`.
  SAP B1 (HANA) ── SAP gateway (Node.js, "server laptop") ── push-ar-aging.ps1 ──┐  every 30 min
  1C (Clobus OData) · BILLZ · Verifix · Google Sheets · OpenRouter (AI) ───────┐ │  (Windows task)
                                                                               ▼ ▼
- Telegram ◀──webhooks──▶ mgmg-api (FastAPI, Render) ──▶ PostgreSQL (mgmg-db) ◀── Render cron jobs
+ Telegram ◀──webhooks──▶ mgmg-api (FastAPI, Render; also starts the 08:00/16:00/17:00 jobs) ──▶ PostgreSQL (mgmg-db)
                          Admin Bot · OPS Manager Bot                              (the agents above)
                          SAP receiver · /f pages · /db viewer
 ```
@@ -94,7 +94,7 @@ access to each of these:
 | What | Where |
 | ---- | ----- |
 | Code | GitHub `emjiemai/mgmg-agents` (this repo) |
-| Hosting, database, all secrets | Render — `mgmg-api`, `mgmg-db`, the cron jobs; env group `mgmg-shared` |
+| Hosting, database, all secrets | Render — `mgmg-api`, `mgmg-db` (the cron jobs were removed 11.11 — the API starts them); env group `mgmg-shared` |
 | Telegram bots | @BotFather, on the account that created Admin Bot and OPS Manager Bot |
 | SAP push | The gateway machine: `C:\mgmg-push\push-ar-aging.ps1` + Windows task "MGMG SAP push" |
 | SAP gateway itself | Code in this repo, `sap-gateway/` (Node.js); runs on the gateway computer at `localhost:3000` with its own `.env` (HANA user, `API_TOKEN`) — admin access since 2026-10-09 |
@@ -364,6 +364,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-11-11 | **No more Render cron services: the 08:00 / 16:00 / 17:00 jobs start from mgmg-api itself** (≈ $5/month — $5.00 of October's $18.41 bill). The API's 5-minute loop starts the same commands as before (`scripts/run_morning_agents.py`, `agents/daily-reports/agent.py --ask`, `run_morning_agents.py --evening`) as separate low-priority processes inside a window (08:00–09:00, 16:00–16:30, 17:00–17:30 — a restart at 08:20 still sends the brief, one at 11:00 doesn't). Each command first **claims its day** (`job_runs`, one atomic insert): a second start the same day does nothing, so the old Render crons can't double-send while they still exist. **To do by hand: delete `mgmg-morning-agents`, `mgmg-daily-reports`, `mgmg-report-reminder` in the Render dashboard** (removed from `render.yaml`; a blueprint doesn't delete services). Run a job again on purpose: `--force`. Switch: `INTERNAL_JOBS_ENABLED` (true). They share the server's 512 MB now — watch the first mornings. |
 | 2026-11-11 | **Cancelled invoices drop out of the month's sales** (from the 09–10.11 review). `sales_facts` (month-to-date sales, /reja plan vs fact, PULSE «Режа ва факт», the analyst's `sales_month`) kept the lines of an invoice cancelled after it was collected — the gateway sends only uncancelled ones, so it just vanished from the push. Now, after each collection, a kept document dated inside the push window (13 days, from the day SAP last sent) that is no longer pushed is removed; an empty or stale push removes nothing. `plan_facts.gone_documents`. |
 | 2026-11-11 | **Brain + spelling checker for the analyst's answers** (the owner). The brain is whatever `OPS_MANAGER_BOT_MODEL` says (set to DeepSeek V4.1 Flash on 11.11 — the router's first call took 2.0 s vs ≈ 7.7 s for GPT-5.6 Luna Pro). Before an answer goes (the Director's or an accountant's), a small fast model (`ANSWER_CHECK_MODEL`, default `google/gemini-3.8-flash`) fixes only its Uzbek Cyrillic (or Russian) spelling; the status line says «⏳ Жавобни текширяпман…». Code keeps the original unless the fixed text has exactly the same digits, Latin words, capitalised names, tags and lines at a similar length — a changed figure or name can never get through; over 6 s or any error → the original. Audit row `answer_check` (changed / why kept / ms — no text). Settings: `ANSWER_CHECK_ENABLED` (true), `ANSWER_CHECK_MODEL`. `integrations/org_bot/answer_polish.py`. |
 | 2026-11-11 | **Analyst: sales per person from both systems** — the 20-question test (11.11) showed «ким энг кўп сотди» answered from Billz shop sellers only; the analyst now looks in Billz AND SAP (B2B sales people) and gives both, labelled. Test results: query_db used in 14 of 20 answers, the database part 4–198 ms; answers 13–51 s, nearly all of it the AI model (≈ 9 s per call, 2–3 calls, a 44k-token prompt 90 % cached). |

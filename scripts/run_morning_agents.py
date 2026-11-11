@@ -21,6 +21,10 @@ Run:
     python scripts/run_morning_agents.py            # 08:00
     python scripts/run_morning_agents.py --evening  # 17:00
     python scripts/run_morning_agents.py --daytime  # nothing since 2026-10-17 (team cheer removed)
+    python scripts/run_morning_agents.py --force    # again, though today's run already happened
+
+Since 2026-11-11 mgmg-api's own loop starts these (integrations/api/scheduler.py); each run first claims its day
+(common/job_runs.py), so a second start the same day does nothing.
 """
 
 from __future__ import annotations
@@ -87,9 +91,32 @@ def run_agent(relative_command: str) -> int:
     return result.returncode
 
 
+def claim_today(job: str) -> bool:
+    """The day's claim for this job (common/job_runs.py, 2026-11-11): False when another start already ran it today."""
+    import asyncio
+
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from integrations.common.db import close_pool
+    from integrations.common.job_runs import claim
+    from integrations.common.timeutil import today_local
+
+    async def go() -> bool:
+        try:
+            return await claim(job, today_local())
+        finally:
+            await close_pool()
+
+    return asyncio.run(go())
+
+
 def main() -> None:
     args = sys.argv[1:]
     commands = EVENING_AGENTS if "--evening" in args else DAYTIME_AGENTS if "--daytime" in args else AGENTS
+    job = "evening" if "--evening" in args else "daytime" if "--daytime" in args else "morning"
+    # One run a day, whoever starts it — mgmg-api's loop or the old Render cron (2026-11-11). --force: run anyway.
+    if "--force" not in args and "--dry-run" not in args and not claim_today(job):
+        print(f"{job}: already run today — nothing to do.")
+        return
     results: dict[str, int] = {}
     for command in commands:
         results[command] = run_agent(command)

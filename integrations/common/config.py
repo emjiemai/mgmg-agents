@@ -228,6 +228,9 @@ class Settings(BaseSettings):
     ops_router_speculative: bool = True
     # The last look at an analyst answer (2026-11-11, answer_polish.py): a small fast model fixes spelling only; code
     # keeps the original if any figure, name, tag or line changed. Empty model or off = answers go as written.
+    # The 08:00 / 16:00 / 17:00 jobs from mgmg-api's own loop (2026-11-11, api/scheduler.py) instead of Render cron
+    # services. Off = only the Render crons (if they still exist) start them.
+    internal_jobs_enabled: bool = True
     answer_check_enabled: bool = True
     answer_check_model: str = "google/gemini-3.8-flash"
     # Cheque photos (2026-10-14, org_bot/cheques.py): a photo the Director sends

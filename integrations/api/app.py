@@ -168,6 +168,13 @@ async def _report_close_loop() -> None:
             await crawler.tick(now_local())
         except Exception as exc:  # noqa: BLE001 — the next round tries again
             log.error("Lead index crawl failed: {}", type(exc).__name__)
+        try:  # 08:00 / 16:00 / 17:00: the scheduled jobs (scheduler.py, 11.11 — were Render cron services)
+            from integrations.api import scheduler
+            from integrations.common.timeutil import now_local
+
+            await scheduler.tick(now_local())
+        except Exception as exc:  # noqa: BLE001 — the next round (inside the window) tries again
+            log.error("Scheduled jobs failed to start: {}", type(exc).__name__)
         try:  # 15:00: the B2B lead tracker's follow-up (lead_tracker.py, 2026-10-28) — when it's on
             from integrations.org_bot import lead_tracker
 

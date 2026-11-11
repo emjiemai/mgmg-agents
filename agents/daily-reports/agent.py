@@ -150,7 +150,7 @@ async def remind_silent(run_id: uuid.UUID) -> int:
     return sent
 
 
-async def run(mode: str, dry_run: bool = False) -> int:
+async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
     """Run one mode of the agent.
 
     Args:
@@ -189,6 +189,12 @@ async def run(mode: str, dry_run: bool = False) -> int:
         return 0
 
     if mode == "ask":
+        # One 16:00 ask a day, whoever starts it — mgmg-api's loop or the old Render cron (2026-11-11).
+        from integrations.common.job_runs import claim
+
+        if not force and not settings.dry_run and not await claim("reports-ask", today_local()):
+            log.info("Today's report ask already ran — nothing sent")
+            return 0
         await ask_everyone(run_id)
     else:
         await remind_silent(run_id)
@@ -202,16 +208,17 @@ def main() -> None:
     group.add_argument("--ask", action="store_true", help="16:00 — ask everyone for today's report")
     group.add_argument("--remind", action="store_true", help="17:00 — nudge whoever hasn't answered")
     parser.add_argument("--dry-run", action="store_true", help="send nothing")
+    parser.add_argument("--force", action="store_true", help="ask again, though today's ask already ran")
     args = parser.parse_args()
 
     try:
-        exit_code = asyncio.run(_main("ask" if args.ask else "remind", args.dry_run))
+        exit_code = asyncio.run(_main("ask" if args.ask else "remind", args.dry_run, args.force))
     except KeyboardInterrupt:
         exit_code = 130
     sys.exit(exit_code)
 
 
-async def _main(mode: str, dry_run: bool) -> int:
+async def _main(mode: str, dry_run: bool, force: bool = False) -> int:
     """Run the agent and close the database pool.
 
     Args:
@@ -222,7 +229,7 @@ async def _main(mode: str, dry_run: bool) -> int:
         The process exit code.
     """
     try:
-        return await run(mode, dry_run)
+        return await run(mode, dry_run, force)
     finally:
         await close_pool()
 

@@ -29,7 +29,8 @@ MGMG Digital Command Center: Python + FastAPI + PostgreSQL on Render
 - **mgmg-api** (Starter plan, always on): Admin Bot (admin) + OPS Manager Bot
   (employees + Director) webhooks, SAP gateway push receiver, `/db` read-only
   viewer, `/f` client complaints page (Uzbek Cyrillic, Russian, English).
-- **Crons:** 08:00 `scripts/run_morning_agents.py` (brief, Lead Agent,
+- **Scheduled jobs (since 11.11 started by mgmg-api's loop, `integrations/api/scheduler.py`, not Render crons; each run
+  claims its day in `job_runs`; delete the 3 Render cron services by hand):** 08:00 `scripts/run_morning_agents.py` (brief, Lead Agent,
   receivables, task tracker, data quality Mon, cash calendar Mon,
   monthly KPI 1st); 16:00 daily-reports ask; 17:00 reminder + Friday
   scorecard; 22:00 reports close (inside the API). **Team cheer removed 2026-10-17** (the owner: not

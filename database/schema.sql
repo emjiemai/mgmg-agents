@@ -1991,3 +1991,13 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'analyst roles not set up: %', SQLERRM;
 END $$;
+
+-- The scheduled jobs' daily claim (2026-11-11): the 08:00 / 16:00 / 17:00 jobs run from mgmg-api's own loop instead of
+-- Render cron services (≈ $5/month). The job's own command claims (job, day) first; a second start the same day —
+-- the old Render cron while it still exists, or a restart — finds it claimed and does nothing.
+CREATE TABLE IF NOT EXISTS job_runs (
+    job         TEXT         NOT NULL,
+    day         DATE         NOT NULL,
+    started_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (job, day)
+);

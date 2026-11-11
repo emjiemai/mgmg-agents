@@ -1906,6 +1906,72 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_internal_jobs_1111() -> None:
+    """11.11.2026 (the owner): the 08:00 / 16:00 / 17:00 jobs start from mgmg-api's own loop, not Render cron services
+    (≈ $5/month). Each job's command claims its day, so the old cron (until deleted) or a restart never runs it twice;
+    a job starts only inside its window."""
+    print("scheduled jobs inside mgmg-api (11.11.2026)")
+    import asyncio
+    from datetime import datetime
+    from pathlib import Path
+
+    from integrations.api import scheduler
+    from integrations.common.config import settings
+
+    scheduler._started.clear()
+    check("08:03: the morning job is due", scheduler.due(datetime(2026, 11, 12, 8, 3)), ["morning"])
+    check("16:10: the report ask", scheduler.due(datetime(2026, 11, 12, 16, 10)), ["reports-ask"])
+    check("17:29: the evening job", scheduler.due(datetime(2026, 11, 12, 17, 29)), ["evening"])
+    check("11:00 (a late restart): nothing — the 08:00 brief never goes at 11:00", scheduler.due(datetime(2026, 11, 12, 11, 0)), [])
+
+    started: list = []
+    claimed_days: set = set()
+
+    async def is_claimed(job, day):
+        return (job, day) in claimed_days
+
+    async def fake_run(job, command):
+        started.append((job, command))
+
+    saved = [(scheduler, "claimed", scheduler.claimed), (scheduler, "_run", scheduler._run),
+             (settings, "internal_jobs_enabled", settings.internal_jobs_enabled)]
+    scheduler.claimed, scheduler._run = is_claimed, fake_run
+    settings.internal_jobs_enabled = True
+
+    async def go():
+        a = await scheduler.tick(datetime(2026, 11, 12, 8, 2))
+        b = await scheduler.tick(datetime(2026, 11, 12, 8, 7))  # the next round: not again
+        claimed_days.add(("evening", datetime(2026, 11, 12).date()))
+        c = await scheduler.tick(datetime(2026, 11, 12, 17, 1))  # the old cron ran it first
+        settings.internal_jobs_enabled = False
+        scheduler._started.clear()
+        d = await scheduler.tick(datetime(2026, 11, 13, 8, 2))
+        await asyncio.sleep(0)
+        return a, b, c, d
+
+    try:
+        a, b, c, d = asyncio.run(go())
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        scheduler._started.clear()
+    check("started once in its window; skipped when already claimed; off → nothing", (a, b, c, d),
+          (["morning"], [], [], []))
+    check("…the same command the cron ran", started, [("morning", ("scripts/run_morning_agents.py",))])
+
+    root = Path(__file__).resolve().parents[1]
+    runner = (root / "scripts" / "run_morning_agents.py").read_text(encoding="utf-8")
+    reports = (root / "agents" / "daily-reports" / "agent.py").read_text(encoding="utf-8")
+    check_true("each job's command claims its day (--force / --dry-run run anyway)",
+               "claim_today(job)" in runner and '"--force" not in args' in runner
+               and 'claim("reports-ask", today_local())' in reports and "--force" in reports)
+    check_true("the claim is one atomic insert", "ON CONFLICT (job, day) DO NOTHING RETURNING" in
+               (root / "integrations" / "common" / "job_runs.py").read_text(encoding="utf-8"))
+    check_true("render.yaml has no cron services left; the loop starts the jobs",
+               "type: cron" not in (root / "render.yaml").read_text(encoding="utf-8")
+               and "scheduler.tick" in (root / "integrations" / "api" / "app.py").read_text(encoding="utf-8"))
+
+
 def test_sales_facts_cancelled_1111() -> None:
     """11.11.2026 (review of 09–10.11): an invoice cancelled after it was collected stayed in sales_facts — the month's
     sales and plan vs fact — for good, since the gateway sends only CANCELED = 'N'. Now a kept document dated inside
@@ -12296,6 +12362,7 @@ def main() -> int:
         test_task_improvements_1110,
         test_answer_polish_1111,
         test_sales_facts_cancelled_1111,
+        test_internal_jobs_1111,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,
