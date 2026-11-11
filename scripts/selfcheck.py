@@ -2287,6 +2287,9 @@ def test_analyst_sql_1109() -> None:
                "query_db" in [t["function"]["name"] for t in analyst.tools_for({"sap"}, sql=True)]
                and "query_db" not in [t["function"]["name"] for t in analyst.tools_for({"1c"}, sql=True)])
     check("tool output capped at 12k characters (was 30k)", analyst.TOOL_CHARS, 12000)
+    check_true("sales per person: both Billz sellers and SAP sales people (11.11)",
+               "billz_sales" in analyst.ANALYST_SYSTEM_PROMPT.split("Sales PER PERSON", 1)[1][:300]
+               and "slp_name" in analyst.ANALYST_SYSTEM_PROMPT.split("Sales PER PERSON", 1)[1][:300])
 
     import psycopg
     calls: list = []
