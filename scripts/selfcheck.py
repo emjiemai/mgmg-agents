@@ -2023,7 +2023,8 @@ def test_internal_jobs_1111() -> None:
         _dbm._schema.update(saved_db[2])
     check("a lock clash at start-up is retried until the schema applies", (applied, len(calls_schema)), (True, 3))
     import re as _re2
-    added = _re2.findall(r"ADD CONSTRAINT ([a-z_]+)", (root / "database" / "schema.sql").read_text(encoding="utf-8"))
+    schema_text = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    added = _re2.findall(r"ADD CONSTRAINT ([a-z_]+)", schema_text)
     check("every constraint is defined once in schema.sql (11.11: a stricter older copy failed on new rows)",
           sorted({n for n in added if added.count(n) > 1}), [])
     check_true("the schema runs with a lock timeout (LOCAL) and a failure reaches the audit log",
@@ -7507,7 +7508,8 @@ def test_explanations_and_start_times() -> None:
     schema = load_source("database/schema.sql")
     check_true("schema: explanations (one per person, kind, day), attendance_starts, files' «explanation» purpose",
                "CREATE TABLE IF NOT EXISTS explanations" in schema and "uq_explanation UNIQUE (employee_id, kind, asked_for)" in schema
-               and "CREATE TABLE IF NOT EXISTS attendance_starts" in schema and "'explanation'));" in schema)
+               and "CREATE TABLE IF NOT EXISTS attendance_starts" in schema
+               and "CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation', 'task'));" in schema)
 
 
 def test_pulse() -> None:
