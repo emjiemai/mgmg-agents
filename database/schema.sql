@@ -1289,12 +1289,11 @@ CREATE TABLE IF NOT EXISTS explanations (
     CONSTRAINT uq_explanation UNIQUE (employee_id, kind, asked_for)
 );
 CREATE INDEX IF NOT EXISTS idx_explanations_open ON explanations (telegram_user_id, asked_at DESC) WHERE answered_at IS NULL;
+-- explanation: 2026-10-22; task (a task's proof): 2026-11-05. ONE definition only (2026-11-11: an older stricter
+-- copy right above it failed once rows with 'task' existed, and the whole start-up schema rolled back).
 ALTER TABLE employee_files DROP CONSTRAINT IF EXISTS employee_files_purpose_check;
 ALTER TABLE employee_files ADD CONSTRAINT employee_files_purpose_check
-    CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation'));  -- explanation: 2026-10-22
-ALTER TABLE employee_files DROP CONSTRAINT IF EXISTS employee_files_purpose_check;
-ALTER TABLE employee_files ADD CONSTRAINT employee_files_purpose_check
-    CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation', 'task'));  -- task: a task's proof, 2026-11-05
+    CHECK (purpose IN ('report', 'director', 'cancelled', 'explanation', 'task'));
 
 -- Report bonus (2026-10-22, the owner): each morning a Garmin сотув person whose report of yesterday they sent
 -- themselves gets +REPORT_BONUS_POINTS (1) KPI; a missed one is told politely no point was given. bonus_at = told, once.

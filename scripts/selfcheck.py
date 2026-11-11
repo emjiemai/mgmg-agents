@@ -2022,6 +2022,10 @@ def test_internal_jobs_1111() -> None:
         _dbm._schema.clear()
         _dbm._schema.update(saved_db[2])
     check("a lock clash at start-up is retried until the schema applies", (applied, len(calls_schema)), (True, 3))
+    import re as _re2
+    added = _re2.findall(r"ADD CONSTRAINT ([a-z_]+)", (root / "database" / "schema.sql").read_text(encoding="utf-8"))
+    check("every constraint is defined once in schema.sql (11.11: a stricter older copy failed on new rows)",
+          sorted({n for n in added if added.count(n) > 1}), [])
     check_true("the schema runs with a lock timeout (LOCAL) and a failure reaches the audit log",
                "SET LOCAL lock_timeout" in inspect_source(_dbm._ensure_schema)
                and 'action="schema_apply"' in inspect_source(_dbm._apply_schema))
