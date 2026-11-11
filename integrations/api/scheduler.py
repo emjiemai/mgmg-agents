@@ -20,12 +20,15 @@ from integrations.common.logging_setup import setup_logging
 
 log = setup_logging("scheduler")
 
-# job name (as the command claims it) → (window start, window end, command)
+# job name (as the command claims it) → (window start, window end, command). The report ask may still go until 19:00
+# (2026-11-11: a failed 16:00 start had no second chance; reports are taken until 22:00); the 17:00 reminder waits for
+# the ask until 18:00 (AFTER), then goes anyway (days off, reports paused: the ask never claims).
 JOBS: dict[str, tuple[time, time, tuple[str, ...]]] = {
     "morning": (time(8, 0), time(9, 0), ("scripts/run_morning_agents.py",)),
-    "reports-ask": (time(16, 0), time(16, 30), ("agents/daily-reports/agent.py", "--ask")),
-    "evening": (time(17, 0), time(17, 30), ("scripts/run_morning_agents.py", "--evening")),
+    "reports-ask": (time(16, 0), time(19, 0), ("agents/daily-reports/agent.py", "--ask")),
+    "evening": (time(17, 0), time(20, 0), ("scripts/run_morning_agents.py", "--evening")),
 }
+AFTER: dict[str, tuple[str, time]] = {"evening": ("reports-ask", time(18, 0))}
 _started: set[tuple[str, str]] = set()
 _running: set[asyncio.Task] = set()
 
@@ -56,6 +59,9 @@ async def tick(now: datetime) -> list[str]:
         return []
     started = []
     for job in due(now):
+        first, until = AFTER.get(job, ("", time(0, 0)))
+        if first and now.time() < until and not await claimed(first, now.date()):
+            continue  # the reminder after the ask (tried again next round)
         _started.add((job, now.date().isoformat()))
         if await claimed(job, now.date()):
             continue  # the Render cron (or an earlier start) already ran it

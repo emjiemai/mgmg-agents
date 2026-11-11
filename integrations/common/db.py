@@ -9,6 +9,7 @@ the log file and in the run summary.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -30,6 +31,10 @@ Status = Literal["success", "failure", "skipped", "dry_run"]
 SCHEMA_PATH = PROJECT_ROOT / "database" / "schema.sql"
 
 _pool: AsyncConnectionPool | None = None
+SCHEMA_ATTEMPTS = 4  # a lock clash with the instance being replaced is retried (2026-11-11)
+SCHEMA_RETRY_EVERY = 600  # seconds between later tries when every attempt failed
+SCHEMA_LOCK_TIMEOUT = "15s"
+_schema = {"ok": False, "retry": None}
 
 
 async def get_pool() -> AsyncConnectionPool:
@@ -60,8 +65,47 @@ async def get_pool() -> AsyncConnectionPool:
         )
         await _pool.open(wait=True, timeout=10)
         log.debug("PostgreSQL pool opened ({}:{})", settings.postgres_host, settings.postgres_port)
-        await _ensure_schema(_pool)
+        await _apply_schema(_pool)
     return _pool
+
+
+async def _apply_schema(pool: AsyncConnectionPool) -> bool:
+    """The schema with retries (2026-11-11: one deploy's apply failed — most likely a lock clash with the instance
+    being replaced — and, the pool being kept, was never tried again: job_runs was missing and the 16:00 ask didn't
+    go). A lock or deadlock error is retried a few times; if every attempt fails, the failure is logged loudly, put
+    in the audit log (IT's /texnik shows it) and tried again every ``SCHEMA_RETRY_EVERY`` seconds in the background.
+    The app keeps serving with the schema it already has."""
+    for attempt in range(1, SCHEMA_ATTEMPTS + 1):
+        try:
+            await _ensure_schema(pool)
+            _schema["ok"] = True
+            return True
+        except psycopg.Error as exc:
+            log.error("Schema not applied (attempt {}/{}): {}: {}", attempt, SCHEMA_ATTEMPTS, type(exc).__name__,
+                      str(exc).splitlines()[0][:200] if str(exc) else "")
+            if attempt < SCHEMA_ATTEMPTS:
+                await asyncio.sleep(3 * attempt)
+                continue
+            try:
+                await log_action(agent="db", action="schema_apply", target_system="postgres", status="failure",
+                                 error_message=f"{type(exc).__name__}: {str(exc)[:300]}", mode="write")
+            except Exception:  # noqa: BLE001
+                pass
+            if _schema["retry"] is None:
+                _schema["retry"] = asyncio.create_task(_retry_schema_later(pool))
+            return False
+    return False
+
+
+async def _retry_schema_later(pool: AsyncConnectionPool) -> None:
+    while not _schema["ok"]:
+        await asyncio.sleep(SCHEMA_RETRY_EVERY)
+        try:
+            await _ensure_schema(pool)
+            _schema["ok"] = True
+            log.info("Schema applied on a later try")
+        except psycopg.Error as exc:
+            log.error("Schema still not applied: {}", type(exc).__name__)
 
 
 async def _ensure_schema(pool: AsyncConnectionPool) -> None:
@@ -73,7 +117,8 @@ async def _ensure_schema(pool: AsyncConnectionPool) -> None:
     Raises:
         psycopg.Error: if the schema fails to apply.
     """
-    sql = SCHEMA_PATH.read_text(encoding="utf-8")
+    # A lock wait ends with an error (retried) instead of holding the start-up; LOCAL — this transaction only.
+    sql = f"SET LOCAL lock_timeout = '{SCHEMA_LOCK_TIMEOUT}';\n" + SCHEMA_PATH.read_text(encoding="utf-8")
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             # No parameters -> psycopg uses the simple query protocol, which

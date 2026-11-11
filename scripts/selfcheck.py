@@ -1921,7 +1921,8 @@ def test_internal_jobs_1111() -> None:
     scheduler._started.clear()
     check("08:03: the morning job is due", scheduler.due(datetime(2026, 11, 12, 8, 3)), ["morning"])
     check("16:10: the report ask", scheduler.due(datetime(2026, 11, 12, 16, 10)), ["reports-ask"])
-    check("17:29: the evening job", scheduler.due(datetime(2026, 11, 12, 17, 29)), ["evening"])
+    check("17:29: the ask may still go (until 19:00), the evening job is due", scheduler.due(datetime(2026, 11, 12, 17, 29)),
+          ["reports-ask", "evening"])
     check("11:00 (a late restart): nothing — the 08:00 brief never goes at 11:00", scheduler.due(datetime(2026, 11, 12, 11, 0)), [])
 
     started: list = []
@@ -1942,7 +1943,8 @@ def test_internal_jobs_1111() -> None:
         a = await scheduler.tick(datetime(2026, 11, 12, 8, 2))
         b = await scheduler.tick(datetime(2026, 11, 12, 8, 7))  # the next round: not again
         claimed_days.add(("evening", datetime(2026, 11, 12).date()))
-        c = await scheduler.tick(datetime(2026, 11, 12, 17, 1))  # the old cron ran it first
+        claimed_days.add(("reports-ask", datetime(2026, 11, 12).date()))
+        c = await scheduler.tick(datetime(2026, 11, 12, 18, 1))  # the old cron ran both first
         settings.internal_jobs_enabled = False
         scheduler._started.clear()
         d = await scheduler.tick(datetime(2026, 11, 13, 8, 2))
@@ -1957,7 +1959,72 @@ def test_internal_jobs_1111() -> None:
         scheduler._started.clear()
     check("started once in its window; skipped when already claimed; off → nothing", (a, b, c, d),
           (["morning"], [], [], []))
-    check("…the same command the cron ran", started, [("morning", ("scripts/run_morning_agents.py",))])
+    check("…the same command the cron ran", started[:1], [("morning", ("scripts/run_morning_agents.py",))])
+
+    # 11.11 (the 16:00 ask failed: job_runs missing): the reminder waits for the ask until 18:00; a late ask still goes.
+    started.clear()
+    claimed_days.clear()
+    scheduler._started.clear()
+    scheduler.claimed, scheduler._run = is_claimed, fake_run
+    settings.internal_jobs_enabled = True
+
+    async def late():
+        a = await scheduler.tick(datetime(2026, 11, 14, 17, 5))  # deploy late: the ask goes, the reminder waits
+        claimed_days.add(("reports-ask", datetime(2026, 11, 14).date()))
+        b = await scheduler.tick(datetime(2026, 11, 14, 17, 10))  # the ask claimed → the reminder
+        return a, b
+
+    try:
+        a2, b2 = asyncio.run(late())
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        scheduler._started.clear()
+    check("a late start: the ask first, the reminder after it", (a2, b2), (["reports-ask"], ["evening"]))
+
+    from integrations.common import db as _dbm
+    from integrations.common import job_runs
+
+    async def broken(*a, **k):
+        raise RuntimeError("relation \"job_runs\" does not exist")
+
+    saved_jr = (job_runs.fetch_one, job_runs.execute, dict(job_runs._ready))
+    job_runs.fetch_one, job_runs.execute = broken, broken
+    job_runs._ready["table"] = False
+    try:
+        open_claim = asyncio.run(job_runs.claim("morning", datetime(2026, 11, 12).date()))
+        not_read = asyncio.run(job_runs.claimed("morning", datetime(2026, 11, 12).date()))
+    finally:
+        job_runs.fetch_one, job_runs.execute = saved_jr[0], saved_jr[1]
+        job_runs._ready.update(saved_jr[2])
+    check("a claim that can't be checked lets the job run (a missed brief is worse than a rare double)",
+          (open_claim, not_read), (True, False))
+    check_true("the claim creates its own table when it's missing", "CREATE TABLE IF NOT EXISTS job_runs" in job_runs.TABLE)
+
+    calls_schema: list = []
+
+    async def flaky(pool):
+        calls_schema.append(1)
+        if len(calls_schema) < 3:
+            import psycopg
+            raise psycopg.errors.DeadlockDetected("deadlock detected")
+
+    async def no_sleep(_s):
+        return None
+
+    saved_db = (_dbm._ensure_schema, _dbm.asyncio.sleep, dict(_dbm._schema))
+    _dbm._ensure_schema = flaky
+    _dbm.asyncio.sleep = no_sleep
+    try:
+        applied = asyncio.run(_dbm._apply_schema(object()))
+    finally:
+        _dbm._ensure_schema, _dbm.asyncio.sleep = saved_db[0], saved_db[1]
+        _dbm._schema.clear()
+        _dbm._schema.update(saved_db[2])
+    check("a lock clash at start-up is retried until the schema applies", (applied, len(calls_schema)), (True, 3))
+    check_true("the schema runs with a lock timeout (LOCAL) and a failure reaches the audit log",
+               "SET LOCAL lock_timeout" in inspect_source(_dbm._ensure_schema)
+               and 'action="schema_apply"' in inspect_source(_dbm._apply_schema))
 
     root = Path(__file__).resolve().parents[1]
     runner = (root / "scripts" / "run_morning_agents.py").read_text(encoding="utf-8")
