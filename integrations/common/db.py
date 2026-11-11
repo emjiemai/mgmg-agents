@@ -56,14 +56,19 @@ async def get_pool() -> AsyncConnectionPool:
     """
     global _pool
     if _pool is None:
-        _pool = AsyncConnectionPool(
+        pool = _pool = AsyncConnectionPool(
             conninfo=settings.postgres_dsn,
             min_size=1,
             max_size=5,
             open=False,
             kwargs={"row_factory": dict_row},
         )
-        await _pool.open(wait=True, timeout=10)
+        try:
+            await pool.open(wait=True, timeout=10)
+        except BaseException:
+            if _pool is pool:  # a pool that never opened isn't kept for the life of the process (2026-11-11 review)
+                _pool = None
+            raise
         log.debug("PostgreSQL pool opened ({}:{})", settings.postgres_host, settings.postgres_port)
         await _apply_schema(_pool)
     return _pool

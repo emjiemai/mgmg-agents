@@ -165,7 +165,24 @@ async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
 
     run_id = uuid.uuid4()
     log.info("Daily reports run {} starting (mode={}, dry_run={})", run_id, mode, settings.dry_run)
+    # One 16:00 ask a day, whoever starts it — mgmg-api's loop or the old Render cron (2026-11-11) — claimed before
+    # the day-off / paused checks and finished on every normal outcome, so the 17:00 reminder (which waits for the
+    # ask to finish) also runs on days nobody is asked. A run that dies leaves the lease to expire; the next start
+    # asks again — safely, store.open_report_request asks each person once a day.
+    from integrations.common import job_runs
 
+    guarded = mode == "ask" and not force and not settings.dry_run
+    if guarded and not await job_runs.claim("reports-ask", today_local()):
+        log.info("Today's report ask already ran, or is running elsewhere — nothing sent")
+        return 0
+    code = await _run_mode(mode, run_id)
+    if guarded:
+        await job_runs.finish("reports-ask", today_local())
+    return code
+
+
+async def _run_mode(mode: str, run_id: uuid.UUID) -> int:
+    """The checks and the work of one run (``run`` holds the day's claim around it)."""
     unfilled = REQUIRED_SETTINGS & set(settings.missing_placeholders())
     if unfilled and not settings.dry_run:
         log.error("Refusing to run — unfilled placeholders in .env: {}", ", ".join(sorted(unfilled)))
@@ -189,12 +206,6 @@ async def run(mode: str, dry_run: bool = False, force: bool = False) -> int:
         return 0
 
     if mode == "ask":
-        # One 16:00 ask a day, whoever starts it — mgmg-api's loop or the old Render cron (2026-11-11).
-        from integrations.common.job_runs import claim
-
-        if not force and not settings.dry_run and not await claim("reports-ask", today_local()):
-            log.info("Today's report ask already ran — nothing sent")
-            return 0
         await ask_everyone(run_id)
     else:
         await remind_silent(run_id)

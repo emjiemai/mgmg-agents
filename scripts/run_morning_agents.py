@@ -91,35 +91,48 @@ def run_agent(relative_command: str) -> int:
     return result.returncode
 
 
-def claim_today(job: str) -> bool:
-    """The day's claim for this job (common/job_runs.py, 2026-11-11): False when another start already ran it today."""
-    import asyncio
-
+def _lease():
+    """The job_runs helpers (imported late: the project root on sys.path first)."""
     sys.path.insert(0, str(PROJECT_ROOT))
-    from integrations.common.db import close_pool
-    from integrations.common.job_runs import claim
+    from integrations.common import job_runs
     from integrations.common.timeutil import today_local
 
-    async def go() -> bool:
-        try:
-            return await claim(job, today_local())
-        finally:
-            await close_pool()
-
-    return asyncio.run(go())
+    return job_runs, today_local()
 
 
 def main() -> None:
+    import threading
+
     args = sys.argv[1:]
     commands = EVENING_AGENTS if "--evening" in args else DAYTIME_AGENTS if "--daytime" in args else AGENTS
     job = "evening" if "--evening" in args else "daytime" if "--daytime" in args else "morning"
-    # One run a day, whoever starts it — mgmg-api's loop or the old Render cron (2026-11-11). --force: run anyway.
-    if "--force" not in args and "--dry-run" not in args and not claim_today(job):
-        print(f"{job}: already run today — nothing to do.")
-        return
+    # One run a day, whoever starts it — mgmg-api's loop or the old Render cron (2026-11-11) — kept alive by a
+    # heartbeat; a run killed by a deploy is taken over by the next start, which skips the agents already started.
+    # --force / --dry-run: run everything anyway.
+    guarded = "--force" not in args and "--dry-run" not in args
+    stop = threading.Event()
+    if guarded:
+        job_runs, day = _lease()
+        if not job_runs.claim_sync(job, day):
+            print(f"{job}: already run today, or running elsewhere — nothing to do.")
+            return
+
+        def heartbeat() -> None:
+            while not stop.wait(60):
+                job_runs.beat_sync(job, day)
+
+        threading.Thread(target=heartbeat, daemon=True).start()
     results: dict[str, int] = {}
-    for command in commands:
-        results[command] = run_agent(command)
+    try:
+        for command in commands:
+            if guarded and not job_runs.once_sync(f"{job}:{command}", day):
+                print(f"\n=== Skipping {command}: already started today (a resumed run) ===", flush=True)
+                continue
+            results[command] = run_agent(command)
+    finally:
+        stop.set()
+    if guarded:
+        job_runs.finish_sync(job, day)
 
     print("\n=== Morning agents summary ===")
     failed = [name for name, code in results.items() if code != 0]

@@ -2000,3 +2000,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
     started_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
     PRIMARY KEY (job, day)
 );
+-- A lease, not a one-shot claim (2026-11-11 review): a run beats every minute and is finished at the end; a run
+-- killed by a deploy stops beating and the next start takes over (common/job_runs.py). Also «job:agent» rows: each
+-- agent of the morning job starts once a day, so a resumed run never sends twice.
+ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;

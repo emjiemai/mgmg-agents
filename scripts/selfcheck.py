@@ -1908,98 +1908,88 @@ def test_security_review_1103() -> None:
 
 def test_internal_jobs_1111() -> None:
     """11.11.2026 (the owner): the 08:00 / 16:00 / 17:00 jobs start from mgmg-api's own loop, not Render cron services
-    (≈ $5/month). Each job's command claims its day, so the old cron (until deleted) or a restart never runs it twice;
-    a job starts only inside its window."""
+    (≈ $5/month). Each job's command takes the day's lease (heartbeat while it runs, finished at the end): a second start
+    finds it running or finished and does nothing; a run killed by a deploy stops beating and the next start takes over,
+    skipping the agents already started (review of 11.11). A job starts only inside its window."""
     print("scheduled jobs inside mgmg-api (11.11.2026)")
     import asyncio
     from datetime import datetime
     from pathlib import Path
 
     from integrations.api import scheduler
+    from integrations.common import db as _dbm
+    from integrations.common import job_runs
     from integrations.common.config import settings
 
-    scheduler._started.clear()
     check("08:03: the morning job is due", scheduler.due(datetime(2026, 11, 12, 8, 3)), ["morning"])
     check("16:10: the report ask", scheduler.due(datetime(2026, 11, 12, 16, 10)), ["reports-ask"])
-    check("17:29: the ask may still go (until 19:00), the evening job is due", scheduler.due(datetime(2026, 11, 12, 17, 29)),
+    check("17:29: the ask may still go (until 19:00), the evening job too", scheduler.due(datetime(2026, 11, 12, 17, 29)),
           ["reports-ask", "evening"])
     check("11:00 (a late restart): nothing — the 08:00 brief never goes at 11:00", scheduler.due(datetime(2026, 11, 12, 11, 0)), [])
 
     started: list = []
-    claimed_days: set = set()
+    states: dict = {}
 
-    async def is_claimed(job, day):
-        return (job, day) in claimed_days
+    async def fake_state(job, day):
+        return states.get((job, day.isoformat()), "none")
 
     async def fake_run(job, command):
         started.append((job, command))
 
-    saved = [(scheduler, "claimed", scheduler.claimed), (scheduler, "_run", scheduler._run),
+    saved = [(scheduler, "state", scheduler.state), (scheduler, "_run", scheduler._run),
              (settings, "internal_jobs_enabled", settings.internal_jobs_enabled)]
-    scheduler.claimed, scheduler._run = is_claimed, fake_run
+    scheduler.state, scheduler._run = fake_state, fake_run
     settings.internal_jobs_enabled = True
+    scheduler._starts.clear()
+    scheduler._running.clear()
 
     async def go():
-        a = await scheduler.tick(datetime(2026, 11, 12, 8, 2))
-        b = await scheduler.tick(datetime(2026, 11, 12, 8, 7))  # the next round: not again
-        claimed_days.add(("evening", datetime(2026, 11, 12).date()))
-        claimed_days.add(("reports-ask", datetime(2026, 11, 12).date()))
-        c = await scheduler.tick(datetime(2026, 11, 12, 18, 1))  # the old cron ran both first
-        settings.internal_jobs_enabled = False
-        scheduler._started.clear()
-        d = await scheduler.tick(datetime(2026, 11, 13, 8, 2))
+        out = []
+        out.append(await scheduler.tick(datetime(2026, 11, 12, 8, 2)))     # started
         await asyncio.sleep(0)
-        return a, b, c, d
+        states[("morning", "2026-11-12")] = "running"                     # its lease is alive
+        out.append(await scheduler.tick(datetime(2026, 11, 12, 8, 7)))     # left alone
+        states[("morning", "2026-11-12")] = "dead"                        # killed by a deploy
+        out.append(await scheduler.tick(datetime(2026, 11, 12, 8, 12)))    # started again: the command takes over
+        states[("morning", "2026-11-12")] = "finished"
+        out.append(await scheduler.tick(datetime(2026, 11, 12, 8, 17)))    # done for the day
+        out.append(await scheduler.tick(datetime(2026, 11, 12, 17, 5)))    # the ask first, the reminder waits for it
+        await asyncio.sleep(0)
+        states[("reports-ask", "2026-11-12")] = "finished"
+        out.append(await scheduler.tick(datetime(2026, 11, 12, 17, 10)))   # the ask finished → the reminder
+        await asyncio.sleep(0)
+        settings.internal_jobs_enabled = False
+        out.append(await scheduler.tick(datetime(2026, 11, 13, 8, 2)))     # off → nothing
+        return out
 
     try:
-        a, b, c, d = asyncio.run(go())
+        rounds = asyncio.run(go())
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
-        scheduler._started.clear()
-    check("started once in its window; skipped when already claimed; off → nothing", (a, b, c, d),
-          (["morning"], [], [], []))
-    check("…the same command the cron ran", started[:1], [("morning", ("scripts/run_morning_agents.py",))])
-
-    # 11.11 (the 16:00 ask failed: job_runs missing): the reminder waits for the ask until 18:00; a late ask still goes.
-    started.clear()
-    claimed_days.clear()
-    scheduler._started.clear()
-    scheduler.claimed, scheduler._run = is_claimed, fake_run
-    settings.internal_jobs_enabled = True
-
-    async def late():
-        a = await scheduler.tick(datetime(2026, 11, 14, 17, 5))  # deploy late: the ask goes, the reminder waits
-        claimed_days.add(("reports-ask", datetime(2026, 11, 14).date()))
-        b = await scheduler.tick(datetime(2026, 11, 14, 17, 10))  # the ask claimed → the reminder
-        return a, b
-
-    try:
-        a2, b2 = asyncio.run(late())
-    finally:
-        for obj, name, value in saved:
-            setattr(obj, name, value)
-        scheduler._started.clear()
-    check("a late start: the ask first, the reminder after it", (a2, b2), (["reports-ask"], ["evening"]))
-
-    from integrations.common import db as _dbm
-    from integrations.common import job_runs
+        scheduler._starts.clear()
+        scheduler._running.clear()
+    check("start; a live run left alone; a dead run started again; finished → done; the ask before the reminder; off",
+          rounds, [["morning"], [], ["morning"], [], ["reports-ask"], ["evening"], []])
+    check("…the same command the cron ran", started[0], ("morning", ("scripts/run_morning_agents.py",)))
 
     async def broken(*a, **k):
-        raise RuntimeError("relation \"job_runs\" does not exist")
+        raise RuntimeError("relation job_runs does not exist")
 
-    saved_jr = (job_runs.fetch_one, job_runs.execute, dict(job_runs._ready))
-    job_runs.fetch_one, job_runs.execute = broken, broken
+    saved_db = (_dbm.fetch_one, _dbm.execute, dict(job_runs._ready))
+    _dbm.fetch_one, _dbm.execute = broken, broken
     job_runs._ready["table"] = False
     try:
         open_claim = asyncio.run(job_runs.claim("morning", datetime(2026, 11, 12).date()))
-        not_read = asyncio.run(job_runs.claimed("morning", datetime(2026, 11, 12).date()))
+        unknown = asyncio.run(job_runs.state("morning", datetime(2026, 11, 12).date()))
     finally:
-        job_runs.fetch_one, job_runs.execute = saved_jr[0], saved_jr[1]
-        job_runs._ready.update(saved_jr[2])
+        _dbm.fetch_one, _dbm.execute = saved_db[0], saved_db[1]
+        job_runs._ready.update(saved_db[2])
     check("a claim that can't be checked lets the job run (a missed brief is worse than a rare double)",
-          (open_claim, not_read), (True, False))
-    check_true("the claim creates its own table when it's missing", "CREATE TABLE IF NOT EXISTS job_runs" in job_runs.TABLE)
+          (open_claim, unknown), (True, "none"))
+    check_true("the lease: a dead run (no heartbeat) is taken over, a finished or live one isn't; the table is made here",
+               "heartbeat_at < now() - interval" in job_runs.CLAIM and "finished_at IS NULL" in job_runs.CLAIM
+               and "CREATE TABLE IF NOT EXISTS job_runs" in job_runs.TABLE and "ON CONFLICT (job, day) DO NOTHING" in job_runs.ONCE)
 
     calls_schema: list = []
 
@@ -2012,33 +2002,36 @@ def test_internal_jobs_1111() -> None:
     async def no_sleep(_s):
         return None
 
-    saved_db = (_dbm._ensure_schema, _dbm.asyncio.sleep, dict(_dbm._schema))
+    saved_s = (_dbm._ensure_schema, _dbm.asyncio.sleep, dict(_dbm._schema))
     _dbm._ensure_schema = flaky
     _dbm.asyncio.sleep = no_sleep
     try:
         applied = asyncio.run(_dbm._apply_schema(object()))
     finally:
-        _dbm._ensure_schema, _dbm.asyncio.sleep = saved_db[0], saved_db[1]
+        _dbm._ensure_schema, _dbm.asyncio.sleep = saved_s[0], saved_s[1]
         _dbm._schema.clear()
-        _dbm._schema.update(saved_db[2])
+        _dbm._schema.update(saved_s[2])
     check("a lock clash at start-up is retried until the schema applies", (applied, len(calls_schema)), (True, 3))
+    root = Path(__file__).resolve().parents[1]
     import re as _re2
-    schema_text = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
-    added = _re2.findall(r"ADD CONSTRAINT ([a-z_]+)", schema_text)
+    added = _re2.findall(r"ADD CONSTRAINT ([a-z_]+)", (root / "database" / "schema.sql").read_text(encoding="utf-8"))
     check("every constraint is defined once in schema.sql (11.11: a stricter older copy failed on new rows)",
           sorted({n for n in added if added.count(n) > 1}), [])
     check_true("the schema runs with a lock timeout (LOCAL) and a failure reaches the audit log",
                "SET LOCAL lock_timeout" in inspect_source(_dbm._ensure_schema)
                and 'action="schema_apply"' in inspect_source(_dbm._apply_schema))
 
-    root = Path(__file__).resolve().parents[1]
     runner = (root / "scripts" / "run_morning_agents.py").read_text(encoding="utf-8")
     reports = (root / "agents" / "daily-reports" / "agent.py").read_text(encoding="utf-8")
-    check_true("each job's command claims its day (--force / --dry-run run anyway)",
-               "claim_today(job)" in runner and '"--force" not in args' in runner
-               and 'claim("reports-ask", today_local())' in reports and "--force" in reports)
-    check_true("the claim is one atomic insert", "ON CONFLICT (job, day) DO NOTHING RETURNING" in
-               (root / "integrations" / "common" / "job_runs.py").read_text(encoding="utf-8"))
+    check_true("the runner keeps the lease alive, finishes it, and starts each agent once (a resumed run skips them)",
+               "claim_sync(job, day)" in runner and "beat_sync(job, day)" in runner and "finish_sync(job, day)" in runner
+               and 'once_sync(f"{job}:{command}", day)' in runner)
+    check_true("the ask claims before its day-off / paused checks and finishes on every normal outcome",
+               reports.index('job_runs.claim("reports-ask"') < reports.index("async def _run_mode")
+               and 'job_runs.finish("reports-ask"' in reports)
+    from integrations.org_bot import store
+    check_true("no reminder right after a late ask (25 minutes)", "interval '25 minutes'" in inspect_source(store.reports_awaiting_reminder))
+    check_true("a job dies first if memory runs out, never the bots", "oom_score_adj" in inspect_source(scheduler._lower_priority))
     check_true("render.yaml has no cron services left; the loop starts the jobs",
                "type: cron" not in (root / "render.yaml").read_text(encoding="utf-8")
                and "scheduler.tick" in (root / "integrations" / "api" / "app.py").read_text(encoding="utf-8"))

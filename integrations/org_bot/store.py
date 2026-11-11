@@ -1694,6 +1694,7 @@ async def reports_awaiting_reminder(report_date: date) -> list[dict[str, Any]]:
         JOIN employees e ON e.id = r.employee_id
         WHERE r.report_date = %s AND r.status = 'asked' AND r.reminded_at IS NULL
           AND e.status = 'active' AND NOT e.reports_off
+          AND r.asked_at < now() - interval '25 minutes'  -- never right after a late ask (2026-11-11 review)
         ORDER BY r.asked_at
         """,
         (report_date,),
