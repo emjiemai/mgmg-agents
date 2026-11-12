@@ -3157,6 +3157,12 @@ async def create_explanation(employee: dict[str, Any], kind: str, asked_for: dat
     )
 
 
+async def explanations_of(employee_id: str, day: date) -> list[dict[str, Any]]:
+    """This person's «report» explanation rows about ``day`` (asked or not)."""
+    return await fetch_all("SELECT * FROM explanations WHERE employee_id = %s AND kind = 'report' AND asked_for = %s",
+                           (employee_id, day))
+
+
 async def set_explanation_prompt(explanation_id: str, message_id: int | None) -> None:
     await execute("UPDATE explanations SET prompt_message_id = %s WHERE id = %s", (message_id, explanation_id))
 
@@ -3287,6 +3293,22 @@ async def save_late_report(report_id: str, content: str) -> dict[str, Any] | Non
     return await fetch_one(
         """UPDATE daily_reports SET late_content = %s, late_sent_at = now(), late_awaiting_at = NULL
            WHERE id = %s AND status = 'asked' AND late_content IS NULL RETURNING *""", (content, report_id))
+
+
+async def withdraw_late_report(report_id: str) -> str | None:
+    """An undecided late report taken back (it was today's): its text, or None when decided / gone. The day's
+    morning question, answered by it, is open again."""
+    row = await fetch_one(
+        """UPDATE daily_reports d SET late_content = NULL, late_sent_at = NULL
+           FROM (SELECT id, late_content FROM daily_reports WHERE id = %s FOR UPDATE) old
+           WHERE d.id = old.id AND d.status = 'asked' AND d.late_content IS NOT NULL AND d.late_decision IS NULL
+           RETURNING old.late_content, d.employee_id, d.report_date""", (report_id,))
+    if row is None:
+        return None
+    await execute("""UPDATE explanations SET answer = NULL, answered_at = NULL
+                     WHERE employee_id = %s AND kind = 'report' AND asked_for = %s AND answer = '[кечиккан ҳисобот юборилди]'""",
+                  (row["employee_id"], row["report_date"]))
+    return row["late_content"]
 
 
 async def decide_late_report(report_id: str, approve: bool, decided_by: int) -> dict[str, Any] | None:

@@ -1906,6 +1906,95 @@ def test_security_review_1103() -> None:
                and "aiter_bytes" in inspect_source(crawler._get))
 
 
+def test_report_day_and_absence_1112() -> None:
+    """12.11.2026 (the owner: Абдурашид's chat — "AI is repeating messages that have almost no meaning"): his 11.11
+    report (a day off on his week) was taken for his missing 10.11 report and sent for approval; «no, it's today's» and
+    «I was ill» went to the work AI, which only said them back. Now: a report while a morning ask waits is today's
+    unless it says otherwise («today» kind); «I didn't work» is the day's explanation (card with ⬜ Сабабли); a late
+    report sent in today's window can be moved to today (↩); the work AI never only repeats. Also: a report sent while
+    no ask was open crashed since 26.10 (open_report_request is keyword-only)."""
+    print("report day + absence notes (12.11.2026)")
+    import asyncio
+    import inspect
+    from datetime import date, datetime
+    from pathlib import Path
+
+    from integrations.org_bot import ai_chat, explanations, late_report, ops_manager, store
+
+    src = Path("integrations/org_bot/ops_manager.py").read_text(encoding="utf-8")
+    check_true("open_report_request is keyword-only", "*" in str(inspect.signature(store.open_report_request)).split(",")[0])
+    check_true("no positional open_report_request call", "open_report_request(employee," not in src
+               and "open_report_request(clicker," not in Path("integrations/org_bot/late_report.py").read_text(encoding="utf-8"))
+    check_true("the report check knows absence", {"absent", "absent_yesterday"} <= set(ops_manager.REPORT_KINDS))
+    check_true("the answer check knows today's report", "today" in ops_manager.ANSWER_KINDS
+               and "{today}" in ops_manager.EXPLANATION_CHECK and "TODAY's" in ops_manager.REPORT_RULE)
+    check_true("the work AI never only repeats", "NEVER ANSWER BY REPEATING THEM" in ai_chat.SYSTEM_PROMPT)
+    check_true("absence card says they wrote it", "ўзи ёзди" in explanations.card("А", "Б", "report", [date(2026, 11, 10)], "x", absent=True))
+    check("↩ only in today's window, for an earlier day", [
+        late_report.can_move(date(2026, 11, 10), datetime(2026, 11, 11, 17, 55)),
+        late_report.can_move(date(2026, 11, 10), datetime(2026, 11, 11, 9, 0)),
+        late_report.can_move(date(2026, 11, 11), datetime(2026, 11, 11, 22, 30))], [True, False, False])
+    check_true("↩ button data fits Telegram", len(late_report.move_keyboard("0" * 36)["inline_keyboard"][0][0]["callback_data"]) <= 64)
+    check_true("lrmv is routed", "lrmv" in late_report.PREFIXES)
+
+    # «Bugun mazam yoqligi sabablik ishga chiqa olmadim» → an explanation card to the Director and the manager.
+    sent, replies, created = [], [], []
+    emp = {"id": "e1", "telegram_user_id": 11, "role": "garmin_sotuv", "full_name": "Абдурашид Хожиев", "display_name": "А"}
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def send_message(self, text, **kw):
+            sent.append((kw.get("chat_id"), text, kw.get("reply_markup")))
+            return [1]
+
+    async def create(employee, kind, asked_for, days):
+        created.append((kind, asked_for, days))
+        return {"id": "x1"}
+
+    async def answer(ids, text):
+        return [{"id": i, "kind": "report", "days": [date(2026, 11, 10)]} for i in ids]
+
+    async def bosses(role):
+        return [{"telegram_user_id": {"operatsion_direktor": 100, "garmin_manager": 200}.get(role, 0)}] \
+            if role in ("operatsion_direktor", "garmin_manager") else []
+
+    async def nothing(*a, **k):
+        return None
+
+    async def reply(uid, run_id, text, **kw):
+        replies.append(text)
+
+    saved = [(store, n, getattr(store, n)) for n in ("create_explanation", "answer_explanations", "active_employees_by_role",
+                                                    "set_explanation_delivered", "explanations_of")]
+    saved += [(ops_manager, n, getattr(ops_manager, n)) for n in ("TelegramBot", "_reply", "log_action", "today_local")]
+    try:
+        store.create_explanation, store.answer_explanations, store.active_employees_by_role = create, answer, bosses
+        store.set_explanation_delivered = nothing
+        ops_manager.TelegramBot, ops_manager._reply, ops_manager.log_action = Bot, reply, nothing
+        ops_manager.today_local = lambda: date(2026, 11, 10)
+        import uuid as _uuid
+        out = asyncio.run(ops_manager._absence_note(emp, "Bugun mazam yoqligi sabablik ishga chiqa olmadim", "absent", _uuid.uuid4()))
+        check("absence: outcome", out, "absence_note")
+        check("absence: the day's explanation, as if asked", created, [("report", date(2026, 11, 10), [date(2026, 11, 10)])])
+        check("absence: Director and Garmin manager get the card", sorted(c for c, _, _ in sent), ["100", "200"])
+        check_true("absence: card has ⬜ Сабабли", all("exc:x1" in str(m) for _, _, m in sent))
+        check_true("absence: the person is thanked, not echoed", replies == [explanations.thanks_text()])
+        created.clear()
+        out = asyncio.run(ops_manager._absence_note(emp, "kecha ishga chiqmadim", "absent_yesterday", _uuid.uuid4()))
+        check("absence yesterday → the day before", created[0][1], date(2026, 11, 9))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_internal_jobs_1111() -> None:
     """11.11.2026 (the owner): the 08:00 / 16:00 / 17:00 jobs start from mgmg-api's own loop, not Render cron services
     (≈ $5/month). Each job's command takes the day's lease (heartbeat while it runs, finished at the end): a second start
@@ -7434,7 +7523,7 @@ def test_explanations_and_start_times() -> None:
     async def report_for_day(user, day):
         return owed["row"]
 
-    async def classify(ask, text, report_ask, run_id):
+    async def classify(ask, text, report_ask, run_id, day=None):
         return verdict["kind"] if report_ask or verdict["kind"] != "report" else "reason"
 
     async def take_typed(employee, day, text, run_id):
@@ -8583,8 +8672,8 @@ def test_reports_any_time() -> None:
     async def report_for_day(tg, day):
         return state.get("row")
 
-    async def open_request(employee, day):
-        state["opened"] = day
+    async def open_request(*, employee, report_date):  # keyword-only, like store (12.11: a positional fake hid a crash)
+        state["opened"] = report_date
         state["row"] = {"id": "r9", "status": "asked"}
         return state["row"]
 
@@ -12429,6 +12518,7 @@ def main() -> int:
         test_answer_polish_1111,
         test_sales_facts_cancelled_1111,
         test_internal_jobs_1111,
+        test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
         test_files_reports_cheer_off,

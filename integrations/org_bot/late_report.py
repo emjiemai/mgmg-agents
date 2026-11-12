@@ -36,7 +36,8 @@ from integrations.telegram.bot import TelegramBot, escape
 AGENT = "ops-manager-bot"
 log = setup_logging(AGENT)
 
-PREFIXES = ("lrs", "lrok", "lrno")
+PREFIXES = ("lrs", "lrok", "lrno", "lrmv")
+OPEN_HOUR, CLOSE_HOUR = 14, 22  # today's report window (ops_manager.REPORT_OPEN_HOUR, store.REPORT_CLOSE_HOUR)
 AWAIT_HOURS = 3  # after the tap, the next message is the report this long (was 12 until 2026-10-24)
 CARD_TEXT = 1500
 CAPTION_TEXT = 600  # a card under a photo / voice: Telegram's caption is 1024 characters
@@ -54,6 +55,27 @@ def prompt_text(day: date) -> str:
 
 def sent_text() -> str:
     return casual("раҳмат, кечаги ҳисоботингиз раҳбариятга тасдиқлаш учун юборилди")
+
+
+def move_keyboard(report_id: str) -> dict[str, Any]:
+    """On «sent for approval»: it was today's report, not yesterday's (2026-11-12 — Абдурашид's 11.11 report went
+    for approval as his missing 10.11 one, and nothing could move it)."""
+    return {"inline_keyboard": [[{"text": "↩️ Бу бугунги ҳисоботим", "callback_data": f"lrmv:{report_id}"}]]}
+
+
+def moved_text(day: date, today: date) -> str:
+    return casual(f"тушундим, бу матн {today:%d.%m} кунги ҳисоботингиз сифатида сақланди, {day:%d.%m} кунги ҳисобот "
+                  "ҳали келмаган деб турибди, раҳмат")
+
+
+def moved_card(person: str, day: date, today: date) -> str:
+    return (f"↩️ {escape(person)}: {day:%d.%m} учун юборилган кечиккан ҳисобот аслида {today:%d.%m} кунги ҳисоботи экан — "
+            f"бугунги ҳисобот сифатида сақланди, {day:%d.%m} кунги карточкага жавоб шарт эмас.")
+
+
+def can_move(day: date, now: datetime) -> bool:
+    """Today's report window is open and the late one is for an earlier day."""
+    return day < now.date() and OPEN_HOUR <= now.hour < CLOSE_HOUR
 
 
 def reading_text() -> str:
@@ -130,7 +152,10 @@ async def deliver(employee: dict[str, Any], row_id: str, content: str, run_id: u
                     delivered += 1
                 except Exception as exc:  # noqa: BLE001 — the next one still gets it
                     log.error("Late report not delivered: {}", type(exc).__name__)
-    await _send(employee["telegram_user_id"], sent_text(), run_id)
+    from integrations.common.timeutil import now_local
+
+    movable = can_move(day, now_local()) and not file_message_id
+    await _send(employee["telegram_user_id"], sent_text(), run_id, move_keyboard(str(row["id"])) if movable else None)
     await log_action(agent=AGENT, action="late_report_sent", target_system="telegram", status="success",
                      run_id=run_id, mode="notify", payload={"delivered": delivered, "file": bool(file_message_id)})
     return "late_report_sent"
@@ -225,6 +250,9 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         await _send(clicker_id, prompt_text(day), run_id)
         return "late_report_asked"
 
+    if prefix == "lrmv":
+        return await _move_to_today(rest, clicker, callback, run_id)
+
     report = await store.get_report(rest)
     person = await store.get_employee(str(report["employee_id"])) if report else None
     if report is None or not excused.may_excuse(clicker, person):
@@ -268,3 +296,46 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
     await log_action(agent=AGENT, action="late_report_approved" if approve else "late_report_declined",
                      target_system="postgres", status="success", run_id=run_id, mode="write")
     return "late_report_approved" if approve else "late_report_declined"
+
+
+async def _move_to_today(report_id: str, clicker: dict[str, Any], callback: dict[str, Any], run_id: uuid.UUID) -> str:
+    """The person's ↩: the late report (still undecided) becomes today's report; the earlier day is missing again
+    and its morning question open again; the deciders are told."""
+    from integrations.common.timeutil import now_local
+    from integrations.org_bot import ops_manager  # local: ops_manager imports this module
+
+    now = now_local()
+    report = await store.get_report(report_id)
+    if report is None or report.get("employee_id") != clicker.get("id") or not can_move(report["report_date"], now):
+        await _answer(callback, "Бу ҳисоботни энди кўчириб бўлмайди")
+        return "late_move_closed"
+    today_row = await store.report_for_day(clicker["telegram_user_id"], now.date())
+    if today_row is not None and today_row.get("status") != "asked":
+        await _answer(callback, "Бугунги ҳисоботингиз аллақачон бор")
+        return "late_move_today_taken"
+    content = await store.withdraw_late_report(report_id)
+    if content is None:
+        await _answer(callback, "Бу ҳисобот аллақачон ҳал қилинган")
+        return "late_move_decided"
+    if today_row is None:
+        await store.open_report_request(employee=clicker, report_date=now.date())
+    pending = await store.pending_report(clicker["telegram_user_id"], now.date())
+    if pending is None or await ops_manager._save_daily_report(clicker, pending, content, run_id, quiet=True) is None:  # noqa: SLF001
+        await store.save_late_report(report_id, content)  # put back: nothing lost
+        await _answer(callback, "Кўчириб бўлмади, кейинроқ уриниб кўринг")
+        return "late_move_failed"
+    message = callback.get("message") or {}
+    async with _bot(run_id) as bot:
+        await bot._edit_message(str((message.get("chat") or {}).get("id")), message.get("message_id"),  # noqa: SLF001
+                                moved_text(report["report_date"], now.date()), reply_markup={"inline_keyboard": []})
+    await _answer(callback, "↩️")
+    person = names.person_name(clicker)
+    for who in managers_of(clicker.get("role")):
+        for boss in await store.active_employees_by_role(who):
+            try:
+                await _send(boss["telegram_user_id"], moved_card(person, report["report_date"], now.date()), run_id)
+            except Exception as exc:  # noqa: BLE001
+                log.error("Late report move not told: {}", type(exc).__name__)
+    await log_action(agent=AGENT, action="late_report_moved", target_system="telegram", status="success",
+                     run_id=run_id, mode="write", payload={})
+    return "late_report_moved"

@@ -148,8 +148,11 @@ REPORT_CHECK = """An employee of MGMG (Tashkent: Garmin shops, Primus laundry eq
 message to the work bot at {time}. Is it their DAILY WORK REPORT — what they did at work (tasks done, customers, places, \
 sales, numbers)? A question, a request for help, a greeting, thanks, chatter, a complaint or only a plan is not; nor is \
 a message that only points elsewhere («the report above», «same as yesterday») or refuses to say. \
-Answer "unsure" only when it could really be either. JSON only: {{"kind": "report"}}, {{"kind": "other"}} or \
-{{"kind": "unsure"}}."""
+If it only says they did NOT work — were ill, on leave, couldn't come — answer "absent" (they didn't work today) or \
+"absent_yesterday" (they say it was yesterday, «кеча»). \
+Answer "unsure" only when it could really be either. JSON only: {{"kind": "report"}}, {{"kind": "other"}}, \
+{{"kind": "absent"}}, {{"kind": "absent_yesterday"}} or {{"kind": "unsure"}}."""
+REPORT_KINDS = ("report", "other", "unsure", "absent", "absent_yesterday")
 
 
 # 2026-10-26: «Tepadagi xisobot» ("the report above") was saved as Абдукарим's 21.10 report — a pointer, no work in it.
@@ -187,7 +190,7 @@ async def _classify_report(text: str, run_id: uuid.UUID) -> str:
         kind = str(verdict.get("kind") or "unsure") if isinstance(verdict, dict) else "unsure"
     except Exception:  # noqa: BLE001
         return "unsure"
-    return kind if kind in ("report", "other", "unsure") else "unsure"
+    return kind if kind in REPORT_KINDS else "unsure"
 
 
 def report_or_ai_keyboard(held_id: str) -> dict[str, Any]:
@@ -1600,6 +1603,8 @@ async def _try_daily_report(
         return "report_pointer"
     if kind == "ask":  # the AI decides (2026-10-26); asked only when it isn't sure
         decided = await _classify_report(text, run_id)
+        if decided in ABSENT_KINDS:
+            return await _absence_note(employee, text, decided, run_id)
         if decided == "other":
             return None
         if decided == "unsure":
@@ -1622,6 +1627,8 @@ async def _report_outside_ask(employee: dict[str, Any], text: str, run_id: uuid.
         await _reply(telegram_user_id, run_id, pointer_text())
         return "report_pointer"
     kind = await _classify_report(text, run_id)
+    if kind in ABSENT_KINDS:
+        return await _absence_note(employee, text, kind, run_id)
     if kind == "other" or (kind == "unsure" and not REPORT_OPEN_HOUR <= now.hour < store.REPORT_CLOSE_HOUR):
         return None
     if now.hour >= store.REPORT_CLOSE_HOUR:
@@ -1642,7 +1649,7 @@ async def _report_outside_ask(employee: dict[str, Any], text: str, run_id: uuid.
     if kind == "unsure":
         return await _ask_report_or_ai(employee, text, run_id)
     if row is None:
-        await store.open_report_request(employee, now.date())
+        await store.open_report_request(employee=employee, report_date=now.date())
     pending = await store.pending_report(telegram_user_id, now.date())
     if pending is None:
         return None
@@ -1659,7 +1666,7 @@ async def _report_from_held(employee: dict[str, Any], text: str, run_id: uuid.UU
     pending = await store.pending_report(telegram_user_id, now.date())
     if pending is None and REPORT_OPEN_HOUR <= now.hour < store.REPORT_CLOSE_HOUR and not employee.get("reports_off") \
             and await store.report_for_day(telegram_user_id, now.date()) is None:
-        await store.open_report_request(employee, now.date())
+        await store.open_report_request(employee=employee, report_date=now.date())
         pending = await store.pending_report(telegram_user_id, now.date())
     if pending is not None and await _save_daily_report(employee, pending, text, run_id, quiet=True) is not None:
         return "daily_report", casual("ҳисобот сифатида сақладим, раҳмат каттакон")
@@ -2181,26 +2188,30 @@ async def _handle_employee_message(
 
 
 EXPLANATION_CHECK = """The work bot asked an employee this morning: «{ask}». Then they wrote the message below. \
-What is it?
+Today is {today}, now {time}. What is it?
 - "reason": an answer to that question — a reason, an excuse, an apology, or a claim that they did come / did send it;
 - "report": {report_rule}
+- "today": their report of TODAY's work ({today}), or they say the report is today's;
 - "other": anything else — a question about their work, a task update, a greeting, chatter.
-JSON only: {{"kind": "reason"}}, {{"kind": "report"}} or {{"kind": "other"}}."""
-REPORT_RULE = ("the question is about yesterday's missing daily report and the message IS that report — what "
-               "they did at work yesterday (tasks, customers, places, numbers), not why it didn't come;")
+JSON only: {{"kind": "reason"}}, {{"kind": "report"}}, {{"kind": "today"}} or {{"kind": "other"}}."""
+REPORT_RULE = ("the question is about the missing daily report of {day} and the message IS that report — what "
+               "they did at work on {day} (tasks, customers, places, numbers), not why it didn't come. From 14:00 a "
+               "work report that doesn't say it is about {day} / yesterday is TODAY's, not this;")
 NO_REPORT_RULE = "never (this question isn't about a report);"
-ANSWER_KINDS = ("reason", "report", "other")
+ANSWER_KINDS = ("reason", "report", "today", "other")
 
 
-async def _classify_answer(ask: str, text: str, report_ask: bool, run_id: uuid.UUID) -> str:
+async def _classify_answer(ask: str, text: str, report_ask: bool, run_id: uuid.UUID, day: date | None = None) -> str:
     """What a message to the morning question is: its reason, the missing report itself, or something else
     (2026-10-24: a typed report became an explanation card; a reply about a task became the explanation).
     The AI decides; if it can't, «reason» — a missed explanation is worse than a misplaced one."""
     try:
         async with OpenRouterClient(agent=AGENT, run_id=run_id, model_override=settings.ops_manager_bot_model,
                                     fallback_override=settings.ops_manager_bot_fallback_models) as ai:
+            now = now_local()
+            rule = REPORT_RULE.format(day=f"{day:%d.%m}" if day else "yesterday") if report_ask else NO_REPORT_RULE
             verdict = await ai.complete_json(EXPLANATION_CHECK.format(
-                ask=ask, report_rule=REPORT_RULE if report_ask else NO_REPORT_RULE), text)
+                ask=ask, report_rule=rule, today=f"{now:%d.%m.%Y}", time=f"{now:%H:%M}"), text)
         kind = str(verdict.get("kind") or "reason") if isinstance(verdict, dict) else "reason"
     except Exception:  # noqa: BLE001
         return "reason"
@@ -2245,9 +2256,10 @@ async def _take_explanation(employee: dict[str, Any], text: str, replied: int | 
         # A reply to the morning message too (2026-10-24): it may also list tasks, so a reply can be about one.
         report_ask = next((w for w in waiting if w["kind"] == "report"), None)
         ask = explanations.ask_text(waiting[0]["kind"], names.call_name(employee), list(waiting[0]["days"]))
-        kind = await _classify_answer(_plain(ask), text, report_ask is not None, run_id)
-        if kind == "other":
-            return None
+        report_day = (report_ask.get("asked_for") or list(report_ask["days"])[-1]) if report_ask else None
+        kind = await _classify_answer(_plain(ask), text, report_ask is not None, run_id, report_day)
+        if kind in ("other", "today"):  # today's report goes the report's way (2026-11-12: Абдурашид's 11.11
+            return None                 # report was taken for his missing 10.11 one)
         if kind == "report" and report_ask is not None:  # the missing report itself, typed: for approval
             day = report_ask.get("asked_for") or list(report_ask["days"])[-1]
             taken = await late_report.take_typed(employee, day, text, run_id)
@@ -2256,13 +2268,21 @@ async def _take_explanation(employee: dict[str, Any], text: str, replied: int | 
     rows = await store.answer_explanations([str(w["id"]) for w in waiting], text)
     if not rows:
         return None
+    return await _deliver_explanations(employee, rows, text, run_id, message_id, held)
+
+
+async def _deliver_explanations(employee: dict[str, Any], rows: list[dict[str, Any]], text: str, run_id: uuid.UUID,
+                                message_id: int | None = None, held: dict[str, Any] | None = None,
+                                absent: bool = False) -> str:
+    """The answered explanation(s) as cards with ⬜ Сабабли to the Director and the person's team manager."""
+    telegram_user_id = employee["telegram_user_id"]
     person, role = names.person_name(employee), ROLE_LABELS.get(employee.get("role") or "", employee.get("role") or "")
     roles = [DIRECTOR_ROLE, *explanation_managers(employee.get("role"))]
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
         for row in rows:
-            card = explanations.card(person, role, row["kind"], list(row["days"]), text)
+            card = explanations.card(person, role, row["kind"], list(row["days"]), text, absent=absent)
             buttons = excused.card_keyboard(str(row["id"]), False)  # ⬜ Сабабли: the days turn grey (2026-10-23)
             delivered = 0
             for who in roles:
@@ -2284,7 +2304,26 @@ async def _take_explanation(employee: dict[str, Any], text: str, replied: int | 
     await log_action(agent=AGENT, action="explanation_received", target_system="telegram", status="success",
                      run_id=run_id, mode="notify", payload={"asks": len(rows)})
     await _reply(telegram_user_id, run_id, explanations.thanks_text(), reply_to=message_id)
-    return "explanation_taken"
+    return "absence_note" if absent else "explanation_taken"
+
+
+ABSENT_KINDS = ("absent", "absent_yesterday")
+
+
+async def _absence_note(employee: dict[str, Any], text: str, kind: str, run_id: uuid.UUID) -> str | None:
+    """«I was ill today, couldn't come» (2026-11-12, the owner: the work AI only repeated it back): the day's
+    explanation, as if the morning had asked — a card with ⬜ Сабабли to the Director and the team manager; the
+    next morning doesn't ask again. None (on to the AI) when that day was already explained."""
+    day = today_local() - timedelta(days=1) if kind == "absent_yesterday" else today_local()
+    row = await store.create_explanation(employee, "report", day, [day])
+    if row is None:  # asked already: the open ask takes it, an answered one isn't overwritten
+        row = next((w for w in await store.explanations_of(str(employee["id"]), day) if not w.get("answered_at")), None)
+        if row is None:
+            return None
+    rows = await store.answer_explanations([str(row["id"])], text)
+    if not rows:
+        return None
+    return await _deliver_explanations(employee, rows, text, run_id, absent=True)
 
 
 def _plain(text: str | None) -> str:

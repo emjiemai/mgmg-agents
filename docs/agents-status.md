@@ -125,3 +125,5 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 **Garmin stock as quantity (2026-10-27):** one row in the Garmin brief (pieces, models, top warehouses); the analyst answers stock questions in pieces.
 
 **Garmin stock (2026-10-27):** `/qoldiq` and the analyst's `garmin_stock_list` — every product left, pieces per warehouse, Excel; no buying advice.
+
+- 2026-11-12: daily reports — the right day for a report typed while a morning question waits, absence notes as explanation cards (⬜ Сабабли), ↩️ move a late report to today, the work AI never parrots; the report-outside-the-ask crash (since 26.10) fixed.

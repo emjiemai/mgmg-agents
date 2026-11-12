@@ -232,6 +232,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   manager for his team) as a card — the second exception to the no-relay rule. **/grafik 🕘** = a person's own
   start time (late counted from it).
   Next from the spec: positions + deputies, route table, escalation; then Day 2 complaint tickets.
+- **12.11 (Абдурашид's chat):** a report typed while a morning question waits is today's unless it says otherwise; «I didn't work (ill)» → that day's explanation card (⬜ Сабабли), never a chat; ↩️ «Бу бугунги ҳисоботим» moves a late report sent 14–22 to today; the work AI never only repeats. `open_report_request` is keyword-only (a positional call crashed reports outside the ask 26.10–12.11).
 - **Excused days + late reports** (2026-10-23, the Boss, spec 29): ⬜ Сабабли on the explanation card and **/sababli**
   (Director: anyone; Garmin manager: his team) → the day is grey (Verifix excused, unsent ask + minus removed, ↩ undoes).
   The morning «no report» ask has 📝 send yesterday's report → ✅ / ❌ by the Director / Garmin manager; approved = green.

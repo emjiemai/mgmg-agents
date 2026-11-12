@@ -94,9 +94,11 @@ def ask_text(kind: str, name: str, days: list[date], no_point: bool = False) -> 
     return casual(f"{escape(name)}, {ask_line(kind, days, no_point)}", keep=[escape(name), "Verifix"])
 
 
-def card(person: str, role: str, kind: str, days: list[date], answer: str) -> str:
-    """The explanation as the Director (and the Garmin manager) see it."""
-    what = (f"ҳисобот келмаган кун: {_days(days)}" if kind == "report" else
+def card(person: str, role: str, kind: str, days: list[date], answer: str, absent: bool = False) -> str:
+    """The explanation as the Director (and the Garmin manager) see it; ``absent`` — they wrote it themselves that
+    they didn't work (not asked)."""
+    what = (f"ишга чиқмаганини ўзи ёзди: {_days(days)}" if absent else
+            f"ҳисобот келмаган кун: {_days(days)}" if kind == "report" else
             f"келмаган кун: {_days(days)}" if len(days) == 1 else f"келмаган кунлар: {_days(days)} ({len(days)} иш куни)")
     return (f"📝 <b>Тушунтириш хати</b> — {escape(person)} ({escape(role)})\n{what}\n"
             f"«{escape(' '.join(answer.split())[:1500])}»")
