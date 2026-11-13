@@ -52,3 +52,14 @@ unsent after 30 minutes (08:00–12:59). Counts-only logs.
 last, one line alone, no emoji, polite), the producers write notes and send nothing, the 08:00 order, one message
 per person and the prompt set, withdrawn questions left out, the agenda in the work AI's prompt, the three-way
 answer check (in `test_explanations_and_start_times`).
+
+## Message budget (F5, 2026-11-13)
+
+`integrations/org_bot/budget.py`. Every OPS Manager Bot send to a private chat (`TelegramBot._call` / file sends)
+adds one to `message_budget (day, telegram_user_id, sent, held)`. In `send_message`, when the person already has
+`MESSAGE_BUDGET_PER_DAY` (12) today, a message from an agent in `MESSAGE_BUDGET_DEFER_AGENTS` (default
+`duty-tasks,task-tracker`) with **no buttons and not a reply** is kept as a `held` morning note for tomorrow
+(text without tags, ≤ 400 chars) and shows as «кечаги эслатма: …» in the one morning message. Never held: the
+Director, groups, cards/questions (buttons), replies, any other agent. Unsure (DB unread / note not saved) = sent.
+`MESSAGE_BUDGET_ENFORCE=false` counts only. IT's /texnik: people at the limit yesterday, held, max to one person.
+Test: `test_message_budget_1113`.

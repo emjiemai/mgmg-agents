@@ -69,6 +69,7 @@ TECHNICAL_TABLES = frozenset({
     "verifix_bad_days",     # days IT marked «Verifix didn't record» (2026-10-24)
     "report_cell_edits",    # the admin's report-sheet changes (2026-10-24)
     "morning_notes",        # the 08:00 agents' notes, sent as one message per person (2026-10-24)
+    "message_budget",       # OPS Manager messages per person per day, counts only (F5, 2026-11-13)
     "job_runs",             # which scheduled job ran which day (2026-11-11)
     "announcements",
     # the bot's own records (2026-10-17)

@@ -196,6 +196,11 @@ class TelegramBot:
             TelegramError: if Telegram rejects a chunk.
         """
         chat = chat_id or self.default_chat_id
+        from integrations.org_bot import budget  # local: org_bot imports this module
+
+        if budget.holdable(self.agent, self._bot_token, chat, has_buttons=reply_markup is not None,
+                           is_reply=bool(reply_to_message_id)) and await budget.hold_if_over(self.agent, chat, text):
+            return []  # over today's message budget (F5): goes in tomorrow's one morning message
         chunks = split_message(text)
         message_ids: list[int] = []
 
@@ -318,7 +323,10 @@ class TelegramBot:
             body = response.json()
             if not body.get("ok"):
                 raise TelegramError(f"Telegram {method} failed: {body.get('description', response.text[:300])}")
-            return (body.get("result") or {}).get("message_id")
+        from integrations.org_bot import budget
+
+        await budget.count(self._bot_token, method, chat_id)
+        return (body.get("result") or {}).get("message_id")
 
     async def download_file(self, file_id: str, max_bytes: int = 10_000_000) -> bytes:
         """A file someone sent the bot, as bytes (getFile, then the file URL).
@@ -458,7 +466,10 @@ class TelegramBot:
                 if BLOCKED in description and payload.get("chat_id"):
                     await self._note_blocked(payload["chat_id"])
                 raise TelegramError(f"Telegram {method} failed: {description}")
-            return body.get("result")
+        from integrations.org_bot import budget
+
+        await budget.count(self._bot_token, method, payload.get("chat_id"))
+        return body.get("result")
 
     async def _note_blocked(self, chat_id: Any) -> None:
         """The person blocked OPS Manager Bot (2026-11-04: a Londry ticket recipient never got one card): noted

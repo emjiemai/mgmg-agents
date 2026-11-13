@@ -1408,6 +1408,19 @@ CREATE TABLE IF NOT EXISTS morning_notes (
     message_id        BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_morning_notes_unsent ON morning_notes (day) WHERE sent_at IS NULL;
+-- 'held' (2026-11-13, F5 message budget): a reminder not sent yesterday because the person was over the day's budget.
+ALTER TABLE morning_notes DROP CONSTRAINT IF EXISTS morning_notes_kind_check;
+ALTER TABLE morning_notes ADD CONSTRAINT morning_notes_kind_check CHECK (kind IN ('bonus', 'task', 'ask', 'held'));
+
+-- Message budget (F5, 2026-11-13, integrations/org_bot/budget.py): OPS Manager Bot messages per person per day
+-- (sent) and those kept for the next morning (held). Counts only, never text.
+CREATE TABLE IF NOT EXISTS message_budget (
+    day               DATE     NOT NULL,
+    telegram_user_id  BIGINT   NOT NULL,
+    sent              INTEGER  NOT NULL DEFAULT 0,
+    held              INTEGER  NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, telegram_user_id)
+);
 
 -- Lead groups (2026-10-26, the owner): the Telegram group each business's leads go to, one message per lead —
 -- set by the admin / the Director typing /lidlar_garmin or /lidlar_primus in the group (lead_groups.py).

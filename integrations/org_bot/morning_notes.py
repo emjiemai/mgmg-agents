@@ -9,7 +9,8 @@ The 08:00 agents that speak to employees no longer send on their own. Each leave
   * **ask** — the «why weren't you at work / where's yesterday's report?» question (agents/explanations);
   * **task** — a task due today or tomorrow (on Friday also over the weekend / /dam days, by weekday name), or
     one that just went overdue, saying who was told (agents/task-tracker --morning); or (2026-11-12, ``released``)
-    a task whose wait ended while the person was off — he may start it now (ops_manager.release_dependants).
+    a task whose wait ended while the person was off — he may start it now (ops_manager.release_dependants);
+  * **held** — a reminder not sent yesterday: the person was over the day's message budget (F5, budget.py).
 
 Then agents/morning-notes sends each person ONE message: the facts as short lines and the question, if any,
 last — with its button (📝 send yesterday's report). A missed report is said once: inside the question
@@ -36,7 +37,7 @@ from integrations.telegram.bot import TelegramBot, TelegramError, escape
 AGENT = "morning-notes"
 log = setup_logging(AGENT)
 
-ORDER = {"bonus": 0, "task": 1, "ask": 2}  # good news first, the question last
+ORDER = {"bonus": 0, "task": 1, "held": 1, "ask": 2}  # good news first, the question last
 FLUSH_AFTER_MINUTES = 30  # the API sends what the 08:00 job left unsent (app.py)
 FLUSH_HOURS = range(8, 13)
 
@@ -109,6 +110,8 @@ def compose(name: str, notes: list[dict[str, Any]]) -> tuple[str, dict[str, Any]
             lines.append(casual(bonus_line(d), keep=keep))
         elif n["kind"] == "task":
             lines.append(task_line(d))
+        elif n["kind"] == "held":  # over yesterday's message budget (F5): already-escaped short text
+            lines.append(f"кечаги эслатма: {d.get('text') or ''}")
     question = ""
     keyboard = None
     if ask:

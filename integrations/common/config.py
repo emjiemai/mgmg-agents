@@ -374,6 +374,11 @@ class Settings(BaseSettings):
     # OPS Manager Bot's token, so this also silences those). Flip back to
     # false and restart to resume -- nothing is deleted or reconfigured.
     bots_frozen: bool = False
+    # Message budget (F5, 2026-11-13, integrations/org_bot/budget.py): a person's OPS Manager messages a day; past
+    # it, buttonless messages from these agents wait for tomorrow's one morning message. false = only count.
+    message_budget_per_day: int = 12
+    message_budget_enforce: bool = True
+    message_budget_defer_agents: str = "duty-tasks,task-tracker"
 
     # --- Business rules ---
     default_currency: str = "UZS"

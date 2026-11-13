@@ -222,6 +222,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   asks +1/+2/+7 days + reason → assigner ✅/❌), overdue lists also to the department manager (TEAM_OF). Analyst status
   line `progress.py` (what it is really doing, deleted before the answer).
 - **13.11 — F1 finished** (spec 08): 🔎 Текширади (dept manager checks proof, only for his whole team), 🎯 expected result, T- dependencies (waiting = no reminders, deadline moved), escalation ladder (manager/deputy day 0 → Director 3 working days; blocked 2/4), deputies on /xodimlar 👥, returns counted (Friday «Қайта ишлаш»). Off until the owner decides: ⛔ helper (`TASK_HELPER_ENABLED`), AI proof hint (`TASK_PROOF_HINT_ENABLED`).
+- **13.11 — message budget (F5, `budget.py`, spec 30):** OPS Manager sends counted per person per day (`message_budget`); past 12, buttonless duty-tasks / task-tracker reminders → «кечаги эслатма» in the next morning message; cards, replies, Director never held; `MESSAGE_BUDGET_ENFORCE=false` = count only.
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).

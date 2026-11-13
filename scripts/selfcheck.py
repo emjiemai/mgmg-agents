@@ -14388,6 +14388,79 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_message_budget_1113() -> None:
+    """13.11.2026, F5: one message counter per person per day; over it, a buttonless reminder from a deferrable
+    agent waits for tomorrow's one morning message; buttons, replies, groups and the Director are never held."""
+    print("message budget (F5, 13.11.2026)")
+    import asyncio
+    from pathlib import Path
+
+    from integrations.common.config import settings
+    from integrations.org_bot import budget, morning_notes, store
+    from integrations.org_bot.roles import DIRECTOR_ROLE
+
+    tok = settings.ops_manager_bot_telegram_bot_token.get_secret_value() or "tok"
+    saved = (settings.message_budget_enforce, settings.message_budget_per_day,
+             settings.message_budget_defer_agents, settings.ops_manager_bot_telegram_bot_token)
+    from pydantic import SecretStr
+    settings.ops_manager_bot_telegram_bot_token = SecretStr(tok)
+    settings.message_budget_enforce, settings.message_budget_per_day = True, 3
+    settings.message_budget_defer_agents = "duty-tasks, task-tracker"
+    calls, notes = [], []
+    row = {"id": "e1", "telegram_user_id": 50, "role": "garmin_sotuv", "sent": 3}
+
+    async def fake_exec(sql, params=None):
+        calls.append((sql.split()[0], params))
+        return 1
+
+    async def fake_one(sql, params=None):
+        return dict(row) if row else None
+
+    async def fake_note(emp, day, kind, detail):
+        notes.append((emp["telegram_user_id"], kind, detail))
+
+    orig = (budget.execute, budget.fetch_one, store.add_morning_note)
+    budget.execute, budget.fetch_one, store.add_morning_note = fake_exec, fake_one, fake_note
+    try:
+        asyncio.run(budget.count(tok, "sendMessage", "50"))
+        asyncio.run(budget.count(tok, "sendMessage", "-1001"))      # a group
+        asyncio.run(budget.count("other", "sendMessage", "50"))     # Admin Bot
+        asyncio.run(budget.count(tok, "editMessageText", "50"))     # an edit is not a message
+        check("counted once: private chat, OPS Manager token, a send", len(calls), 1)
+        h = lambda agent="duty-tasks", chat="50", **k: budget.holdable(  # noqa: E731
+            agent, tok, chat, has_buttons=k.get("b", False), is_reply=k.get("r", False))
+        check_true("buttonless reminder from duty-tasks: holdable", h())
+        check_true("with buttons: never held", not h(b=True))
+        check_true("a reply: never held", not h(r=True))
+        check_true("a group: never held", not h(chat="-100"))
+        check_true("the work AI: never held", not h(agent="ai-chat"))
+        held = asyncio.run(budget.hold_if_over("duty-tasks", "50", "<b>эслатма</b> " + "х" * 600))
+        check_true("at the limit → held", held)
+        check("kept as tomorrow's 'held' note, tags dropped, cut", (notes[0][1], notes[0][2]["text"][:8],
+              len(notes[0][2]["text"]) <= budget.HELD_CHARS), ("held", "эслатма ", True))
+        row["sent"] = 2
+        check_true("under the limit → sent", not asyncio.run(budget.hold_if_over("duty-tasks", "50", "x")))
+        row.update(sent=99, role=DIRECTOR_ROLE)
+        check_true("the Director → never held", not asyncio.run(budget.hold_if_over("duty-tasks", "50", "x")))
+        settings.message_budget_enforce = False
+        check_true("ENFORCE=false → only counts", not h())
+    finally:
+        budget.execute, budget.fetch_one, store.add_morning_note = orig
+        (settings.message_budget_enforce, settings.message_budget_per_day,
+         settings.message_budget_defer_agents, settings.ops_manager_bot_telegram_bot_token) = saved
+
+    text, _, _ = morning_notes.compose("Али", [{"kind": "held", "detail": {"text": "чек-лист"}},
+                                               {"kind": "bonus", "detail": {"report_date": "2026-11-12", "points": 1,
+                                                                            "month": 3}}])
+    check_true("held reminder is a line in the one morning message", "кечаги эслатма: чек-лист" in text)
+    schema = Path("database/schema.sql").read_text(encoding="utf-8")
+    check_true("schema: message_budget + 'held' kind",
+               "CREATE TABLE IF NOT EXISTS message_budget" in schema and "'ask', 'held'" in schema)
+    bot_src = Path("integrations/telegram/bot.py").read_text(encoding="utf-8")
+    check_true("send_message checks the budget; _call and files count", bot_src.count("budget.count(") == 2
+               and "budget.hold_if_over(" in bot_src)
+
+
 def test_task_ladder_fixes_1113() -> None:
     """13.11.2026: the ladder review — the assigning Director never gets a ladder step (blocked too); a helper_done
     restarts the blocked clock; ⛔ restarts the level; working days, not calendar days; a shared task across
@@ -14563,6 +14636,7 @@ def main() -> int:
         test_task_helper_1112,
         test_task_ladder_1112,
         test_task_ladder_fixes_1113,
+        test_message_budget_1113,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

@@ -129,3 +129,4 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 - 2026-11-12: daily reports — the right day for a report typed while a morning question waits, absence notes as explanation cards (⬜ Сабабли), ↩️ move a late report to today, the work AI never parrots; the report-outside-the-ask crash (since 26.10) fixed.
 
 - 2026-11-13: task register F1 finished — checker manager, expected result, dependencies, escalation ladder + deputies, rework count, reminder gaps; helper and AI proof check built but off.
+- 2026-11-13: message budget (F5) — per-person daily counter; over 12, buttonless duty/task reminders wait for the next morning message.

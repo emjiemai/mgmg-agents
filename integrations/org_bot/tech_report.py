@@ -83,6 +83,7 @@ class TechReport:
     pending_access: int = 0
     data_access: int = 0  # people given company data through the bot (count only)
     refused: int = 0  # Admin Bot commands from someone else + closed /db tables asked for
+    budget: tuple[int, int, int] = (0, 0, 0)  # F5, yesterday: people at the limit, held, max sent to one person
     blocked: list[tuple[str, str]] = field(default_factory=list)  # (name, role label): blocked OPS Manager Bot
     blocked_sends: int = 0  # sends refused in 24 h because the person blocked the bot (not counted as errors)
 
@@ -257,6 +258,11 @@ async def gather(now: datetime | None = None) -> TechReport:
         (since,),
     )
     report.refused = int(refused[0]["n"]) if refused else 0
+    used = await fetch_read_only(
+        """SELECT count(*) FILTER (WHERE sent >= %s) AS at_limit, coalesce(sum(held), 0) AS held, coalesce(max(sent), 0) AS top
+           FROM message_budget WHERE day = %s""", (settings.message_budget_per_day, (now - timedelta(days=1)).date()))
+    if used:
+        report.budget = (int(used[0]["at_limit"]), int(used[0]["held"]), int(used[0]["top"]))
     return report
 
 
@@ -319,6 +325,10 @@ def render(r: TechReport) -> str:
         lines += ["", "<b>Хатолар</b>"]
         lines += [f"• {escape(AGENT_LABELS.get(a, a))}: {escape(reason)} ×{n}" for a, reason, n in r.errors]
 
+    full, held, top = r.budget
+    lines += ["", "<b>Хабар бюджети (кеча)</b>",
+              f"{'⚠️' if full else '✅'} Кунлик чегара ({settings.message_budget_per_day} та)га етганлар: {full} киши; "
+              f"эртага қолдирилган эслатмалар: {held} та; бир кишига энг кўпи: {top} та"]
     lines += ["", "<b>Захира нусха ва база</b>",
               f"База ҳажми: {r.db_size_mb} MB" if r.db_size_mb is not None else "База ҳажми: ўқилмади",
               _backup_line(r),
