@@ -92,6 +92,9 @@ HIDDEN_COLUMNS: dict[str, frozenset[str]] = {
     "lead_assignments": frozenset({"sold_amount", "sold_currency", "outcome"}),
     "lead_checkins": frozenset({"note"}),
     "employees": frozenset({"responsibilities"}),
+    # 2026-11-12: the Director's expected result and the advisory AI line on the proof — management's words.
+    "tasks": frozenset({"expected_result", "proof_hint"}),
+    "task_drafts": frozenset({"expected_result"}),
 }
 
 

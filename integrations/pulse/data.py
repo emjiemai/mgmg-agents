@@ -433,9 +433,14 @@ async def keep_warm(scopes: list[tuple[str, ...] | None]) -> None:
 
 # ---- one person ---------------------------------------------------------------------------------------------
 
-TASK_EVENT_LABELS = {"created": "Топшириқ олди", "accepted": "Бошлади", "blocked": "Тўсиқ", "unblocked": "Давом этди",
+TASK_EVENT_LABELS = {"escalated": "Раҳбарга етказилди", "created": "Топшириқ олди", "accepted": "Бошлади", "blocked": "Тўсиқ", "unblocked": "Давом этди",
                      "submitted": "Бажардим деди", "closed": "Қабул қилинди", "returned": "Қайтарилди",
-                     "cancelled": "Бекор қилинди", "repeated": "Қайта эслатилди"}
+                     "cancelled": "Бекор қилинди", "repeated": "Қайта эслатилди",
+                     "reschedule_asked": "Муддат сўради", "rescheduled": "Муддат ўзгарди",
+                     "reschedule_refused": "Муддат рад этилди", "resubmit_asked": "Далил қайта сўралди",
+                     "accepter_set": "Текширувчи белгиланди", "depends_set": "Бошқа топшириқни кутади",
+                     "depends_done": "Кутиш тугади", "helper_asked": "Ёрдамчи тайинланди",
+                     "helper_done": "Ёрдам тайёр"}
 
 
 def timeline(day: date, rec: Any | None, task_events: list[dict[str, Any]], report: dict[str, Any] | None,

@@ -508,7 +508,12 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events (task_id, at);
 ALTER TABLE task_events DROP CONSTRAINT IF EXISTS task_events_event_check;
 ALTER TABLE task_events ADD CONSTRAINT task_events_event_check CHECK (event IN (
     'created', 'accepted', 'blocked', 'unblocked', 'submitted', 'closed', 'returned', 'cancelled', 'repeated',
-    'reschedule_asked', 'rescheduled', 'reschedule_refused'));  -- a new deadline asked / given / refused (10.11)
+    'reschedule_asked', 'rescheduled', 'reschedule_refused',  -- a new deadline asked / given / refused (10.11)
+    'resubmit_asked',  -- the proof never reached the assigner, asked again (12.11) — not rework
+    'accepter_set',  -- a TEAM_OF manager checks the proof instead of the assigner (12.11); note = his name
+    'depends_set', 'depends_done',  -- waits for another T- code / that one finished or was cancelled (12.11)
+    'helper_asked', 'helper_done',  -- ⛔ → a help task given / accepted (12.11, TASK_HELPER_ENABLED); note = who / code
+    'escalated'));  -- the ladder told a department manager / deputy / the Director (12.11); note = 'manager:<name>' / 'director'
 -- Task improvements (2026-11-10, the owner's МИЯ document §5.2 and the agents catalogue): priority P1–P4 (1 =
 -- шошилинч, 2 = муҳим — the default, 3 = оддий, 4 = кутиши мумкин); a new deadline the employee asked for, waiting
 -- for the assigner's ✅ / ❌ (proposed_due), and how many times the deadline was moved (reschedules).
@@ -517,6 +522,30 @@ ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_priority_check;
 ALTER TABLE tasks ADD CONSTRAINT tasks_priority_check CHECK (priority BETWEEN 1 AND 4);
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proposed_due DATE;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reschedules INTEGER NOT NULL DEFAULT 0;
+-- Rework (2026-11-12): how many times the assigner returned it (↩️ + a reason code; the reason is the 'returned'
+-- event's note). A delivery failure ('resubmit_asked') is never counted.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS returns INTEGER NOT NULL DEFAULT 0;
+-- Accepting manager (2026-11-12): the TEAM_OF manager the Director picked on the draft checks the proof (✅ / ↩️)
+-- instead of him; NULL = the assigner, as before. Only when every recipient is in that manager's team.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepter_employee_id UUID REFERENCES employees(id) ON DELETE SET NULL;
+-- Expected result (2026-11-12): what must exist when it is done, in the Director's words (the classifier extracts it,
+-- he confirms it on the draft; NULL = he didn't say). proof_hint = the advisory AI line on the review card
+-- (TASK_PROOF_HINT_ENABLED, off by default) — kept for history, never a status. Both hidden from /db (db_viewer).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS expected_result TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_hint TEXT;
+-- Dependencies (2026-11-12): the task waits for another one (an explicit T- code in the Director's words, kept or
+-- dropped on the draft). Waiting = depends_on set, not released yet, and some copy of that task's shared group still
+-- open. dependency_done_at = released (the one it waited for was accepted or cancelled) — set once.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS depends_on UUID REFERENCES tasks(id) ON DELETE SET NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS dependency_done_at TIMESTAMPTZ;
+-- ⛔ helper (2026-11-12, TASK_HELPER_ENABLED, off by default): a help task the assigner gave for a blocked task —
+-- helper_for = that blocked task. Accepting it never unblocks the parent by itself: its assignee is asked ▶️ / ⛔.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS helper_for UUID REFERENCES tasks(id) ON DELETE SET NULL;
+-- Escalation ladder (2026-11-12): 0 = nobody above the assigner told yet; 1 = the department manager (TEAM_OF) or his
+-- deputy got it (the day-0 overdue list counts); 2 = the Director got it. Set only after a send went out; reset
+-- together with reminded_at / overdue_notified_at (new deadline, return, release, unblock, help done).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS escalation_level SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ;
 
 DROP INDEX IF EXISTS idx_tasks_open;
 CREATE INDEX idx_tasks_open ON tasks (created_at DESC) WHERE status IN ('sent', 'started', 'blocked', 'review');
@@ -792,7 +821,7 @@ ALTER TABLE employee_changes DROP CONSTRAINT IF EXISTS employee_changes_field_ch
 -- the press and the toggle flipped back and forth.
 ALTER TABLE employee_changes ADD CONSTRAINT employee_changes_field_check
     CHECK (field IN ('full_name', 'role', 'workdays', 'address_form', 'ai_chat', 'cheer', 'reports',
-                     'data_access', 'lang'));
+                     'data_access', 'lang', 'deputy'));
 
 -- Who also works at the weekend (set by the admin on the /xodimlar card).
 -- Everyone works Monday–Friday; on Saturday/Sunday only these are asked for
@@ -1080,6 +1109,14 @@ CREATE TABLE IF NOT EXISTS task_drafts (
     created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS priority SMALLINT NOT NULL DEFAULT 2;  -- P1–P4 picked on the card (10.11)
+-- The accepting manager picked on the card (12.11; NULL = the Director himself) and the managers offered when the
+-- picker opened (frozen: a button carries only its index into accepter_candidate_ids).
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS accepter_employee_id UUID;
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS accepter_candidate_ids UUID[] NOT NULL DEFAULT '{}';
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS expected_result TEXT;  -- 🎯 the Director's expected result (12.11)
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS depends_on UUID;  -- ⏳ the open task it waits for (12.11)
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS depends_code TEXT;  -- its T- code, for the card
+ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS helper_for UUID;  -- 🙋 a help task for this blocked task (12.11)
 
 -- ---------------------------------------------------------------------------
 -- director_clarifications — OPS Manager Bot's question back when it didn't
@@ -1153,6 +1190,10 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS data_access TEXT[] NOT NULL DEFAU
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uz';
 -- 2026-11-04: Telegram said "bot was blocked by the user" (OPS Manager Bot); cleared when they write again.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS bot_blocked_at TIMESTAMPTZ;
+-- A department manager's deputy (2026-11-12, Admin Bot /xodimlar 👥, TEAM_OF manager roles only; the deputy is one of
+-- his team): gets the escalation ladder's step when the manager isn't at work that day. The Director is told of
+-- every change. Names only — structure, no figures.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS deputy_employee_id UUID REFERENCES employees(id) ON DELETE SET NULL;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS media_count INTEGER NOT NULL DEFAULT 0;
 -- Reports close at 22:00 (2026-10-15, the Director); an ask still open then gets minus KPI
 -- points (REPORT_MISS_PENALTY) and the person is told — once (penalized_at).
@@ -1938,12 +1979,20 @@ SELECT t.code AS code,
        (t.verified_at AT TIME ZONE 'Asia/Tashkent')::date AS accepted_on,
        COALESCE(NULLIF(btrim(e.full_name), ''), e.display_name) AS assignee,
        e.role AS assignee_role,
-       t.director_telegram_user_id::text || ':' || t.source_message_id::text AS shared_key,
+       CASE WHEN t.source_message_id = 0 THEN COALESCE(t.code, t.id::text)  -- 0 = not a shared message (12.11)
+            ELSE t.director_telegram_user_id::text || ':' || t.source_message_id::text END AS shared_key,
        t.status IN ('sent', 'started', 'blocked', 'review') AS is_open,
        t.priority AS priority,
        t.reschedules AS reschedules,
-       t.proposed_due AS proposed_due
-FROM tasks t LEFT JOIN employees e ON e.id = t.assigned_employee_id;
+       t.proposed_due AS proposed_due,
+       t.returns AS returns,
+       COALESCE(NULLIF(btrim(acc.full_name), ''), acc.display_name) AS accepter,
+       (t.expected_result IS NOT NULL) AS has_expected_result,
+       CASE WHEN t.depends_on IS NOT NULL AND t.dependency_done_at IS NULL
+                 AND t.status IN ('sent', 'started', 'blocked', 'review') THEN dep.code END AS waiting_for
+FROM tasks t LEFT JOIN employees e ON e.id = t.assigned_employee_id
+     LEFT JOIN employees acc ON acc.id = t.accepter_employee_id
+     LEFT JOIN tasks dep ON dep.id = t.depends_on;
 
 CREATE OR REPLACE VIEW analyst.bot_daily_reports AS
 SELECT r.report_date AS report_date,

@@ -265,6 +265,29 @@ class Settings(BaseSettings):
     # Director set, so nothing is sent until a task has one. Set
     # TASK_TRACKER_ENABLED=false in Render's mgmg-shared group to pause it.
     task_tracker_enabled: bool = True
+    # Accepting manager (2026-11-12): on a task card the Director may let a TEAM_OF manager (today the Garmin
+    # manager) check the proof instead of himself — offered only when every ticked person is in that manager's
+    # team and he isn't one of them. TASK_ACCEPTER_ENABLED=false hides the choice (tasks already given keep theirs).
+    task_accepter_enabled: bool = True
+    # Proof hint (2026-11-12): when a task has an expected result, the proof TEXT (never the file) and that result go
+    # to the AI for one advisory line on the review card («🤖 Маслаҳат (қарорни сиз қиласиз): …»); it never decides.
+    # Off until the owner decides on personal data before AI (IT instruction rule 4).
+    task_proof_hint_enabled: bool = False
+    # ⛔ helper (2026-11-12): under a ⛔ the assigner gets «🙋 Ёрдамчи тайинлаш» — a normal task draft for someone
+    # else (the blocked person left out), the blocker shown only to him on the draft. Off until the owner agrees: it is
+    # a new relay exception (spec 08). Accepting the help task asks the blocked person ▶️ / ⛔, never unblocks itself.
+    task_helper_enabled: bool = False
+    # Escalation ladder (2026-11-12, the 08:00 task-tracker morning): an overdue task still not reached its department
+    # manager (TEAM_OF) after TASK_ESCALATE_MANAGER_DAYS goes to him — or his deputy (/xodimlar 👥) when he isn't at
+    # work today; after TASK_ESCALATE_DIRECTOR_DAYS to the Director when he didn't assign it himself. A blocked task:
+    # the manager after TASK_BLOCKED_MANAGER_DAYS, every Director after TASK_BLOCKED_DIRECTOR_DAYS («still blocked»).
+    # Each step once per task; employees are never messaged by it. TASK_ESCALATION_ENABLED=false stops the ladder
+    # (today's day-0 overdue lists stay).
+    task_escalation_enabled: bool = True
+    task_escalate_manager_days: int = 1
+    task_escalate_director_days: int = 3
+    task_blocked_manager_days: int = 2
+    task_blocked_director_days: int = 4
 
     # --- Data quality (B4) ---
     # Monday 08:00 report to the admin chat (IT), never to the Director:

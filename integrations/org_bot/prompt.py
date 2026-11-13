@@ -448,6 +448,16 @@ nothing about timing, due_date MUST be null — never invent, estimate or
 default a deadline. "Tezroq"/"срочно" without a date is not a deadline:
 null. A wrong deadline makes a real person look late when they weren't.
 
+# EXPECTED RESULT (target_type="employee" only)
+If the Director SAID what must exist when the task is done — the result, the
+thing to hand over, how he will know it is finished ("hisobot Excel'da
+bo'lsin", "3 ta taklif tayyor bo'lsin", "договор подписан") — put it in
+expected_result: only in the Director's own words, in Uzbek Cyrillic, at most
+200 characters, one line. If he said nothing about the result, expected_result
+MUST be null — never invent, infer or default one (the same rule as due_date).
+Do not repeat the whole task there, only the result. The Director sees it and
+confirms it before anything is sent.
+
 # FORMATTING
 You may use <b>...</b> around one or two key terms (a name, an amount) if it
 genuinely helps someone scanning quickly — sparingly, not on every sentence.
@@ -464,6 +474,7 @@ Respond with a single JSON object, no prose before or after it:
   "options": ["clarify only: 2–3 full requests in Uzbek Cyrillic, each ≤ ~50 characters; else []"],
   "target_employee": "the person's code from EMPLOYEES (e.g. E3) when the Director named one person, else null",
   "due_date": "YYYY-MM-DD only if the Director stated a deadline, else null",
+  "expected_result": "employee only: what must exist when it is done, in the Director's own words (Uzbek Cyrillic, ≤ 200 chars) — null if he didn't say; never invent",
   "confidence": 0.0-1.0
 }}
 """

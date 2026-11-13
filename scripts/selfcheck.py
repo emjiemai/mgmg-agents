@@ -2359,18 +2359,14 @@ def test_task_improvements_1110() -> None:
 
     tracker = load_agent("task-tracker")
 
-    async def managers(role):
-        return [{"telegram_user_id": 300}] if role == "garmin_manager" else []
+    from datetime import date as _date
 
-    saved_role = store.active_employees_by_role
-    store.active_employees_by_role = managers
-    try:
-        out = asyncio.run(tracker.managers_overdue([
-            {"id": "a", "employee_role": "garmin_sotuv", "director_telegram_user_id": 9},
-            {"id": "b", "employee_role": "garmin_sotuv", "director_telegram_user_id": 300},
-            {"id": "c", "employee_role": "it", "director_telegram_user_id": 9}]))
-    finally:
-        store.active_employees_by_role = saved_role
+    team = {"team_of": {"garmin_manager": ("garmin_sotuv",)}, "deputies": {}, "directors": [], "excused": set(),
+            "managers_by_role": {"garmin_manager": [{"id": "m", "telegram_user_id": 300, "status": "active"}]}}
+    out = {k: v["tasks"] for k, v in tracker.managers_overdue([
+        {"id": "a", "employee_role": "garmin_sotuv", "director_telegram_user_id": 9},
+        {"id": "b", "employee_role": "garmin_sotuv", "director_telegram_user_id": 300},
+        {"id": "c", "employee_role": "it", "director_telegram_user_id": 9}], team, _date(2026, 11, 13)).items()}
     check("escalation: the Garmin manager hears of his team's overdue tasks he didn't give",
           {k: [t["id"] for t in v] for k, v in out.items()}, {300: ["a"]})
     schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
@@ -2834,7 +2830,7 @@ def test_shared_tasks_1109() -> None:
     leader = {"id": "1", "code": "T-2026-11-0048", "director_telegram_user_id": 9, "source_message_id": 3814,
               "task_summary": "Солиштириш", "status": "done", "completed_at": None, "evidence_text": "файл"}
 
-    async def verify(task_id, clicker, accept, by):
+    async def verify(task_id, clicker, accept, by, reason=None):
         return leader
 
     async def with_employee(task_id):
@@ -3322,10 +3318,16 @@ def test_task_proof_and_brief_1104() -> None:
             return None
 
     saved = [(store, n, getattr(store, n)) for n in ("tasks_needing_reminder", "tasks_newly_overdue", "tasks_proof_missing",
-                                                       "add_morning_note", "mark_proof_reminded")]
+                                                       "add_morning_note", "mark_proof_reminded", "days_off_between",
+                                                       "excused_between")]
     saved += [(tracker, "today_local", tracker.today_local), (tracker, "_bot", tracker._bot),
               (tracker.names, "ask_missing_names", tracker.names.ask_missing_names)]
-    store.tasks_needing_reminder = store.tasks_newly_overdue = none
+    store.tasks_needing_reminder = store.tasks_newly_overdue = store.excused_between = none
+
+    async def no_days(*a, **k):
+        return set()
+
+    store.days_off_between = no_days
     store.tasks_proof_missing, store.add_morning_note, store.mark_proof_reminded = proof_missing, add_note, mark
     tracker.today_local, tracker._bot, tracker.names.ask_missing_names = (lambda: date(2026, 11, 4)), QuietBot, nothing
     try:
@@ -5928,9 +5930,10 @@ def test_task_register() -> None:
                and "CREATE SEQUENCE IF NOT EXISTS task_code_seq" in schema and "WHERE code IS NULL" in schema
                and "CREATE TABLE IF NOT EXISTS task_events" in schema and "uq_tasks_code" in schema)
     src = load_source("integrations/org_bot/store.py")
-    check_true("closing needs proof, and only the one who assigned it can accept or return",
-               "AND awaiting = 'evidence'" in src and "director_telegram_user_id = %s AND status = 'review'" in src
-               and "nextval('task_code_seq')" in src)
+    check_true("closing needs proof, and only the one who assigned it (or his accepting manager, 12.11) can accept "
+               "or return",
+               "AND awaiting = 'evidence'" in src and "t.director_telegram_user_id = %s" in src
+               and "{MAY_VERIFY} AND t.status = 'review'" in src and "nextval('task_code_seq')" in src)
 
     # the flow, with the database and Telegram faked
     state = {"task": {**base, "status": "started", "awaiting": None}}
@@ -5967,12 +5970,15 @@ def test_task_register() -> None:
         events.append(("blocked", reason))
         return state["task"]
 
-    async def verify(task_id, clicker, accept, by):
+    async def verify(task_id, clicker, accept, by, reason=None):
         if clicker != 9 or state["task"]["status"] != "review":
             return None
         state["task"] = {**state["task"], "status": "done" if accept else "started"}
         events.append(("closed" if accept else "returned", by))
         return state["task"]
+
+    async def get_task(task_id):
+        return {**state["task"], "director_telegram_user_id": 9}
 
     async def with_employee(task_id):
         return {**state["task"], "employee_telegram_user_id": 501, "display_name": "Алишер Каримов"}
@@ -6010,8 +6016,10 @@ def test_task_register() -> None:
 
     saved = [(store, n, getattr(store, n)) for n in ("await_task_input", "task_awaiting_input", "submit_task", "block_task",
                                                        "verify_task", "task_with_employee", "set_task_review_message",
-                                                       "report_for_day", "set_task_awaiting_message", "tasks_awaiting_evidence")]
+                                                       "report_for_day", "set_task_awaiting_message", "tasks_awaiting_evidence",
+                                                       "get_task")]
     saved += [(ops_manager, n, getattr(ops_manager, n)) for n in ("_reply", "TelegramBot", "_answer")]
+    store.get_task = get_task
     store.await_task_input, store.task_awaiting_input, store.submit_task = await_input, awaiting, submit
     store.block_task, store.verify_task, store.task_with_employee = block, verify, with_employee
     store.set_task_review_message = store.report_for_day = nothing  # /hisobot: no report today, no database
@@ -6034,8 +6042,12 @@ def test_task_register() -> None:
         stranger = {"id": "q", "data": f"taskok:{tid}", "from": {"id": 777}, "message": {"message_id": 80, "chat": {"id": 777}}}
         check("nobody else can accept it", asyncio.run(ops_manager._handle_callback(stranger, uuid.uuid4())), "verify_closed")
         back = {**stranger, "data": f"taskback:{tid}", "from": {"id": 9}, "message": {"message_id": 80, "chat": {"id": 9}, "text": "x"}}
-        check("↩️ Қайтариш sends it back to the employee", (asyncio.run(ops_manager._handle_callback(back, uuid.uuid4())),
-                                                             state["task"]["status"]), ("task_returned", "started"))
+        check("↩️ Қайтариш first asks why (reason buttons), the task still in review",
+              (asyncio.run(ops_manager._handle_callback(back, uuid.uuid4())), state["task"]["status"]),
+              ("return_reasons", "review"))
+        why = {**back, "data": f"tbr:{tid}:e"}
+        check("a reason tap sends it back to the employee", (asyncio.run(ops_manager._handle_callback(why, uuid.uuid4())),
+                                                            state["task"]["status"]), ("task_returned", "started"))
         check_true("...who is told to do it again with new proof", "янги далил" in replies[-1][1])
         asyncio.run(ops_manager._handle_callback(tap, uuid.uuid4()))
         sent.clear()
@@ -8161,7 +8173,8 @@ def test_morning_verifix_and_admin_sheet() -> None:
     check_true("the bonus, the question and task reminders are notes now — none of them sends on its own",
                'add_morning_note(row, today_local(), "bonus"' in bonus_src and "send_message" not in bonus_src
                and 'add_morning_note(person, today, "ask"' in expl_src and "explanations.ask_text(" not in expl_src
-               and tasks_src.count('add_morning_note(_who(task), today, "task"') == 3  # due, overdue, no proof (04.11)
+               and tasks_src.count('add_morning_note(_who(task), today, "task"') == 2  # due, no proof (04.11)
+               and 'add_morning_note(_who(task), note_day, "task"' in tasks_src  # overdue (held → later, 13.11)
                and "reminder_text(" not in tasks_src and "overdue_employee_text(" not in tasks_src)
     order = [runner.index(a) for a in ("agents/report-bonus", "agents/explanations", "agents/task-tracker/agent.py --morning",
                                        "agents/morning-notes")]
@@ -12458,6 +12471,2029 @@ def test_invoice_as_written() -> None:
             setattr(obj, name, value)
 
 
+def test_task_rework_1112() -> None:
+    """12.11.2026 (task register, piece 6): a return is rework — counted (tasks.returns), its reason a tap (tbr), shown
+    on the review card, the employee's card, the brief and the Friday scorecard; analyst.bot_tasks has returns last."""
+    print("task rework: returns counted and shown (12.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import ops_manager, sql_catalog, store, task_register as tr, task_tracker as tt
+
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("tasks.returns added idempotently",
+               "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS returns INTEGER NOT NULL DEFAULT 0;" in schema)
+    view = schema.split("CREATE OR REPLACE VIEW analyst.bot_tasks AS", 1)[1].split(";", 1)[0]
+    check_true("analyst.bot_tasks: returns appended after proposed_due (accepter follows, 12.11)",
+               "t.proposed_due AS proposed_due,\n       t.returns AS returns," in view)
+    names_ = [c[0] for c in sql_catalog.CATALOG["bot_tasks"][2]]
+    check("…and in the same place in the catalog", names_[names_.index("returns") - 1:names_.index("returns") + 1],
+          ["proposed_due", "returns"])
+
+    # verify_task: a return counts, keeps awaiting NULL, logs the reason; accept logs no note
+    src = inspect_source(store.verify_task)
+    check_true("verify_task's return: returns + 1, awaiting stays NULL (never 'evidence')",
+               "returns = returns + 1" in src and "awaiting = NULL" in src and "awaiting = 'evidence'" not in src)
+    events: list = []
+
+    async def one(sql, params=()):
+        return {"id": params[0], "status": "started", "returns": 1}
+
+    async def log_event(task_id, event, actor, note=None):
+        events.append((event, note))
+
+    saved = [(store, "fetch_one", store.fetch_one), (store, "log_task_event", store.log_task_event)]
+    store.fetch_one, store.log_task_event = one, log_event
+    try:
+        asyncio.run(store.verify_task("t1", 9, False, "boss", reason="Натижа бошқа"))
+        asyncio.run(store.verify_task("t1", 9, True, "boss", reason="ignored"))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("the reason is the 'returned' note; accepting logs none", events, [("returned", "Натижа бошқа"), ("closed", None)])
+    rb = inspect_source(store.returns_between)
+    check_true("returns_between counts only 'returned' (a delivery failure stays out)",
+               "ev.event = 'returned'" in rb and "resubmit_asked" not in rb.split('"""')[-1])
+
+    # the reason buttons
+    tid = str(uuid.uuid4())
+    kb = tr.return_reason_keyboard(tid)
+    datas = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+    check_true("tbr / tbrx callbacks ≤ 64 bytes", all(len(d.encode()) <= 64 for d in datas))
+    check("four reasons and «Ортга»", len(datas), 5)
+    check("a reason tap parses", tr.parse_return_reason(f"{tid}:q"), (tid, "Сифати талабга жавоб бермайди"))
+    check("an unknown code is refused", tr.parse_return_reason(f"{tid}:z"), None)
+
+    # shown on the cards
+    task = {"id": tid, "code": "T-2026-11-0100", "task_summary": "Омборни санаш", "evidence_text": "тайёр",
+            "status": "review", "returns": 0}
+    check_true("review card: no ⚠️ line on the first review", "Аввал" not in tr.review_text(task, "Али"))
+    check_true("…⚠️ when it came back before", "⚠️ Аввал 2 марта қайтарилган." in tr.review_text({**task, "returns": 2}, "Али"))
+    cap = tr.review_caption({**task, "returns": 3, "evidence_text": "ж" * 3000}, "Али", "↩️ Қайтарилди")
+    check_true("…the caption keeps the ⚠️ line within 1024", len(cap) <= 1024 and "Аввал 3 марта" in cap)
+    check_true("employee card: ↩️ N марта қайтарилган",
+               "↩️ 1 марта қайтарилган" in tr.status_line({**task, "status": "started", "returns": 1}))
+    check_true("…not while it asks for the proof",
+               "қайтарилган" not in tr.status_line({**task, "status": "started", "returns": 1, "awaiting": "evidence"}))
+    note = tr.returned_note(task, "Далил етарли эмас")
+    check_true("the employee is told why, politely, in Cyrillic",
+               "T-2026-11-0100 қайтарилди: Далил етарли эмас" in note and "Илтимос" in note
+               and latin_words(note, allow={"T"}) == [])
+
+    brief = load_agent("ceo-daily-brief")
+    rows, _ = brief.task_rows([{"id": "1", "display_name": "A", "task_summary": "санаш", "status": "started",
+                                "due_date": date(2026, 11, 1), "returns": 2}], date(2026, 11, 12))
+    check_true("the brief's row gets « · ↩️2»", rows[0]["what"].endswith(" · ↩️2"))
+
+    # the Friday scorecard
+    rework = [{"code": f"T-2026-11-01{i:02d}", "display_name": f"Ходим {i}", "times": 2 if i == 0 else 1} for i in range(7)]
+    text = tt.weekly_text(date(2026, 11, 9), date(2026, 11, 13), tt.TaskScore(), None, None, rework)
+    check_true("«Қайта ишлаш: 7 та топшириқ 8 марта қайтарилди»", "Қайта ишлаш: 7 та топшириқ 8 марта қайтарилди" in text)
+    check("…up to five named", text.count("   • T-2026-11-01"), 5)
+    check_true("…twice is marked, the scorecard within one message", "(2 марта)" in text and len(text) < 4096)
+    check_true("no line when nothing came back",
+               "Қайта ишлаш" not in tt.weekly_text(date(2026, 11, 9), date(2026, 11, 13), tt.TaskScore(), None, None, []))
+    tracker = load_agent("task-tracker")
+    check_true("the weekly job reads returns_between", "store.returns_between(start, today)" in inspect_source(tracker.weekly))
+
+    # the handlers: ↩️ opens the reasons, «Ортга» brings ✅ / ↩️ back, a stranger is refused, the reason reaches him
+    calls: list = []
+    answers: list = []
+    told: list = []
+    verified: list = []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
+        async def _call(self, method, payload, **kw):
+            calls.append((method, payload.get("reply_markup")))
+            return {}
+
+        async def _edit_message(self, **kw):
+            calls.append(("edit", kw.get("text")))
+
+    async def get_task(task_id):
+        return {**task, "director_telegram_user_id": 9}
+
+    async def answer(query_id, text):
+        answers.append(text)
+
+    async def verify(task_id, clicker, accept, by, reason=None):
+        verified.append((accept, reason))
+        return {**task, "status": "started", "returns": 1}
+
+    async def with_employee(task_id):
+        return {**task, "employee_telegram_user_id": 501, "display_name": "Али"}
+
+    async def reply(uid, run_id, text, *a, **k):
+        told.append((uid, text))
+
+    async def nothing(*a, **k):
+        return None
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("get_task", "verify_task", "task_with_employee")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_answer", "_reply", "_refresh_task_card")]
+    store.get_task, store.verify_task, store.task_with_employee = get_task, verify, with_employee
+    ops_manager.TelegramBot, ops_manager._answer, ops_manager._reply, ops_manager._refresh_task_card = Bot, answer, reply, nothing
+    card = {"message_id": 80, "chat": {"id": 9}, "text": "x"}
+    try:
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"taskback:{tid}", "from": {"id": 9},
+                                                        "message": card}, uuid.uuid4()))
+        check_true("↩️ opens the reason buttons on the card (buttons only)",
+                   out == "return_reasons" and calls[-1][0] == "editMessageReplyMarkup" and "tbr:" in str(calls[-1][1]))
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tbrx:{tid}", "from": {"id": 9},
+                                                        "message": card}, uuid.uuid4()))
+        check_true("«Ортга» brings ✅ / ↩️ back", out == "return_back" and "taskok:" in str(calls[-1][1]))
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"taskback:{tid}", "from": {"id": 7},
+                                                        "message": card}, uuid.uuid4()))
+        check("someone else: refused", out, "verify_closed")
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tbr:{tid}:z", "from": {"id": 9},
+                                                        "message": card}, uuid.uuid4()))
+        check("an unknown reason code: refused, nothing returned", (out, verified), ("unrecognized", []))
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tbr:{tid}:r", "from": {"id": 9},
+                                                        "message": card}, uuid.uuid4()))
+        check("a reason tap returns it with that reason", (out, verified), ("task_returned", [(False, "Натижа бошқа")]))
+        check_true("…the card says why, without counting this return as «аввал»",
+                   calls[-1][0] == "edit" and "Натижа бошқа" in calls[-1][1] and "Аввал" not in calls[-1][1])
+        check_true("…and the employee is told the reason", any(u == 501 and "Натижа бошқа" in t for u, t in told))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
+def test_task_crosscutting_1112() -> None:
+    """12.11.2026 (task-register review): source 0 is never "one shared task"; a clarification-born task gets the
+    clarification card's id; a refused duplicate row is told to the Director; only the assignee can ▶️ accept;
+    a proof that never reached the assigner is logged as 'resubmit_asked' (not rework)."""
+    print("task register cross-cutting fixes (12.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import ops_manager, store, task_picker
+    from integrations.pulse import data as pulse_data
+
+    # 1: the shared-sibling clause of the reminder / overdue queries leaves out source 0
+    for name in ("tasks_needing_reminder", "tasks_newly_overdue"):
+        check_true(f"{name}: source 0 is never a shared task", "t.source_message_id <> 0" in inspect_source(getattr(store, name)))
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("analyst.bot_tasks: a source-0 task's shared_key is its own code, not director:0",
+               "CASE WHEN t.source_message_id = 0 THEN COALESCE(t.code, t.id::text)" in schema)
+    check_true("task_events accepts 'resubmit_asked', defined once",
+               "'resubmit_asked'" in schema and schema.count("ADD CONSTRAINT task_events_event_check") == 1)
+    check("PULSE names the new event", pulse_data.TASK_EVENT_LABELS.get("resubmit_asked"), "Далил қайта сўралди")
+
+    # 2: reopen_submission logs its own event; nothing logged when the row wasn't in review
+    events: list = []
+
+    async def log_event(task_id, event, actor, note=None):
+        events.append((task_id, event, note))
+
+    rows = {"value": {"id": "t9", "status": "started", "awaiting": "evidence"}}
+
+    async def one(sql, params=()):
+        return rows["value"]
+
+    saved = [(store, "fetch_one", store.fetch_one), (store, "log_task_event", store.log_task_event)]
+    store.fetch_one, store.log_task_event = one, log_event
+    try:
+        out = asyncio.run(store.reopen_submission("t9"))
+        check_true("proof not delivered: back to 'send again' and logged as resubmit_asked, not returned",
+                   out["id"] == "t9" and events == [("t9", "resubmit_asked", "далил етиб бормади")])
+        rows["value"] = None
+        events.clear()
+        asyncio.run(store.reopen_submission("t9"))
+        check("not in review: nothing logged", events, [])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 3: ▶️ only by the assignee
+    check_true("mark_task_started joins the assignee's Telegram id",
+               "e.telegram_user_id = %s" in inspect_source(store.mark_task_started))
+    answers: list = []
+    seen: list = []
+
+    async def answer(query_id, text):
+        answers.append(text)
+
+    async def started(task_id, by, tg_id):
+        seen.append(tg_id)
+        return {"id": task_id, "code": "T-1", "task_summary": "x", "director_telegram_user_id": 9} if tg_id == 11 else None
+
+    async def owner(task_id):
+        return {"id": task_id, "employee_telegram_user_id": 11}
+
+    async def nothing(*a, **k):
+        return None
+
+    async def actor(clicker):
+        return "Али"
+
+    saved = [(store, "mark_task_started", store.mark_task_started), (store, "task_with_employee", store.task_with_employee),
+             (ops_manager, "_answer", ops_manager._answer), (ops_manager, "_refresh_task_card", ops_manager._refresh_task_card),
+             (ops_manager, "_tell_assigner", ops_manager._tell_assigner),
+             (ops_manager, "_actor_display_name", ops_manager._actor_display_name)]
+    store.mark_task_started, store.task_with_employee, ops_manager._answer = started, owner, answer
+    ops_manager._refresh_task_card, ops_manager._tell_assigner, ops_manager._actor_display_name = nothing, nothing, actor
+    try:
+        out = asyncio.run(ops_manager._handle_task_start("t1", {"id": "q", "from": {"id": 99}}, uuid.uuid4()))
+        check_true("someone else's card: refused, the task untouched",
+                   out == "not_assignee" and answers[-1] == "Бу топшириқ сизга берилмаган" and seen == [99])
+        out = asyncio.run(ops_manager._handle_task_start("t1", {"id": "q", "from": {"id": 11}}, uuid.uuid4()))
+        check("the assignee accepts it", out, "started")
+        out = asyncio.run(ops_manager._handle_task_start("t1", {"id": "q", "from": {}}, uuid.uuid4()))
+        check("no clicker id: nothing happens", out, "unrecognized")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 4: a clarification-born task gets the clarification card's message id, not 0
+    dispatched: list = []
+
+    async def choose(cid, clicker, index):
+        return {"options": ["Ҳисоботни юборинг", "Бошқа"], "chosen": index, "question": "Қайси?"}
+
+    async def dispatch(director, text, source, run_id):
+        dispatched.append((director, text, source))
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return False
+
+        async def _edit_message(self, **kw):
+            return None
+
+    saved = [(store, "choose_clarification", store.choose_clarification), (ops_manager, "_answer", ops_manager._answer),
+             (ops_manager, "_dispatch_director_task", ops_manager._dispatch_director_task),
+             (ops_manager, "TelegramBot", ops_manager.TelegramBot)]
+    store.choose_clarification, ops_manager._answer = choose, answer
+    ops_manager._dispatch_director_task, ops_manager.TelegramBot = dispatch, Bot
+    try:
+        callback = {"id": "q", "from": {"id": 9}, "message": {"message_id": 4321, "chat": {"id": 9}}}
+        asyncio.run(ops_manager._handle_clarification("c1:0", callback, uuid.uuid4(), None))
+        check("the clarification card's id is the task's source", dispatched, [(9, "Ҳисоботни юборинг", 4321)])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 5: create_task → None (already dispatched from this message) is told, never dropped silently
+    class CardBot(Bot):
+        async def send_message(self, text, chat_id=None, reply_markup=None, reply_to_message_id=None):
+            return [900]
+
+    async def no_open(employee_id):
+        return []
+
+    async def create(**kw):
+        return None if kw["assigned_employee_id"] == "e1" else {"id": "t2", "code": "T-2026-11-0002", "priority": 2}
+
+    saved = [(ops_manager, "TelegramBot", ops_manager.TelegramBot), (store, "open_tasks_of", store.open_tasks_of),
+             (store, "create_task", store.create_task), (store, "set_task_message_id", store.set_task_message_id)]
+    ops_manager.TelegramBot, store.open_tasks_of, store.create_task, store.set_task_message_id = CardBot, no_open, create, nothing
+    try:
+        people = [{"id": "e1", "telegram_user_id": 11, "role": "londry", "full_name": "Зиёда"},
+                  {"id": "e2", "telegram_user_id": 12, "role": "londry", "full_name": "Шерзод"}]
+        draft = {"director_telegram_user_id": 9, "due_date": None, "source_message_id": 4321, "raw_message": "x",
+                 "task_summary": "Омборни санаш", "has_media": False, "priority": 2}
+        dups: list = []
+        sent = asyncio.run(ops_manager._send_task_cards(draft, people, uuid.uuid4(), [], dups))
+        check_true("the refused row is reported, the other sent",
+                   [p["id"] for p in sent] == ["e2"] and [p["id"] for p in dups] == ["e1"])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    text = task_picker.duplicate_text([{"full_name": "Зиёда"}])
+    check_true("the Director reads who was not given it twice", "Зиёда" in text and "қайта юборилмади" in text)
+    check_true("the draft send passes the duplicates list and shows it",
+               "duplicates)" in inspect_source(ops_manager._handle_draft_send)
+               and "task_picker.duplicate_text(duplicates)" in inspect_source(ops_manager._handle_draft_send))
+
+
+def test_task_reminders_1112() -> None:
+    """12.11.2026: the reminder gaps closed — a task due on a weekend / /dam day is reminded on the last working day
+    before (by weekday name) without using up the next working day's «бугун»; someone not at work this morning
+    (their week, an excused day) gets nothing and nothing is marked; a ✅-pressed copy gets the proof line, no overdue
+    line; the overdue line says who was really told (the Director / whoever gave it, the department manager)."""
+    print("task reminders: the gaps (12.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import morning_notes, store, task_tracker as tt
+
+    fri, thu, tue = date(2026, 11, 13), date(2026, 11, 12), date(2026, 11, 10)
+    check("next working day: Friday → Monday", tt.next_work_day(fri), date(2026, 11, 16))
+    check("…a /dam day skipped", tt.next_work_day(fri, {date(2026, 11, 16)}), date(2026, 11, 17))
+    check("Friday's reminder covers Saturday and Sunday, never Monday", tt.remind_until(fri), date(2026, 11, 15))
+    check("an ordinary Thursday: tomorrow only", tt.remind_until(thu), fri)
+    check("Thursday before a /dam Friday: through Sunday", tt.remind_until(thu, {fri}), date(2026, 11, 15))
+    check("Tuesday before a /dam Wednesday: Wednesday only (Thursday has its own morning)",
+          tt.remind_until(tue, {date(2026, 11, 11)}), date(2026, 11, 11))
+    src = inspect_source(store.tasks_needing_reminder)
+    check_true("the reminder query takes the end date and the person's week",
+               "t.due_date BETWEEN %s AND %s" in src and "e.work_days, e.works_saturday, e.works_sunday" in src)
+    src = inspect_source(store.tasks_newly_overdue)
+    check_true("the overdue query brings the person's week and the assigner's role",
+               "e.work_days, e.works_saturday, e.works_sunday" in src and "AS assigner_role" in src)
+
+    # who is held this morning
+    mon_fri = {"assigned_employee_id": "e1", "work_days": None}
+    four_days = {"assigned_employee_id": "e2", "work_days": "1111000"}
+    weekends = {"assigned_employee_id": "e3", "work_days": "0000011"}
+    check("held: not on a Friday off in their own week; excused; never a weekend-only worker",
+          [tt.held_today(mon_fri, fri, set()), tt.held_today(four_days, fri, set()), tt.held_today(mon_fri, fri, {"e1"}),
+           tt.held_today(weekends, fri, set())], [False, True, True, False])
+    check("who was told", [tt.overdue_told({"assigner_role": "operatsion_direktor"}, False), tt.overdue_told({"assigner_role": None}, True),
+                           tt.overdue_told({"assigner_role": "garmin_manager"}, False)],
+          [{"told": "director", "manager": False}, {"told": "director", "manager": True},
+           {"told": "assigner", "manager": False}])
+
+    # the lines
+    base = {"code": "T-2026-11-0101", "summary": "Нарх рўйхати", "today": "2026-11-13", "overdue": False}
+    sunday = morning_notes.task_line({**base, "due": "2026-11-15"})
+    check_true("a Sunday deadline reminded on Friday: the weekday's name",
+               sunday.endswith("муддати якшанба, 15.11") and friendly_problems(sunday, ("T-2026-11-0101", "Нарх")) == [])
+    check_true("…today / tomorrow as before",
+               morning_notes.task_line({**base, "due": "2026-11-13"}).endswith("муддати бугун, 13.11")
+               and morning_notes.task_line({**base, "due": "2026-11-14"}).endswith("муддати эртага, 14.11"))
+    late = {**base, "due": "2026-11-11", "overdue": True}
+    check_true("overdue: the Director told (and old notes without «told» read as before)",
+               morning_notes.task_line(late).endswith("(11.11), директорга хабар берилди")
+               and morning_notes.task_line({**late, "told": "director", "manager": True}).endswith(
+                   "директорга ва бўлим раҳбарига хабар берилди"))
+    other = morning_notes.task_line({**late, "told": "assigner"})
+    check_true("…a task someone else gave: «топшириқ берган кишига»",
+               other.endswith("топшириқ берган кишига хабар берилди") and friendly_problems(other, ("T-2026-11-0101", "Нарх")) == [])
+
+    # the morning run, Friday 13.11.2026
+    tracker = load_agent("task-tracker")
+    notes: list = []
+    reminded: list = []
+    notified: list = []
+    sent: list = []
+    asked_until: list = []
+
+    def task(tid, emp, due, **kw):
+        return {"id": tid, "code": f"T-2026-11-0{tid}", "task_summary": "Иш", "due_date": due, "assigned_employee_id": emp,
+                "employee_telegram_user_id": 500 + len(tid), "display_name": "Ходим", "director_telegram_user_id": 9,
+                "work_days": None, "works_saturday": False, "works_sunday": False, "awaiting": None,
+                "employee_role": "it", "assigner_role": "operatsion_direktor", **kw}
+
+    async def needing(today, until=None):
+        asked_until.append(until)
+        return [task("101", "e1", date(2026, 11, 15)), task("102", "e2", date(2026, 11, 14), work_days="1111000")]
+
+    async def overdue(today):
+        return [task("201", "e1", date(2026, 11, 11), awaiting="evidence"),
+                task("202", "e4", date(2026, 11, 10), employee_role="garmin_sotuv"),
+                task("203", "e5", date(2026, 11, 10), employee_role="garmin_sotuv", director_telegram_user_id=300,
+                     assigner_role="garmin_manager"),
+                task("204", "e6", date(2026, 11, 10))]
+
+    async def none(*a, **k):
+        return []
+
+    async def excused(start, end):
+        return [{"id": "e6", "day": start}]
+
+    async def days_off(start, end):
+        return set()
+
+    note_days = {}
+
+    async def add_note(who, day_, kind, detail):
+        notes.append((who["employee_id"], kind, detail))
+        note_days[detail.get("code")] = day_
+
+    async def mark_reminded(task_id):
+        reminded.append(task_id)
+
+    async def mark_notified(task_id):
+        notified.append(task_id)
+
+    async def by_role(role):
+        return [{"telegram_user_id": 300}] if role == "garmin_manager" else []
+
+    async def nothing(*a, **k):
+        return None
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def send_message(self, text, chat_id=None, **k):
+            sent.append(chat_id)
+            return [1]
+
+    names_ = ("tasks_needing_reminder", "tasks_newly_overdue", "tasks_proof_missing", "add_morning_note",
+              "mark_task_reminded", "mark_task_overdue_notified", "days_off_between", "excused_between",
+              "active_employees_by_role", "mark_task_escalated", "tasks_for_escalation")
+    saved = [(store, n, getattr(store, n)) for n in names_]
+    saved += [(tracker, "today_local", tracker.today_local), (tracker, "_bot", tracker._bot),
+              (tracker.names, "ask_missing_names", tracker.names.ask_missing_names)]
+
+    async def no_rows(*a, **k):
+        return []
+
+    store.mark_task_escalated, store.tasks_for_escalation = nothing, no_rows
+    (store.tasks_needing_reminder, store.tasks_newly_overdue, store.tasks_proof_missing, store.add_morning_note,
+     store.mark_task_reminded, store.mark_task_overdue_notified, store.days_off_between, store.excused_between,
+     store.active_employees_by_role) = (needing, overdue, none, add_note, mark_reminded, mark_notified, days_off,
+                                        excused, by_role)
+    tracker.today_local, tracker._bot, tracker.names.ask_missing_names = (lambda: fri), Bot, nothing
+    try:
+        asyncio.run(tracker.morning(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("Friday asks for tasks due through Sunday", asked_until, [date(2026, 11, 15)])
+    check("reminded: the Sunday task; the person off on Fridays is not noted nor marked", reminded, ["101"])
+    by_task = {d["code"]: d for _, kind, d in notes}
+    check("notes: the Sunday reminder, three overdue lines — not the ✅-pressed copy; the excused one's is for later",
+          sorted(by_task), ["T-2026-11-0101", "T-2026-11-0202", "T-2026-11-0203", "T-2026-11-0204"])
+    check_true("the excused person's overdue line waits for his next working day",
+               note_days["T-2026-11-0204"] > fri and note_days["T-2026-11-0202"] == fri)
+    check("…who was told on each overdue line",
+          [(by_task[c]["told"], by_task[c]["manager"]) for c in ("T-2026-11-0202", "T-2026-11-0203")],
+          [("director", True), ("assigner", False)])
+    check("the ✅-pressed copy and the excused one's task are still on the assigner's list and marked (13.11)",
+          sorted(notified), ["201", "202", "203", "204"])
+    check("the Director's list and the department manager's (his own task not on it) went out", sorted(sent), ["300", "300", "9"])
+    text = morning_notes.compose("Ширин опа", [{"kind": "task", "detail": by_task["T-2026-11-0101"]},
+                                               {"kind": "task", "detail": by_task["T-2026-11-0202"]},
+                                               {"kind": "ask", "detail": {"kind": "absent", "days": ["2026-11-12"],
+                                                                          "ids": ["x"]}}])[0]
+    check_true("still one message: greeting, the lines, the question last",
+               text.startswith("Ширин опа, хайрли тонг") and "муддати якшанба, 15.11" in text
+               and "директорга ва бўлим раҳбарига хабар берилди" in text
+               and text.split("\n")[-1].startswith("Verifix бўйича"))
+
+
+def test_task_accepter_1112() -> None:
+    """12.11.2026: the accepting manager — a TEAM_OF manager the Director picks on the draft checks the proof instead
+    of him, only when every ticked person is in his team and he isn't ticked; re-checked on 📨; the review card goes
+    to him (the assigner when he can't get it); he never checks his own task; leaving / role change hands back."""
+    print("task register: accepting manager (12.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common.config import settings as cfg
+    from integrations.org_bot import admin, ops_manager, sql_catalog, store, task_picker, task_register as tr
+
+    # schema, view, catalog
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    tasks_alter = "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepter_employee_id UUID REFERENCES employees(id) ON DELETE SET NULL;"
+    check_true("tasks.accepter_employee_id added idempotently, before the analyst view",
+               tasks_alter in schema and schema.index(tasks_alter) < schema.index("CREATE OR REPLACE VIEW analyst.bot_tasks"))
+    for column in ("accepter_employee_id UUID;", "accepter_candidate_ids UUID[] NOT NULL DEFAULT '{}';"):
+        line = f"ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS {column}"
+        check_true(f"task_drafts.{column.split()[0]} added after the table is created",
+                   line in schema and schema.index(line) > schema.index("CREATE TABLE IF NOT EXISTS task_drafts"))
+    check_true("'accepter_set' in the one task_events check",
+               "'accepter_set'" in schema and schema.count("ADD CONSTRAINT task_events_event_check") == 1)
+    view = schema.split("CREATE OR REPLACE VIEW analyst.bot_tasks AS", 1)[1].split(";", 1)[0]
+    check_true("analyst.bot_tasks: accepter appended after returns (has_expected_result follows, 12.11), its JOIN "
+               "after the FROM line",
+               "AS returns,\n       COALESCE(NULLIF(btrim(acc.full_name), ''), acc.display_name) AS accepter," in view
+               and "LEFT JOIN employees acc ON acc.id = t.accepter_employee_id" in view.split("\nFROM ", 1)[1])
+    names_ = [c[0] for c in sql_catalog.CATALOG["bot_tasks"][2]]
+    check("…and in the same place in the catalog", names_[names_.index("returns") + 1], "accepter")
+
+    # who can be offered
+    mgr = {"id": "m1", "role": "garmin_manager", "full_name": "Умар Хошимов", "telegram_user_id": 70}
+    s1 = {"id": "s1", "role": "garmin_sotuv", "full_name": "Али Валиев", "telegram_user_id": 71}
+    s2 = {"id": "s2", "role": "garmin_sotuv", "full_name": "Вали Алиев", "telegram_user_id": 72}
+    it = {"id": "i1", "role": "it", "full_name": "Улуғбек", "telegram_user_id": 73}
+    people = [mgr, s1, s2, it]
+    ids = lambda rows: [r["id"] for r in rows]  # noqa: E731
+    check("all ticked in his team: the Garmin manager is offered", ids(task_picker.accepter_candidates(people, {"s1", "s2"})), ["m1"])
+    check("a mixed task (one outside his team): nobody", task_picker.accepter_candidates(people, {"s1", "i1"}), [])
+    check("he is ticked himself: nobody (never his own proof)", task_picker.accepter_candidates(people, {"s1", "m1"}), [])
+    check("nobody ticked: nobody", task_picker.accepter_candidates(people, set()), [])
+    check_true("accepter_allowed follows the ticks", task_picker.accepter_allowed("m1", people, {"s1"})
+               and not task_picker.accepter_allowed("m1", people, {"s1", "i1"})
+               and not task_picker.accepter_allowed(None, people, {"s1"}))
+
+    # the card: the row only when it can matter; callbacks ≤ 64 bytes
+    did = str(uuid.uuid4())
+    base = {"id": did, "task_summary": "Витринани янгилаш", "raw_message": "x", "priority": 2}
+    _t, kb = ops_manager._draft_card({**base, "selected_ids": ["i1"]}, people)
+    check_true("a task outside any manager's team: no 🔎 row (no noise on the card)", "tdm:" not in str(kb))
+    text, kb = ops_manager._draft_card({**base, "selected_ids": ["s1"]}, people)
+    check_true("a Garmin сотув task: «🔎 Текширади: Ўзим» row, no line on the text yet",
+               f"tdm:{did}" in str(kb) and "Текширади: Ўзим" in str(kb) and "Текширади" not in text)
+    text, kb = ops_manager._draft_card({**base, "selected_ids": ["s1"], "accepter_employee_id": "m1"}, people)
+    check_true("picked: the card and the row name him", "🔎 Текширади: <b>Умар Хошимов</b>" in text
+               and "Текширади: Умар Хошимов" in str(kb))
+    picker = task_picker.accepter_keyboard(did, [mgr])
+    datas = [b["callback_data"] for row in picker["inline_keyboard"] for row_ in [row] for b in row_] + [f"tdm:{did}"]
+    check_true("tdm / tdmp callbacks ≤ 64 bytes; index 0 = «Ўзим»", all(len(d.encode()) <= 64 for d in datas)
+               and picker["inline_keyboard"][0][0]["callback_data"] == f"tdmp:{did}:0"
+               and task_picker.parse_toggle(f"{did}:1") == (did, 1))
+    saved_flag = cfg.task_accepter_enabled
+    cfg.task_accepter_enabled = False
+    try:
+        _t, kb = ops_manager._draft_card({**base, "selected_ids": ["s1"]}, people)
+        check_true("TASK_ACCEPTER_ENABLED=false hides the row", "tdm:" not in str(kb))
+    finally:
+        cfg.task_accepter_enabled = saved_flag
+
+    # store: who may verify
+    src = inspect_source(store.verify_task)
+    check_true("verify_task: the assigner or an active accepter, never the assignee; the clicker bound for each %s",
+               "{MAY_VERIFY}" in src and "(task_id, v, v, v)" in src
+               and "a.status = 'active'" in store.MAY_VERIFY and "NOT EXISTS" in store.MAY_VERIFY
+               and store.MAY_VERIFY.count("%s") == 3)
+    check_true("a new deadline stays the assigner's (decide_reschedule untouched)",
+               "accepter" not in inspect_source(store.decide_reschedule))
+    check_true("the review goes to an accepter only when active, reachable and not blocked",
+               all(x in inspect_source(store.review_accepter) for x in ("status = 'active'", "bot_blocked_at IS NULL")))
+    check_true("leaving or a role change clears him on open tasks and names the reviews to re-send",
+               all("clear_accepter_of(employee_id" in inspect_source(f) and "reviews_to_resend" in inspect_source(f)
+                   for f in (store.revoke_employee, store.change_employee_role))
+               and "_resend_reviews(" in inspect_source(admin._handle_remove_user))
+    events: list = []
+
+    async def cleared(sql, params=()):
+        return [{"id": "t1", "status": "review"}, {"id": "t2", "status": "started"}]
+
+    async def log_event(task_id, event, actor, note=None):
+        events.append((task_id, event))
+
+    saved = [(store, "fetch_all", store.fetch_all), (store, "log_task_event", store.log_task_event)]
+    store.fetch_all, store.log_task_event = cleared, log_event
+    try:
+        rows = asyncio.run(store.clear_accepter_of("m1", "admin", "текширувчи ўчирилди"))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("clear_accepter_of logs 'accepter_set' per task", len(rows) == 2 and events == [("t1", "accepter_set"), ("t2", "accepter_set")])
+
+    # texts
+    task = {"id": "t1", "code": "T-2026-11-0100", "task_summary": "Витрина", "director_telegram_user_id": 9,
+            "accepter_employee_id": "m1", "status": "started", "awaiting": "evidence", "telegram_message_id": 5}
+    check("to the assigner on ✅", tr.accepter_decided_text(task, "Умар Хошимов", True), "✅ T-2026-11-0100 ёпилди — Умар Хошимов текширди.")
+    check("…on ↩️ with the reason", tr.accepter_decided_text(task, "Умар Хошимов", False, "Натижа бошқа"),
+          "↩️ T-2026-11-0100 қайтарилди — Умар Хошимов (Натижа бошқа).")
+
+    # review routing: accepter first; his send fails → the assigner; nobody → asked again
+    calls: list = []
+    replies: list = []
+    fail = {"chats": set()}
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **kw):
+            calls.append(("text", chat_id, text, reply_markup))
+            if chat_id in fail["chats"]:
+                raise ops_manager.TelegramError("blocked")
+            return [500]
+
+        async def _call(self, method, payload, **kw):
+            calls.append((method, payload.get("chat_id"), payload.get("caption") or payload.get("text"), payload.get("reply_markup")))
+            if payload.get("chat_id") in fail["chats"]:
+                raise ops_manager.TelegramError("blocked")
+            return {"message_id": 501}
+
+        async def _edit_message(self, **kw):
+            calls.append(("edit", kw.get("chat_id"), kw.get("text"), kw.get("reply_markup")))
+
+        async def _answer_callback(self, *a):
+            return None
+
+    accepter_row = {"value": mgr}
+    reopened: list = []
+
+    async def submit(task_id, by, text, msg_id):
+        return {**task, "status": "review", "evidence_text": text, "evidence_message_id": msg_id}
+
+    async def review_accepter(t):
+        return accepter_row["value"] if t.get("accepter_employee_id") else None
+
+    async def none_list(*a, **k):
+        return []
+
+    async def nothing(*a, **k):
+        return None
+
+    async def reopen(task_id):
+        reopened.append(task_id)
+        return {**task, "awaiting": "evidence"}
+
+    async def reply(chat, run_id, text, *a, **k):
+        replies.append((chat, text))
+        return [1]
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("submit_task", "review_accepter", "open_shared_copies",
+                                                         "set_task_review_message", "tasks_awaiting_evidence",
+                                                         "reopen_submission")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_reply", "_refresh_task_card")]
+    store.submit_task, store.review_accepter, store.open_shared_copies = submit, review_accepter, none_list
+    store.set_task_review_message, store.tasks_awaiting_evidence, store.reopen_submission = nothing, none_list, reopen
+    ops_manager.TelegramBot, ops_manager._reply, ops_manager._refresh_task_card = Bot, reply, nothing
+    employee = {"telegram_user_id": 71, "full_name": "Али Валиев"}
+    try:
+        out = asyncio.run(ops_manager._consume_task_input(employee, task, {"message_id": 60, "text": "витрина тайёр"}, uuid.uuid4()))
+        check_true("an accepter set and reachable: the review card goes to him, not the assigner",
+                   out == "task_submitted" and [c[1] for c in calls] == ["70"] and "taskok:" in str(calls[0][3])
+                   and "текширади: Умар Хошимов" in replies[-1][1])
+        calls.clear()
+        fail["chats"] = {"70"}
+        out = asyncio.run(ops_manager._consume_task_input(employee, task, {"message_id": 61, "photo": [{}], "caption": ""}, uuid.uuid4()))
+        check_true("his send fails: the assigner gets it (file, then text to him first), nobody asked again",
+                   out == "task_submitted" and [(c[0], c[1]) for c in calls] == [("copyMessage", "70"), ("text", "70"),
+                                                                                 ("copyMessage", "9")]
+                   and reopened == [])
+        calls.clear()
+        fail["chats"] = set()
+        accepter_row["value"] = None  # revoked / blocked → store.review_accepter gives None
+        out = asyncio.run(ops_manager._consume_task_input(employee, task, {"message_id": 62, "text": "тайёр"}, uuid.uuid4()))
+        check_true("no reachable accepter: the assigner, as before", out == "task_submitted" and [c[1] for c in calls] == ["9"])
+        calls.clear()
+        fail["chats"] = {"9"}
+        out = asyncio.run(ops_manager._consume_task_input(employee, task, {"message_id": 63, "text": "тайёр"}, uuid.uuid4()))
+        check_true("nobody got it: back to «send the proof again»", out == "task_review_failed" and reopened == ["t1"])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the accepter decides: allowed, the assigner gets one line; an inactive accepter is refused with its own toast
+    calls.clear()
+    replies.clear()
+    answers: list = []
+    verifier = {"value": "accepter"}
+
+    async def get_task(task_id):
+        return {**task, "status": "review"}
+
+    async def task_verifier(task_id, tg):
+        return verifier["value"]
+
+    async def verify(task_id, clicker, accept, by, reason=None):
+        return {**task, "status": "done"} if verifier["value"] == "accepter" else None
+
+    async def with_employee(task_id):
+        return {**task, "employee_telegram_user_id": 71, "display_name": "Али Валиев"}
+
+    async def by_tg(tg):
+        return mgr
+
+    async def answer(query_id, text):
+        answers.append(text)
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("get_task", "task_verifier", "verify_task", "task_with_employee",
+                                                         "get_employee_by_telegram_id", "close_shared_copies")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_reply", "_refresh_task_card", "_answer")]
+    store.get_task, store.task_verifier, store.verify_task = get_task, task_verifier, verify
+    store.task_with_employee, store.get_employee_by_telegram_id, store.close_shared_copies = with_employee, by_tg, none_list
+    ops_manager.TelegramBot, ops_manager._reply, ops_manager._refresh_task_card, ops_manager._answer = Bot, reply, nothing, answer
+    card = {"message_id": 80, "chat": {"id": 70}, "text": "x"}
+    try:
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": "taskback:t1", "from": {"id": 70}, "message": card},
+                                                       uuid.uuid4()))
+        check("the accepter may open the return reasons", out, "return_reasons")
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": "taskok:t1", "from": {"id": 70}, "message": card},
+                                                       uuid.uuid4()))
+        check_true("the accepter's ✅ closes it; the assigner gets «ёпилди — … текширди»",
+                   out == "task_closed" and (9, "✅ T-2026-11-0100 ёпилди — Умар Хошимов текширди.") in replies)
+        verifier["value"] = "accepter_inactive"
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": "taskok:t1", "from": {"id": 70}, "message": card},
+                                                       uuid.uuid4()))
+        check("an accepter no longer active: «Рухсат йўқ», not «already decided»", (out, answers[-1]), ("verify_refused", "Рухсат йўқ"))
+        verifier["value"] = None
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": "taskback:t1", "from": {"id": 71}, "message": card},
+                                                       uuid.uuid4()))
+        check("anyone else (the assignee too) can't open the reasons", out, "verify_closed")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the draft: 🔎 freezes the managers, a pick is checked again, 📨 drops one who no longer fits
+    state = {"draft": {**base, "director_telegram_user_id": 9, "selected_ids": ["s1"], "status": "open",
+                       "accepter_employee_id": None, "accepter_candidate_ids": [], "due_date": None,
+                       "source_message_id": 444, "has_media": False}}
+    created: list = []
+
+    async def get_draft(draft_id):
+        return state["draft"]
+
+    async def freeze(draft_id, director, cand):
+        state["draft"] = {**state["draft"], "accepter_candidate_ids": cand}
+        return state["draft"]
+
+    async def set_accepter(draft_id, director, emp):
+        state["draft"] = {**state["draft"], "accepter_employee_id": emp}
+        return state["draft"]
+
+    async def close(draft_id, director, status):
+        return state["draft"]
+
+    async def draft_people(draft):
+        return people
+
+    async def create(**kw):
+        created.append(kw)
+        return {"id": "t5", "code": "T-2026-11-0105", "priority": 2}
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("get_task_draft", "open_task_draft_accepters", "set_task_draft_accepter",
+                                                         "close_task_draft", "open_tasks_of", "create_task",
+                                                         "set_task_message_id", "log_conversation_turn")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_answer", "_draft_people")]
+    store.get_task_draft, store.open_task_draft_accepters, store.set_task_draft_accepter = get_draft, freeze, set_accepter
+    store.close_task_draft, store.open_tasks_of, store.create_task = close, none_list, create
+    store.set_task_message_id, store.log_conversation_turn = nothing, nothing
+    ops_manager.TelegramBot, ops_manager._answer, ops_manager._draft_people = Bot, answer, draft_people
+    dcard = {"message_id": 90, "chat": {"id": 9}, "text": "x"}
+    try:
+        calls.clear()
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdm:{did}", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check_true("🔎 opens the picker and freezes who was offered",
+                   out == "accepter_menu" and state["draft"]["accepter_candidate_ids"] == ["m1"]
+                   and f"tdmp:{did}:1" in str(calls[-1][3]))
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdmp:{did}:1", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check_true("a name picks him; the card names him", out == "draft_accepter" and state["draft"]["accepter_employee_id"] == "m1"
+                   and "Умар Хошимов" in calls[-1][2])
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdmp:{did}:5", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check("an index past the frozen list: refused", out, "unrecognized")
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdm:{did}", "from": {"id": 70}, "message": dcard},
+                                                       uuid.uuid4()))
+        check("someone else's draft: refused", out, "unrecognized")
+        state["draft"] = {**state["draft"], "selected_ids": ["s1", "i1"]}
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdmp:{did}:1", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check_true("the ticks changed (a person outside his team): the pick falls back to the Director",
+                   out == "accepter_refused" and state["draft"]["accepter_employee_id"] is None)
+        state["draft"] = {**state["draft"], "accepter_employee_id": "m1"}
+        created.clear()
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tds:{did}", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check_true("📨 with a mixed list: sent without an accepter, and the card says so in one line",
+                   out == "draft_sent" and created and all(kw["accepter_employee_id"] is None for kw in created)
+                   and "Умар Хошимов текширмайди" in calls[-1][2])
+        state["draft"] = {**state["draft"], "selected_ids": ["s1", "s2"], "accepter_employee_id": "m1"}
+        created.clear()
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tds:{did}", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check_true("📨 when he still fits: every copy carries him (logged by name), the card names him",
+                   out == "draft_sent" and len(created) == 2
+                   and all(kw["accepter_employee_id"] == "m1" and kw["accepter_name"] == "Умар Хошимов" for kw in created)
+                   and "🔎 Текширади: <b>Умар Хошимов</b>" in calls[-1][2])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("create_task logs 'accepter_set' with the name", "\"accepter_set\", str(director_telegram_user_id), accepter_name"
+               in inspect_source(store.create_task))
+
+    # re-sent to the assigner when the accepter leaves
+    calls.clear()
+    fail["chats"] = set()
+
+    async def in_review(task_id):
+        return {**task, "status": "review", "employee_telegram_user_id": 71, "display_name": "Али Валиев",
+                "evidence_text": "тайёр", "evidence_message_id": None}
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("task_with_employee", "open_shared_copies", "set_task_review_message")] + \
+            [(ops_manager, "TelegramBot", ops_manager.TelegramBot)]
+    store.task_with_employee, store.open_shared_copies, store.set_task_review_message = in_review, none_list, nothing
+    ops_manager.TelegramBot = Bot
+    try:
+        sent = asyncio.run(ops_manager.resend_reviews_to_assigner(["t1"], uuid.uuid4()))
+        check_true("a waiting review goes to the assigner with ✅ / ↩️ and a note",
+                   sent == 1 and calls[-1][1] == "9" and "taskok:" in str(calls[-1][3]) and "Текширувчи энди йўқ" in calls[-1][2])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
+def test_task_expected_1112() -> None:
+    """12.11.2026: the expected result — the classifier hears what must exist when it is done (never invented), the
+    Director keeps or drops it on the draft, every card / the proof ask / the review card show it; the advisory AI
+    hint on the proof (TASK_PROOF_HINT_ENABLED, off by default) is one labelled line that decides nothing."""
+    print("task register: expected result + advisory proof hint (12.11.2026)")
+    import asyncio
+    import uuid
+    from datetime import date as _date
+
+    from integrations.api import db_viewer
+    from integrations.common.config import Settings, settings as cfg
+    from integrations.org_bot import ops_manager, prompt, sql_catalog, store, task_register as tr
+    from integrations.org_bot import task_tracker as tt
+
+    # the classifier: the field and the "never invent" rule
+    check_true("classify prompt asks for expected_result, null when not said, never invented",
+               '"expected_result"' in prompt.CLASSIFY_SYSTEM_PROMPT and "EXPECTED RESULT" in prompt.CLASSIFY_SYSTEM_PROMPT
+               and "MUST be null — never invent" in prompt.CLASSIFY_SYSTEM_PROMPT)
+    check("clean_expected: null / empty / non-text → None", [tr.clean_expected(v) for v in (None, "", "null", " - ", 5)],
+          [None] * 5)
+    check("clean_expected: tags gone, one line, ≤ 200", (tr.clean_expected("<b>Excel</b>\n файл."),
+                                                          len(tr.clean_expected("а" * 500))), ("Excel файл", 200))
+
+    # schema, view, catalog, /db, setting
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    view_at = schema.index("CREATE OR REPLACE VIEW analyst.bot_tasks")
+    for line in ("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS expected_result TEXT;",
+                 "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS proof_hint TEXT;"):
+        check_true(f"{line.split('EXISTS ')[1].split()[0]} added idempotently before the analyst view",
+                   line in schema and schema.index(line) < view_at)
+    line = "ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS expected_result TEXT;"
+    check_true("task_drafts.expected_result added after the table",
+               line in schema and schema.index(line) > schema.index("CREATE TABLE IF NOT EXISTS task_drafts"))
+    view = schema.split("CREATE OR REPLACE VIEW analyst.bot_tasks AS", 1)[1].split(";", 1)[0]
+    check_true("analyst.bot_tasks: has_expected_result appended after accepter (a flag, no text; waiting_for follows)",
+               "AS accepter,\n       (t.expected_result IS NOT NULL) AS has_expected_result," in view
+               and "proof_hint" not in view)
+    names_ = [c[0] for c in sql_catalog.CATALOG["bot_tasks"][2]]
+    check("…and in the same place in the catalog", names_[names_.index("accepter") + 1], "has_expected_result")
+    check_true("/db and the local copy hide the expected result and the hint",
+               {"expected_result", "proof_hint"} <= db_viewer.hidden("tasks")
+               and "expected_result" in db_viewer.hidden("task_drafts"))
+    check("TASK_PROOF_HINT_ENABLED is off by default", Settings.model_fields["task_proof_hint_enabled"].default, False)
+
+    # the draft card: line + drop row, only when set
+    did = str(uuid.uuid4())
+    people = [{"id": "s1", "role": "garmin_sotuv", "full_name": "Али Валиев", "telegram_user_id": 71}]
+    base = {"id": did, "task_summary": "Ҳисобот тайёрланг", "raw_message": "x", "priority": 2, "selected_ids": ["s1"]}
+    text, kb = ops_manager._draft_card({**base, "expected_result": "Excel файл <жадвал>"}, people)
+    check_true("set: «🎯 Кутилган натижа» (escaped) on the card and the drop row",
+               "🎯 <b>Кутилган натижа:</b> Excel файл &lt;жадвал&gt;" in text and f"tdrx:{did}" in str(kb))
+    check_true("tdrx ≤ 64 bytes", len(f"tdrx:{did}".encode()) <= 64)
+    text, kb = ops_manager._draft_card({**base, "expected_result": None}, people)
+    check_true("not said: no line, no row", "Кутилган натижа" not in text and "tdrx:" not in str(kb))
+
+    # employee cards, captions, the proof ask, the reminder
+    card = ops_manager._task_card_text("Ҳисобот тайёрланг", None, None, "T-2026-11-0200", 2, "Excel файл")
+    check_true("the employee's text card shows it", "🎯 <b>Кутилган натижа:</b> Excel файл" in card)
+    check_true("…and nothing when not said",
+               "Кутилган" not in ops_manager._task_card_text("Ҳисобот", None, None, "T-1", 2, None))
+    big = {"code": "T-2026-11-0200", "priority": 1, "task_summary": "ж" * 2000, "due_date": _date(2026, 11, 20),
+           "expected_result": "н" * 200}
+    caption = ops_manager._task_caption(big, tr.status_line({"status": "started", "returns": 3}))
+    check_true("a file card's caption: ≤ 1024, the expected result capped at 120, the summary keeps room",
+               len(caption) <= tr.CAPTION_MAX and "н" * 119 + "…" in caption and "н" * 121 not in caption
+               and caption.count("ж") > 300)
+    task = {"id": "t1", "code": "T-2026-11-0200", "task_summary": "Ҳисобот", "awaiting": "evidence",
+            "expected_result": "Excel файл"}
+    check_true("the ✅ proof ask says what the proof must show", "Далилда шу кўринсин: <b>Excel файл</b>." in tr.prompt_text(task))
+    check_true("…not when nothing was said", "кўринсин" not in tr.prompt_text({**task, "expected_result": None}))
+    check_true("the reminder card shows it", "🎯 Кутилган натижа: Excel файл" in tt.reminder_text(
+        {**task, "due_date": _date(2026, 11, 13)}, _date(2026, 11, 12)))
+
+    # the hint: each verdict, unknown / error / timeout → nothing, a file-only proof never calls the AI
+    check("fits", tr.hint_line("fits"), "🤖 Маслаҳат (қарорни сиз қиласиз): далил кутилган натижага мос кўринади.")
+    check("partly", tr.hint_line("partly", "жадвал йўқ"), "🤖 Маслаҳат (қарорни сиз қиласиз): далил қисман мос: жадвал йўқ")
+    check("missing (gap escaped, ≤ 120)", tr.hint_line("missing", "<x>" + "г" * 300),
+          "🤖 Маслаҳат (қарорни сиз қиласиз): натижа кўринмаяпти: &lt;x&gt;" + "г" * 116 + "…")
+    check("unknown / anything else → nothing", [tr.hint_line(v) for v in ("unknown", None, "yes")], ["", "", ""])
+    asked: list = []
+
+    class AI:
+        def __init__(self, reply=None, error=None, delay=0.0):
+            self.reply, self.error, self.delay = reply, error, delay
+
+        async def complete_json(self, system, user):
+            asked.append(user)
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            if self.error:
+                raise self.error
+            return self.reply
+
+    run = lambda *a: asyncio.run(tr.proof_hint(*a))  # noqa: E731
+    check("verdict fits → the line", run("Excel файл", "жадвал юборилди", False, AI({"verdict": "fits"}))[1], "fits")
+    check_true("only the two texts reach the AI (+ a note that a file can't be seen)",
+               "Excel файл" in asked[-1] and "жадвал юборилди" in asked[-1] and "file" not in asked[-1])
+    check("verdict partly → its line with the gap", run("Excel", "ярми", True, AI({"verdict": "partly", "gap": "2-қисм йўқ"}))[0],
+          "🤖 Маслаҳат (қарорни сиз қиласиз): далил қисман мос: 2-қисм йўқ")
+    check_true("…a file alongside is said to the AI", "cannot see it" in asked[-1])
+    check("unknown → nothing", run("Excel", "x", False, AI({"verdict": "unknown"})), ("", "unknown"))
+    check("an AI error → nothing", run("Excel", "x", False, AI(error=RuntimeError("down"))), ("", "error"))
+    check("a reply that isn't an object → nothing", run("Excel", "x", False, AI(["fits"]))[0], "")
+    saved_timeout = tr.HINT_TIMEOUT
+    tr.HINT_TIMEOUT = 0.01
+    try:
+        check("slower than the timeout → nothing (the card goes anyway)",
+              run("Excel", "x", False, AI({"verdict": "fits"}, delay=0.5)), ("", "timeout"))
+    finally:
+        tr.HINT_TIMEOUT = saved_timeout
+    before = len(asked)
+    check("a file with no text: «файлни ўзингиз кўринг», no AI call",
+          (run("Excel", "", True, AI({"verdict": "fits"})), len(asked)), ((tr.FILE_ONLY_HINT, "file"), before))
+    check("no expected result: no call, nothing", (run(None, "x", False, AI({"verdict": "fits"})), len(asked)),
+          (("", "none"), before))
+
+    # the review card with everything at its longest still fits a caption; the proof keeps room
+    review_task = {"code": "T-2026-11-0200", "task_summary": "ҳ" * 900, "evidence_text": "д" * 1500, "returns": 4,
+                   "expected_result": "н" * 200,
+                   "proof_hint": tr.hint_line("missing", "г" * 300)}
+    cap = tr.review_caption(review_task, "Али Валиев", "👥 Умумий топшириқ — қабул қилсангиз Вали Алиев нусхаси ҳам ёпилади.")
+    check_true("review caption at max length: ≤ 1024, 🎯 capped, the hint whole, the proof ≥ 300 chars",
+               len(cap) <= tr.CAPTION_MAX and "н" * 121 not in cap and cap.endswith("…")
+               and "натижа кўринмаяпти" in cap and cap.count("д") >= 300)
+    full = tr.review_text(review_task, "Али Валиев")
+    check_true("review text: 🎯 under who, the hint under the proof",
+               full.index("Кутилган натижа") < full.index("<b>Далил:</b>") < full.index("🤖 Маслаҳат"))
+
+    # the hint decides nothing: the only write in its path is proof_hint
+    hint_src = inspect_source(ops_manager._proof_hint)
+    check_true("the hint path writes only tasks.proof_hint (no status, no button)",
+               hint_src.count("store.") == 1 and "store.set_task_proof_hint" in hint_src
+               and "store" not in inspect_source(tr.proof_hint)
+               and "SET proof_hint = %s WHERE id = %s" in inspect_source(store.set_task_proof_hint)
+               and "status" not in inspect_source(store.set_task_proof_hint).split('"""', 2)[2])
+
+    # carried end to end: classifier → draft → every copy
+    check_true("classifier → _propose_task (text and file) → create_task_draft",
+               'clean_expected(result.get("expected_result"))' in inspect_source(ops_manager._dispatch_director_task)
+               and "expected_result=expected" in inspect_source(ops_manager._dispatch_director_task)
+               and "expected_result=media_expected" in inspect_source(ops_manager._dispatch_director_media)
+               and "expected_result=expected_result" in inspect_source(ops_manager._propose_task)
+               and "expected_result" in inspect_source(store.create_task_draft)
+               and "accepter_employee_id, expected_result, depends_on, helper_for, code)" in inspect_source(store.create_task))
+
+    calls: list = []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **kw):
+            calls.append(("text", chat_id, text, reply_markup))
+            return [500]
+
+        async def _call(self, method, payload, **kw):
+            calls.append((method, payload.get("chat_id"), payload.get("caption") or payload.get("text"),
+                          payload.get("reply_markup")))
+            return {"message_id": 501}
+
+        async def _edit_message(self, **kw):
+            calls.append(("edit", kw.get("chat_id"), kw.get("text"), kw.get("reply_markup")))
+
+    created: list = []
+
+    async def none_list(*a, **k):
+        return []
+
+    async def nothing(*a, **k):
+        return None
+
+    async def create(**kw):
+        created.append(kw)
+        return {"id": f"t{len(created)}", "code": f"T-2026-11-020{len(created)}", "priority": 2, "status": "sent"}
+
+    draft = {"id": did, "director_telegram_user_id": 9, "source_message_id": 444, "raw_message": "x",
+             "task_summary": "Ҳисобот тайёрланг", "has_media": False, "due_date": None, "priority": 2,
+             "expected_result": "Excel файл"}
+    two = people + [{"id": "s2", "role": "garmin_sotuv", "full_name": "Вали Алиев", "telegram_user_id": 72}]
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("open_tasks_of", "create_task", "set_task_message_id")] + \
+            [(ops_manager, "TelegramBot", ops_manager.TelegramBot)]
+    store.open_tasks_of, store.create_task, store.set_task_message_id = none_list, create, nothing
+    ops_manager.TelegramBot = Bot
+    try:
+        sent = asyncio.run(ops_manager._send_task_cards(draft, two, uuid.uuid4()))
+        check_true("📨: every copy carries the same expected result; each text card shows it",
+                   len(sent) == 2 and all(kw["expected_result"] == "Excel файл" for kw in created)
+                   and all("Кутилган натижа:</b> Excel файл" in c[2] for c in calls))
+        calls.clear()
+        created.clear()
+        asyncio.run(ops_manager._send_task_cards({**draft, "has_media": True}, people, uuid.uuid4()))
+        check_true("…a file's caption too, within 1024", calls[-1][0] == "copyMessage" and "Кутилган натижа" in calls[-1][2]
+                   and len(calls[-1][2]) <= tr.CAPTION_MAX)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # redraws keep it (start, block, reschedule … all go through _refresh_task_card)
+    row = {"id": "t1", "code": "T-2026-11-0201", "task_summary": "Ҳисобот", "status": "started", "priority": 2,
+           "telegram_message_id": 5, "employee_telegram_user_id": 71, "expected_result": "Excel файл"}
+    saved = [(ops_manager, "TelegramBot", ops_manager.TelegramBot)]
+    ops_manager.TelegramBot = Bot
+    try:
+        calls.clear()
+        asyncio.run(ops_manager._refresh_task_card(row, uuid.uuid4(), full=row))
+        asyncio.run(ops_manager._refresh_task_card(row, uuid.uuid4(), full={**row, "has_media": True}))
+        check_true("a redraw keeps 🎯 — text card and file caption", [c[0] for c in calls] == ["edit", "editMessageCaption"]
+                   and all("Кутилган натижа" in c[2] for c in calls))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 🎯 Натижани олиб ташлаш on the draft
+    state = {"draft": {**draft, "selected_ids": ["s1"], "candidate_ids": ["s1"], "status": "open"}}
+    answers: list = []
+
+    async def drop(draft_id, director):
+        if director != 9:
+            return None
+        state["draft"] = {**state["draft"], "expected_result": None}
+        return state["draft"]
+
+    async def draft_people(d):
+        return people
+
+    async def answer(query_id, text):
+        answers.append(text)
+
+    saved = [(store, "drop_task_draft_expected", store.drop_task_draft_expected)] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_answer", "_draft_people")]
+    store.drop_task_draft_expected = drop
+    ops_manager.TelegramBot, ops_manager._answer, ops_manager._draft_people = Bot, answer, draft_people
+    dcard = {"message_id": 90, "chat": {"id": 9}, "text": "x"}
+    try:
+        calls.clear()
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdrx:{did}", "from": {"id": 9}, "message": dcard},
+                                                       uuid.uuid4()))
+        check_true("tdrx drops it: the card redrawn without the line or the row",
+                   out == "draft_expected_dropped" and state["draft"]["expected_result"] is None
+                   and "Кутилган натижа" not in calls[-1][2] and "tdrx:" not in str(calls[-1][3]))
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tdrx:{did}", "from": {"id": 70}, "message": dcard},
+                                                       uuid.uuid4()))
+        check("someone else's / a closed draft: refused", out, "draft_closed")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("drop_task_draft_expected: same guards as the priority tap",
+               all(x in inspect_source(store.drop_task_draft_expected)
+                   for x in ("director_telegram_user_id = %s", "status = 'open'", "interval '24 hours'")))
+
+    # the proof flow: hint on → the line reaches the review card and is stored; off → no AI at all
+    ai_opened: list = []
+    stored: list = []
+
+    class Client:
+        def __init__(self, *a, **k):
+            ai_opened.append(1)
+
+        async def __aenter__(self):
+            return AI({"verdict": "partly", "gap": "жадвал йўқ"})
+
+        async def __aexit__(self, *e):
+            return None
+
+    the_task = {"id": "t1", "code": "T-2026-11-0201", "task_summary": "Ҳисобот", "director_telegram_user_id": 9,
+                "status": "started", "awaiting": "evidence", "telegram_message_id": 5, "expected_result": "Excel файл"}
+
+    async def submit(task_id, by, text, msg_id):
+        return {**the_task, "status": "review", "evidence_text": text, "evidence_message_id": msg_id}
+
+    async def set_hint(task_id, hint):
+        stored.append((task_id, hint))
+
+    async def reply(chat, run_id, text, *a, **k):
+        return [1]
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("submit_task", "review_accepter", "open_shared_copies",
+                                                         "set_task_review_message", "tasks_awaiting_evidence",
+                                                         "set_task_proof_hint")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_reply", "_refresh_task_card",
+                                                                    "OpenRouterClient")]
+    store.submit_task, store.review_accepter, store.open_shared_copies = submit, nothing, none_list
+    store.set_task_review_message, store.tasks_awaiting_evidence, store.set_task_proof_hint = nothing, none_list, set_hint
+    ops_manager.TelegramBot, ops_manager._reply, ops_manager._refresh_task_card = Bot, reply, nothing
+    ops_manager.OpenRouterClient = Client
+    saved_flag = cfg.task_proof_hint_enabled
+    employee = {"telegram_user_id": 71, "full_name": "Али Валиев"}
+    try:
+        cfg.task_proof_hint_enabled = False
+        calls.clear()
+        out = asyncio.run(ops_manager._consume_task_input(employee, the_task, {"message_id": 60, "text": "тайёр"}, uuid.uuid4()))
+        check_true("hint off (the default): no AI, the review card has 🎯 and no hint",
+                   out == "task_submitted" and not ai_opened and not stored and "Кутилган натижа" in calls[-1][2]
+                   and "Маслаҳат" not in calls[-1][2])
+        cfg.task_proof_hint_enabled = True
+        calls.clear()
+        out = asyncio.run(ops_manager._consume_task_input(employee, the_task, {"message_id": 61, "text": "тайёр"}, uuid.uuid4()))
+        check_true("hint on: one labelled line on the review card, stored for history, the task still in review",
+                   out == "task_submitted" and ai_opened and stored == [("t1", tr.hint_line("partly", "жадвал йўқ"))]
+                   and "🤖 Маслаҳат (қарорни сиз қиласиз): далил қисман мос: жадвал йўқ" in calls[-1][2]
+                   and "taskok:" in str(calls[-1][3]))
+        ai_opened.clear()
+        stored.clear()
+
+        async def submit_plain(task_id, by, text, msg_id):
+            return {**the_task, "expected_result": None, "status": "review", "evidence_text": text}
+
+        store.submit_task = submit_plain
+        out = asyncio.run(ops_manager._consume_task_input(employee, the_task, {"message_id": 63, "text": "тайёр"},
+                                                          uuid.uuid4()))
+        check_true("hint on but the task has no expected result: nothing changes, no AI",
+                   out == "task_submitted" and not ai_opened and not stored)
+    finally:
+        cfg.task_proof_hint_enabled = saved_flag
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
+def test_task_dependency_1112() -> None:
+    """12.11.2026: dependencies — a task waits for another T- code the Director named (an explicit code + a waiting
+    word, kept or dropped on the draft); while it waits no reminder / overdue / proof line and no red in the brief;
+    released once when every copy of what it waited for is accepted or cancelled, the deadline moved by the days it
+    waited, the person told now if at work, else in his next morning message."""
+    print("task register: dependencies (12.11.2026)")
+    import asyncio
+    import uuid
+    from datetime import date as _date, timedelta as _td
+    from pathlib import Path
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import admin, morning_notes, ops_manager, sql_catalog, store, task_picker
+    from integrations.org_bot import task_register as tr, task_tracker as tt
+
+    # parse: an explicit code AND a waiting word, nothing guessed
+    check("parse_dependency: code + «тугагач» → the code",
+          tr.parse_dependency("T-2026-11-0048 тугагач нархларни янгиланг"), "T-2026-11-0048")
+    check("…Cyrillic «Т-» read as the Latin code, «кейин»",
+          tr.parse_dependency("Т-2026-11-0051 дан кейин отчет"), "T-2026-11-0051")
+    check("…codes past 9999 (\\d{4,})", tr.parse_dependency("T-2026-12-10234 қабул қилингач бошланг"), "T-2026-12-10234")
+    check("…no waiting word / no code / two codes → None",
+          [tr.parse_dependency("T-2026-11-0048 ни текширинг"), tr.parse_dependency("эртага кейин қиламиз"),
+           tr.parse_dependency("T-2026-11-0048 ва T-2026-11-0049 тугагач"), tr.parse_dependency(None)],
+          [None, None, None, None])
+    check("…the same code twice is one code", tr.parse_dependency("T-2026-11-0048 тугагач, T-2026-11-0048 ни кутинг"),
+          "T-2026-11-0048")
+
+    # schema / view / catalog
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    view_at = schema.index("CREATE OR REPLACE VIEW analyst.bot_tasks")
+    for line in ("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS depends_on UUID REFERENCES tasks(id) ON DELETE SET NULL;",
+                 "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS dependency_done_at TIMESTAMPTZ;"):
+        check_true(f"{line.split('EXISTS ')[1].split()[0]} added idempotently before the analyst view",
+                   line in schema and schema.index(line) < view_at)
+    for line in ("ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS depends_on UUID;",
+                 "ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS depends_code TEXT;"):
+        check_true(f"task_drafts.{line.split('EXISTS ')[1].split()[0]} added after the table",
+                   line in schema and schema.index(line) > schema.index("CREATE TABLE IF NOT EXISTS task_drafts"))
+    check_true("'depends_set' / 'depends_done' in the one task_events check",
+               "'depends_set', 'depends_done'" in schema and schema.count("ADD CONSTRAINT task_events_event_check") == 1)
+    view = schema.split("CREATE OR REPLACE VIEW analyst.bot_tasks AS", 1)[1].split(";", 1)[0]
+    check_true("analyst.bot_tasks: waiting_for appended last (a code, no text), its JOIN after the FROM line",
+               view.split("\nFROM ", 1)[0].rstrip().endswith("THEN dep.code END AS waiting_for")
+               and "AS has_expected_result,\n" in view
+               and "LEFT JOIN tasks dep ON dep.id = t.depends_on" in view.split("\nFROM ", 1)[1])
+    check("…and last in the catalog", sql_catalog.CATALOG["bot_tasks"][2][-1][0], "waiting_for")
+
+    # waiting excluded from every one-shot notice; the shared group counts
+    for fn in (store.tasks_needing_reminder, store.tasks_newly_overdue, store.tasks_proof_missing):
+        check_true(f"{fn.__name__} leaves waiting tasks out", "AND NOT {WAITING}" in inspect_source(fn))
+    check_true("WAITING: not released, and some copy of the shared group (source ≠ 0) still open",
+               "t.dependency_done_at IS NULL" in store.WAITING and "d.source_message_id <> 0" in store.WAITING
+               and "g.status IN ('sent', 'started', 'blocked', 'review')" in store.WAITING)
+    check_true("open_tasks_with_names / task_with_employee carry waiting_for",
+               "{WAITING_FOR} AS waiting_for" in inspect_source(store.open_tasks_with_names)
+               and "{WAITING_FOR} AS waiting_for" in inspect_source(store.task_with_employee))
+    rel = inspect_source(store.release_dependants)
+    check_true("release_dependants: once (dependency_done_at), only when no copy is open, flags reset, a passed "
+               "deadline moved by the days waited, logged depends_done + rescheduled",
+               all(x in rel for x in ("t.dependency_done_at IS NULL", "AND NOT EXISTS", "reminded_at = NULL",
+                                      "overdue_notified_at = NULL", "t.due_date <= %(today)s", "GREATEST(",
+                                      '"depends_done"', '"rescheduled"')))
+    check_true("task_by_code: open tasks only", "status IN ('sent', 'started', 'blocked', 'review')"
+               in inspect_source(store.task_by_code))
+    check_true("create_task stores depends_on and logs depends_set",
+               "depends_on, helper_for, code)" in inspect_source(store.create_task)
+               and '"depends_set"' in inspect_source(store.create_task))
+
+    # release is called after an accept (+ shared copies) and after both cancel paths
+    verify = inspect_source(ops_manager._handle_task_verify)
+    check_true("accept → release_dependants with the accepted task and every closed copy",
+               'closed = [str(task["id"])]' in verify and 'closed.append(str(copy["id"]))' in verify
+               and "await release_dependants(closed" in verify)
+    check_true("revoke / role change return the cancelled ids; admin releases after both",
+               '"cancelled_task_ids"' in inspect_source(store.revoke_employee)
+               and '"cancelled_task_ids"' in inspect_source(store.change_employee_role)
+               and inspect_source(admin).count("await _release_dependants(") == 2
+               and "cancelled=True" in inspect_source(admin._release_dependants))
+
+    # cards: the draft line and row, the employee's status line
+    did = str(uuid.uuid4())
+    kb = task_picker.keyboard(did, [], set(), depends_row=True)
+    datas = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+    check_true("draft keyboard: ⏳ row tddx:<draft>, every callback ≤ 64 bytes",
+               f"tddx:{did}" in datas and all(len(d.encode()) <= 64 for d in datas))
+    check_true("…no row without a dependency", "tddx:" not in str(task_picker.keyboard(did, [], set())))
+    card = task_picker.card_text("Нархларни янгиланг", "x", [], depends="T-2026-11-0048")
+    check_true("draft card: «⏳ T-… қабул қилингач бошланади»", "⏳ T-2026-11-0048 қабул қилингач бошланади" in card)
+    sent_line = tr.status_line({"status": "sent", "waiting_for": "T-2026-11-0048"})
+    check("employee card while waiting", sent_line, "⏳ T-2026-11-0048 кутилмоқда — у қабул қилингач бошланг")
+    check_true("…started + a new-date ask keeps the ask; blocked keeps its reason; ✅ pressed shows the proof ask",
+               tr.status_line({"status": "started", "waiting_for": "T-1", "proposed_due": _date(2026, 11, 20)})
+               .startswith("⏳ T-1 кутилмоқда") and "янги муддат сўралди" in
+               tr.status_line({"status": "started", "waiting_for": "T-1", "proposed_due": _date(2026, 11, 20)})
+               and tr.status_line({"status": "blocked", "blocker": "пул йўқ", "waiting_for": "T-1"}).startswith("⛔ Тўсиқ бор: пул йўқ")
+               and "⏳" not in tr.status_line({"status": "started", "waiting_for": "T-1", "awaiting": "evidence"}))
+    check_true("…not waiting: as before", tr.status_line({"status": "sent"}) == "🆕 Яратилди — қабул қилинмаган")
+    check_true("the Director's task answers say what it waits for",
+               "(кутмоқда: T-2026-11-0048)" in tr.answer_line({"status": "sent", "code": "T-2", "waiting_for": "T-2026-11-0048"}))
+
+    # the brief: a 'waiting' group, never red; a shared task waits only when every copy does
+    brief = load_agent("ceo-daily-brief")
+    day = _date(2026, 11, 12)
+    rows, n = brief.task_rows([
+        {"id": "a", "source_message_id": 0, "display_name": "Али", "task_summary": "Нарх", "status": "sent",
+         "due_date": day - _td(days=2), "waiting_for": "T-2026-11-0048"},
+        {"id": "b", "source_message_id": 0, "display_name": "Вали", "task_summary": "Отчет", "status": "sent",
+         "due_date": day - _td(days=1)},
+    ], day)
+    check_true("task_rows: the waiting one is «кутмоқда T-…», not red; the other still overdue",
+               n["waiting"] == 1 and n["overdue"] == 1
+               and any(r["what"].startswith("кутмоқда T-2026-11-0048") and not r["alert"] for r in rows))
+    rows, n = brief.task_rows([
+        {"id": "c", "director_telegram_user_id": 9, "source_message_id": 7, "display_name": "Али", "task_summary": "Нарх",
+         "status": "sent", "due_date": day - _td(days=1), "waiting_for": "T-1"},
+        {"id": "d", "director_telegram_user_id": 9, "source_message_id": 7, "display_name": "Вали", "task_summary": "Нарх",
+         "status": "sent", "due_date": day - _td(days=1), "waiting_for": None},
+    ], day)
+    check_true("…a shared task waits only when every copy waits", n["waiting"] == 0 and n["overdue"] == 1)
+
+    # texts: released, assigner line, morning line
+    task = {"code": "T-2026-11-0060", "task_summary": "Нархларни янгиланг", "depends_code": "T-2026-11-0048",
+            "display_name": "Али Валиев", "old_due": _date(2026, 11, 10), "due_date": _date(2026, 11, 14)}
+    check_true("released_text: accepted / cancelled, the moved deadline said",
+               tr.released_text(task, False).startswith("▶️ T-2026-11-0048 қабул қилинди — энди T-2026-11-0060")
+               and "10.11 → <b>14.11</b>" in tr.released_text(task, False)
+               and "бекор қилинди" in tr.released_text(task, True)
+               and "сурилди" not in tr.released_text({**task, "old_due": task["due_date"]}, False))
+    check_true("released_assigner_text: one line each way",
+               "энди бошланади — T-2026-11-0048 қабул қилинди" in tr.released_assigner_text(task, False)
+               and "бекор бўлди — T-2026-11-0060 (Али Валиев) кутишда эди" in tr.released_assigner_text(task, True))
+    line = morning_notes.task_line({"code": "T-2026-11-0060", "summary": "Нарх", "released": True,
+                                    "after": "T-2026-11-0048", "due": "2026-11-16"})
+    check("morning line when released while off (no emoji, «сиз»)", line,
+          "T-2026-11-0048 қабул қилинди, энди T-2026-11-0060 «Нарх» топшириғини бошлашингиз мумкин, муддати 16.11")
+    check_true("…cancelled wording", "бекор қилинди" in morning_notes.task_line(
+        {"code": "T-1", "summary": "x", "released": True, "after": "T-0", "cancelled": True, "due": None}))
+    thu = _date(2026, 11, 12)
+    check("next_day_at_work: Mon–Wed person on Thursday → Monday", tt.next_day_at_work({"work_days": "1110000"}, thu),
+          _date(2026, 11, 16))
+    check("…a /dam Friday skipped", tt.next_day_at_work({}, thu, {_date(2026, 11, 13)}), _date(2026, 11, 16))
+
+    # flows — offline fakes only
+    answers: list = []
+    replies: list = []
+    notes: list = []
+    told: list = []
+    refreshed: list = []
+    edits: list = []
+
+    async def answer(query_id, text):
+        answers.append(text)
+
+    async def reply(chat, run_id, text, reply_markup=None, reply_to=None):
+        replies.append((chat, text, reply_markup))
+        return [800]
+
+    async def nothing(*a, **k):
+        return None
+
+    people = [{"id": "s1", "role": "garmin_sotuv", "full_name": "Али Валиев", "telegram_user_id": 71}]
+
+    # _propose_task: the code found and open → on the draft; unknown / closed → not
+    drafts: list = []
+
+    async def active():
+        return people
+
+    async def create_draft(**kw):
+        drafts.append(kw)
+        return {"id": did, **kw}
+
+    async def by_code(code):
+        return {"id": "dep-1", "code": code} if code == "T-2026-11-0048" else None
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("list_active_employees", "create_task_draft", "task_by_code",
+                                                         "set_task_draft_message", "log_conversation_turn")] + \
+            [(ops_manager, "_reply", ops_manager._reply)]
+    store.list_active_employees, store.create_task_draft, store.task_by_code = active, create_draft, by_code
+    store.set_task_draft_message = store.log_conversation_turn = nothing
+    ops_manager._reply = reply
+    try:
+        asyncio.run(ops_manager._propose_task(9, 1, "T-2026-11-0048 тугагач нархларни янгиланг", "Нарх", None,
+                                              uuid.uuid4(), person=people[0]))
+        asyncio.run(ops_manager._propose_task(9, 2, "T-2026-11-0099 тугагач отчет", "Отчет", None,
+                                              uuid.uuid4(), person=people[0]))
+        check_true("_propose_task: an open code goes on the draft and its card (line + ⏳ row)",
+                   drafts[0]["depends_on"] == "dep-1" and drafts[0]["depends_code"] == "T-2026-11-0048"
+                   and "⏳ T-2026-11-0048 қабул қилингач бошланади" in replies[0][1] and f"tddx:{did}" in str(replies[0][2]))
+        check_true("…an unknown / closed code → nothing waits",
+                   drafts[1]["depends_on"] is None and drafts[1]["depends_code"] is None and "tddx:" not in str(replies[1][2]))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # tddx drops it; someone else refused
+    state = {"draft": {"id": did, "director_telegram_user_id": 9, "task_summary": "Нарх", "raw_message": "x",
+                       "selected_ids": ["s1"], "candidate_ids": ["s1"], "status": "open", "priority": 2,
+                       "depends_on": "dep-1", "depends_code": "T-2026-11-0048"}}
+
+    async def drop(draft_id, director):
+        if director != 9:
+            return None
+        state["draft"] = {**state["draft"], "depends_on": None, "depends_code": None}
+        return state["draft"]
+
+    async def draft_people(d):
+        return people
+
+    async def edit_card(callback, text, keyboard, run_id):
+        edits.append((text, keyboard))
+
+    saved = [(store, "drop_task_draft_dependency", store.drop_task_draft_dependency)] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_answer", "_draft_people", "_edit_draft_card")]
+    store.drop_task_draft_dependency = drop
+    ops_manager._answer, ops_manager._draft_people, ops_manager._edit_draft_card = answer, draft_people, edit_card
+    try:
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tddx:{did}", "from": {"id": 9}}, uuid.uuid4()))
+        check_true("tddx: the dependency gone, the card redrawn without the line or the row",
+                   out == "draft_dependency_dropped" and "⏳" not in edits[-1][0] and "tddx:" not in str(edits[-1][1]))
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tddx:{did}", "from": {"id": 70}}, uuid.uuid4()))
+        check("…someone else's / a closed draft: refused", out, "draft_closed")
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("drop_task_draft_dependency: same guards as the priority tap",
+               all(x in inspect_source(store.drop_task_draft_dependency)
+                   for x in ("director_telegram_user_id = %s", "status = 'open'", "interval '24 hours'")))
+
+    # 📨: checked again — still open → every copy waits (card says so); closed meanwhile → dropped, said
+    passed: list = []
+    base = {"id": did, "director_telegram_user_id": 9, "task_summary": "Нарх", "raw_message": "x", "selected_ids": ["s1"],
+            "candidate_ids": ["s1"], "status": "open", "priority": 2, "due_date": _date(2026, 11, 20),
+            "source_message_id": 5, "has_media": False, "depends_on": "dep-1", "depends_code": "T-2026-11-0048"}
+    dep_open = {"v": True}
+
+    async def get_draft(draft_id):
+        return dict(base)
+
+    async def close_draft(draft_id, director, status):
+        return dict(base)
+
+    async def is_open(task_id):
+        return dep_open["v"]
+
+    async def send_cards(draft, recipients, run_id, reminded=None, duplicates=None):
+        passed.append(draft)
+        return recipients
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("get_task_draft", "close_task_draft", "dependency_open",
+                                                         "log_conversation_turn")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_answer", "_draft_people", "_edit_draft_card",
+                                                                    "_send_task_cards")]
+    store.get_task_draft, store.close_task_draft, store.dependency_open = get_draft, close_draft, is_open
+    store.log_conversation_turn = nothing
+    ops_manager._answer, ops_manager._draft_people, ops_manager._edit_draft_card = answer, draft_people, edit_card
+    ops_manager._send_task_cards = send_cards
+    try:
+        edits.clear()
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tds:{did}", "from": {"id": 9}}, uuid.uuid4()))
+        check_true("📨 with the dependency still open: passed on, the sent card says it waits",
+                   out == "draft_sent" and passed[-1]["depends_on"] == "dep-1"
+                   and "⏳ T-2026-11-0048 қабул қилингач бошланади" in edits[-1][0])
+        dep_open["v"] = False
+        out = asyncio.run(ops_manager._handle_callback({"id": "q", "data": f"tds:{did}", "from": {"id": 9}}, uuid.uuid4()))
+        check_true("…closed before 📨: dropped, one line on the card",
+                   passed[-1]["depends_on"] is None and "аллақачон ёпилган — топшириқ кутмасдан бошланади" in edits[-1][0]
+                   and "қабул қилингач бошланади" not in edits[-1][0])
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # _send_task_cards: every copy gets depends_on; the card shows the wait
+    created: list = []
+    calls: list = []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **kw):
+            calls.append(text)
+            return [500]
+
+        async def _call(self, method, payload, **kw):
+            calls.append(payload.get("caption"))
+            return {"message_id": 501}
+
+    async def none_list(*a, **k):
+        return []
+
+    async def create(**kw):
+        created.append(kw)
+        return {"id": f"t{len(created)}", "code": f"T-2026-11-030{len(created)}", "priority": 2, "status": "sent"}
+
+    two = people + [{"id": "s2", "role": "garmin_sotuv", "full_name": "Вали Алиев", "telegram_user_id": 72}]
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("open_tasks_of", "create_task", "set_task_message_id")] + \
+            [(ops_manager, "TelegramBot", ops_manager.TelegramBot)]
+    store.open_tasks_of, store.create_task, store.set_task_message_id = none_list, create, nothing
+    ops_manager.TelegramBot = Bot
+    try:
+        asyncio.run(ops_manager._send_task_cards({**base, "expected_result": None}, two, uuid.uuid4()))
+        asyncio.run(ops_manager._send_task_cards({**base, "has_media": True, "expected_result": None}, people[:1], uuid.uuid4()))
+        check_true("📨: every copy waits for the same task; text card and file caption say so",
+                   [kw["depends_on"] for kw in created] == ["dep-1"] * 3
+                   and all(kw["depends_code"] == "T-2026-11-0048" for kw in created)
+                   and all("⏳ T-2026-11-0048 кутилмоқда" in c for c in calls) and len(calls[-1]) <= tr.CAPTION_MAX)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # release: at work today → told now (reply under the card); off → his next working morning; assigner one line
+    released = [
+        {"id": "r1", "code": "T-2026-11-0060", "task_summary": "Нарх", "status": "sent", "assigned_employee_id": "s1",
+         "employee_telegram_user_id": 71, "employee_status": "active", "telegram_message_id": 33,
+         "director_telegram_user_id": 9, "depends_code": "T-2026-11-0048", "due_date": _date(2026, 11, 14),
+         "old_due": _date(2026, 11, 10), "work_days": None},
+        {"id": "r2", "code": "T-2026-11-0061", "task_summary": "Отчет", "status": "started", "assigned_employee_id": "s2",
+         "employee_telegram_user_id": 72, "employee_status": "active", "telegram_message_id": 34,
+         "director_telegram_user_id": 9, "depends_code": "T-2026-11-0048", "due_date": None, "old_due": None,
+         "work_days": "1110000"},
+        {"id": "r3", "code": "T-2026-11-0062", "task_summary": "Далил", "status": "review", "assigned_employee_id": "s3",
+         "employee_telegram_user_id": 73, "employee_status": "active", "telegram_message_id": 35,
+         "director_telegram_user_id": 9, "depends_code": "T-2026-11-0048", "due_date": None, "old_due": None},
+    ]
+    asked: list = []
+
+    async def release(ids, today, by):
+        asked.append((list(ids), today))
+        return [dict(r) for r in released]
+
+    async def no_days(*a, **k):
+        return set()
+
+    async def add_note(employee, day, kind, detail):
+        notes.append((employee["telegram_user_id"], day, kind, detail))
+
+    async def refresh(task, run_id, full=None):
+        refreshed.append((task["id"], (full or {}).get("waiting_for")))
+
+    async def tell(task, text, run_id):
+        told.append(text)
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("release_dependants", "days_off_between", "excused_between",
+                                                         "add_morning_note")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_reply", "_refresh_task_card", "_tell_assigner",
+                                                                    "today_local")]
+    store.release_dependants, store.days_off_between, store.excused_between = release, no_days, none_list
+    store.add_morning_note = add_note
+    ops_manager._reply, ops_manager._refresh_task_card, ops_manager._tell_assigner = reply, refresh, tell
+    ops_manager.today_local = lambda: thu
+    try:
+        replies.clear()
+        count = asyncio.run(ops_manager.release_dependants(["d1", "d2"], uuid.uuid4(), by="boss"))
+        check_true("release: the accepted ids asked once with today; every card redrawn as not waiting",
+                   count == 3 and asked == [(["d1", "d2"], thu)] and refreshed == [("r1", None), ("r2", None), ("r3", None)])
+        check_true("…at work today → told now; not working Thursday → a note for Monday; a copy in review not told",
+                   [r[0] for r in replies] == [71] and "14.11" in replies[0][1]
+                   and [(n_[0], n_[1], n_[2], n_[3]["released"]) for n_ in notes] == [(72, _date(2026, 11, 16), "task", True)])
+        check_true("…the assigner one line per task", len(told) == 3 and all("энди бошланади" in t for t in told))
+        told.clear()
+        asyncio.run(ops_manager.release_dependants(["d3"], uuid.uuid4(), cancelled=True))
+        check_true("…cancel path: «бекор бўлди … кутишда эди»", all("бекор бўлди" in t for t in told))
+        check("…nothing given → nothing asked", asyncio.run(ops_manager.release_dependants([], uuid.uuid4())), 0)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
+def test_task_helper_1112() -> None:
+    """12.11.2026: ⛔ → 🙋 helper (TASK_HELPER_ENABLED, off by default) — under the ⛔ message the assigner may give a
+    help task through the normal draft (the blocked person left out, nobody ticked, the source = that message, the
+    blocker shown on his draft only); one at a time; accepting it never unblocks the parent — its assignee is asked
+    ▶️ / ⛔ and the one-shot flags reset."""
+    print("task register: ⛔ helper (12.11.2026)")
+    import asyncio
+    import uuid
+    from pathlib import Path
+
+    from integrations.common.config import Settings, settings as cfg
+    from integrations.org_bot import ops_manager, store, task_picker
+    from integrations.org_bot import task_register as tr
+    from integrations.pulse import data as pulse_data
+
+    # schema / setting / labels
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    line = "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS helper_for UUID REFERENCES tasks(id) ON DELETE SET NULL;"
+    check_true("tasks.helper_for added idempotently before the analyst view",
+               line in schema and schema.index(line) < schema.index("CREATE OR REPLACE VIEW analyst.bot_tasks"))
+    line = "ALTER TABLE task_drafts ADD COLUMN IF NOT EXISTS helper_for UUID;"
+    check_true("task_drafts.helper_for added after the table",
+               line in schema and schema.index(line) > schema.index("CREATE TABLE IF NOT EXISTS task_drafts"))
+    check_true("'helper_asked' / 'helper_done' in the one task_events check",
+               "'helper_asked', 'helper_done'" in schema and schema.count("ADD CONSTRAINT task_events_event_check") == 1)
+    check("TASK_HELPER_ENABLED is off by default", Settings.model_fields["task_helper_enabled"].default, False)
+    check_true("PULSE labels both events in Uzbek",
+               pulse_data.TASK_EVENT_LABELS.get("helper_asked") == "Ёрдамчи тайинланди"
+               and pulse_data.TASK_EVENT_LABELS.get("helper_done") == "Ёрдам тайёр")
+
+    # store: dedupe, follow-up without unblocking, helping on the card, the escalation fragment
+    pending = inspect_source(store.helper_pending)
+    check_true("helper_pending: an open draft of the last day OR an open help task",
+               "task_drafts d WHERE d.helper_for = %s AND d.status = 'open'" in pending
+               and "tasks h WHERE h.helper_for = %s" in pending)
+    done = inspect_source(store.helper_done)
+    check_true("helper_done: one-shot flags reset, 'helper_done' logged, the status never changed",
+               "reminded_at = NULL, overdue_notified_at = NULL" in done and '"helper_done"' in done
+               and "status =" not in done.split("SET", 1)[1].split("WHERE", 1)[0])
+    check_true("HAS_OPEN_HELPER for the blocked escalation; HELPING on task_with_employee",
+               "h.helper_for = t.id" in store.HAS_OPEN_HELPER
+               and "{HELPING} AS helping" in inspect_source(store.task_with_employee))
+    check_true("create_task stores helper_for; create_task_draft too",
+               "depends_on, helper_for, code)" in inspect_source(store.create_task)
+               and "depends_code, helper_for)" in inspect_source(store.create_task_draft))
+
+    # texts and buttons
+    pid = str(uuid.uuid4())
+    kb = tr.helper_keyboard(pid)
+    data = kb["inline_keyboard"][0][0]["callback_data"]
+    check_true("🙋 button tbh:<uuid>, ≤ 64 bytes, routed by _handle_callback",
+               data == f"tbh:{pid}" and len(data.encode()) <= 64
+               and 'prefix == "tbh"' in inspect_source(ops_manager._handle_callback))
+    parent = {"id": pid, "code": "T-2026-11-0070", "task_summary": "<b>Омбор</b> ҳисобини топширинг",
+              "status": "blocked", "blocker": "Сканер ишламаяпти", "assigned_employee_id": "e1",
+              "director_telegram_user_id": 9, "employee_telegram_user_id": 71, "telegram_message_id": 30,
+              "priority": 1}
+    summary = tr.helper_summary(parent)
+    check_true("help summary: the parent's code and plain summary, never the blocker",
+               summary.startswith("T-2026-11-0070 «Омбор ҳисобини топширинг»") and "Сканер" not in summary
+               and "<b>" not in summary)
+    card = task_picker.card_text(summary, "Сканер <ишламаяпти>", [], blocker="Сканер <ишламаяпти>")
+    check_true("the draft shows the blocker (escaped) for him only, not as «Сиздан»",
+               "Тўсиқ</b> (фақат сизга кўринади): Сканер &lt;ишламаяпти&gt;" in card and "Сиздан" not in card)
+    check_true("status_line: «🙋 ёрдам: T-… (name)» on a blocked card",
+               "🙋 ёрдам: T-2026-11-0071 (Вали)" in tr.status_line({**parent, "helping": "T-2026-11-0071 (Вали)"})
+               and "🙋" not in tr.status_line({**parent, "status": "started", "helping": "T-2026-11-0071 (Вали)"}))
+    ready = tr.helper_ready_text(parent, "T-2026-11-0071")
+    rkb = tr.helper_ready_keyboard(parent)
+    check_true("help ready, still blocked: asked ▶️ / ⛔ (taskgo / taskblock), polite Cyrillic",
+               "давом эттира оласизми" in ready and [b["callback_data"] for b in rkb["inline_keyboard"][0]]
+               == [f"taskgo:{pid}", f"taskblock:{pid}"] and not latin_words(ready, {"T"}))
+    check_true("…unblocked by hand already: only told, no buttons",
+               tr.helper_ready_keyboard({**parent, "status": "started"}) is None
+               and "?" not in tr.helper_ready_text({**parent, "status": "started"}, "T-2026-11-0071"))
+    check_true("assigner lines", "ходимдан давом эттириш сўралди" in tr.helper_done_assigner_text(parent, "T-1")
+               and "ёрдам эди" in tr.helper_done_assigner_text({**parent, "status": "started"}, "T-1"))
+
+    # ⛔ to the assigner: the button only with the flag on
+    told: list = []
+    answers: list = []
+    replies: list = []
+
+    async def nothing(*a, **k):
+        return None
+
+    async def block(task_id, by, reason):
+        return {**parent, "id": task_id, "blocker": reason}
+
+    async def tell(task, text, run_id, reply_markup=None):
+        told.append(reply_markup)
+
+    async def answer(query_id, text=""):
+        answers.append(text)
+
+    async def reply(chat, run_id, text, reply_markup=None, reply_to=None):
+        replies.append((chat, text, reply_markup, reply_to))
+        return [777]
+
+    saved = [(store, "block_task", store.block_task)] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_refresh_task_card", "_reply", "_tell_assigner")]
+    store.block_task = block
+    ops_manager._refresh_task_card, ops_manager._reply, ops_manager._tell_assigner = nothing, reply, tell
+    saved_flag = cfg.task_helper_enabled
+    employee = {"telegram_user_id": 71, "full_name": "Али Валиев"}
+    try:
+        for flag in (False, True):
+            cfg.task_helper_enabled = flag
+            asyncio.run(ops_manager._consume_task_input(employee, {**parent, "awaiting": "blocker"},
+                                                        {"message_id": 5, "text": "Сканер ишламаяпти"}, uuid.uuid4()))
+        check_true("⛔ to the assigner: no button when off (the default), «🙋 Ёрдамчи тайинлаш» when on",
+                   told == [None, tr.helper_keyboard(pid)])
+    finally:
+        cfg.task_helper_enabled = saved_flag
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the tap: guards, then an ordinary draft (blocked person out, nobody ticked, source = the ⛔ message)
+    state = {"task": dict(parent), "pending": False}
+    drafts: list = []
+    people = [{"id": "e1", "role": "londry", "full_name": "Али Валиев", "telegram_user_id": 71},
+              {"id": "e2", "role": "londry", "full_name": "Вали Каримов", "telegram_user_id": 72},
+              {"id": "e3", "role": "it", "full_name": "Ҳасан", "telegram_user_id": 73}]
+
+    async def task_with_employee(task_id):
+        return state["task"]
+
+    async def helper_pending(parent_id):
+        return state["pending"]
+
+    async def active():
+        return [dict(p) for p in people] + [{"id": "d0", "role": ops_manager.DIRECTOR_ROLE, "full_name": "Бошлиқ"}]
+
+    async def create_draft(**kw):
+        drafts.append(kw)
+        return {"id": "dr1", **kw}
+
+    async def task_by_code(code):
+        raise AssertionError("a help draft never reads a dependency")
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("task_with_employee", "helper_pending", "list_active_employees",
+                                                         "create_task_draft", "set_task_draft_message",
+                                                         "log_conversation_turn", "task_by_code")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_answer", "_reply")]
+    store.task_with_employee, store.helper_pending, store.list_active_employees = task_with_employee, helper_pending, active
+    store.create_task_draft, store.set_task_draft_message, store.log_conversation_turn = create_draft, nothing, nothing
+    store.task_by_code = task_by_code
+    ops_manager._answer, ops_manager._reply = answer, reply
+    saved_flag = cfg.task_helper_enabled
+    cb = {"id": "q", "data": f"tbh:{pid}", "from": {"id": 9}, "message": {"message_id": 4400, "chat": {"id": 9}}}
+    try:
+        cfg.task_helper_enabled = False
+        check("off: the tap does nothing", asyncio.run(ops_manager._handle_callback(cb, uuid.uuid4())), "unrecognized")
+        cfg.task_helper_enabled = True
+        check("someone else taps: refused",
+              asyncio.run(ops_manager._handle_callback({**cb, "from": {"id": 71}}, uuid.uuid4())), "helper_refused")
+        state["task"] = {**parent, "status": "started"}
+        check("no longer blocked: refused", asyncio.run(ops_manager._handle_callback(cb, uuid.uuid4())),
+              "helper_not_blocked")
+        state["task"], state["pending"] = dict(parent), True
+        check("a help draft / task already open: refused (dedupe)",
+              asyncio.run(ops_manager._handle_callback(cb, uuid.uuid4())), "helper_pending")
+        state["pending"] = False
+        replies.clear()
+        out = asyncio.run(ops_manager._handle_callback(cb, uuid.uuid4()))
+        kw = drafts[-1]
+        check_true("the assigner's tap: a draft — source = the ⛔ message, helper_for = parent, the parent's priority",
+                   out == "helper_draft" and kw["source_message_id"] == 4400 and kw["helper_for"] == pid
+                   and kw["priority"] == 1 and kw["director_telegram_user_id"] == 9 and kw["depends_on"] is None)
+        check_true("…the blocked person left out, the Director never listed, nobody ticked",
+                   "e1" not in kw["candidate_ids"] and set(kw["candidate_ids"]) == {"e2", "e3"} and kw["selected_ids"] == [])
+        check_true("…its card shows the blocker to him, the summary without it",
+                   "Сканер ишламаяпти" in replies[-1][1] and "фақат сизга кўринади" in replies[-1][1]
+                   and "Сканер" not in kw["task_summary"])
+        check_true("…a different source from the parent's: never a shared copy of it",
+                   kw["source_message_id"] != parent.get("source_message_id"))
+    finally:
+        cfg.task_helper_enabled = saved_flag
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # 📨: the blocker never leaves the Director's chat; every copy carries helper_for
+    created: list = []
+    calls: list = []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *e):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **kw):
+            calls.append(text)
+            return [500]
+
+    async def none_list(*a, **k):
+        return []
+
+    async def create(**kw):
+        created.append(kw)
+        return {"id": f"h{len(created)}", "code": f"T-2026-11-007{len(created)}", "priority": 1, "status": "sent"}
+
+    draft = {"director_telegram_user_id": 9, "due_date": None, "source_message_id": 4400, "raw_message": "Сканер ишламаяпти",
+             "task_summary": summary, "has_media": False, "priority": 1, "helper_for": pid}
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("open_tasks_of", "create_task", "set_task_message_id")] + \
+            [(ops_manager, "TelegramBot", ops_manager.TelegramBot)]
+    store.open_tasks_of, store.create_task, store.set_task_message_id = none_list, create, nothing
+    ops_manager.TelegramBot = Bot
+    try:
+        sent = asyncio.run(ops_manager._send_task_cards(draft, people[1:], uuid.uuid4()))
+        check_true("📨 help task: every copy helper_for = parent, raw_message = the summary (no blocker), card without it",
+                   len(sent) == 2 and all(k["helper_for"] == pid and k["raw_message"] == summary for k in created)
+                   and all("Сканер" not in c and "T-2026-11-0070" in c for c in calls))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("the draft send calls the helper note only for a help draft",
+               'if sent and draft.get("helper_for"):' in inspect_source(ops_manager._handle_draft_send))
+
+    # after 📨: parent logs helper_asked, card redrawn, the blocked person told who helps
+    events: list = []
+    refreshed: list = []
+
+    async def log_event(task_id, event, actor, note=None):
+        events.append((task_id, event, note))
+
+    async def refresh(task, run_id, full=None):
+        refreshed.append(task["id"])
+
+    async def with_helping(task_id):
+        return {**parent, "helping": "T-2026-11-0071 (Вали Каримов)"}
+
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("log_task_event", "task_with_employee")] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_reply", "_refresh_task_card")]
+    store.log_task_event, store.task_with_employee = log_event, with_helping
+    ops_manager._reply, ops_manager._refresh_task_card = reply, refresh
+    try:
+        replies.clear()
+        asyncio.run(ops_manager._helper_sent(draft, people[1:], uuid.uuid4()))
+        check_true("sent: 'helper_asked' on the parent with the helpers' names, its card redrawn, its person told",
+                   events == [(pid, "helper_asked", "Вали Каримов, Ҳасан")] and refreshed == [pid]
+                   and replies[-1][0] == 71 and "Вали Каримов, Ҳасан" in replies[-1][1] and replies[-1][3] == 30)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # the help task accepted: the parent asked ▶️ / ⛔ (never unblocked here), the assigner one line
+    check_true("verify: an accepted help task → _helper_done", "await _helper_done(task" in
+               inspect_source(ops_manager._handle_task_verify))
+    asked: list = []
+    lines: list = []
+    state["parent"] = dict(parent)
+
+    async def helper_done(parent_id, code, by):
+        asked.append((parent_id, code))
+        return state["parent"]
+
+    async def tell2(task, text, run_id, reply_markup=None):
+        lines.append(text)
+
+    saved = [(store, "helper_done", store.helper_done)] + \
+            [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_reply", "_refresh_task_card", "_tell_assigner")]
+    store.helper_done = helper_done
+    ops_manager._reply, ops_manager._refresh_task_card, ops_manager._tell_assigner = reply, refresh, tell2
+    try:
+        replies.clear()
+        asyncio.run(ops_manager._helper_done({"id": "h1", "code": "T-2026-11-0071", "helper_for": pid}, uuid.uuid4(), "boss"))
+        check_true("accepted: the blocked person asked with ▶️ / ⛔ under his card; the assigner one line",
+                   asked == [(pid, "T-2026-11-0071")] and replies[-1][0] == 71 and replies[-1][2] == tr.helper_ready_keyboard(parent)
+                   and replies[-1][3] == 30 and len(lines) == 1 and "сўралди" in lines[0])
+        state["parent"] = None
+        replies.clear()
+        asyncio.run(ops_manager._helper_done({"id": "h1", "code": "T-2026-11-0071", "helper_for": pid}, uuid.uuid4(), "boss"))
+        check_true("…a parent already closed: nobody messaged", not replies and len(lines) == 1)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
+def test_task_ladder_1112() -> None:
+    """12.11.2026: the escalation ladder + deputies — the day-0 manager list counts as level 1; level 1 later only for
+    a task still at 0 (manager away → his deputy); the Director only when he didn't give it (overdue), after 3 days;
+    blocked: manager at 2 days, Director at 4; each step once; deputies only for a TEAM_OF manager, of his team."""
+    print("task register: escalation ladder and deputies (12.11.2026)")
+    import asyncio
+    from datetime import date as _date, datetime as _dt, timezone as _tz
+    from pathlib import Path
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import admin, store, task_tracker as tt
+
+    fri = _date(2026, 11, 13)
+    days = dict(tt.LADDER_DEFAULTS)
+    noticed = _dt(2026, 11, 12, 4, tzinfo=_tz.utc)
+    base = {"id": "t1", "status": "started", "due_date": _date(2026, 11, 11), "overdue_notified_at": noticed,
+            "escalation_level": 0, "employee_role": "garmin_sotuv", "director_telegram_user_id": 9,
+            "employee_telegram_user_id": 50, "assigned_employee_id": "e", "display_name": "Али",
+            "task_summary": "x", "source_message_id": 0}
+    check("overdue, notified yesterday, still at 0 → level 1", tt.ladder_steps(base, fri, days), [(1, "overdue", 2)])
+    check("already at level 1 → nothing until the Director's day", tt.ladder_steps({**base, "escalation_level": 1}, fri, days), [])
+    late = {**base, "due_date": _date(2026, 11, 9), "overdue_notified_at": _dt(2026, 11, 10, 4, tzinfo=_tz.utc),
+            "escalation_level": 1}
+    check("4 days late, at 1 → the Director", tt.ladder_steps(late, fri, days), [(2, "overdue", 4)])
+    check("not yet notified → no ladder", tt.ladder_steps({**base, "overdue_notified_at": None}, fri, days), [])
+    blocked = {**base, "due_date": None, "overdue_notified_at": None, "status": "blocked",
+               "blocked_since": _dt(2026, 11, 11, 4, tzinfo=_tz.utc)}
+    check("blocked 2 days → manager", tt.ladder_steps(blocked, fri, days), [(1, "blocked", 2)])
+    check("blocked with a helper → no blocked ladder", tt.ladder_steps({**blocked, "has_helper": True}, fri, days), [])
+    check("blocked 4 days → manager and Director",
+          [s[0] for s in tt.ladder_steps({**blocked, "blocked_since": _dt(2026, 11, 9, 4, tzinfo=_tz.utc)}, fri, days)],
+          [1, 2])
+
+    manager = {"id": "m", "telegram_user_id": 300, "status": "active", "full_name": "Бобур", "deputy_employee_id": "d"}
+    deputy = {"id": "d", "telegram_user_id": 301, "status": "active", "full_name": "Сардор"}
+    by_role = {"garmin_manager": [manager]}
+    team_of = {"garmin_manager": ("garmin_sotuv",)}
+    check("manager at work → he gets it",
+          [(p["id"], f) for p, f in tt.manager_targets(base, by_role, {"d": deputy}, team_of, fri)], [("m", None)])
+    check("manager excused → his deputy, with his name",
+          [(p["id"], f) for p, f in tt.manager_targets(base, by_role, {"d": deputy}, team_of, fri, {"m"})],
+          [("d", "Бобур")])
+    check("manager away, no deputy → nobody",
+          tt.manager_targets(base, by_role, {}, team_of, fri, {"m"}), [])
+    check("the manager gave it → not told", tt.manager_targets({**base, "director_telegram_user_id": 300}, by_role,
+                                                               {"d": deputy}, team_of, fri), [])
+    check("a deputy who is the assignee → not told",
+          tt.manager_targets({**base, "assigned_employee_id": "d"}, by_role, {"d": deputy}, team_of, fri, {"m"}), [])
+    sat = _date(2026, 11, 14)
+    check("Saturday: a Mon–Fri manager isn't present", tt.present(manager, sat), False)
+
+    directors = [{"telegram_user_id": 9}, {"telegram_user_id": 10}]
+    plan = tt.escalation_plan([late], fri, days, by_role, {"d": deputy}, directors, team_of)
+    check("overdue Director step skips the Director who gave it", [s["chat_id"] for s in plan], [10])
+    plan = tt.escalation_plan([{**blocked, "blocked_since": _dt(2026, 11, 9, 4, tzinfo=_tz.utc)}], fri, days, by_role,
+                              {"d": deputy}, directors, team_of)
+    check("blocked 4 days: manager + every Director but the one who gave it",
+          sorted((s["chat_id"], s["level"]) for s in plan), [(10, 2), (300, 1)])
+    shared = [{**late, "id": "s1", "source_message_id": 77}, {**late, "id": "s2", "source_message_id": 77}]
+    plan = tt.escalation_plan(shared, fri, days, by_role, {}, directors, team_of)
+    check("a shared task escalates once, every copy's id recorded",
+          [(len(s["tasks"]), sorted(s["ids"])) for s in plan], [(1, ["s1", "s2"])])
+    text = tt.escalation_text({"tasks": [{**base, "ladder_note": tt.ladder_note("overdue", 2)}], "level": 1,
+                               "deputy_for": "Бобур"})
+    check_true("deputy message names the manager, no Latin", "Бобур бугун ишда эмас" in text and "ўринбосари" in text)
+
+    check_true("deputies only for a TEAM_OF manager", admin.is_team_manager({"role": "garmin_manager"})
+               and not admin.is_team_manager({"role": "garmin_sotuv"}))
+    cands = [{"id": "aaaaaaaa-0000-0000-0000-000000000000", "full_name": "Сардор"}]
+    mid = "bbbbbbbb-0000-0000-0000-000000000000"
+    _, kb = admin.deputy_picker_view({"id": mid, "full_name": "Бобур", "deputy_employee_id": cands[0]["id"]}, cands)
+    datas = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+    check_true("deputy picker: callback_data ≤ 64 bytes, a clear button",
+               all(len(d.encode()) <= 64 for d in datas) and f"dps:x:{mid}" in datas)
+    _, kb = admin.employee_card({"id": mid, "role": "garmin_manager", "display_name": "b", "full_name": "Бобур",
+                                 "deputy_name": "Сардор", "deputy_employee_id": "x"})
+    check_true("manager card has 👥", any(b["callback_data"] == f"dep:{mid}" for row in kb["inline_keyboard"] for b in row))
+    note = admin.deputy_director_text({"full_name": "Бобур"}, None, "admin", "Ходим ўчирилди.")
+    check_true("Director told of a cleared deputy", "олиб ташланди" in note)
+
+    tracker = load_agent("task-tracker")
+    sent, marked = [], []
+
+    class _Bot:
+        async def send_message(self, text, chat_id):
+            sent.append(chat_id)
+
+    async def _tasks(today):
+        return [late]
+
+    async def _mark(ids, level, by, note):
+        marked.append((tuple(ids), level, note))
+        return len(ids)
+
+    saved = store.tasks_for_escalation, store.mark_task_escalated
+    store.tasks_for_escalation, store.mark_task_escalated = _tasks, _mark
+    try:
+        asyncio.run(tracker.escalate(_Bot(), fri, {"team_of": team_of, "managers_by_role": by_role, "deputies": {},
+                                                   "directors": directors, "excused": set()}))
+    finally:
+        store.tasks_for_escalation, store.mark_task_escalated = saved
+    check("escalate: sends then records the level", (sent, marked), (["10"], [(("t1",), 2, "director")]))
+
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("schema: escalation columns and deputy, ADD COLUMN IF NOT EXISTS",
+               "ADD COLUMN IF NOT EXISTS escalation_level" in schema
+               and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
+
+
+def test_task_ladder_fixes_1113() -> None:
+    """13.11.2026: the ladder review — the assigning Director never gets a ladder step (blocked too); a helper_done
+    restarts the blocked clock; ⛔ restarts the level; working days, not calendar days; a shared task across
+    departments; a failed recipient leaves the step unrecorded; day-0 manager list rules; PULSE labels."""
+    print("task register: escalation ladder fixes (13.11.2026)")
+    import asyncio
+    import re as _re
+    from datetime import date as _date, datetime as _dt, timezone as _tz
+    from pathlib import Path
+
+    from integrations.common.agent_loader import load_agent
+    from integrations.org_bot import store, task_tracker as tt
+    from integrations.pulse import data as pulse_data
+    from integrations.telegram.bot import TelegramError
+
+    days = dict(tt.LADDER_DEFAULTS)
+    fri, mon = _date(2026, 11, 13), _date(2026, 11, 16)
+    utc = lambda d, h=4: _dt(d.year, d.month, d.day, h, tzinfo=_tz.utc)  # noqa: E731
+    base = {"id": "t1", "status": "blocked", "due_date": None, "overdue_notified_at": None, "escalation_level": 0,
+            "employee_role": "garmin_sotuv", "director_telegram_user_id": 9, "employee_telegram_user_id": 50,
+            "assigned_employee_id": "e", "display_name": "Али", "task_summary": "x", "source_message_id": 0,
+            "blocked_since": utc(_date(2026, 11, 9))}
+    manager = {"id": "m", "telegram_user_id": 300, "status": "active", "full_name": "Бобур"}
+    by_role, team_of = {"garmin_manager": [manager]}, {"garmin_manager": ("garmin_sotuv",)}
+    directors = [{"telegram_user_id": 9}, {"telegram_user_id": 10}]
+    plan = tt.escalation_plan([{**base, "escalation_level": 1}], fri, days, by_role, {}, directors, team_of)
+    check("blocked task the Director gave: no level 2 to him, the other Director gets it",
+          [(s["chat_id"], s["level"]) for s in plan], [(10, 2)])
+
+    check_true("blocked clock counts from helper_done too",
+               "ev.event IN ('blocked', 'helper_done')) AS blocked_since" in Path(store.__file__).read_text(encoding="utf-8"))
+    helped = {**base, "blocked_since": utc(fri)}  # 5 days blocked, help accepted on Friday
+    check("helper_done yesterday, level 0 → nothing the next working day", tt.ladder_steps(helped, mon, days), [])
+    src = Path(store.__file__).read_text(encoding="utf-8")
+    block = src[src.index("async def block_task("):src.index("async def unblock_task(")]
+    check_true("⛔ restarts the ladder level", "escalation_level = 0" in block)
+    blocked_after = {**base, "escalation_level": 0, "due_date": _date(2026, 11, 2),
+                     "overdue_notified_at": utc(_date(2026, 11, 3)), "blocked_since": utc(_date(2026, 11, 11))}
+    check("overdue task (was level 1) blocked 2 days → the manager hears «тўсиқда»",
+          tt.ladder_steps(blocked_after, fri, days)[0], (1, "blocked", 2))
+
+    wed, thu = _date(2026, 11, 11), _date(2026, 11, 12)
+    check("working days: Fri→Mon = 1", tt.working_days_between(fri, mon), 1)
+    check("working days skip /dam days", tt.working_days_between(fri, mon, {mon}), 0)
+    late = {**base, "status": "started", "blocked_since": None, "due_date": wed, "overdue_notified_at": utc(thu),
+            "escalation_level": 1}
+    check("due Wed, notice Thu: no Director step on Monday", tt.ladder_steps(late, mon, days), [])
+    check("blocked on Friday: no manager step on Monday",
+          tt.ladder_steps({**base, "blocked_since": utc(fri)}, mon, days), [])
+
+    other = {**late, "id": "s2", "employee_role": "londry", "assigned_employee_id": "o", "employee_telegram_user_id": 51,
+             "source_message_id": 77, "escalation_level": 0, "due_date": _date(2026, 11, 9),
+             "overdue_notified_at": utc(_date(2026, 11, 10))}
+    mine = {**other, "id": "s1", "employee_role": "garmin_sotuv", "assigned_employee_id": "e",
+            "employee_telegram_user_id": 50}
+    plan = tt.escalation_plan([other, mine], fri, days, by_role, {}, directors, team_of)
+    lvl1 = [s for s in plan if s["level"] == 1]
+    check("shared task across departments: the Garmin manager told of his copy only",
+          [(s["chat_id"], s["ids"]) for s in lvl1], [(300, ["s1"])])
+
+    sends = [{"level": 2, "ids": ["a", "b"]}, {"level": 2, "ids": ["a"]}]
+    check("a failed Director send leaves the task below level 2",
+          tt.ids_to_mark(sends, {1}), [(2, "director", ["b"])])
+
+    tracker = load_agent("task-tracker")
+    marked = []
+
+    class _Bot:
+        async def send_message(self, text, chat_id):
+            if chat_id == "10":
+                raise TelegramError("x")
+
+    async def _tasks(today):
+        return [{**late, "due_date": _date(2026, 11, 2), "overdue_notified_at": utc(_date(2026, 11, 3))}]
+
+    async def _mark(ids, level, by, note):
+        marked.append((tuple(ids), level))
+        return len(ids)
+
+    saved = store.tasks_for_escalation, store.mark_task_escalated
+    store.tasks_for_escalation, store.mark_task_escalated = _tasks, _mark
+    try:
+        asyncio.run(tracker.escalate(_Bot(), fri, {"team_of": team_of, "managers_by_role": by_role, "deputies": {},
+                                                   "directors": directors + [{"telegram_user_id": 11}],
+                                                   "excused": set()}))
+    finally:
+        store.tasks_for_escalation, store.mark_task_escalated = saved
+    check("two Directors, one send fails → nothing recorded at level 2", marked, [])
+
+    team = {"team_of": team_of, "managers_by_role": by_role, "deputies": {}, "excused": set()}
+    check("day-0 manager list skips a task already at level 1",
+          tracker.managers_overdue([{**late, "escalation_level": 1}], team, fri), {})
+    agent_src = Path(tracker.__file__).read_text(encoding="utf-8")
+    check_true("day-0 manager list leaves out tasks waiting for proof",
+               'managers_overdue([t for t in overdue if t.get("awaiting") != "evidence"]' in agent_src)
+    check_true("day-0 deputy send recorded as 'deputy'", '"deputy" if send.get("deputy_for") else "manager")' in agent_src)
+    check_true("held overdue task stays in the assigner's list (hold is the person's note only)",
+               'overdue = [t for t in overdue if str(t["id"]) not in held_ids]' not in agent_src
+               and "next_day_at_work(task, today, off_days) if str(task[\"id\"]) in held_ids" in agent_src)
+
+    schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
+    m = schema[schema.rindex("ADD CONSTRAINT task_events_event_check"):]
+    events = _re.findall(r"'([a-z_]+)'", m[:m.index("));")])
+    check("every task event has a PULSE label", [e for e in events if e not in pulse_data.TASK_EVENT_LABELS], [])
+
+
 def main() -> int:
     """Run every check.
 
@@ -12518,6 +14554,15 @@ def main() -> int:
         test_answer_polish_1111,
         test_sales_facts_cancelled_1111,
         test_internal_jobs_1111,
+        test_task_crosscutting_1112,
+        test_task_rework_1112,
+        test_task_accepter_1112,
+        test_task_expected_1112,
+        test_task_reminders_1112,
+        test_task_dependency_1112,
+        test_task_helper_1112,
+        test_task_ladder_1112,
+        test_task_ladder_fixes_1113,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

@@ -134,7 +134,8 @@ The owner: don't send the AI whole data sets — send the structure and let it f
   `sap_supplier_balances`, `sap_customers`, `sap_products`, `sap_stock`, `sap_stock_by_warehouse`,
   `sap_item_sales_90d`, `sap_po_open`, `sap_orders_open`, `sap_service_calls`, `sap_equipment`,
   `sap_service_contracts`, `sap_warehouses`, `sap_sales_people`, `ar_open`, `sales_month`; Director only:
-  `bot_tasks`, `bot_daily_reports` (states, never texts). Amounts keep their unit in the name (`_usd` SAP local,
+  `bot_tasks`, `bot_daily_reports` (states, never texts; `bot_tasks.shared_key` = the task's own code when it
+  has no source message — 12.11; `bot_tasks.returns` = times returned for rework, appended 12.11; `bot_tasks.accepter` = the manager who checks the proof instead of the Director, NULL = the Director, appended 12.11; `bot_tasks.has_expected_result` = the Director said what must exist when it is done, a flag only, appended 12.11; `bot_tasks.waiting_for` = the T- code the task still waits for, NULL = not waiting, appended last 12.11). Amounts keep their unit in the name (`_usd` SAP local,
   `_som` so'm, `_doc` the document's currency); dates are the date part of SAP's text (no timestamp casts);
   `analyst.num` / `analyst.day` turn a stray value into NULL instead of failing the query; `name_key` /
   `item_key` = one Latin skeleton for Cyrillic and Latin names (`analyst.name_key`, mirrored by

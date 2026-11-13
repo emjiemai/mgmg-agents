@@ -5,7 +5,11 @@ then silently stall, because nobody is reminded. This agent does the
 reminding so the Director doesn't have to.
 
   --morning (08:00, with the other morning agents)
-      * Employees whose open task is due today or tomorrow get one reminder.
+      * Employees whose open task is due today or tomorrow get one reminder; on the
+        last working day before a weekend or /dam days, also tasks due on those days
+        (never the next working day — its own morning says «бугун»).
+      * Someone not at work this morning (their week, an excused day) gets nothing
+        and nothing is marked: their next working morning catches it.
       * Tasks that just went past their deadline: the employee is told once,
         and the Director gets one message listing all of them.
       * ✅ Бажардим pressed before today and still no proof (2026-11-04): the
@@ -89,17 +93,27 @@ async def morning(run_id: uuid.UUID) -> None:
         log.info("Weekend — no task reminders today")
         return
 
-    due_soon = await store.tasks_needing_reminder(today)
+    off_days = await store.days_off_between(today + timedelta(days=1), today + timedelta(days=21))
+    due_soon = await store.tasks_needing_reminder(today, task_tracker.remind_until(today, off_days))
     overdue = await store.tasks_newly_overdue(today)
     proof = await store.tasks_proof_missing(today)  # ✅ pressed, no proof since (2026-11-04)
-    log.info("{} task(s) due soon, {} newly overdue, {} waiting for proof", len(due_soon), len(overdue), len(proof))
-    if settings.dry_run:
+    # Not at work this morning (their week, or an excused day): nothing noted or marked — their next working
+    # morning catches it, as an overdue line once the date has passed (2026-11-12).
+    excused = {str(r["id"]) for r in await store.excused_between(today, today)}
+    # The hold is the employee's own note only (2026-11-13): an overdue task of someone off still reaches the
+    # assigner and the manager; the person's line is left for his next working morning.
+    held = [t for t in due_soon + overdue if task_tracker.held_today(t, today, excused)]
+    held_ids = {str(t["id"]) for t in held}
+    due_soon = [t for t in due_soon if str(t["id"]) not in held_ids]
+    log.info("{} task(s) due soon, {} newly overdue, {} waiting for proof, {} held (not at work today)",
+             len(due_soon), len(overdue), len(proof), len(held))
+    if settings.dry_run:  # codes only — no task text in the logs
         for task in due_soon:
-            log.info("[dry-run] remind {}: {}", task["display_name"], task["task_summary"][:60])
+            log.info("[dry-run] remind: {}", task.get("code"))
         for task in overdue:
-            log.info("[dry-run] overdue {}: {}", task["display_name"], task["task_summary"][:60])
+            log.info("[dry-run] overdue: {}", task.get("code"))
         for task in proof:
-            log.info("[dry-run] proof missing {}: {}", task["display_name"], task["task_summary"][:60])
+            log.info("[dry-run] proof missing: {}", task.get("code"))
         return
 
     # ✅ Бажардим without the proof: told once per tap, how to send it (the card itself shows the ask too).
@@ -121,14 +135,30 @@ async def morning(run_id: uuid.UUID) -> None:
             continue
         await store.mark_task_reminded(str(task["id"]))
 
+    try:
+        team = await team_context(today, excused)
+    except Exception as exc:  # noqa: BLE001 — the assigners' lists still go; tomorrow the ladder retries
+        log.error("Team context not read: {}", type(exc).__name__)
+        team = None
+    if team is None:
+        team = {"team_of": {}, "managers_by_role": {}, "deputies": {}, "directors": [], "excused": excused}
+    # ✅ pressed (waiting for proof) is not «late» for the manager either — the ladder skips it the same way.
+    managers = managers_overdue([t for t in overdue if t.get("awaiting") != "evidence"], team, today)
+    manager_told = {str(t["id"]) for send in managers.values() for t in send["tasks"]}
     async with _bot(run_id) as bot:
         by_director: dict[int, list[dict]] = defaultdict(list)
         for task in overdue:
+            by_director[task["director_telegram_user_id"]].append(task)
+            if task.get("awaiting") == "evidence":
+                continue  # ✅ pressed: the proof line says what's missing — no overdue line on top (2026-11-12)
+            detail = {**_task_detail(task, today, overdue=True),
+                      **task_tracker.overdue_told(task, str(task["id"]) in manager_told)}
+            note_day = (task_tracker.next_day_at_work(task, today, off_days) if str(task["id"]) in held_ids
+                        else today)
             try:
-                await store.add_morning_note(_who(task), today, "task", _task_detail(task, today, overdue=True))
+                await store.add_morning_note(_who(task), note_day, "task", detail)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Overdue note not saved: {}", type(exc).__name__)
-            by_director[task["director_telegram_user_id"]].append(task)
 
         for director_id, tasks in by_director.items():
             try:
@@ -142,32 +172,83 @@ async def morning(run_id: uuid.UUID) -> None:
                 await store.mark_task_overdue_notified(str(task["id"]))
 
         # Escalation (2026-11-10): the person's department manager hears of their overdue tasks too, unless they gave
-        # them (report_calendar.TEAM_OF: today the Garmin manager for Garmin сотув).
-        for manager_id, tasks in (await managers_overdue(overdue)).items():
+        # them (report_calendar.TEAM_OF: today the Garmin manager for Garmin сотув) — or his deputy when he isn't at
+        # work today (2026-11-12). A send that went out is the ladder's level 1 (no second manager message later).
+        for send in managers.values():
             try:
-                await bot.send_message(task_tracker.overdue_director_text(tasks), chat_id=str(manager_id))
+                await bot.send_message(task_tracker.overdue_director_text(
+                    send["tasks"], head=task_tracker.escalation_head(len(send["tasks"]), 1, send.get("deputy_for"))
+                    if send.get("deputy_for") else None), chat_id=str(send["chat_id"]))
             except TelegramError as exc:
                 log.warning("Could not send the overdue list to a department manager: {}", type(exc).__name__)
+                continue
+            await store.mark_task_escalated([str(t["id"]) for t in send["tasks"]], 1, AGENT,
+                                            "deputy" if send.get("deputy_for") else "manager")
+
+        # The ladder (2026-11-12): still overdue / still blocked days later → the manager (or deputy), then the
+        # Director (never the one who gave an overdue task — he had the day-0 list). Each step once per task.
+        if settings.task_escalation_enabled and team["team_of"]:
+            try:
+                await escalate(bot, today, team, off_days)
+            except Exception as exc:  # noqa: BLE001 — never stops the morning; unsent steps are retried tomorrow
+                log.error("Escalation failed: {}", type(exc).__name__)
 
     # Anyone the bot still has no real name for (joined before names were
     # asked, or never answered): one question each, once (names.py).
     await names.ask_missing_names(run_id)
 
 
-async def managers_overdue(overdue: list[dict]) -> dict[int, list[dict]]:
-    """The overdue tasks each department manager should see: their team's, not the ones they assigned themselves."""
+async def team_context(today, excused: set[str]) -> dict:
+    """The TEAM_OF managers (by role), their deputies (only ones of their team, by id), the Directors and who is
+    excused today — read once for the day-0 list and the ladder."""
     from integrations.org_bot.report_calendar import TEAM_OF
 
-    out: dict[int, list[dict]] = defaultdict(list)
-    for manager_role, team in TEAM_OF.items():
-        tasks = [t for t in overdue if t.get("employee_role") in team]
-        if not tasks:
-            continue
-        for manager in await store.active_employees_by_role(manager_role):
-            mine = [t for t in tasks if t.get("director_telegram_user_id") != manager["telegram_user_id"]]
-            if mine:
-                out[int(manager["telegram_user_id"])].extend(mine)
-    return dict(out)
+    managers_by_role = {role: await store.active_employees_by_role(role) for role in TEAM_OF}
+    deputies: dict[str, dict] = {}
+    for managers in managers_by_role.values():
+        for manager in managers:
+            if not manager.get("deputy_employee_id"):
+                continue
+            for person in await store.deputy_candidates(manager):  # a deputy no longer in his team is ignored
+                if str(person["id"]) == str(manager["deputy_employee_id"]):
+                    deputies[str(person["id"])] = person
+    return {"team_of": TEAM_OF, "managers_by_role": managers_by_role, "deputies": deputies,
+            "directors": await store.active_employees_by_role(DIRECTOR_ROLE), "excused": excused}
+
+
+def managers_overdue(overdue: list[dict], team: dict, today) -> dict[int, dict]:
+    """The overdue tasks each department manager (or his deputy, when he isn't at work) should see: their team's,
+    not the ones they assigned themselves. ``{chat_id: {"chat_id", "deputy_for", "tasks"}}``."""
+    out: dict[int, dict] = {}
+    for task in overdue:
+        if int(task.get("escalation_level") or 0) >= 1:
+            continue  # the day-0 manager list went already (an assigner's failed send brings the task back)
+        for person, deputy_for in task_tracker.manager_targets(
+                task, team["managers_by_role"], team["deputies"], team["team_of"], today, team["excused"]):
+            chat = int(person["telegram_user_id"])
+            out.setdefault(chat, {"chat_id": chat, "deputy_for": deputy_for, "tasks": []})["tasks"].append(task)
+    return out
+
+
+async def escalate(bot: TelegramBot, today, team: dict, off_days=frozenset()) -> int:
+    """Send this morning's ladder steps; a step is recorded only after every send of that level for the task went
+    out (a failed recipient → tomorrow retries). Logs counts only."""
+    tasks = await store.tasks_for_escalation(today)
+    sends = task_tracker.escalation_plan(
+        tasks, today, task_tracker.ladder_days(settings), team["managers_by_role"], team["deputies"],
+        team["directors"], team["team_of"], team["excused"], off_days)
+    failed: set[int] = set()
+    for i, send in enumerate(sends):
+        try:
+            await bot.send_message(task_tracker.escalation_text(send), chat_id=str(send["chat_id"]))
+        except TelegramError as exc:
+            log.warning("Could not send a ladder step: {}", type(exc).__name__)
+            failed.add(i)
+    for level, note, ids in task_tracker.ids_to_mark(sends, failed):
+        await store.mark_task_escalated(ids, level, AGENT, note)
+    sent = len(sends) - len(failed)
+    log.info("Escalation: {} task(s) looked at, {} message(s) sent", len(tasks), sent)
+    return sent
 
 
 async def weekly(run_id: uuid.UUID, force: bool = False) -> None:
@@ -185,7 +266,8 @@ async def weekly(run_id: uuid.UUID, force: bool = False) -> None:
         else None
     )
     permissions = await store.permission_counts_between(start, today) if settings.permissions_enabled else None
-    text = task_tracker.weekly_text(start, today, tasks, reports, permissions)
+    rework = await store.returns_between(start, today)  # ↩️ returns this week (2026-11-12)
+    text = task_tracker.weekly_text(start, today, tasks, reports, permissions, rework)
 
     directors = await store.active_employees_by_role(DIRECTOR_ROLE)
     if settings.dry_run:

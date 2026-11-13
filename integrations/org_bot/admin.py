@@ -721,6 +721,8 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         lines.append(f"Вазифалари: {'юкланган' if (emp.get('responsibilities') or '').strip() else 'ҳали юкланмаган'}")
         lines.append(f"AI жавоб тили: {data_access.lang_label(emp)}")
         lines.append(data_access.card_line(emp))
+        if is_team_manager(emp):  # 12.11: who gets the escalation ladder's step when he isn't at work
+            lines.append(f"Ўринбосар: {escape(emp.get('deputy_name') or ('белгиланган' if emp.get('deputy_employee_id') else 'йўқ'))}")
     if note:
         lines += ["", note]
     employee_id = emp["id"]
@@ -763,11 +765,81 @@ def employee_card(emp: dict[str, Any], note: str = "") -> tuple[str, dict[str, A
         access_buttons = data_access.card_buttons(emp)
         if access_buttons:
             rows.append(access_buttons)
+        # A department manager's deputy (2026-11-12): one of his team; the Director is told of each change.
+        if is_team_manager(emp):
+            rows.append([{"text": "👥 Ўринбосар", "callback_data": f"dep:{employee_id}"}])
     rows += [
         [{"text": "🗑 Ўчириш", "callback_data": f"rmask:{employee_id}"}],
         [{"text": "← Рўйхат", "callback_data": "emplist:all"}],
     ]
     return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def is_team_manager(emp: dict[str, Any]) -> bool:
+    """A department manager with a team (report_calendar.TEAM_OF) — the only role that can have a deputy."""
+    from integrations.org_bot.report_calendar import TEAM_OF
+
+    return emp.get("role") in TEAM_OF
+
+
+def _person_name(emp: dict[str, Any] | None) -> str:
+    if not emp:
+        return "—"
+    return (emp.get("full_name") or "").strip() or emp.get("display_name") or "—"
+
+
+def deputy_picker_view(manager: dict[str, Any], candidates: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    """Pick a manager's deputy from his team. A button carries the first 8 characters of the person's id (≤ 64 bytes),
+    matched again against the team on the tap."""
+    text = (f"👥 <b>{escape(_person_name(manager))}</b> учун ўринбосар:\n"
+            "<i>У ишда бўлмаган куни муддати ўтган ва тўсиқда турган топшириқлар ўринбосарга боради. "
+            "Директорга хабар берилади.</i>")
+    current = str(manager.get("deputy_employee_id") or "")
+    rows = [[{"text": f"{'✅ ' if str(p['id']) == current else ''}{_person_name(p)}",
+              "callback_data": f"dps:{str(p['id'])[:8]}:{manager['id']}"}] for p in candidates[:30]]
+    if not candidates:
+        text += "\n\n<i>Жамоасида фаол ходим йўқ.</i>"
+    if current:
+        rows.append([{"text": "❌ Ўринбосарсиз", "callback_data": f"dps:x:{manager['id']}"}])
+    rows.append([{"text": "← Орқага", "callback_data": f"emp:{manager['id']}"}])
+    return text, {"inline_keyboard": rows}
+
+
+def deputy_director_text(manager: dict[str, Any], deputy: dict[str, Any] | None, by: str, reason: str = "") -> str:
+    """What the Director is told when a manager's deputy changes (names only)."""
+    head = (f"👥 <b>{escape(_person_name(manager))}</b> ўринбосари: <b>{escape(_person_name(deputy))}</b>"
+            if deputy else f"👥 <b>{escape(_person_name(manager))}</b> ўринбосари олиб ташланди")
+    return head + (f"\n<i>{escape(reason)}</i>" if reason else "") + f"\n<i>Ўзгартирди: {escape(by)}</i>"
+
+
+async def _with_deputy(emp: dict[str, Any]) -> dict[str, Any]:
+    """The card row with the deputy's name (only a manager has one)."""
+    if not emp or not emp.get("deputy_employee_id"):
+        return emp
+    deputy = await store.get_employee(str(emp["deputy_employee_id"]))
+    return {**emp, "deputy_name": _person_name(deputy)} if deputy else emp
+
+
+async def _tell_director_text(text: str, run_id: uuid.UUID) -> None:
+    """A plain notice to every active Director in OPS Manager Bot; never fatal."""
+    try:
+        directors = await store.active_employees_by_role(DIRECTOR_ROLE)
+        async with TelegramBot(
+            agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
+        ) as bot:
+            for director in directors:
+                try:
+                    await bot.send_message(text, chat_id=str(director["telegram_user_id"]))
+                except TelegramError as exc:
+                    log.warning("Could not tell the Director: {}", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — the change itself already happened
+        log.error("Director notice failed: {}", type(exc).__name__)
+
+
+async def _tell_deputies_cleared(managers: list[dict[str, Any]] | None, by: str, reason: str, run_id: uuid.UUID) -> None:
+    """Someone left / changed role and a deputy link went with it: the Director hears of each manager's change."""
+    for manager in managers or []:
+        await _tell_director_text(deputy_director_text(manager, None, by, reason), run_id)
 
 
 def address_text(emp: dict[str, Any]) -> str:
@@ -1211,7 +1283,7 @@ async def _tell_employee(telegram_user_id: int, text: str, run_id: uuid.UUID) ->
 
 EMPLOYEE_ACTIONS = (
     "emp", "emplist", "rename", "rerole", "cr", "rmask", "nameok", "nameno", "wsat", "wsun", "addr", "aich", "chof",
-    "rpof", "lng", "dacc", "wd0", "wd1", "wd2", "wd3", "wd4", "wd5", "wd6",
+    "rpof", "lng", "dacc", "dep", "dps", "wd0", "wd1", "wd2", "wd3", "wd4", "wd5", "wd6",
 )
 
 
@@ -1238,6 +1310,9 @@ async def _handle_employee_action(
         if role_slug not in ROLE_SLUGS:
             await _answer(query_id, "Номаълум роль")
             return "unrecognized"
+    deputy_key = None
+    if action == "dps":  # 👥 picked: "<first 8 of the deputy's id | x>:<manager id>"
+        deputy_key, _, employee_id = target.partition(":")
     if action == "dacc":
         system, _, employee_id = target.partition(":")
         if system not in data_access.SYSTEMS:
@@ -1250,8 +1325,38 @@ async def _handle_employee_action(
         return "not_found"
 
     if action == "emp":
-        text, keyboard = employee_card(employee)
+        text, keyboard = employee_card(await _with_deputy(employee))
         await _edit(callback, text, keyboard, run_id)
+    elif action == "dep":
+        if not is_team_manager(employee):
+            await _answer(query_id, "Фақат бўлим раҳбари учун")
+            return "deputy_refused"
+        text, keyboard = deputy_picker_view(employee, await store.deputy_candidates(employee))
+        await _edit(callback, text, keyboard, run_id)
+    elif action == "dps":
+        if not is_team_manager(employee):
+            await _answer(query_id, "Фақат бўлим раҳбари учун")
+            return "deputy_refused"
+        deputy = None
+        if deputy_key != "x":
+            matches = [p for p in await store.deputy_candidates(employee) if str(p["id"]).startswith(deputy_key or "-")]
+            if len(matches) != 1:
+                await _answer(query_id, "Ходим жамоада топилмади")
+                return "deputy_refused"
+            deputy = matches[0]
+        updated = await store.set_deputy(employee_id, str(deputy["id"]) if deputy else None, decided_by)
+        if updated is None:
+            await _answer(query_id, "Ўзгармади")
+            return "deputy_unchanged"
+        note = (f"👥 Ўринбосар: {escape(_person_name(deputy))}. Директорга хабар берилди." if deputy
+                else "👥 Ўринбосар олиб ташланди. Директорга хабар берилди.")
+        text, keyboard = employee_card(await _with_deputy(updated), note)
+        await _edit(callback, text, keyboard, run_id)
+        await _tell_director_text(deputy_director_text(updated, deputy, decided_by), run_id)
+        await log_action(
+            agent=AGENT, action="deputy_changed", target_system="postgres", status="success", run_id=run_id,
+            target_ref=employee_id, mode="write", payload={"by": decided_by, "set": deputy is not None},
+        )
     elif action == "rerole":
         text, keyboard = role_picker_view(employee)
         await _edit(callback, text, keyboard, run_id)
@@ -1356,6 +1461,9 @@ async def _handle_employee_action(
             return "role_unchanged"
         before, after = changed
         cancelled = after.pop("tasks_cancelled", 0)  # a clean start in the new role (store.change_employee_role)
+        await _resend_reviews(after.pop("reviews_to_resend", None), run_id)  # he no longer checks others' proof
+        await _release_dependants(after.pop("cancelled_task_ids", None), run_id)  # tasks that waited for his
+        await _tell_deputies_cleared(after.pop("deputies_cleared", None), decided_by, "Ходимнинг роли ўзгарди.", run_id)
         if menus.role_menu(before["role"]) or menus.role_menu(after["role"]):  # the ☰ menu follows the role (menus.py)
             await menus.sync_person(after["telegram_user_id"], after["role"])
         # Data access belongs to Бухгалтерия / Молия, and a role-given one (Garmin manager) to that
@@ -1612,6 +1720,31 @@ async def _handle_role_decision(
     return f"role_{decision}"
 
 
+async def _resend_reviews(task_ids: list[str] | None, run_id: uuid.UUID) -> None:
+    """An accepting manager left or changed role (2026-11-12): the review cards waiting for him go to the assigner
+    through OPS Manager Bot (``ops_manager.resend_reviews_to_assigner``). Never fatal to the admin's action."""
+    if not task_ids:
+        return
+    from integrations.org_bot import ops_manager  # local import breaks the admin<->ops_manager cycle
+    try:
+        await ops_manager.resend_reviews_to_assigner(list(task_ids), run_id)
+    except Exception as exc:  # noqa: BLE001 — the removal / role change itself already happened
+        log.error("Could not re-send reviews to the assigner: {}", type(exc).__name__)
+
+
+async def _release_dependants(task_ids: list[str] | None, run_id: uuid.UUID) -> None:
+    """His open tasks were cancelled (removed / role changed): tasks that waited for them are released — unless a
+    colleague's copy of a shared one is still open — through OPS Manager Bot (``ops_manager.release_dependants``,
+    2026-11-12). Never fatal to the admin's action."""
+    if not task_ids:
+        return
+    from integrations.org_bot import ops_manager  # local import breaks the admin<->ops_manager cycle
+    try:
+        await ops_manager.release_dependants(list(task_ids), run_id, by="admin", cancelled=True)
+    except Exception as exc:  # noqa: BLE001 — the removal / role change itself already happened
+        log.error("Could not release waiting tasks: {}", type(exc).__name__)
+
+
 async def _handle_remove_user(
     employee_id: str, query_id: str, removed_by: str, callback: dict[str, Any], run_id: uuid.UUID
 ) -> str:
@@ -1627,6 +1760,9 @@ async def _handle_remove_user(
         return "already_removed"
     # revoke_employee closed everything (data access, AI memory, open tasks); the Director
     # is told when data access was open (data_access.py).
+    await _resend_reviews(employee.get("reviews_to_resend"), run_id)  # proofs he was to check → the assigner
+    await _release_dependants(employee.get("cancelled_task_ids"), run_id)  # tasks that waited for his
+    await _tell_deputies_cleared(employee.get("deputies_cleared"), removed_by, "Ходим ўчирилди.", run_id)
     if employee.get("had_data_access"):
         await _tell_director_data_access({**employee, "data_access": []}, removed_by, run_id)
     if menus.role_menu(employee.get("role")):  # back to the plain ☰ menu (menus.py)

@@ -19,7 +19,7 @@ The 08:00 agents that speak to employees leave a note instead of sending:
 | ---- | ---- | ------ |
 | `bonus` | agents/report-bonus | yesterday's date, the points given (0/1), the month's total, sent / missed / built from messages |
 | `ask` | agents/explanations | «absent» (the days) or «report» (yesterday), the explanation ids |
-| `task` | agents/task-tracker --morning | code, summary, due date, overdue or not; `proof: true` = ✅ pressed before today, no proof yet (04.11 — «…«Бажардим» босилган, лекин далил келмаган — топшириқ картасига жавоб қилиб далил юборинг») |
+| `task` | agents/task-tracker --morning | code, summary, due date, overdue or not; `proof: true` = ✅ pressed before today, no proof yet (04.11 — «…«Бажардим» босилган, лекин далил келмаган — топшириқ картасига жавоб қилиб далил юборинг»); 12.11: a deadline more than a day ahead (Friday → the weekend, before /dam days) is named by its weekday («муддати якшанба, 15.11»); an overdue note carries `told` (`director` / `assigner`) and `manager` → «директорга / топшириқ берган кишига [ва бўлим раҳбарига] хабар берилди»; a ✅-pressed copy gets no overdue note; someone not at work that morning gets no task note (spec 08); 12.11 `released: true` (+ `after`, `cancelled`) = a task whose wait ended while he was off, left by `ops_manager.release_dependants` for his next working day → «T-… қабул қилинди, энди T-… «…» топшириғини бошлашингиз мумкин, муддати 16.11» |
 
 `run_morning_agents.py`: brief → report-bonus → explanations → task-tracker --morning → **morning-notes** → the rest.
 

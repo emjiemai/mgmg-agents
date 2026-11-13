@@ -673,9 +673,10 @@ def shared_tasks(tasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
 
 def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Open tasks that need the Director's eye, most urgent first, and the counts — a shared task once, in the state
-    of the copy furthest along (in review > proof awaited > blocked > overdue > today)."""
+    of the copy furthest along (in review > proof awaited > waiting for another task > blocked > overdue > today).
+    A task waiting for another T- code (2026-11-12) is «кутмоқда T-…», never red: its time hasn't started."""
     groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "asked": [], "proof": [], "review": [],
-                                               "today": []}
+                                               "waiting": [], "today": []}
     # Priority first within each group (2026-11-10): P1 («🔴») before the rest.
     shared = sorted(shared_tasks(tasks), key=lambda copies: min(int(c.get("priority") or 2) for c in copies))
     for copies in shared:
@@ -685,6 +686,9 @@ def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, An
         who = (t.get("display_name") or "") + (f" +{len(copies) - 1}" if len(copies) > 1 else "")
         urgent = "🔴 " if any(int(c.get("priority") or 2) == 1 for c in copies) else ""
         text = urgent + _short(t.get("task_summary") or "")
+        returned = max(int(c.get("returns") or 0) for c in copies)  # rework (2026-11-12): returned N times
+        if returned:
+            text += f" · ↩️{returned}"
         asked = next((c.get("proposed_due") for c in copies if c.get("proposed_due") and c.get("awaiting") != "reschedule"
                       and c.get("status") in ("sent", "started", "blocked")), None)
         late = f"{(day - due).days} кун ўтди · " if due is not None and due < day else ""
@@ -696,13 +700,16 @@ def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, An
         elif any(c.get("awaiting") == "evidence" for c in copies):
             # ✅ Бажардим pressed, the proof not in yet (2026-11-04): the person's step, not red for the Director.
             groups["proof"].append({"who": who, "what": f"далил кутилмоқда · {text}", "alert": False})
+        elif all(c.get("waiting_for") for c in copies):
+            groups["waiting"].append({"who": who, "what": f"кутмоқда {copies[0]['waiting_for']} · {text}", "alert": False})
         elif any(c.get("status") == "blocked" for c in copies):
             groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
         elif due is not None and due < day:
             groups["overdue"].append({"who": who, "what": f"{(day - due).days} кун ўтди · {text}", "alert": True})
         elif due == day:
             groups["today"].append({"who": who, "what": f"бугун · {text}", "alert": False})
-    rows = groups["overdue"] + groups["blocked"] + groups["asked"] + groups["proof"] + groups["review"] + groups["today"]
+    rows = (groups["overdue"] + groups["blocked"] + groups["asked"] + groups["proof"] + groups["review"]
+            + groups["waiting"] + groups["today"])
     return rows, {**{k: len(v) for k, v in groups.items()}, "open": len(shared)}
 
 
@@ -712,7 +719,7 @@ def tasks_block(data: BriefData) -> dict[str, Any]:
         return _people_block("Топшириқлар", "task", None, "", "warn", [], "маълумот олиб бўлмади")
     rows, n = task_rows(data.tasks, today_local())
     parts = [f"{n['open']} та очиқ"]
-    for key, word in (("overdue", "ўтган"), ("blocked", "тўсиқ"), ("asked", "муддат сўрови")):
+    for key, word in (("overdue", "ўтган"), ("blocked", "тўсиқ"), ("asked", "муддат сўрови"), ("waiting", "кутмоқда")):
         if n[key]:
             parts.append(f"{n[key]} {word}")
     tone = "alert" if (n["overdue"] or n["blocked"] or n["asked"]) else "ok"

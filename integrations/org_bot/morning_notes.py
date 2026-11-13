@@ -7,7 +7,9 @@ The 08:00 agents that speak to employees no longer send on their own. Each leave
 
   * **bonus** — the report bonus (agents/report-bonus): +1 for yesterday's report, or why not this time;
   * **ask** — the «why weren't you at work / where's yesterday's report?» question (agents/explanations);
-  * **task** — a task due today or tomorrow, or one that just went overdue (agents/task-tracker --morning).
+  * **task** — a task due today or tomorrow (on Friday also over the weekend / /dam days, by weekday name), or
+    one that just went overdue, saying who was told (agents/task-tracker --morning); or (2026-11-12, ``released``)
+    a task whose wait ended while the person was off — he may start it now (ops_manager.release_dependants).
 
 Then agents/morning-notes sends each person ONE message: the facts as short lines and the question, if any,
 last — with its button (📝 send yesterday's report). A missed report is said once: inside the question
@@ -27,6 +29,7 @@ from integrations.common.config import settings
 from integrations.common.db import log_action
 from integrations.common.logging_setup import setup_logging
 from integrations.org_bot import explanations, names
+from integrations.org_bot.task_tracker import WEEKDAYS_UZ
 from integrations.org_bot.tone import casual
 from integrations.telegram.bot import TelegramBot, TelegramError, escape
 
@@ -62,10 +65,22 @@ def task_line(d: dict[str, Any]) -> str:
     if d.get("proof"):  # ✅ pressed, the proof never came (2026-11-04)
         return (f"{code}«{what}» топшириғида «Бажардим» босилган, лекин далил келмаган — топшириқ картасига жавоб "
                 "қилиб далил юборинг, шунда текширувга ўтади")
+    if d.get("released"):  # what it waited for is over (2026-11-12): he may start now
+        after = escape(str(d.get("after") or ""))
+        why = "бекор қилинди" if d.get("cancelled") else "қабул қилинди"
+        tail = f", муддати {_day(d['due']):%d.%m}" if d.get("due") else ""
+        return f"{after} {why}, энди {code}«{what}» топшириғини бошлашингиз мумкин{tail}"
     due = _day(d["due"])
     if d.get("overdue"):
-        return f"{code}«{what}» топшириғининг муддати ўтди ({due:%d.%m}), директорга хабар берилди"
-    when = "бугун" if due == _day(d.get("today") or due) else "эртага"
+        # 2026-11-12: who was really told — the Director, or whoever gave it; the department manager too
+        who = "топшириқ берган кишига" if d.get("told") == "assigner" else "директорга"
+        if d.get("manager"):
+            who += " ва бўлим раҳбарига"
+        return f"{code}«{what}» топшириғининг муддати ўтди ({due:%d.%m}), {who} хабар берилди"
+    today = _day(d.get("today") or due)
+    days = (due - today).days
+    # more than a day ahead = reminded on Friday / before /dam days: the weekday's name (2026-11-12)
+    when = "бугун" if days <= 0 else "эртага" if days == 1 else WEEKDAYS_UZ[due.weekday()]
     return f"{code}«{what}» топшириғининг муддати {when}, {due:%d.%m}"
 
 
