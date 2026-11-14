@@ -14386,6 +14386,62 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_reopen_fix_1114() -> None:
+    """14.11.2026: the 11 copies the old shared-task rule closed are reopened once, cards redrawn, one correction each."""
+    print("reopen the wrongly closed shared copies (14.11.2026)")
+    import asyncio
+    from pathlib import Path
+
+    from integrations.org_bot import ops_manager, reopen_fix, store, tone
+
+    sql, events, refreshed, told = [], [], [], []
+    rows = [{"id": "a", "code": "T-2026-11-0068", "started_at": 1}, {"id": "b", "code": "T-2026-11-0067", "started_at": None}]
+
+    async def fetch(q, params=None):
+        sql.append((q, params))
+        return rows
+
+    async def event(task_id, ev, actor, note=None):
+        events.append((task_id, ev))
+
+    async def refresh(task, run_id, full=None):
+        refreshed.append(task["id"])
+
+    async def with_employee(task_id):
+        return {"employee_telegram_user_id": 7 if task_id == "a" else 8, "telegram_message_id": 5}
+
+    async def reply(uid, run_id, text, reply_markup=None, reply_to=None):
+        told.append((uid, text, reply_to))
+
+    async def nothing(*a, **k):
+        return None
+
+    saved = [(reopen_fix, "fetch_all", reopen_fix.fetch_all), (reopen_fix, "log_action", reopen_fix.log_action),
+             (store, "log_task_event", store.log_task_event), (store, "task_with_employee", store.task_with_employee),
+             (ops_manager, "_refresh_task_card", ops_manager._refresh_task_card), (ops_manager, "_reply", ops_manager._reply)]
+    reopen_fix.fetch_all, reopen_fix.log_action = fetch, nothing
+    store.log_task_event, store.task_with_employee = event, with_employee
+    ops_manager._refresh_task_card, ops_manager._reply = refresh, reply
+    try:
+        counts = asyncio.run(reopen_fix.reopen())
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    q, params = sql[0]
+    check("only copies still closed «T-0072 орқали» from message 4908", params, (4908, "T-2026-11-0072 орқали"))
+    check_true("back to started if started, else sent; done fields cleared",
+               "CASE WHEN started_at IS NULL THEN 'sent' ELSE 'started' END" in q and "completed_by = NULL" in q
+               and "status = 'done' AND completed_by = %s" in q)
+    check("counts", counts, {"reopened": 2, "told": 2, "failed": 0})
+    check("each logged 'reopened', card redrawn", (events, refreshed), ([("a", "reopened"), ("b", "reopened")], ["a", "b"]))
+    text = told[0][1]
+    check_true("correction: under the card, names the code, polite", told[0][2] == 5 and "T-2026-11-0068" in text
+               and "хато" in text and tone.is_polite(text))
+    check_true("schema allows 'reopened'; startup runs it",
+               "'reopened'" in Path("database/schema.sql").read_text(encoding="utf-8")
+               and "reopen_fix.reopen()" in Path("integrations/api/app.py").read_text(encoding="utf-8"))
+
+
 def test_message_budget_1113() -> None:
     """13.11.2026, F5: one message counter per person per day; over it, a buttonless reminder from a deferrable
     agent waits for tomorrow's one morning message; buttons, replies, groups and the Director are never held."""
@@ -14635,6 +14691,7 @@ def main() -> int:
         test_task_ladder_1112,
         test_task_ladder_fixes_1113,
         test_message_budget_1113,
+        test_reopen_fix_1114,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

@@ -170,7 +170,8 @@ closed for all when one proof was accepted, and the 11 others were told «… б
 `move_shared_copies` (a new deadline moved every copy), the «colleague did it» clause in the reminder / overdue /
 escalation queries and «one ask per shared task». Kept as display only: the brief's one row («+N»), now in the state of
 the most urgent copy (asked > blocked > overdue > review > proof > waiting > today); `shared_line` on the review card
-says how many others got it and that theirs close separately.
+says how many others got it and that theirs close separately. Repair: `reopen_fix.py` (API startup, once) reopens the 11
+copies, redraws the cards, one correction line each; event `reopened`.
 
 **2026-11-09 fix:** the task-pick buttons carry the task code without «T-» (`report_tools.proof_key`) — file id + task id exceeded Telegram's 64-byte `callback_data` limit.
 

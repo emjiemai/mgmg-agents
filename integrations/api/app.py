@@ -228,6 +228,17 @@ async def _startup() -> None:
     app.state.menus = asyncio.create_task(_set_menus())
     # PULSE ready before the Boss / the Garmin manager opens it: everyone, and the Garmin manager's team.
     app.state.pulse_warm = asyncio.create_task(pulse_data.keep_warm([None, report_calendar.TEAM_OF["garmin_manager"]]))
+    app.state.reopen_fix = asyncio.create_task(_reopen_fix())
+
+
+async def _reopen_fix() -> None:
+    """One-time (2026-11-14): the 11 copies closed by the removed shared-task rule are reopened (runs once)."""
+    from integrations.org_bot import reopen_fix
+
+    try:
+        log.info("Reopen fix: {}", await reopen_fix.reopen())
+    except Exception as exc:  # noqa: BLE001 — a repair must never stop the service
+        log.error("Reopen fix failed: {}", type(exc).__name__)
 
 
 @app.get("/health")

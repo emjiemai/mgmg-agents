@@ -433,7 +433,7 @@ async def keep_warm(scopes: list[tuple[str, ...] | None]) -> None:
 
 # ---- one person ---------------------------------------------------------------------------------------------
 
-TASK_EVENT_LABELS = {"escalated": "Раҳбарга етказилди", "created": "Топшириқ олди", "accepted": "Бошлади", "blocked": "Тўсиқ", "unblocked": "Давом этди",
+TASK_EVENT_LABELS = {"escalated": "Раҳбарга етказилди", "reopened": "Қайта очилди", "created": "Топшириқ олди", "accepted": "Бошлади", "blocked": "Тўсиқ", "unblocked": "Давом этди",
                      "submitted": "Бажардим деди", "closed": "Қабул қилинди", "returned": "Қайтарилди",
                      "cancelled": "Бекор қилинди", "repeated": "Қайта эслатилди",
                      "reschedule_asked": "Муддат сўради", "rescheduled": "Муддат ўзгарди",

@@ -513,6 +513,7 @@ ALTER TABLE task_events ADD CONSTRAINT task_events_event_check CHECK (event IN (
     'accepter_set',  -- a TEAM_OF manager checks the proof instead of the assigner (12.11); note = his name
     'depends_set', 'depends_done',  -- waits for another T- code / that one finished or was cancelled (12.11)
     'helper_asked', 'helper_done',  -- ⛔ → a help task given / accepted (12.11, TASK_HELPER_ENABLED); note = who / code
+    'reopened',  -- a copy closed by mistake put back (14.11, reopen_fix.py)
     'escalated'));  -- the ladder told a department manager / deputy / the Director (12.11); note = 'manager:<name>' / 'director'
 -- Task improvements (2026-11-10, the owner's МИЯ document §5.2 and the agents catalogue): priority P1–P4 (1 =
 -- шошилинч, 2 = муҳим — the default, 3 = оддий, 4 = кутиши мумкин); a new deadline the employee asked for, waiting
