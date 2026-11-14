@@ -790,10 +790,6 @@ async def tasks_needing_reminder(today: date, until: date | None = None) -> list
           AND t.due_date BETWEEN %s AND %s
           AND e.status = 'active'
           AND NOT {WAITING}  -- waits for another task (12.11): no reminder yet
-          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
-                          AND s.source_message_id = t.source_message_id AND t.source_message_id <> 0
-                          AND s.id <> t.id
-                          AND (s.status = 'review' OR s.awaiting = 'evidence'))  -- a shared task's colleague did it
         ORDER BY t.due_date, t.created_at
         """,
         (today, until or today + timedelta(days=1)),
@@ -820,10 +816,6 @@ async def tasks_newly_overdue(today: date) -> list[dict[str, Any]]:
         WHERE t.status IN ('sent', 'started', 'blocked') AND t.overdue_notified_at IS NULL
           AND t.due_date < %s AND e.status = 'active'
           AND NOT {WAITING}  -- waits for another task (12.11): not late for someone else's delay
-          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
-                          AND s.source_message_id = t.source_message_id AND t.source_message_id <> 0
-                          AND s.id <> t.id
-                          AND (s.status = 'review' OR s.awaiting = 'evidence'))  -- a shared task's colleague did it
         ORDER BY t.director_telegram_user_id, t.due_date
         """,
         (today,),
@@ -862,10 +854,6 @@ async def tasks_for_escalation(today: date) -> list[dict[str, Any]]:
           AND ((t.due_date < %s AND t.overdue_notified_at IS NOT NULL) OR t.status = 'blocked')
           AND t.awaiting IS DISTINCT FROM 'evidence'  -- ✅ pressed: the proof line is the news, not the ladder
           AND NOT {WAITING}  -- waits for another task: not late for someone else's delay
-          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
-                          AND s.source_message_id = t.source_message_id AND t.source_message_id <> 0
-                          AND s.id <> t.id
-                          AND (s.status = 'review' OR s.awaiting = 'evidence'))  -- a shared task's colleague did it
         ORDER BY t.director_telegram_user_id, t.due_date NULLS LAST, t.created_at
         """,
         (today,),
@@ -1073,10 +1061,6 @@ async def ask_reschedule(task_id: str, telegram_user_id: int, new_due: date) -> 
           AND t.status IN ('sent', 'started', 'blocked') AND t.due_date IS NOT NULL
           AND (t.proposed_due IS NULL OR t.awaiting = 'reschedule')
           AND (t.awaiting IS NULL OR t.awaiting = 'reschedule')
-          AND NOT EXISTS (SELECT 1 FROM tasks s WHERE s.director_telegram_user_id = t.director_telegram_user_id
-                          AND s.source_message_id = t.source_message_id AND s.source_message_id <> 0
-                          AND s.id <> t.id AND s.proposed_due IS NOT NULL
-                          AND s.status IN ('sent', 'started', 'blocked'))  -- one ask per shared task
         RETURNING t.*
         """,
         (new_due, task_id, telegram_user_id),
@@ -1114,22 +1098,6 @@ async def decide_reschedule(task_id: str, assigner_telegram_user_id: int, accept
         await log_task_event(task_id, "rescheduled" if accept else "reschedule_refused", by,
                              str(row["due_date"]) if accept else None)
     return row
-
-
-async def move_shared_copies(task: dict[str, Any], by: str) -> list[dict[str, Any]]:
-    """A shared task's new deadline for every other open copy (09.11 rule: one message to several people = one task)."""
-    if not task.get("source_message_id") or not task.get("director_telegram_user_id"):
-        return []
-    rows = await fetch_all(
-        f"""UPDATE tasks SET due_date = %s, reminded_at = NULL, overdue_notified_at = NULL, proposed_due = NULL,
-                              {ESCALATION_RESET}
-           WHERE director_telegram_user_id = %s AND source_message_id = %s AND id <> %s
-             AND status IN ('sent', 'started', 'blocked') RETURNING *""",
-        (task["due_date"], task["director_telegram_user_id"], task["source_message_id"], task["id"]),
-    )
-    for r in rows:
-        await log_task_event(str(r["id"]), "rescheduled", by, f"{task['due_date']} ({task.get('code') or ''} орқали)")
-    return rows
 
 
 async def set_task_priority(task_id: str, priority: int) -> None:
@@ -1425,28 +1393,6 @@ async def open_shared_copies(task: dict[str, Any]) -> list[dict[str, Any]]:
         """,
         (task["director_telegram_user_id"], task["source_message_id"], task["id"]),
     )
-
-
-async def close_shared_copies(task: dict[str, Any], by: str) -> list[dict[str, Any]]:
-    """The assigner accepted one copy of a shared task: every other copy is closed by the same proof (same time, so
-    the KPI counts it on time when that one was)."""
-    if not task.get("source_message_id") or not task.get("director_telegram_user_id"):
-        return []
-    rows = await fetch_all(
-        """
-        UPDATE tasks SET status = 'done', verified_at = now(), completed_at = COALESCE(%s, now()), completed_by = %s,
-                         proposed_due = NULL,
-                         awaiting = NULL, awaiting_since = NULL
-        WHERE director_telegram_user_id = %s AND source_message_id = %s AND id <> %s
-          AND status IN ('sent', 'started', 'blocked', 'review')
-        RETURNING *
-        """,
-        (task.get("completed_at"), f"{task.get('code') or ''} орқали", task["director_telegram_user_id"],
-         task["source_message_id"], task["id"]),
-    )
-    for row in rows:
-        await log_task_event(str(row["id"]), "closed", by, f"{task.get('code') or ''} орқали (умумий топшириқ)")
-    return rows
 
 
 async def reopen_submission(task_id: str) -> dict[str, Any] | None:

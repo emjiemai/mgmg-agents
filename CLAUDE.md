@@ -216,8 +216,9 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   no proof, all red); a reply to it or to the card is the proof any time (`replied_to`), a plain message only
   within 30 min; ✅ without proof → «далил кутилмоқда» in the brief (not red) + one morning line.
   **05.11:** a file sent on its own → «нима учун?» offers «топшириқ далили» (pick the task) — same as a reply.
-  **09.11 — shared tasks:** one message to several people = one task (copies share `source_message_id`): brief shows it once
-  (furthest state, «+N»), no overdue noise while a copy awaits proof / is in review, accepting one closes all (`close_shared_copies`).
+  **09.11 — shared tasks; 14.11 fixed:** copies of one message (same `source_message_id`) show as one brief row («+N», the
+  most urgent copy's state) but each is the person's own task — closed only by its own proof, own deadline, own reminders
+  (accepting one used to close all 12 copies of T-0067…0078 and tell 11 people «… бажарди»).
   **10.11:** priority P1–P4 (Director's card row, guessed from his words; brief P1 first), «📅 Муддатни узайтириш» (employee
   asks +1/+2/+7 days + reason → assigner ✅/❌), overdue lists also to the department manager (TEAM_OF). Analyst status
   line `progress.py` (what it is really doing, deleted before the answer).

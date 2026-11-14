@@ -900,17 +900,6 @@ async def _handle_reschedule_decision(accept: bool, task_id: str, callback: dict
         await _reply(before["employee_telegram_user_id"], run_id, note, reply_to=before.get("telegram_message_id"))
     except TelegramError as exc:
         log.warning("Could not tell {} the deadline decision: {}", task_register.code_of(task), exc)
-    if accept:  # a shared task: every copy gets the new deadline (one message to several people = one task)
-        for copy in await store.move_shared_copies(task, clicker.get("username") or str(clicker_id)):
-            await _refresh_task_card(copy, run_id)
-            mate = await store.task_with_employee(str(copy["id"]))
-            if mate:
-                try:
-                    await _reply(mate["employee_telegram_user_id"], run_id,
-                                 f"📅 {escape(task_register.code_of(copy))}: умумий топшириқнинг янги муддати — "
-                                 f"{task['due_date']:%d.%m}.", reply_to=mate.get("telegram_message_id"))
-                except TelegramError as exc:
-                    log.warning("Could not tell a colleague the new deadline: {}", type(exc).__name__)
     return "rescheduled" if accept else "reschedule_rejected"
 
 
@@ -1199,16 +1188,9 @@ async def _handle_task_verify(
         await _tell_assigner(task, task_register.accepter_decided_text(
             task, names.person_name(checker) if checker else str(clicker.get("first_name") or ""), accept, reason), run_id)
     if accept:
+        # Each person's copy closes only with its own proof (2026-11-14: one task to 12 people was closed for all
+        # when one person's proof was accepted, and the 11 others were told «… бажарди»).
         closed = [str(task["id"])]
-        # One task sent to several people is one shared task (2026-11-09): the others' copies close with it.
-        for copy in await store.close_shared_copies(task, clicker.get("username") or str(clicker_id)):
-            await _refresh_task_card(copy, run_id)
-            mate = await store.task_with_employee(str(copy["id"]))
-            if mate:
-                await _reply(mate["employee_telegram_user_id"], run_id,
-                             f"✅ {escape(task_register.code_of(copy))} ёпилди: умумий топшириқни {escape(who)} бажарди "
-                             f"({code}), раҳмат.")
-            closed.append(str(copy["id"]))
         # Tasks that waited for this one (2026-11-12) may start now.
         await release_dependants(closed, run_id, by=clicker.get("username") or str(clicker_id))
         if task.get("helper_for"):  # a 🙋 help task (2026-11-12): the blocked person decides whether to go on

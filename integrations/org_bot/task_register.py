@@ -442,11 +442,11 @@ async def proof_hint(expected: str | None, evidence_text: str | None, has_file: 
 
 
 def shared_line(others: list[dict[str, Any]]) -> str:
-    """On the assigner's review card when the task went to several people (2026-11-09): accepting closes theirs too."""
+    """On the assigner's review card when the task went to several people: accepting closes only this person's copy
+    (2026-11-14 — it used to close everyone's)."""
     if not others:
         return ""
-    names = ", ".join(escape(str(o.get("display_name") or "")) for o in others)
-    return f"👥 Умумий топшириқ — қабул қилсангиз {names} нусхаси ҳам ёпилади."
+    return f"👥 Бу топшириқ яна {len(others)} кишига юборилган — уларники ўз далили билан алоҳида ёпилади."
 
 
 # ⛔ helper (2026-11-12, TASK_HELPER_ENABLED, off by default): under the blocked card the assigner may give a help task

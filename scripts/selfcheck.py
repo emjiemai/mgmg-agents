@@ -2325,15 +2325,14 @@ def test_task_improvements_1110() -> None:
     check_true("the decision is the assigner's, and the employee is told",
                ("decide", 9, True) in calls and any(c[0] == "reply" and c[1] == 50 and "розилик" in c[2] for c in calls))
     check("someone else's task: no new deadline", stranger, "reschedule_refused")
-    check_true("a shared task's other copies take the new deadline on ✅ (one message = one task)",
-               "move_shared_copies" in inspect_source(ops_manager._handle_reschedule_decision)
-               and "source_message_id = %s AND id <> %s" in inspect_source(store.move_shared_copies))
+    check_true("a new deadline moves only that person's copy (2026-11-14)",
+               "move_shared_copies" not in inspect_source(ops_manager._handle_reschedule_decision))
     check_true("the Director can decide while proof is awaited; leaving the open states clears the ask",
                inspect_source(store.decide_reschedule).count("IS DISTINCT FROM 'reschedule'") == 2
                and "proposed_due = NULL" in inspect_source(store.submit_task)
                and "proposed_due = NULL" in inspect_source(store.verify_task))
-    check_true("one ask per shared task, never over a pending proof / blocker ask",
-               "one ask per shared task" in inspect_source(store.ask_reschedule)
+    check_true("each person asks for their own copy, never over a pending proof / blocker ask",
+               "one ask per shared task" not in inspect_source(store.ask_reschedule)
                and "t.awaiting IS NULL OR t.awaiting = 'reschedule'" in inspect_source(store.ask_reschedule))
     check_true("a later deadline (taskdue) redraws the cards, so 📅 appears",
                "_refresh_task_card" in inspect_source(ops_manager._handle_task_due))
@@ -2814,19 +2813,22 @@ def test_shared_tasks_1109() -> None:
          "task_summary": "Мижоз", "status": "sent", "awaiting": None, "due_date": date(2026, 10, 31)},
     ]
     rows, n = brief.task_rows(tasks, day)
-    check("one row per shared task; its copies not red while the proof is awaited",
+    # 2026-11-14: each copy is the person's own task — one person's proof never hides the others' late copies.
+    check("one row per task sent to several people, in its most urgent copy's state",
           [(r["who"], r["what"].split(" · ")[0], r["alert"]) for r in rows],
-          [("Абдукарим Зунунов", "9 кун ўтди", True), ("Улуғбек Исоқов +2", "далил кутилмоқда", False)])
-    check("open counts tasks, not copies", (n["open"], n["overdue"]), (2, 1))
-    for name in ("tasks_newly_overdue", "tasks_needing_reminder"):
-        check_true(f"{name} skips a shared task a colleague has done", "s.awaiting = 'evidence'" in inspect_source(getattr(store, name)))
+          [("Улуғбек Исоқов +2", "7 кун ўтди", True), ("Абдукарим Зунунов", "9 кун ўтди", True)])
+    check("open counts tasks, not copies", (n["open"], n["overdue"]), (2, 2))
+    for name in ("tasks_newly_overdue", "tasks_needing_reminder", "tasks_for_escalation"):
+        fn = getattr(store, name, None)
+        check_true(f"{name}: a colleague's proof doesn't silence this copy",
+                   fn is None or "a shared task's colleague did it" not in inspect_source(fn))
 
     others = [{"display_name": "Эшонов Шахзод"}, {"display_name": "Нажотова Зайнабхон"}]
-    check_true("the review card says accepting closes the others' copies",
-               "Эшонов Шахзод, Нажотова Зайнабхон нусхаси ҳам ёпилади" in task_register.shared_line(others)
-               and task_register.shared_line([]) == "")
+    check_true("the review card says only this copy closes",
+               "яна 2 кишига юборилган" in task_register.shared_line(others)
+               and "ёпилади" in task_register.shared_line(others) and task_register.shared_line([]) == "")
 
-    told, refreshed, closed = [], [], []
+    told, refreshed = [], []
     leader = {"id": "1", "code": "T-2026-11-0048", "director_telegram_user_id": 9, "source_message_id": 3814,
               "task_summary": "Солиштириш", "status": "done", "completed_at": None, "evidence_text": "файл"}
 
@@ -2837,10 +2839,6 @@ def test_shared_tasks_1109() -> None:
         return {"1": {"display_name": "Улуғбек Исоқов", "employee_telegram_user_id": 1},
                 "2": {"display_name": "Эшонов Шахзод", "employee_telegram_user_id": 2}}.get(task_id)
 
-    async def close_copies(task, by):
-        closed.append(task["code"])
-        return [{"id": "2", "code": "T-2026-11-0049"}]
-
     async def nothing(*a, **k):
         return None
 
@@ -2850,21 +2848,21 @@ def test_shared_tasks_1109() -> None:
     async def refresh(task, run_id, full=None):
         refreshed.append(task["id"])
 
-    saved = [(store, n_, getattr(store, n_)) for n_ in ("verify_task", "task_with_employee", "close_shared_copies")] + \
+    saved = [(store, n_, getattr(store, n_)) for n_ in ("verify_task", "task_with_employee")] + \
             [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("_answer", "_reply", "_refresh_task_card")]
-    store.verify_task, store.task_with_employee, store.close_shared_copies = verify, with_employee, close_copies
+    store.verify_task, store.task_with_employee = verify, with_employee
     ops_manager._answer, ops_manager._reply, ops_manager._refresh_task_card = nothing, reply, refresh
     try:
         out = asyncio.run(ops_manager._handle_task_verify(True, "1", {"id": "q", "from": {"id": 9}}, uuid.uuid4()))
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
-    check("accepting one copy closes the others", (out, closed, refreshed), ("task_closed", ["T-2026-11-0048"], ["1", "2"]))
-    check_true("the colleague is told who did it",
-               any(uid == 2 and "T-2026-11-0049 ёпилди" in text and "Улуғбек Исоқов" in text for uid, text in told))
-    check_true("close_shared_copies: same message, same assigner, open copies, the leader's completion time",
-               all(part in inspect_source(store.close_shared_copies)
-                   for part in ("source_message_id = %s", "id <> %s", "COALESCE(%s, now())", "'review'")))
+    # 2026-11-14: one task to 12 people closed for all when one proof was accepted, and 11 were told «… бажарди».
+    check("accepting one copy closes only that copy", (out, refreshed), ("task_closed", ["1"]))
+    check_true("no colleague is told «… бажарди»", not any(uid == 2 for uid, _ in told)
+               and "умумий топшириқни" not in inspect_source(ops_manager))
+    check_true("no code closes or moves the other copies",
+               not hasattr(store, "close_shared_copies") and not hasattr(store, "move_shared_copies"))
 
 
 def test_londry_branch_qr_1105() -> None:
@@ -12641,8 +12639,9 @@ def test_task_crosscutting_1112() -> None:
     from integrations.pulse import data as pulse_data
 
     # 1: the shared-sibling clause of the reminder / overdue queries leaves out source 0
-    for name in ("tasks_needing_reminder", "tasks_newly_overdue"):
-        check_true(f"{name}: source 0 is never a shared task", "t.source_message_id <> 0" in inspect_source(getattr(store, name)))
+    for name in ("tasks_needing_reminder", "tasks_newly_overdue"):  # 14.11: no sibling clause at all now
+        check_true(f"{name}: no colleague's copy silences it", "s.source_message_id = t.source_message_id"
+                   not in inspect_source(getattr(store, name)))
     schema = (Path(__file__).resolve().parents[1] / "database" / "schema.sql").read_text(encoding="utf-8")
     check_true("analyst.bot_tasks: a source-0 task's shared_key is its own code, not director:0",
                "CASE WHEN t.source_message_id = 0 THEN COALESCE(t.code, t.id::text)" in schema)
@@ -13170,10 +13169,10 @@ def test_task_accepter_1112() -> None:
         answers.append(text)
 
     saved = [(store, n_, getattr(store, n_)) for n_ in ("get_task", "task_verifier", "verify_task", "task_with_employee",
-                                                         "get_employee_by_telegram_id", "close_shared_copies")] + \
+                                                         "get_employee_by_telegram_id")] + \
             [(ops_manager, n_, getattr(ops_manager, n_)) for n_ in ("TelegramBot", "_reply", "_refresh_task_card", "_answer")]
     store.get_task, store.task_verifier, store.verify_task = get_task, task_verifier, verify
-    store.task_with_employee, store.get_employee_by_telegram_id, store.close_shared_copies = with_employee, by_tg, none_list
+    store.task_with_employee, store.get_employee_by_telegram_id = with_employee, by_tg
     ops_manager.TelegramBot, ops_manager._reply, ops_manager._refresh_task_card, ops_manager._answer = Bot, reply, nothing, answer
     card = {"message_id": 80, "chat": {"id": 70}, "text": "x"}
     try:
@@ -13691,9 +13690,8 @@ def test_task_dependency_1112() -> None:
 
     # release is called after an accept (+ shared copies) and after both cancel paths
     verify = inspect_source(ops_manager._handle_task_verify)
-    check_true("accept → release_dependants with the accepted task and every closed copy",
-               'closed = [str(task["id"])]' in verify and 'closed.append(str(copy["id"]))' in verify
-               and "await release_dependants(closed" in verify)
+    check_true("accept → release_dependants with the accepted task (each copy closes on its own, 14.11)",
+               'closed = [str(task["id"])]' in verify and "await release_dependants(closed" in verify)
     check_true("revoke / role change return the cancelled ids; admin releases after both",
                '"cancelled_task_ids"' in inspect_source(store.revoke_employee)
                and '"cancelled_task_ids"' in inspect_source(store.change_employee_role)

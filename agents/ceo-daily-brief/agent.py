@@ -672,8 +672,9 @@ def shared_tasks(tasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
 
 
 def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Open tasks that need the Director's eye, most urgent first, and the counts — a shared task once, in the state
-    of the copy furthest along (in review > proof awaited > waiting for another task > blocked > overdue > today).
+    """Open tasks that need the Director's eye, most urgent first, and the counts — a task sent to several people once
+    («+N»), in the state of its most urgent copy (new deadline asked > blocked > overdue > in review > proof awaited >
+    waiting for another task > today; 2026-11-14 — each copy is that person's own task).
     A task waiting for another T- code (2026-11-12) is «кутмоқда T-…», never red: its time hasn't started."""
     groups: dict[str, list[dict[str, Any]]] = {"overdue": [], "blocked": [], "asked": [], "proof": [], "review": [],
                                                "waiting": [], "today": []}
@@ -695,6 +696,15 @@ def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, An
         if asked:
             # A new deadline is asked and waits for the Director's ✅ / ❌ (2026-11-10).
             groups["asked"].append({"who": who, "what": f"{late}янги муддат сўралди {asked:%d.%m} · {text}", "alert": True})
+        # Each copy is the person's own task (2026-11-14): the group shows its most urgent copy — one person's
+        # proof in review never hides the others' late or blocked copies.
+        elif any(c.get("status") == "blocked" and not c.get("waiting_for") for c in copies):
+            groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
+        elif late_copies := [c for c in copies if c.get("due_date") and c["due_date"] < day
+                             and c.get("status") in ("sent", "started") and c.get("awaiting") != "evidence"
+                             and not c.get("waiting_for")]:
+            worst = min(c["due_date"] for c in late_copies)
+            groups["overdue"].append({"who": who, "what": f"{(day - worst).days} кун ўтди · {text}", "alert": True})
         elif any(c.get("status") == "review" for c in copies):
             groups["review"].append({"who": who, "what": f"текширувда · {text}", "alert": False})
         elif any(c.get("awaiting") == "evidence" for c in copies):
@@ -702,10 +712,6 @@ def task_rows(tasks: list[dict[str, Any]], day: date) -> tuple[list[dict[str, An
             groups["proof"].append({"who": who, "what": f"далил кутилмоқда · {text}", "alert": False})
         elif all(c.get("waiting_for") for c in copies):
             groups["waiting"].append({"who": who, "what": f"кутмоқда {copies[0]['waiting_for']} · {text}", "alert": False})
-        elif any(c.get("status") == "blocked" for c in copies):
-            groups["blocked"].append({"who": who, "what": f"тўсиқ · {text}", "alert": True})
-        elif due is not None and due < day:
-            groups["overdue"].append({"who": who, "what": f"{(day - due).days} кун ўтди · {text}", "alert": True})
         elif due == day:
             groups["today"].append({"who": who, "what": f"бугун · {text}", "alert": False})
     rows = (groups["overdue"] + groups["blocked"] + groups["asked"] + groups["proof"] + groups["review"]

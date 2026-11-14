@@ -364,6 +364,7 @@ since 2026-10-10. Details are in git history and the specs.
 
 | Date | What changed |
 | ---- | ---- |
+| 2026-11-14 | **Fix — a task sent to several people no longer closes for everyone.** One task to 12 people was closed for all 11 others when one person's proof was accepted, and each got «✅ T-… ёпилди: умумий топшириқни … бажарди». Now each copy is that person's own task: closed only by their own proof, a new deadline moves only their copy, a colleague's proof doesn't silence their reminders / overdue / escalation. The brief still shows the copies as one row («+N»), in the most urgent copy's state. The review card says «👥 Бу топшириқ яна N кишига юборилган — уларники ўз далили билан алоҳида ёпилади». |
 | 2026-11-13 | Connected platforms overview (23 platforms, status of each, what is not connected yet), Uzbek Cyrillic PDF: `docs/platforms-2026-11-13.pdf`. |
 | 2026-11-13 | **Message budget (F5)**: OPS Manager Bot counts what it sends each person a day (`message_budget`, counts only). Past `MESSAGE_BUDGET_PER_DAY` (12), a buttonless reminder from `MESSAGE_BUDGET_DEFER_AGENTS` (duty-tasks, task-tracker) is not sent — it goes as «кечаги эслатма: …» in the next one morning message. Cards, questions, replies, groups and the Director are never held. `MESSAGE_BUDGET_ENFORCE=false` only counts. IT's /texnik: «Хабар бюджети (кеча)» — people at the limit, held, most to one person. `integrations/org_bot/budget.py`. |
 | 2026-11-13 | Test checklist for 11–13.11 (scheduler, reports, F1 tasks, escalation + deputies): `docs/test-checklist-2026-11-13.md`. |
