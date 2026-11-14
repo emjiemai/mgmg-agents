@@ -14395,13 +14395,16 @@ def test_reopen_fix_1114() -> None:
     from integrations.org_bot import ops_manager, reopen_fix, store, tone
 
     sql, events, refreshed, told = [], [], [], []
-    rows = [{"id": "a", "code": "T-2026-11-0068", "started_at": 1}, {"id": "b", "code": "T-2026-11-0067", "started_at": None}]
+    rows = [{"id": "a", "code": "T-2026-11-0068", "started_at": 1}, {"id": "b", "code": "T-2026-11-0067", "started_at": None},
+            {"id": "c", "code": "T-2026-11-0069", "started_at": None}]
 
     async def fetch(q, params=None):
         sql.append((q, params))
-        return rows
+        return rows if q.lstrip().startswith("SELECT") else []
 
     async def event(task_id, ev, actor, note=None):
+        if task_id == "c":
+            raise RuntimeError("check constraint")  # the old schema: left for the next start, nobody told
         events.append((task_id, ev))
 
     async def refresh(task, run_id, full=None):
@@ -14416,10 +14419,14 @@ def test_reopen_fix_1114() -> None:
     async def nothing(*a, **k):
         return None
 
+    async def ready():
+        return True
+
     saved = [(reopen_fix, "fetch_all", reopen_fix.fetch_all), (reopen_fix, "log_action", reopen_fix.log_action),
+             (reopen_fix, "_schema_ready", reopen_fix._schema_ready),
              (store, "log_task_event", store.log_task_event), (store, "task_with_employee", store.task_with_employee),
              (ops_manager, "_refresh_task_card", ops_manager._refresh_task_card), (ops_manager, "_reply", ops_manager._reply)]
-    reopen_fix.fetch_all, reopen_fix.log_action = fetch, nothing
+    reopen_fix.fetch_all, reopen_fix.log_action, reopen_fix._schema_ready = fetch, nothing, ready
     store.log_task_event, store.task_with_employee = event, with_employee
     ops_manager._refresh_task_card, ops_manager._reply = refresh, reply
     try:
@@ -14428,15 +14435,19 @@ def test_reopen_fix_1114() -> None:
         for obj, name, value in saved:
             setattr(obj, name, value)
     q, params = sql[0]
-    check("only copies still closed «T-0072 орқали» from message 4908", params, (4908, "T-2026-11-0072 орқали"))
+    check("step 1: only copies still closed «T-0072 орқали» from message 4908", params, (4908, "T-2026-11-0072 орқали"))
     check_true("back to started if started, else sent; done fields cleared",
                "CASE WHEN started_at IS NULL THEN 'sent' ELSE 'started' END" in q and "completed_by = NULL" in q
                and "status = 'done' AND completed_by = %s" in q)
-    check("counts", counts, {"reopened": 2, "told": 2, "failed": 0})
-    check("each logged 'reopened', card redrawn", (events, refreshed), ([("a", "reopened"), ("b", "reopened")], ["a", "b"]))
+    check_true("step 2: closed that way and not yet 'reopened' (safe to repeat)",
+               sql[1][1] == (4908, "T-2026-11-0072 орқали (умумий топшириқ)") and "NOT EXISTS" in sql[1][0]
+               and "'reopened'" in sql[1][0])
+    check("counts: a copy whose event fails is skipped, not told", counts, {"reopened": 3, "told": 2, "failed": 1})
+    check("event first, then the card", (events, refreshed), ([("a", "reopened"), ("b", "reopened")], ["a", "b"]))
     text = told[0][1]
     check_true("correction: under the card, names the code, polite", told[0][2] == 5 and "T-2026-11-0068" in text
                and "хато" in text and tone.is_polite(text))
+    check_true("waits for this deploy's schema first", "_schema[\"ok\"]" in inspect_source(reopen_fix._schema_ready))
     check_true("schema allows 'reopened'; startup runs it",
                "'reopened'" in Path("database/schema.sql").read_text(encoding="utf-8")
                and "reopen_fix.reopen()" in Path("integrations/api/app.py").read_text(encoding="utf-8"))
