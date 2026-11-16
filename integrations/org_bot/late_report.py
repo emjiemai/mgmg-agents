@@ -135,21 +135,30 @@ async def deliver(employee: dict[str, Any], row_id: str, content: str, run_id: u
     person = names.person_name(employee)
     role = ROLE_LABELS.get(employee.get("role") or "", employee.get("role") or "")
     delivered = 0
+    cards: list = []  # (Card, decider, role) for the AI checker (16.11)
+    from integrations.org_bot import ai_checker
+
     async with _bot(run_id) as bot:
         for who in managers_of(employee.get("role")):
             for boss in await store.active_employees_by_role(who):
                 try:
                     if file_message_id:
-                        await bot._call("copyMessage", {  # noqa: SLF001 — same-package reuse of the Bot API primitive
+                        result = await bot._call("copyMessage", {  # noqa: SLF001 — same-package reuse of the Bot API primitive
                             "chat_id": str(boss["telegram_user_id"]), "from_chat_id": str(employee["telegram_user_id"]),
                             "message_id": file_message_id, "parse_mode": "HTML",
                             "caption": card(person, role, day, row.get("late_sent_at"), content, CAPTION_TEXT),
                             "reply_markup": card_keyboard(str(row["id"]))}, mode="notify",
                             target_ref=str(boss["telegram_user_id"]))
+                        sent_id = (result or {}).get("message_id")
                     else:
-                        await bot.send_message(card(person, role, day, row.get("late_sent_at"), content),
-                                               chat_id=str(boss["telegram_user_id"]), reply_markup=card_keyboard(str(row["id"])))
+                        ids = await bot.send_message(card(person, role, day, row.get("late_sent_at"), content),
+                                                     chat_id=str(boss["telegram_user_id"]),
+                                                     reply_markup=card_keyboard(str(row["id"])))
+                        sent_id = ids[-1] if ids else None
                     delivered += 1
+                    if sent_id:
+                        cards.append((ai_checker.Card(int(boss["telegram_user_id"]), int(sent_id), bool(file_message_id)),
+                                      int(boss["telegram_user_id"]), who))
                 except Exception as exc:  # noqa: BLE001 — the next one still gets it
                     log.error("Late report not delivered: {}", type(exc).__name__)
     from integrations.common.timeutil import now_local
@@ -158,6 +167,7 @@ async def deliver(employee: dict[str, Any], row_id: str, content: str, run_id: u
     await _send(employee["telegram_user_id"], sent_text(), run_id, move_keyboard(str(row["id"])) if movable else None)
     await log_action(agent=AGENT, action="late_report_sent", target_system="telegram", status="success",
                      run_id=run_id, mode="notify", payload={"delivered": delivered, "file": bool(file_message_id)})
+    ai_checker.spawn("late_report", ai_checker.review_late_report(row, employee, cards, run_id, bool(file_message_id)))
     return "late_report_sent"
 
 
@@ -265,6 +275,7 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
         await _answer(callback, "Аллақачон ҳал қилинган")
         return "late_already_decided"
     verdict = "✅ Тасдиқланди" if approve else "❌ Рад этилди"
+    decider_name = "AI текширувчи" if callback.get("ai") else names.person_name(clicker)  # the AI checker (16.11)
     role = ROLE_LABELS.get(person.get("role") or "", "")
     chat_id, message_id = str((message.get("chat") or {}).get("id")), message.get("message_id")
     async with _bot(run_id) as bot:
@@ -272,13 +283,13 @@ async def handle_callback(prefix: str, rest: str, callback: dict[str, Any], run_
             await bot._call("editMessageCaption", {  # noqa: SLF001
                 "chat_id": chat_id, "message_id": message_id, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": []},
                 "caption": card(names.person_name(person), role, row["report_date"], row.get("late_sent_at"),
-                                row.get("late_content") or "", CAPTION_TEXT) + f"\n{verdict} — {escape(names.person_name(clicker))}"},
+                                row.get("late_content") or "", CAPTION_TEXT) + f"\n{verdict} — {escape(decider_name)}"},
                 mode="write", target_ref=chat_id)
         else:
             await bot._edit_message(  # noqa: SLF001
                 chat_id=chat_id, message_id=message_id,
                 text=card(names.person_name(person), role, row["report_date"], row.get("late_sent_at"),
-                          row.get("late_content") or "") + f"\n{verdict} — {escape(names.person_name(clicker))}",
+                          row.get("late_content") or "") + f"\n{verdict} — {escape(decider_name)}",
                 reply_markup={"inline_keyboard": []})
     await _answer(callback, verdict)
     try:

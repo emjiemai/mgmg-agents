@@ -36,7 +36,7 @@ from integrations.google.sheets_client import SheetsClient, SheetsError
 from integrations.org_bot import answer_polish
 from integrations.org_bot.progress import CHECKING, Progress
 from integrations.org_bot import (
-    admin, agenda, ai_chat, cheques, duties, duty_review, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, sap_entry, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
+    admin, agenda, ai_chat, ai_checker, cheques, duties, duty_review, duty_tasks, excused, explanations, late_report, lead_tracker, old_stock, report_calendar, sap_entry, report_media, data_access, kpi, kpi_flow, kpi_score, leads, names, permission_flow, report_tools, store,
     task_picker, task_register, task_tracker,
 )
 from integrations.org_bot.tone import casual, is_polite
@@ -325,6 +325,8 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
         return await _handle_task_step(prefix, rest, callback, run_id)
     if prefix == "taskok":
         return await _handle_task_verify(True, rest, callback, run_id)
+    if prefix == "aiu":  # ↩️ under the AI checker's note (16.11)
+        return await ai_checker.handle_undo(rest, callback, run_id)
     if prefix in ("taskback", "tbrx"):
         return await _handle_return_menu(prefix == "taskback", rest, callback, run_id)
     if prefix == "tbr":
@@ -921,9 +923,12 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
         await _reply(telegram_user_id, run_id, f"📨 {escape(task_register.code_of(asked))}: янги муддат сўрови топшириқ "
                                                "берган кишига юборилди — жавоб келгач хабар бераман.")
         try:
-            await _reply(asked["director_telegram_user_id"], run_id,
-                         task_register.reschedule_request_text(asked, who, reason),
-                         reply_markup=task_register.reschedule_keyboard(str(asked["id"])))
+            ids = await _reply(asked["director_telegram_user_id"], run_id,
+                               task_register.reschedule_request_text(asked, who, reason),
+                               reply_markup=task_register.reschedule_keyboard(str(asked["id"])))
+            if ids:  # the AI checker decides it at once (16.11); the Boss can undo
+                ai_checker.spawn("reschedule", ai_checker.review_reschedule(
+                    asked, reason, ai_checker.Card(int(asked["director_telegram_user_id"]), int(ids[-1])), run_id))
         except TelegramError as exc:
             log.warning("Could not send {}'s deadline request: {}", task_register.code_of(asked), exc)
         return "reschedule_asked"
@@ -983,6 +988,9 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
         thanks += "\n" + task_register.waiting_line(others)
     await _reply(telegram_user_id, run_id, thanks)
     await store.set_task_review_message(str(submitted["id"]), review_id)
+    if review_id and reached is not None:  # the AI checker decides it at once (16.11); the Boss can undo
+        ai_checker.spawn("task_proof", ai_checker.review_task_proof(
+            submitted, ai_checker.Card(int(reached), int(review_id), bool(has_file)), bool(has_file), run_id))
     return "task_submitted"
 
 
@@ -2539,21 +2547,28 @@ async def _deliver_explanations(employee: dict[str, Any], rows: list[dict[str, A
             card = explanations.card(person, role, row["kind"], list(row["days"]), text, absent=absent)
             buttons = excused.card_keyboard(str(row["id"]), False)  # ⬜ Сабабли: the days turn grey (2026-10-23)
             delivered = 0
+            cards: list[tuple[ai_checker.Card, int, str | None]] = []  # for the AI checker (16.11)
             for who in roles:
                 for boss in await store.active_employees_by_role(who):
                     try:
                         if held is not None:  # the file itself, the explanation as its caption
-                            await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
+                            result = await bot._call(  # noqa: SLF001 — same-package reuse of the low-level Bot API primitive
                                 "copyMessage", {"chat_id": str(boss["telegram_user_id"]), "from_chat_id": str(telegram_user_id),
                                                 "message_id": held["message_id"], "caption": card[:1024], "parse_mode": "HTML",
                                                 "reply_markup": buttons},
                                 mode="notify", target_ref=str(boss["telegram_user_id"]))
+                            sent_id, is_caption = (result or {}).get("message_id"), True
                         else:
-                            await bot.send_message(card, chat_id=str(boss["telegram_user_id"]), reply_markup=buttons)
+                            ids = await bot.send_message(card, chat_id=str(boss["telegram_user_id"]), reply_markup=buttons)
+                            sent_id, is_caption = (ids[-1] if ids else None), False
                         delivered += 1
+                        if sent_id:
+                            cards.append((ai_checker.Card(int(boss["telegram_user_id"]), int(sent_id), is_caption),
+                                          int(boss["telegram_user_id"]), who))
                     except Exception as exc:  # noqa: BLE001 — the next one still gets it
                         log.error("Explanation not delivered: {}", type(exc).__name__)
             await store.set_explanation_delivered(str(row["id"]), delivered)
+            ai_checker.spawn("explanation", ai_checker.review_explanation(row, employee, text, cards, run_id))
             held = None if delivered else held  # the file once is enough
     await log_action(agent=AGENT, action="explanation_received", target_system="telegram", status="success",
                      run_id=run_id, mode="notify", payload={"asks": len(rows)})

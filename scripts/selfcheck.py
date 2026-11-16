@@ -14386,6 +14386,134 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_ai_checker_1116() -> None:
+    """16.11.2026 (the owner: the Boss doesn't approve or deny): the AI checker decides explanations, late reports, task
+    proofs and new deadlines at once — pressing the Boss's own button — with a reason note and ↩️ undo."""
+    print("AI checker (16.11.2026)")
+    import asyncio
+    import uuid
+    from datetime import date as _date
+
+    from integrations.common.config import settings
+    from integrations.org_bot import ai_checker as ac, store
+
+    # parse: only a clear verdict with a polite reason is acted on
+    check("approve parsed", ac.parse({"decision": "approve", "reason": "ҳисоботда қилинган ишлар ёзилган"}).decision,
+          "approve")
+    check("odd decision → unsure", ac.parse({"decision": "maybe", "reason": "x"}).decision, "unsure")
+    check("no reason → unsure", ac.parse({"decision": "reject", "reason": ""}).decision, "unsure")
+    check("reject without code → «e» (proof not enough)", ac.parse({"decision": "reject", "reason": "далил йўқ"}).return_code,
+          "e")
+    check_true("note: unsure leaves it to the Boss",
+               "Ўзингиз ҳал қилинг" in ac.note_text("late_report", ac.Verdict("unsure", ""), False))
+    check_true("note: explanation rejected points at ⬜",
+               "⬜" in ac.note_text("explanation", ac.Verdict("reject", "ҳисобот базада йўқ"), True))
+    saved_key = settings.openrouter_api_key
+    from pydantic import SecretStr
+    settings.openrouter_api_key = SecretStr("")
+    check_true("no AI key → nothing runs (tests make no paid calls)", not ac.enabled("late_report"))
+    settings.openrouter_api_key = saved_key
+
+    calls, notes, records = [], [], []
+    verdicts = {}
+
+    async def judge(kind, facts, run_id):
+        calls.append((kind, facts))
+        return verdicts[kind]
+
+    async def snapshot(kind, ref_id):
+        return {"status": "asked"} if not calls or calls[-1][0] != "after" else {"status": "submitted"}
+
+    async def record(kind, ref_id, verdict, card, before, after):
+        records.append((kind, verdict.decision, before is not None))
+        return "d1"
+
+    async def note(card, text, keyboard, run_id):
+        notes.append((card.chat_id, text, keyboard))
+        return 77
+
+    async def nothing(*a, **k):
+        return None
+
+    async def states(employee_id, days):
+        return {d: "none" for d in days}
+
+    pressed = []
+
+    async def late_cb(prefix, rest, cb, run_id):
+        pressed.append((prefix, rest, cb["from"]["id"], cb["ai"], cb["id"]))
+        return "late_report_approved" if prefix == "lrok" else "late_report_declined"
+
+    async def exc_cb(prefix, rest, cb, run_id):
+        pressed.append((prefix, rest, cb["from"]["id"], cb["ai"], cb["id"]))
+        return "excused_set"
+
+    from integrations.org_bot import excused, late_report
+    saved = [(ac, n, getattr(ac, n)) for n in ("judge", "_snapshot", "_record", "_note", "execute", "log_action")] + \
+            [(store, "report_states", store.report_states), (late_report, "handle_callback", late_report.handle_callback),
+             (excused, "handle_callback", excused.handle_callback)]
+    ac.judge, ac._snapshot, ac._record, ac._note, ac.execute, ac.log_action = judge, snapshot, record, note, nothing, nothing
+    store.report_states, late_report.handle_callback, excused.handle_callback = states, late_cb, exc_cb
+    emp = {"id": "e1", "role": "londry", "telegram_user_id": 50}
+    cards = [(ac.Card(300, 11), 300, "garmin_manager"), (ac.Card(9, 12), 9, "operatsion_direktor")]
+    try:
+        # Зиёда's late report of 13.11: real work → approved, pressed on the Director's card as the AI
+        verdicts["late_report"] = ac.Verdict("approve", "ҳисоботда қилинган ишлар ёзилган")
+        late = {"id": "r1", "report_date": _date(2026, 11, 13), "late_content": "Лондри1 тозалаб . Лондри2 тозалаб. "
+                "Халиям телга жавоб бервомман.", "late_sent_at": "2026-11-13 22:11"}
+        out = asyncio.run(ac.review_late_report(late, emp, cards, uuid.uuid4()))
+        check("late report with real work → approved", out, "approve")
+        check("pressed ✅ on the Director's card, marked as the AI, no query id", pressed[-1], ("lrok", "r1", 9, True, ""))
+        check_true("the note under the card has the reason and ↩️ undo",
+                   notes[-1][0] == 9 and "тасдиқлади" in notes[-1][1] and "aiu:d1" in str(notes[-1][2]))
+        # Зиёда's explanation «Юборганман» while no report for 13.11 is in the bot → not excused, nothing pressed
+        verdicts["explanation"] = ac.Verdict("reject", "13.11 учун ҳисобот ботда йўқ")
+        n_pressed = len(pressed)
+        expl = {"id": "x1", "kind": "report", "days": [_date(2026, 11, 13)]}
+        out = asyncio.run(ac.review_explanation(expl, emp, "Юборганман", cards, uuid.uuid4()))
+        check("«Юборганман» with no report → rejected", out, "reject")
+        check_true("the AI was told no report is in the bot", calls[-1][1]["reports_in_bot"] == {"2026-11-13": "none"})
+        check_true("nothing pressed; the note points at ⬜", len(pressed) == n_pressed and "⬜" in notes[-1][1]
+                   and notes[-1][2] is None)
+        # a real reason → ⬜ Сабабли pressed
+        verdicts["explanation"] = ac.Verdict("approve", "касал бўлгани сабабли")
+        out = asyncio.run(ac.review_explanation(expl, emp, "касал эдим", cards, uuid.uuid4()))
+        check("illness → excused (⬜ pressed)", (out, pressed[-1][0]), ("approve", "exc"))
+        # unsure → nothing pressed, the Boss decides
+        verdicts["late_report"] = ac.Verdict("unsure", "")
+        n_pressed = len(pressed)
+        out = asyncio.run(ac.review_late_report(late, emp, cards, uuid.uuid4()))
+        check_true("unsure → nothing pressed, «ўзингиз ҳал қилинг»", out == "unsure" and len(pressed) == n_pressed
+                   and "Ўзингиз ҳал қилинг" in notes[-1][1])
+
+        # someone was first: the press didn't decide → shown as unsure, no undo
+        async def first(prefix, rest, cb, run_id):
+            return "late_already_decided"
+        late_report.handle_callback = first
+        verdicts["late_report"] = ac.Verdict("reject", "ҳисоботда иш ёзилмаган")
+        out = asyncio.run(ac.review_late_report(late, emp, cards, uuid.uuid4()))
+        check_true("already decided by a person → nothing claimed", out == "unsure" and notes[-1][2] is None)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    sql, params = ac.restore_sql("tasks", {"status": "review", "returns": 0}, {"status": "done", "returns": 0})
+    check_true("undo restores only while the row is as the AI left it",
+               "SET status = %s, returns = %s WHERE id = %s AND status IS NOT DISTINCT FROM %s" in sql
+               and params == ["review", 0, "<id>", "done", 0])
+    check_true("APPLIED holds each button's real decision", {"task_closed", "task_returned", "late_report_approved",
+               "late_report_declined", "rescheduled", "reschedule_rejected", "excused_set"} == set(ac.APPLIED))
+    import inspect as _inspect
+    from integrations.org_bot import ops_manager
+    src = _inspect.getsource(ops_manager)
+    check_true("wired: explanations, deadline asks, task proofs, ↩️ undo",
+               all(k in src for k in ('ai_checker.spawn("explanation"', 'ai_checker.spawn("reschedule"',
+                                      'ai_checker.spawn("task_proof"', 'prefix == "aiu"')))
+    check_true("wired: late reports; the card names «AI текширувчи»",
+               'ai_checker.spawn("late_report"' in _inspect.getsource(late_report.deliver)
+               and "AI текширувчи" in _inspect.getsource(late_report.handle_callback))
+
+
 def test_reopen_fix_1114() -> None:
     """14.11.2026: the 11 copies the old shared-task rule closed are reopened once, cards redrawn, one correction each."""
     print("reopen the wrongly closed shared copies (14.11.2026)")
@@ -14703,6 +14831,7 @@ def main() -> int:
         test_task_ladder_fixes_1113,
         test_message_budget_1113,
         test_reopen_fix_1114,
+        test_ai_checker_1116,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

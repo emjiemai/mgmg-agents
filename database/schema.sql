@@ -513,6 +513,7 @@ ALTER TABLE task_events ADD CONSTRAINT task_events_event_check CHECK (event IN (
     'accepter_set',  -- a TEAM_OF manager checks the proof instead of the assigner (12.11); note = his name
     'depends_set', 'depends_done',  -- waits for another T- code / that one finished or was cancelled (12.11)
     'helper_asked', 'helper_done',  -- ⛔ → a help task given / accepted (12.11, TASK_HELPER_ENABLED); note = who / code
+    'ai_undone',  -- the Boss undid the AI checker's decision (16.11, ai_checker.py); note = the kind
     'reopened',  -- a copy closed by mistake put back (14.11, reopen_fix.py)
     'escalated'));  -- the ladder told a department manager / deputy / the Director (12.11); note = 'manager:<name>' / 'director'
 -- Task improvements (2026-11-10, the owner's МИЯ document §5.2 and the agents catalogue): priority P1–P4 (1 =
@@ -2068,3 +2069,24 @@ CREATE TABLE IF NOT EXISTS job_runs (
 -- agent of the morning job starts once a day, so a resumed run never sends twice.
 ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+
+-- AI checker (2026-11-16, integrations/org_bot/ai_checker.py): each decision the AI made on something that waited for
+-- the Boss (explanation, late report, task proof, new deadline): verdict, reason, the card, and the record's columns
+-- before / after — so ↩️ puts it back exactly.
+CREATE TABLE IF NOT EXISTS ai_decisions (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind             TEXT         NOT NULL CHECK (kind IN ('explanation', 'late_report', 'task_proof', 'reschedule')),
+    ref_id           TEXT         NOT NULL,
+    decision         TEXT         NOT NULL CHECK (decision IN ('approve', 'reject', 'unsure')),
+    reason           TEXT,
+    chat_id          BIGINT,
+    card_message_id  BIGINT,
+    card_is_caption  BOOLEAN      NOT NULL DEFAULT false,
+    note_message_id  BIGINT,
+    before           JSONB,
+    after            JSONB,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    undone_at        TIMESTAMPTZ,
+    undone_by        BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_ref ON ai_decisions (kind, ref_id);

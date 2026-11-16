@@ -3677,6 +3677,21 @@ async def decide_late_report(report_id: str, approve: bool, decided_by: int) -> 
     return await fetch_one(sql, (decided_by, report_id))
 
 
+async def report_states(employee_id: str, days: list[date]) -> dict[date, str]:
+    """For the AI checker (16.11): what the bot holds for this person's report on each day — «submitted», «late
+    waiting», «declined», «excused» or «none» (asked, nothing came)."""
+    rows = await fetch_all("""SELECT report_date, status, late_content IS NOT NULL AS late, late_decision
+                              FROM daily_reports WHERE employee_id = %s AND report_date = ANY(%s)""",
+                           (employee_id, list(days)))
+    out = {d: "none" for d in days}
+    for r in rows:
+        if r["status"] in ("submitted", "excused"):
+            out[r["report_date"]] = r["status"]
+        elif r["late"]:
+            out[r["report_date"]] = "declined late report" if r["late_decision"] == "declined" else "late report waiting"
+    return out
+
+
 async def get_report(report_id: str) -> dict[str, Any] | None:
     return await fetch_one("SELECT * FROM daily_reports WHERE id = %s", (report_id,))
 

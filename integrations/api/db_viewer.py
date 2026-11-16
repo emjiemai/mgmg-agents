@@ -65,6 +65,7 @@ TECHNICAL_TABLES = frozenset({
     "attendance_flexible",  # Verifix ids marked "эркин график" (ids only)
     "attendance_starts",    # people's own start times (/grafik, 2026-10-22)
     "explanations",         # «why weren't you at work / no report» asks and answers (2026-10-22)
+    "ai_decisions",         # the AI checker's decisions on what waited for the Boss (2026-11-16)
     "excused_days",         # days the Director / Garmin manager excused (2026-10-23)
     "verifix_bad_days",     # days IT marked «Verifix didn't record» (2026-10-24)
     "report_cell_edits",    # the admin's report-sheet changes (2026-10-24)
