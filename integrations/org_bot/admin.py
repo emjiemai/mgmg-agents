@@ -57,6 +57,8 @@ FLEXIBLE_LOOKBACK_DAYS = 30
 DAY_OFF_DAYS = 14
 # "/texnik" -> IT's technical report now (tech_report.py; also every morning).
 TECH_REPORT_COMMANDS = ("/texnik", "/tech")
+# "/aicheck" -> the AI checker on what waits for the Boss; "/aicheck sinov" -> a live test on fixed samples (16.11)
+AI_CHECK_COMMANDS = ("/aicheck",)
 # "/baza" -> the bot's own tables checked now: stale, test, duplicate rows (db_review.py, 2026-10-17).
 DB_REVIEW_COMMANDS = ("/baza", "/база")
 # "/lidlar" -> the B2B lead tracker on / off (2026-10-28, the Boss: stop / start) — no figures for IT.
@@ -276,12 +278,45 @@ async def handle_admin_message(message: dict[str, Any], run_id: uuid.UUID) -> st
                                    + rollout.status_text(await rollout.status(today_local())),
                                    reply_markup={"inline_keyboard": [[duty_tasks.switch_button(await duty_tasks.is_on())]]})
         return "duties_synced"
+    if text.split()[:1] and text.split()[0] in AI_CHECK_COMMANDS:  # the AI checker (16.11): «sinov» = live test on samples; else the waiting ones
+        import asyncio
+
+        test = text.split()[1:2] == ["sinov"]
+        await tell_admin("🧪 Синов бошланди, натижа 1 дақиқа ичида келади." if test
+                         else "🤖 Кутилаётган ишлар AI текширувчига юборилди, натижа бир неча дақиқада келади.", run_id)
+        task = asyncio.get_running_loop().create_task(_ai_check(test, run_id))
+        _AI_CHECK_TASKS.add(task)
+        task.add_done_callback(_AI_CHECK_TASKS.discard)
+        return "ai_check_started"
     if text in TECH_REPORT_COMMANDS:
         from integrations.org_bot import tech_report
 
         return "tech_report_" + await tech_report.send(run_id)
 
     return "ignored"
+
+
+_AI_CHECK_TASKS: set = set()
+
+
+async def _ai_check(test: bool, run_id: uuid.UUID) -> None:
+    """/aicheck in the background (a dozen AI calls outlast Telegram's webhook wait): counts only to IT."""
+    from integrations.org_bot import ai_checker
+
+    try:
+        if test:
+            results = await ai_checker.self_test(run_id)
+            good = sum(1 for _, want, got in results if want == got)
+            lines = [f"{'✅' if want == got else '⚠️'} {kind}: кутилган {want}, AI {got}" for kind, want, got in results]
+            await tell_admin(f"🧪 AI текширувчи синови: {good}/{len(results)} тўғри\n" + "\n".join(lines), run_id)
+            return
+        counts = await ai_checker.run_backlog(run_id)
+        await tell_admin(f"🤖 AI текширувчи кутилаётган ишларни кўрди: тасдиқлади {counts.get('approve', 0)}, рад этди "
+                         f"{counts.get('reject', 0)}, аниқ эмас (раҳбарга қолди) {counts.get('unsure', 0)}, ўтказиб "
+                         f"юборилди {counts.get('skipped', 0)}. Номлар ва матнлар сизга кўрсатилмайди.", run_id)
+    except Exception as exc:  # noqa: BLE001
+        log.error("/aicheck failed: {}", type(exc).__name__)
+        await tell_admin(f"⚠️ AI текширувчи ишламади: {type(exc).__name__}", run_id)
 
 
 async def _show_lead_switch(run_id: uuid.UUID) -> str:

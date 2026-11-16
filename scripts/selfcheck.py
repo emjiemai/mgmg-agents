@@ -6658,7 +6658,7 @@ def test_command_menus() -> None:
     admin_handles = {*admin.EMPLOYEE_LIST_COMMANDS, *admin.ASK_NAMES_COMMANDS, *admin.DATA_QUALITY_COMMANDS,
                      admin.QR_COMMAND, admin.VERIFIX_COMMAND, admin.BILLZ_COMMAND, *admin.ONEC_COMMANDS, *admin.DB_REVIEW_COMMANDS,
                      *admin.DAY_OFF_COMMANDS, *admin.FLEXIBLE_COMMANDS, *admin.TECH_REPORT_COMMANDS, admin.ANNOUNCE_COMMAND,
-                     *admin.LEADS_COMMANDS, *admin.DUTIES_COMMANDS}
+                     *admin.LEADS_COMMANDS, *admin.DUTIES_COMMANDS, *admin.AI_CHECK_COMMANDS}
     ops_handles = {*report_tools.REPORT_COMMANDS, *kpi_flow.KPI_COMMANDS, *kpi_flow.RESULT_COMMANDS,
                    *kpi_flow.GOAL_COMMANDS, *kpi_flow.GOALS_COMMANDS, *kpi_flow.RATE_COMMANDS,
                    *permissions.COMMANDS, *permissions.CANCEL_COMMANDS, *ops_manager.NAME_CHANGE_COMMANDS,
@@ -14509,6 +14509,70 @@ def test_ai_checker_1116() -> None:
     check_true("wired: explanations, deadline asks, task proofs, ↩️ undo",
                all(k in src for k in ('ai_checker.spawn("explanation"', 'ai_checker.spawn("reschedule"',
                                       'ai_checker.spawn("task_proof"', 'prefix == "aiu"')))
+    # /aicheck (16.11): the waiting ones — a fresh card to the Boss, then the same review; counts only
+    sent, reviewed = [], []
+
+    class FakeBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def send_message(self, text, chat_id=None, reply_markup=None, **k):
+            sent.append((chat_id, text[:20], reply_markup))
+            return [len(sent)]
+
+    async def directors(role):
+        return [{"telegram_user_id": 9}]
+
+    async def waiting():
+        return {"explanations": [{"id": "x1", "employee_id": "e1", "kind": "report", "days": [_date(2026, 11, 13)],
+                                  "answer": "Юборганман"}],
+                "late_reports": [{"id": "r1", "employee_id": "e1", "report_date": _date(2026, 11, 13),
+                                  "late_content": "Лондри1 тозалаб", "late_sent_at": None}],
+                "tasks": []}
+
+    async def person(eid):
+        return {"id": "e1", "full_name": "Мирсагатова Зиёда", "role": "londry", "telegram_user_id": 50}
+
+    async def rev_expl(row, emp, answer, cards, run_id):
+        reviewed.append(("explanation", cards[0][0].chat_id, cards[0][1]))
+        return "reject"
+
+    async def rev_late(row, emp, cards, run_id, has_file=False):
+        reviewed.append(("late_report", cards[0][0].chat_id, cards[0][1]))
+        return "approve"
+
+    saved = [(ac, n, getattr(ac, n)) for n in ("TelegramBot", "review_explanation", "review_late_report", "log_action",
+                                                "enabled")] + \
+            [(store, n, getattr(store, n)) for n in ("active_employees_by_role", "waiting_for_boss", "get_employee")]
+    ac.TelegramBot, ac.review_explanation, ac.review_late_report, ac.log_action = FakeBot, rev_expl, rev_late, nothing
+    ac.enabled = lambda kind: True
+    store.active_employees_by_role, store.waiting_for_boss, store.get_employee = directors, waiting, person
+    try:
+        counts = asyncio.run(ac.run_backlog(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("backlog: counts only", (counts["approve"], counts["reject"], counts["unsure"]), (1, 1, 0))
+    check_true("one heading, then a fresh card with its buttons to the Boss for each",
+               len(sent) == 3 and all(c == "9" for c, _, _ in sent) and "exc:x1" in str(sent[1][2])
+               and "lrok:r1" in str(sent[2][2]))
+    check("each reviewed on its fresh card, as the Boss", reviewed, [("explanation", 9, 9), ("late_report", 9, 9)])
+    src_store = _inspect.getsource(store.waiting_for_boss)
+    check_true("waiting: not excused / not decided / in review, never one the AI already judged",
+               "ai_decisions" in src_store and "late_decision IS NULL" in src_store and "status = 'review'" in src_store)
+    check_true("sinov: fixed samples, both «Юборганман» (reject) and Зиёда's late report (approve)",
+               any(k == "explanation" and f["answer"] == "Юборганман" and w == "reject" for k, f, w in ac.SAMPLES)
+               and any(k == "late_report" and "Лондри1" in f["report"] and w == "approve" for k, f, w in ac.SAMPLES))
+    from integrations.org_bot import admin as _admin
+    asrc = _inspect.getsource(_admin)
+    check_true("/aicheck runs in the background, counts only to IT", "AI_CHECK_COMMANDS" in asrc and "create_task(_ai_check" in asrc
+               and "Номлар ва матнлар сизга кўрсатилмайди" in asrc)
     check_true("wired: late reports; the card names «AI текширувчи»",
                'ai_checker.spawn("late_report"' in _inspect.getsource(late_report.deliver)
                and "AI текширувчи" in _inspect.getsource(late_report.handle_callback))

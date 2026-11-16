@@ -36,4 +36,13 @@ Files employees send are never read: a proof that is only a file → unsure (the
 verdict only (`ai_check_<kind>`: decision, applied) — never the text. The note is a reply (never held by the message
 budget). `TASK_PROOF_HINT_ENABLED` (advisory line) is superseded by this for decisions.
 
+## Admin Bot `/aicheck` (16.11)
+- `/aicheck sinov` — a live test: seven fixed made-up samples (`SAMPLES`: «Юборганман» with no report → reject,
+  illness → approve, «Лондри1 тозалаб…» → approve, «ок» → reject, task proofs, a 4th deadline move) through the real
+  AI; IT gets «кутилган / AI» per sample. Nothing is changed, nobody else is messaged.
+- `/aicheck` — what already waited before the checker (`store.waiting_for_boss`: explanations of 14 days answered
+  but not excused, undecided late reports, tasks in review; never one already in `ai_decisions`): one heading to the
+  Director, then each card sent to him again with its buttons and judged like a new one. IT gets counts only.
+  Both run in the background (a dozen AI calls outlast Telegram's webhook wait).
+
 Test: `test_ai_checker_1116`.

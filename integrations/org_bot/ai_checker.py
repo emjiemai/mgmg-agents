@@ -406,3 +406,110 @@ async def handle_undo(rest: str, callback: dict[str, Any], run_id: uuid.UUID) ->
     await log_action(agent=AGENT, action="ai_check_undone", target_system="postgres", status="success",
                      run_id=run_id, mode="write", payload={"kind": row["kind"]})
     return "ai_undone"
+
+
+# --------------------------------------------------------------------------- the waiting ones + a live test (16.11)
+
+# Fixed examples for Admin Bot «/aicheck sinov»: the real AI on made-up texts — nothing is changed, nobody is told.
+SAMPLES: tuple[tuple[str, dict[str, Any], str], ...] = (
+    ("explanation", {"asked_about": "report", "days": ["2026-11-13"], "answer": "Юборганман",
+                     "reports_in_bot": {"2026-11-13": "none"}}, "reject"),
+    ("explanation", {"asked_about": "report", "days": ["2026-11-13"], "answer": "кеча касал бўлиб қолдим, иситмам бор эди",
+                     "reports_in_bot": {"2026-11-13": "none"}}, "approve"),
+    ("late_report", {"report_day": "2026-11-13", "report": "Лондри1 тозалаб . Лондри2 тозалаб. Халиям телга жавоб "
+                     "бервомман."}, "approve"),
+    ("late_report", {"report_day": "2026-11-13", "report": "ок"}, "reject"),
+    ("task_proof", {"task": "Витринадаги нархларни янгиланг", "expected_result": "янги нарх ёрлиқлари",
+                    "proof_text": "барча нарх ёрлиқлари янгиланди, 24 та маҳсулот", "proof_has_file": False}, "approve"),
+    ("task_proof", {"task": "Ойлик ҳисоботни PDF қилиб юборинг", "expected_result": "PDF файл",
+                    "proof_text": "эртага қиламан", "proof_has_file": False}, "reject"),
+    ("reschedule", {"task": "Омбор хатловини ўтказинг", "deadline": "2026-11-14", "asked_deadline": "2026-11-16",
+                    "reason": "улгурмадим", "moved_before": 3}, "reject"),
+)
+
+
+async def self_test(run_id: uuid.UUID | None = None) -> list[tuple[str, str, str]]:
+    """Each sample through the real AI: (kind, expected, got). For IT — no company data in or out."""
+    run_id = run_id or uuid.uuid4()
+    out = []
+    for kind, facts, expected in SAMPLES:
+        verdict = await judge(kind, facts, run_id)
+        out.append((kind, expected, verdict.decision))
+    return out
+
+
+async def run_backlog(run_id: uuid.UUID | None = None) -> dict[str, int]:
+    """Admin Bot «/aicheck»: what already waited for the Boss before the checker existed — each card is sent to him
+    again (the old one may be days up the chat) and judged like a new one. Counts only; once per item
+    (anything already in ``ai_decisions`` is skipped)."""
+    from integrations.org_bot import excused, explanations, late_report, names, ops_manager, store, task_register
+    from integrations.org_bot.roles import DIRECTOR_ROLE, ROLE_LABELS
+
+    run_id = run_id or uuid.uuid4()
+    counts = {"approve": 0, "reject": 0, "unsure": 0, "skipped": 0}
+    directors = await store.active_employees_by_role(DIRECTOR_ROLE)
+    if not directors:
+        return counts
+    boss = int(directors[0]["telegram_user_id"])
+    items = await store.waiting_for_boss()
+    if not any(items.values()):
+        return counts
+    async with _bot(run_id) as bot:
+        await bot.send_message("🤖 AI текширувчи сиз ҳал қилишингизни кутиб турган ишларни кўриб чиқди — ҳар бирининг "
+                               "остида сабаби ва «↩️ бекор қилиш» тугмаси бор.", chat_id=str(boss))
+
+    async def send(text: str, keyboard: dict[str, Any]) -> Card | None:
+        async with _bot(run_id) as bot:
+            ids = await bot.send_message(text, chat_id=str(boss), reply_markup=keyboard)
+        return Card(boss, ids[-1]) if ids else None
+
+    for row in items["explanations"]:
+        if not enabled("explanation"):
+            counts["skipped"] += 1
+            continue
+        person = await store.get_employee(str(row["employee_id"]))
+        if not person:
+            counts["skipped"] += 1
+            continue
+        role = ROLE_LABELS.get(person.get("role") or "", person.get("role") or "")
+        card = await send(explanations.card(names.person_name(person), role, row["kind"], list(row["days"]),
+                                            row.get("answer") or ""), excused.card_keyboard(str(row["id"]), False))
+        out = await review_explanation(row, person, row.get("answer") or "", [(card, boss, DIRECTOR_ROLE)] if card else [],
+                                       run_id)
+        counts[out] = counts.get(out, 0) + 1
+    for row in items["late_reports"]:
+        if not enabled("late_report"):
+            counts["skipped"] += 1
+            continue
+        person = await store.get_employee(str(row["employee_id"]))
+        if not person:
+            counts["skipped"] += 1
+            continue
+        role = ROLE_LABELS.get(person.get("role") or "", person.get("role") or "")
+        card = await send(late_report.card(names.person_name(person), role, row["report_date"], row.get("late_sent_at"),
+                                           row.get("late_content") or ""), late_report.card_keyboard(str(row["id"])))
+        out = await review_late_report(row, person, [(card, boss, DIRECTOR_ROLE)] if card else [], run_id)
+        counts[out] = counts.get(out, 0) + 1
+    for row in items["tasks"]:
+        if not enabled("task_proof"):
+            counts["skipped"] += 1
+            continue
+        full = await store.task_with_employee(str(row["id"]))
+        if not full or full.get("status") != "review" or not full.get("director_telegram_user_id"):
+            counts["skipped"] += 1
+            continue
+        chat = int(full["director_telegram_user_id"])
+        review_id, reached = await ops_manager._deliver_review(
+            full, full.get("display_name") or "", int(full["employee_telegram_user_id"]),
+            task_register.shared_line(await store.open_shared_copies(full)), run_id, [chat],
+            full.get("evidence_message_id"))
+        if not review_id:
+            counts["skipped"] += 1
+            continue
+        await store.set_task_review_message(str(row["id"]), review_id)
+        has_file = bool(full.get("evidence_message_id"))
+        out = await review_task_proof(full, Card(int(reached), int(review_id), has_file), has_file, run_id)
+        counts[out] = counts.get(out, 0) + 1
+    await log_action(agent=AGENT, action="ai_check_backlog", target_system="postgres", status="success",
+                     run_id=run_id, mode="write", payload=counts)
+    return counts

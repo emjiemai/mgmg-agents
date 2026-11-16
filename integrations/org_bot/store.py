@@ -3677,6 +3677,26 @@ async def decide_late_report(report_id: str, approve: bool, decided_by: int) -> 
     return await fetch_one(sql, (decided_by, report_id))
 
 
+async def waiting_for_boss() -> dict[str, list[dict[str, Any]]]:
+    """What still waits for a decision and the AI checker hasn't judged (16.11, Admin «/aicheck»): explanations of
+    the last 14 days answered but not excused, late reports not decided, tasks in review."""
+    seen = "NOT EXISTS (SELECT 1 FROM ai_decisions a WHERE a.kind = %s AND a.ref_id = {ref})"
+    return {
+        "explanations": await fetch_all(
+            f"""SELECT x.* FROM explanations x WHERE x.answered_at IS NOT NULL AND x.answered_at > now() - interval '14 days'
+                  AND x.answer NOT LIKE '[%%'
+                  AND NOT EXISTS (SELECT 1 FROM excused_days d WHERE d.employee_id = x.employee_id AND d.day = ANY(x.days))
+                  AND {seen.format(ref="x.id::text")} ORDER BY x.answered_at""", ("explanation",)),
+        "late_reports": await fetch_all(
+            f"""SELECT r.* FROM daily_reports r WHERE r.status = 'asked' AND r.late_content IS NOT NULL
+                  AND r.late_decision IS NULL AND {seen.format(ref="r.id::text")} ORDER BY r.report_date""",
+            ("late_report",)),
+        "tasks": await fetch_all(
+            f"""SELECT t.id FROM tasks t WHERE t.status = 'review' AND {seen.format(ref="t.id::text")}
+                ORDER BY t.completed_at""", ("task_proof",)),
+    }
+
+
 async def report_states(employee_id: str, days: list[date]) -> dict[date, str]:
     """For the AI checker (16.11): what the bot holds for this person's report on each day — «submitted», «late
     waiting», «declined», «excused» or «none» (asked, nothing came)."""
