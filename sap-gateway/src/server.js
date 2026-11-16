@@ -30,6 +30,12 @@ import {
   getServiceContracts,
   getItemSales
 } from './complete.js';
+import {
+  getGoodsReceipts,
+  getStockTransfers,
+  getInventoryMoves,
+  getOpenSalesOrderLines
+} from './history.js';
 import { toolDefinitions } from './tools.js';
 
 dotenv.config();
@@ -103,6 +109,11 @@ app.post('/tools/get_equipment', toolHandler(getEquipment));
 app.post('/tools/get_service_calls', toolHandler(getServiceCalls));
 app.post('/tools/get_service_contracts', toolHandler(getServiceContracts));
 app.post('/tools/get_item_sales', toolHandler(getItemSales));
+// SAP history (F4, 2026-11-16, history.js): stock movements and open sales-order lines
+app.post('/tools/get_goods_receipts', toolHandler(getGoodsReceipts));
+app.post('/tools/get_stock_transfers', toolHandler(getStockTransfers));
+app.post('/tools/get_inventory_moves', toolHandler(getInventoryMoves));
+app.post('/tools/get_open_sales_order_lines', toolHandler(getOpenSalesOrderLines));
 
 app.use((_req, res) => {
   res.status(404).json({ ok: false, error: 'Not found' });

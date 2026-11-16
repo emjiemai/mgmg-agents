@@ -6783,9 +6783,16 @@ def test_stock_items() -> None:
         stored.append((dataset, len(rows)))
         return {"ok": True, "written": len(rows), "skipped": 0, "missing_columns": missing}
 
+    kept_history: list[int] = []
+
+    async def fake_history(item_rows, today, run_id):
+        kept_history.append(len(item_rows))
+
     saved = push_handler._store_full
+    saved_history = push_handler._keep_stock_history
     try:
         push_handler._store_full = fake_store
+        push_handler._keep_stock_history = fake_history
         rows = [{"ItemCode": "T1", "ItemName": "TIMER, DRYER 3CYCLE RETAIL 240V 50 Hz", "WhsCode": "01", "WhsName": "Асосий",
                  "OnHand": 4, "AvgPrice": 10, "StockValue": 40},
                 {"ItemCode": "T2", "ItemName": "Fenix 8", "WhsCode": "G.A._01", "WhsName": "Абай", "OnHand": 2,
@@ -6795,6 +6802,8 @@ def test_stock_items() -> None:
         out = asyncio.run(push_handler.handle_full_push("stock_value", {"rows": rows}, uuid.uuid4()))
     finally:
         push_handler._store_full = saved
+        push_handler._keep_stock_history = saved_history
+    check("the item rows also kept as today's stock history (F4)", kept_history, [3])
     check_true("get_stock_value: totals per warehouse AND every item row kept as stock_items",
                out["ok"] and stored == [("stock_value", 3), ("stock_items", 3)])
     check_true("stock_items keyed by item and warehouse", push_handler.FULL_DATASETS["stock_items"] == ("ItemCode", "WhsCode"))
@@ -6819,7 +6828,7 @@ def test_sap_everything() -> None:
     server = (root / "sap-gateway" / "src" / "server.js").read_text(encoding="utf-8")
     script = (root / "scripts" / "sap-gateway-push" / "push-ar-aging.ps1").read_text(encoding="utf-8")
     more = re.findall(r'@\{ Tool = "(\w+)"; Kind = "(\w+)"; Body = \'([^\']*)\'; Fallback = "(\w*)" \}', script)
-    check("the push calls 12 more complete tools", len(more), 12)
+    check("the push calls 16 more complete tools (12 + 4 SAP history, 16.11)", len(more), 16)
     served = set(re.findall(r"app\.post\('/tools/(\w+)'", server))
     check_true("the gateway serves every one", {t for t, _k, _b, _f in more} <= served)
     check_true("each lands in a kind the Command Center stores and the analyst knows",
@@ -11478,7 +11487,10 @@ def test_sap_gateway_code() -> None:
 
     root = Path(__file__).resolve().parents[1]
     gateway = root / "sap-gateway"
-    columns = json.loads((root / "scripts" / "sap-gateway-push" / "sap_columns.json").read_text(encoding="utf-8"))["tables"]
+    exported = json.loads((root / "scripts" / "sap-gateway-push" / "sap_columns.json").read_text(encoding="utf-8"))
+    columns = dict(exported["tables"])
+    # F4 (16.11): document tables not in the export share the standard marketing-document columns
+    columns.update({t: columns[src] for t, src in exported.get("standard_copies", {}).items() if not t.startswith("_")})
     sources = {f.name: f.read_text(encoding="utf-8") for f in sorted((gateway / "src").glob("*.js"))}
     check_true("no secrets in the repo copy", not (gateway / ".env").exists()
                and all("HANA_PASSWORD=" not in s or s.startswith("#") for s in sources.values()))
@@ -14386,6 +14398,78 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_sap_history_1116() -> None:
+    """16.11.2026, F4 SAP history: the gateway's four history tools, the push calls them, the daily stock picture and
+    the movement lines kept long, typed views the analyst can query."""
+    print("SAP history (F4, 16.11.2026)")
+    import asyncio
+    import re
+    import uuid
+    from datetime import date as _date
+
+    from integrations.org_bot import sql_catalog
+    from integrations.sap import push_handler as ph
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "sap-gateway" / "src" / "history.js").read_text(encoding="utf-8")
+    server = (root / "sap-gateway" / "src" / "server.js").read_text(encoding="utf-8")
+    script = (root / "scripts" / "sap-gateway-push" / "push-ar-aging.ps1").read_text(encoding="utf-8")
+    tools = {"get_goods_receipts": "goods_receipts", "get_stock_transfers": "stock_transfers",
+             "get_inventory_moves": "inventory_moves", "get_open_sales_order_lines": "so_open_lines"}
+    check_true("gateway serves the four history tools", all(f"/tools/{t}'" in server for t in tools))
+    check_true("push sends each to its kind", all(f'Tool = "{t}"; Kind = "{k}"' in script for t, k in tools.items()))
+    check_true("the receiver knows the kinds", all(k in ph.FULL_DATASETS for k in tools.values()))
+    check_true("history SQL: read-only, days bound", "ADD_DAYS(CURRENT_DATE, ?)" in js
+               and not re.search(r"\b(INSERT|UPDATE|DELETE|MERGE|DROP)\b", js) and "[-back, -back]" in js)
+    check_true("goods issues (60) and goods receipts (59) told apart", '59 AS "ObjType"' in js and "SELECT 60," in js)
+
+    today = _date(2026, 11, 16)
+    hist = ph.history_rows([{"ItemCode": "A", "WhsCode": "01", "ItemName": "Fenix 8", "WhsName": "Абай", "OnHand": "3",
+                             "StockValue": "1500"}, {"ItemCode": "", "WhsCode": "01"},
+                            {"ItemCode": "A", "WhsCode": "01", "OnHand": 2, "StockValue": 1000}], today)
+    check("stock picture: one row per item and warehouse, the last wins, no blank item", hist,
+          [(today, "A", "01", None, None, 2.0, 1000.0)])
+    moves = ph.move_rows("stock_transfers", [{"DocEntry": "7", "LineNum": 0, "DocNum": "107", "DocDate": "2026-11-10",
+                                              "ItemCode": "A", "Quantity": "5", "FromWhsCod": "01", "WhsCode": "G.A._01",
+                                              "CANCELED": "N"}])
+    check("transfer: from → to", (moves[0][0], moves[0][8], moves[0][9], moves[0][4], moves[0][14]),
+          ("transfer", "01", "G.A._01", _date(2026, 11, 10), False))
+    rec = ph.move_rows("goods_receipts", [{"DocEntry": 3, "LineNum": 1, "CardCode": "S1", "CardName": "Garmin Ltd",
+                                           "WhsCode": "01", "Quantity": 10, "LineTotal": 4000, "DocCur": "USD"}])[0]
+    check("receipt: supplier and the warehouse it went to", (rec[0], rec[9], rec[11], rec[13]),
+          ("receipt", "01", "Garmin Ltd", "USD"))
+    iss = ph.move_rows("inventory_moves", [{"ObjType": 60, "DocEntry": 4, "LineNum": 0, "WhsCode": "02", "Quantity": 1},
+                                           {"ObjType": 59, "DocEntry": 5, "LineNum": 0, "WhsCode": "02", "Quantity": 2},
+                                           {"ObjType": 60, "DocEntry": None, "LineNum": 0}])
+    check("goods issue leaves a warehouse, goods receipt enters one; no key → skipped",
+          [(m[0], m[8], m[9]) for m in iss], [("goods_issue", "02", None), ("goods_receipt", None, "02")])
+
+    calls = []
+
+    async def fake_store(dataset, rows, today, run_id, complete, missing):
+        return {"ok": True, "written": len(rows), "skipped": 0, "missing_columns": missing}
+
+    async def fake_moves(dataset, rows, today, run_id):
+        calls.append((dataset, len(rows)))
+
+    saved = (ph._store_full, ph._keep_moves)
+    ph._store_full, ph._keep_moves = fake_store, fake_moves
+    try:
+        asyncio.run(ph.handle_full_push("goods_receipts", {"rows": [{"DocEntry": 1, "LineNum": 0}]}, uuid.uuid4()))
+        asyncio.run(ph.handle_full_push("so_open_lines", {"rows": [{"DocEntry": 1, "LineNum": 0}]}, uuid.uuid4()))
+    finally:
+        ph._store_full, ph._keep_moves = saved
+    check("movement kinds also go to the long history; open order lines don't", calls, [("goods_receipts", 1)])
+    check("kept: stock picture ~400 days, movements two years", (ph.STOCK_HISTORY_DAYS, ph.STOCK_MOVES_DAYS), (400, 730))
+    schema = (root / "database" / "schema.sql").read_text(encoding="utf-8")
+    check_true("tables, views, the snapshot kinds and the analyst roles' SELECT",
+               all(x in schema for x in ("CREATE TABLE IF NOT EXISTS stock_history", "CREATE TABLE IF NOT EXISTS stock_moves",
+                                         "'goods_receipts', 'stock_transfers', 'inventory_moves', 'so_open_lines'",
+                                         "analyst.sap_stock_history, analyst.sap_stock_moves, analyst.sap_so_open_lines")))
+    check_true("the analyst's catalog describes them",
+               all(v in sql_catalog.CATALOG for v in ("sap_stock_history", "sap_stock_moves", "sap_so_open_lines")))
+
+
 def test_ai_checker_1116() -> None:
     """16.11.2026 (the owner: the Boss doesn't approve or deny): the AI checker decides explanations, late reports, task
     proofs and new deadlines at once — pressing the Boss's own button — with a reason note and ↩️ undo."""
@@ -14896,6 +14980,7 @@ def main() -> int:
         test_message_budget_1113,
         test_reopen_fix_1114,
         test_ai_checker_1116,
+        test_sap_history_1116,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

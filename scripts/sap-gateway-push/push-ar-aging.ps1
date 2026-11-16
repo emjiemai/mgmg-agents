@@ -87,7 +87,12 @@ $MoreTools = @(
     @{ Tool = "get_equipment"; Kind = "equipment"; Body = '{}'; Fallback = "" },
     @{ Tool = "get_service_calls"; Kind = "service_calls"; Body = '{"days":180}'; Fallback = "" },
     @{ Tool = "get_service_contracts"; Kind = "service_contracts"; Body = '{}'; Fallback = "" },
-    @{ Tool = "get_item_sales"; Kind = "item_sales_90d"; Body = '{"days":90}'; Fallback = "" }
+    @{ Tool = "get_item_sales"; Kind = "item_sales_90d"; Body = '{"days":90}'; Fallback = "" },
+    # SAP history (F4, 2026-11-16): stock movements kept two years by the Command Center
+    @{ Tool = "get_goods_receipts"; Kind = "goods_receipts"; Body = '{"days":45}'; Fallback = "" },
+    @{ Tool = "get_stock_transfers"; Kind = "stock_transfers"; Body = '{"days":45}'; Fallback = "" },
+    @{ Tool = "get_inventory_moves"; Kind = "inventory_moves"; Body = '{"days":45}'; Fallback = "" },
+    @{ Tool = "get_open_sales_order_lines"; Kind = "so_open_lines"; Body = '{}'; Fallback = "" }
 )
 
 function Write-Log {

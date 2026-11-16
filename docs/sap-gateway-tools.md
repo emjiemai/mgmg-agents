@@ -249,3 +249,30 @@ is recorded by the Command Center (`agent_actions`, Admin Bot `/texnik`).
 `npm start`; copy the new `push-ar-aging.ps1` over the old one **keeping the
 four settings at its top** (token, host, secret, gateway URL). Then
 `push-ar-aging.ps1 -Check` lists every tool as "works".
+
+## SAP history — F4 (2026-11-16)
+
+Four more read-only tools in `sap-gateway/src/history.js`, pushed every 30 min by `push-ar-aging.ps1`:
+
+| Tool | SAP tables | Kind | Kept |
+| ---- | ---------- | ---- | ---- |
+| `get_goods_receipts` `{days: 45}` | OPDN + PDN1 | `goods_receipts` | lines → `stock_moves` kind `receipt`, 2 years |
+| `get_stock_transfers` `{days: 45}` | OWTR + WTR1 | `stock_transfers` | `stock_moves` kind `transfer` (FromWhsCod → WhsCode), 2 years |
+| `get_inventory_moves` `{days: 45}` | OIGN + IGN1 (ObjType 59), OIGE + IGE1 (60) | `inventory_moves` | `stock_moves` kind `goods_receipt` / `goods_issue`, 2 years |
+| `get_open_sales_order_lines` `{}` | ORDR + RDR1, open lines | `so_open_lines` | snapshot (3 days), view `analyst.sap_so_open_lines` |
+
+Also: `get_stock_value`'s item rows are kept as the **daily stock picture** in `stock_history` (~400 days) — history
+starts the day this is deployed. Analyst views: `analyst.sap_stock_history`, `analyst.sap_stock_moves`,
+`analyst.sap_so_open_lines`.
+
+Columns: these tables are not in the 2026-10-02 export; they share SAP's standard marketing-document columns, so
+selfcheck checks them against OPOR / POR1 (`sap_columns.json` → `standard_copies`).
+
+**On the gateway computer:** the HANA user the gateway logs in with (`.env` → `HANA_USER`) needs SELECT on
+`OPDN, PDN1, OWTR, WTR1, OIGN, IGN1, OIGE, IGE1, RDR1` in schema `MGM` (an SAP / HANA admin runs it):
+
+```sql
+GRANT SELECT ON "MGM"."OPDN" TO <HANA_USER>;  -- and the same for PDN1, OWTR, WTR1, OIGN, IGN1, OIGE, IGE1, RDR1
+```
+
+Without it each tool answers «insufficient privilege» and the push logs a warning; nothing else breaks.

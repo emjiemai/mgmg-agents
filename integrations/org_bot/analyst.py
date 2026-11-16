@@ -104,6 +104,12 @@ SAP_KINDS: dict[str, str] = {
     "service_calls": "service calls (OSCL): every open one and every one of the last 180 days, with status and dates; "
                      "TechnicianName / AssigneeName = who handles it (once the gateway sends them; else only the ids)",
     "service_contracts": "service contracts (OCTR)",
+    # SAP history (F4, 2026-11-16): the last ~45 days as pushed; months back are in sap_stock_moves / sap_stock_history
+    "goods_receipts": "goods receipt PO lines (OPDN + PDN1), last ~45 days: what arrived from which supplier, item, "
+                      "quantity, warehouse (WhsCode); older ones → query_db sap_stock_moves kind 'receipt'",
+    "stock_transfers": "inventory transfer lines (OWTR + WTR1), last ~45 days: item, quantity, FromWhsCod → WhsCode",
+    "inventory_moves": "goods receipts (ObjType 59) and goods issues (60: write-offs, own use) lines, last ~45 days",
+    "so_open_lines": "open customer sales-order LINES (ORDR + RDR1): item, OpenQty still to deliver, customer, ShipDate",
 }
 # Fields whose sums are worked out here, not left to the model to add up.
 SUM_FIELDS = ("DocTotal", "DocTotalFC", "DocTotalSy", "PaidToDate", "PaidFC", "LineTotal", "GTotalSC", "TotalSumSy", "Quantity",

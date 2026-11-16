@@ -92,6 +92,28 @@ CATALOG: dict[str, tuple[str, str, tuple[tuple[str, str], ...]]] = {
         ("card_code", ""), ("card_name", "supplier"), ("name_key", ""), ("item_code", ""), ("item_name", ""),
         ("whs_code", ""), ("quantity", ""), ("open_qty", "still to arrive"), ("price", "in line_currency"),
         ("line_currency", ""), ("line_usd", ""), ("doc_currency", ""), ("captured_at", ""))),
+    "sap_stock_history": ("sap", "Stock per item and warehouse ON EACH DAY (one picture a day, kept ~400 days; "
+                          "history starts 16.11.2026). «What was in stock on <date>», stock trends. Latest day = "
+                          "max(day). WHERE NOT is_faulty for sellable stock.", (
+        ("day", "the date of the picture"), ("item_code", ""), ("item_name", ""), ("item_key", ""), ("whs_code", ""),
+        ("whs_name", "warehouse"), ("on_hand", "pieces that day"), ("stock_value_usd", ""),
+        ("is_faulty", "a faulty-goods warehouse"))),
+    "sap_stock_moves": ("sap", "Stock movement LINES, kept two years: kind 'receipt' (arrived from a supplier, "
+                        "card_name = supplier), 'transfer' (from_whs → to_whs), 'goods_receipt' (stock added without "
+                        "a purchase) and 'goods_issue' (taken out: write-off, own use). Sales are in sap_sales_lines. "
+                        "Leave out cancelled.", (
+        ("kind", "receipt | transfer | goods_receipt | goods_issue"), ("doc_entry", ""), ("doc_num", "SAP number"),
+        ("line_num", ""), ("doc_date", ""), ("item_code", ""), ("item_name", ""), ("item_key", ""),
+        ("quantity", "pieces"), ("from_whs", "warehouse it left"), ("to_whs", "warehouse it went to"),
+        ("card_code", ""), ("card_name", "supplier (receipts)"), ("name_key", ""),
+        ("line_total", "in currency"), ("currency", ""), ("cancelled", ""), ("comments", ""))),
+    "sap_so_open_lines": ("sap", "Open customer sales-order LINES: what customers ordered and is still to deliver "
+                          "(per item).", (
+        ("doc_entry", ""), ("doc_num", ""), ("line_num", ""), ("doc_date", ""), ("due_date", ""), ("ship_date", ""),
+        ("card_code", ""), ("card_name", "customer"), ("name_key", ""), ("slp_code", ""), ("item_code", ""),
+        ("item_name", ""), ("whs_code", ""), ("quantity", ""), ("open_qty", "still to deliver"),
+        ("price", "in line_currency"), ("line_currency", ""), ("line_usd", ""), ("doc_currency", ""),
+        ("captured_at", ""))),
     "sap_orders_open": ("sap", "Open customer sales orders.", (
         ("doc_entry", ""), ("doc_num", ""), ("doc_date", ""), ("due_date", ""), ("card_code", ""),
         ("card_name", "customer"), ("name_key", ""), ("slp_code", ""), ("doc_currency", ""), ("total_usd", ""),

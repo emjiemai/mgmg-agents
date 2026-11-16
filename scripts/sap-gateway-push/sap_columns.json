@@ -5067,5 +5067,17 @@
 "UoMNum2",
 "UoMDen2"
 ]
+},
+"standard_copies": {
+"_note": "Tables not in the 2026-10-02 export that share SAP's standard marketing-document columns (2026-11-16, F4): checked against the table named.",
+"OPDN": "OPOR",
+"PDN1": "POR1",
+"OWTR": "OPOR",
+"WTR1": "POR1",
+"OIGN": "OPOR",
+"IGN1": "POR1",
+"OIGE": "OPOR",
+"IGE1": "POR1",
+"RDR1": "POR1"
 }
 }

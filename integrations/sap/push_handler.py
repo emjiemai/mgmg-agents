@@ -349,7 +349,16 @@ FULL_DATASETS: dict[str, tuple[str, ...]] = {
     "stock_value": ("WhsCode",),                   # OITW summed per warehouse (gateway get_stock_value)
     "stock_items": ("ItemCode", "WhsCode"),        # the same push's item rows, kept (2026-10-16): «X нечта қолди?»
     "supplier_balances": ("CardCode",),            # OCRD suppliers with a balance (gateway get_supplier_balances)
+    # SAP history (F4, 2026-11-16, gateway history.js): also kept long in stock_moves (two years)
+    "goods_receipts": ("DocEntry", "LineNum"),     # OPDN + PDN1, last 45 days: arrived from suppliers
+    "stock_transfers": ("DocEntry", "LineNum"),    # OWTR + WTR1, last 45 days: warehouse to warehouse
+    "inventory_moves": ("ObjType", "DocEntry", "LineNum"),  # OIGN (59) + OIGE (60): goods receipts / issues
+    "so_open_lines": ("DocEntry", "LineNum"),      # ORDR + RDR1, open lines: customers' orders still to deliver
 }
+
+# How long the long history keeps (F4): the daily stock picture and the movement lines.
+STOCK_HISTORY_DAYS = 400
+STOCK_MOVES_DAYS = 730
 
 # The columns each complete gateway tool must send (docs/sap-gateway-tools.md).
 # A push without some of them is still stored, and the missing names go into
@@ -576,7 +585,102 @@ async def handle_full_push(dataset: str, payload: dict[str, Any], run_id: uuid.U
     result = await _store_full(dataset, rows, today, run_id, complete, missing)
     if item_rows:
         await _store_full("stock_items", item_rows, today, run_id, complete, [])
+        await _keep_stock_history(item_rows, today, run_id)
+    if dataset in MOVE_KINDS:
+        await _keep_moves(dataset, rows, today, run_id)
     return result
+
+
+def _num(value: Any) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(value: Any) -> int | None:
+    number = _num(value)
+    return int(number) if number is not None else None
+
+
+def history_rows(item_rows: list[dict[str, Any]], today: date) -> list[tuple]:
+    """get_stock_value's item rows as today's stock picture (one row per item and warehouse)."""
+    seen: dict[tuple[str, str], tuple] = {}
+    for r in item_rows:
+        item, whs = str(r.get("ItemCode") or "").strip(), str(r.get("WhsCode") or "").strip()
+        if item and whs:
+            seen[(item, whs)] = (today, item, whs, r.get("ItemName"), r.get("WhsName"), _num(r.get("OnHand")),
+                                 _num(r.get("StockValue")))
+    return list(seen.values())
+
+
+def move_rows(dataset: str, rows: list[dict[str, Any]]) -> list[tuple]:
+    """A history tool's lines as stock_moves rows: (kind, doc_entry, line_num, doc_num, doc_date, item_code,
+    item_name, quantity, from_whs, to_whs, card_code, card_name, line_total, currency, cancelled, comments)."""
+    out: dict[tuple, tuple] = {}
+    for r in rows:
+        entry, line = _int(r.get("DocEntry")), _int(r.get("LineNum"))
+        if entry is None or line is None:
+            continue
+        if dataset == "goods_receipts":
+            kind, src, dst, card, name = "receipt", None, r.get("WhsCode"), r.get("CardCode"), r.get("CardName")
+        elif dataset == "stock_transfers":
+            kind, card, name = "transfer", None, None
+            src, dst = r.get("FromWhsCod") or r.get("Filler"), r.get("WhsCode") or r.get("ToWhsCode")
+        else:
+            issue = _int(r.get("ObjType")) == 60
+            kind = "goods_issue" if issue else "goods_receipt"
+            src, dst = (r.get("WhsCode"), None) if issue else (None, r.get("WhsCode"))
+            card = name = None
+        doc_date = parse_sap_date(r.get("DocDate")) if r.get("DocDate") else None
+        out[(kind, entry, line)] = (
+            kind, entry, line, _int(r.get("DocNum")), doc_date, r.get("ItemCode"), r.get("Dscription"),
+            _num(r.get("Quantity")), src, dst, card, name, _num(r.get("LineTotal")),
+            r.get("Currency") or r.get("DocCur"), str(r.get("CANCELED") or "N").upper() in ("Y", "C"),
+            (str(r.get("Comments"))[:500] if r.get("Comments") else None))
+    return list(out.values())
+
+
+MOVE_KINDS = ("goods_receipts", "stock_transfers", "inventory_moves")
+
+
+async def _keep_stock_history(item_rows: list[dict[str, Any]], today: date, run_id: uuid.UUID) -> None:
+    """Today's stock picture replaced (the last push of the day stays); days beyond STOCK_HISTORY_DAYS go."""
+    rows = history_rows(item_rows, today)
+    async with audited(agent="sap-gateway-push", action="stock_history_kept", target_system="postgres",
+                       run_id=run_id, target_ref="stock_history", mode="write", payload={"rows": len(rows)}):
+        async with connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("DELETE FROM stock_history WHERE day = %s OR day < %s",
+                                  (today, today - timedelta(days=STOCK_HISTORY_DAYS)))
+                if rows:
+                    await cur.executemany(
+                        """INSERT INTO stock_history (day, item_code, whs_code, item_name, whs_name, on_hand,
+                                                      stock_value_usd) VALUES (%s, %s, %s, %s, %s, %s, %s)""", rows)
+
+
+async def _keep_moves(dataset: str, rows: list[dict[str, Any]], today: date, run_id: uuid.UUID) -> None:
+    """The lines upserted (a document edited or cancelled in SAP is updated); lines older than STOCK_MOVES_DAYS go."""
+    params = move_rows(dataset, rows)
+    async with audited(agent="sap-gateway-push", action=f"stock_moves_{dataset}", target_system="postgres",
+                       run_id=run_id, target_ref="stock_moves", mode="write", payload={"rows": len(params)}):
+        async with connection() as conn:
+            async with conn.cursor() as cur:
+                if params:
+                    await cur.executemany(
+                        """INSERT INTO stock_moves (kind, doc_entry, line_num, doc_num, doc_date, item_code, item_name,
+                                                    quantity, from_whs, to_whs, card_code, card_name, line_total,
+                                                    currency, cancelled, comments)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (kind, doc_entry, line_num) DO UPDATE SET
+                               doc_num = EXCLUDED.doc_num, doc_date = EXCLUDED.doc_date, item_code = EXCLUDED.item_code,
+                               item_name = EXCLUDED.item_name, quantity = EXCLUDED.quantity,
+                               from_whs = EXCLUDED.from_whs, to_whs = EXCLUDED.to_whs, card_code = EXCLUDED.card_code,
+                               card_name = EXCLUDED.card_name, line_total = EXCLUDED.line_total,
+                               currency = EXCLUDED.currency, cancelled = EXCLUDED.cancelled,
+                               comments = EXCLUDED.comments, updated_at = now()""", params)
+                await cur.execute("DELETE FROM stock_moves WHERE doc_date < %s",
+                                  (today - timedelta(days=STOCK_MOVES_DAYS),))
 
 
 async def _store_full(dataset: str, rows: list[dict[str, Any]], today: date, run_id: uuid.UUID, complete: bool,

@@ -166,5 +166,33 @@ export const toolDefinitions = [
     path: '/tools/get_item_sales',
     description: 'Quantity sold per item and warehouse in the last N days (invoices minus credit notes).',
     input: { days: 'integer 1-400, default 90', limit: 'integer 1-200000, default 100000' }
+  },
+  {
+    name: 'get_goods_receipts',
+    method: 'POST',
+    path: '/tools/get_goods_receipts',
+    description: 'Goods receipt PO lines (OPDN/PDN1) of the last N days: what arrived from suppliers.',
+    input: { days: 'integer 1-730, default 45', limit: 'integer 1-200000, default 100000' }
+  },
+  {
+    name: 'get_stock_transfers',
+    method: 'POST',
+    path: '/tools/get_stock_transfers',
+    description: 'Inventory transfer lines (OWTR/WTR1) of the last N days: from which warehouse to which.',
+    input: { days: 'integer 1-730, default 45', limit: 'integer 1-200000, default 100000' }
+  },
+  {
+    name: 'get_inventory_moves',
+    method: 'POST',
+    path: '/tools/get_inventory_moves',
+    description: 'Goods receipts (OIGN) and goods issues (OIGE) lines of the last N days: stock corrections.',
+    input: { days: 'integer 1-730, default 45', limit: 'integer 1-200000, default 100000' }
+  },
+  {
+    name: 'get_open_sales_order_lines',
+    method: 'POST',
+    path: '/tools/get_open_sales_order_lines',
+    description: 'Every open sales-order line (ORDR/RDR1): what customers ordered and is still to deliver.',
+    input: { limit: 'integer 1-100000, default 50000' }
   }
 ];

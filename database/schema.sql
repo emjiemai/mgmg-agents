@@ -663,7 +663,8 @@ ALTER TABLE sap_gateway_snapshots ADD CONSTRAINT sap_gateway_snapshots_tool_chec
     'sales', 'sales_lines', 'payments_out', 'ap_open', 'po_open', 'sales_people',
     'equipment', 'service_calls', 'service_contracts', 'stock_value', 'supplier_balances',
     'stock_items',  -- get_stock_value's item rows, kept (2026-10-16)
-    'item_sales_90d'  -- quantity sold per item and warehouse, 90 days (gateway get_item_sales, 2026-10-16)
+    'item_sales_90d',  -- quantity sold per item and warehouse, 90 days (gateway get_item_sales, 2026-10-16)
+    'goods_receipts', 'stock_transfers', 'inventory_moves', 'so_open_lines'  -- SAP history (F4, 2026-11-16)
 ));
 
 -- Billz → SAP check (2026-10-03, docs/agent-specs/17-billz-sap-check.md):
@@ -2029,6 +2030,81 @@ EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'pg_trgm not installed: %', SQLERRM;
 END $$;
 
+-- SAP history (F4, 2026-11-16): the stock picture of every day (from get_stock_value's item rows, ~400 days) and
+-- stock movement lines (receipts from suppliers, transfers, goods receipts / issues — two years), typed and compact,
+-- so «what was in stock on 1 October», «what came in last month», «what moved from A to B» can be answered. Filled by
+-- integrations/sap/push_handler.py from the gateway's history tools (sap-gateway/src/history.js).
+CREATE TABLE IF NOT EXISTS stock_history (
+    day              DATE     NOT NULL,
+    item_code        TEXT     NOT NULL,
+    whs_code         TEXT     NOT NULL,
+    item_name        TEXT,
+    whs_name         TEXT,
+    on_hand          NUMERIC,
+    stock_value_usd  NUMERIC,
+    PRIMARY KEY (day, item_code, whs_code)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_history_item ON stock_history (item_code, day);
+CREATE TABLE IF NOT EXISTS stock_moves (
+    kind         TEXT     NOT NULL CHECK (kind IN ('receipt', 'transfer', 'goods_receipt', 'goods_issue')),
+    doc_entry    BIGINT   NOT NULL,
+    line_num     INTEGER  NOT NULL,
+    doc_num      BIGINT,
+    doc_date     DATE,
+    item_code    TEXT,
+    item_name    TEXT,
+    quantity     NUMERIC,
+    from_whs     TEXT,     -- transfers: the source; goods issues: the warehouse it left
+    to_whs       TEXT,     -- receipts / transfers / goods receipts: where it went
+    card_code    TEXT,     -- receipts: the supplier
+    card_name    TEXT,
+    line_total   NUMERIC,
+    currency     TEXT,
+    cancelled    BOOLEAN  NOT NULL DEFAULT false,
+    comments     TEXT,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (kind, doc_entry, line_num)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_moves_date ON stock_moves (doc_date);
+CREATE INDEX IF NOT EXISTS idx_stock_moves_item ON stock_moves (item_code, doc_date);
+
+CREATE OR REPLACE VIEW analyst.sap_stock_history AS
+SELECT h.day AS day, h.item_code AS item_code, h.item_name AS item_name, analyst.name_key(h.item_name) AS item_key,
+       h.whs_code AS whs_code, h.whs_name AS whs_name, h.on_hand AS on_hand, h.stock_value_usd AS stock_value_usd,
+       coalesce(lower(h.whs_name) ~ '(faulty|брак|brak|nosoz|носоз|defect)', false) AS is_faulty
+FROM stock_history h;
+
+CREATE OR REPLACE VIEW analyst.sap_stock_moves AS
+SELECT m.kind AS kind, m.doc_entry AS doc_entry, m.doc_num AS doc_num, m.line_num AS line_num,
+       m.doc_date AS doc_date, m.item_code AS item_code, m.item_name AS item_name,
+       analyst.name_key(m.item_name) AS item_key, m.quantity AS quantity, m.from_whs AS from_whs, m.to_whs AS to_whs,
+       m.card_code AS card_code, m.card_name AS card_name, analyst.name_key(m.card_name) AS name_key,
+       m.line_total AS line_total, m.currency AS currency, m.cancelled AS cancelled, m.comments AS comments
+FROM stock_moves m;
+
+CREATE OR REPLACE VIEW analyst.sap_so_open_lines AS
+SELECT analyst.num(s.raw->>'DocEntry')::bigint AS doc_entry,
+       analyst.num(s.raw->>'DocNum')::bigint AS doc_num,
+       analyst.num(s.raw->>'LineNum')::int AS line_num,
+       analyst.day(s.raw->>'DocDate') AS doc_date,
+       analyst.day(s.raw->>'DocDueDate') AS due_date,
+       analyst.day(s.raw->>'ShipDate') AS ship_date,
+       s.raw->>'CardCode' AS card_code,
+       s.raw->>'CardName' AS card_name,
+       analyst.name_key(s.raw->>'CardName') AS name_key,
+       analyst.num(s.raw->>'SlpCode')::int AS slp_code,
+       s.raw->>'ItemCode' AS item_code,
+       s.raw->>'Dscription' AS item_name,
+       s.raw->>'WhsCode' AS whs_code,
+       analyst.num(s.raw->>'Quantity') AS quantity,
+       analyst.num(s.raw->>'OpenQty') AS open_qty,
+       analyst.num(s.raw->>'Price') AS price,
+       s.raw->>'Currency' AS line_currency,
+       analyst.num(s.raw->>'LineTotal') AS line_usd,
+       s.raw->>'DocCur' AS doc_currency,
+       s.captured_at AS captured_at
+FROM v_sap_gateway_latest s WHERE s.tool = 'so_open_lines';
+
 -- The roles query_db runs as: SELECT on these views only — no public tables, no writes (also READ ONLY per query).
 -- mgmg_analyst_sap: the SAP views (accounting with SAP access); mgmg_analyst_director: everything here. The app role
 -- may SET ROLE to them but doesn't inherit them. Never fatal: without the roles query_db is simply not offered.
@@ -2048,7 +2124,7 @@ BEGIN
                     analyst.sap_stock, analyst.sap_stock_by_warehouse, analyst.sap_item_sales_90d, analyst.sap_po_open,
                     analyst.sap_orders_open, analyst.sap_service_calls, analyst.sap_equipment,
                     analyst.sap_service_contracts, analyst.sap_warehouses, analyst.sap_sales_people, analyst.ar_open,
-                    analyst.sales_month
+                    analyst.sales_month, analyst.sap_stock_history, analyst.sap_stock_moves, analyst.sap_so_open_lines
         TO mgmg_analyst_sap, mgmg_analyst_director;
     GRANT SELECT ON analyst.bot_tasks, analyst.bot_daily_reports TO mgmg_analyst_director;
 EXCEPTION WHEN OTHERS THEN
