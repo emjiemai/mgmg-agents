@@ -58,6 +58,7 @@ from integrations.org_bot.roles import (
     role_picker_keyboard,
 )
 from integrations.sap.models import doc_balance
+from integrations.telegram import rich as telegram_rich
 from integrations.telegram.bot import TelegramBot, TelegramError, escape, sanitize_model_html
 
 AGENT = "ops-manager-bot"
@@ -293,13 +294,40 @@ async def handle_update(update: dict[str, Any], run_id: uuid.UUID, background: B
     message = update.get("message")
     if not message:
         return "ignored"
+    # A rich message (Bot API 10.1: lists, headings, tables) has no ``text`` — read as plain text (2026-11-17: the
+    # Boss's task written as a numbered list was dropped without a word).
+    message = telegram_rich.readable(message)
     if (message.get("chat") or {}).get("type") not in (None, "private"):
         # A group (2026-10-26): only the lead groups' binding commands — never tasks, reports or join requests.
         from integrations.org_bot import lead_groups
 
         return await lead_groups.handle_group_message(message, run_id)
 
+    if (sender and not message.get("text") and not message.get("caption")
+            and not any(message.get(f) for f in MEDIA_FIELDS) and report_tools.file_kind(message) is None):
+        return await _unreadable(message, int(sender), run_id)
     return await _handle_message(message, run_id, background)
+
+
+# What a person's private message can be without our reading it (stickers, polls, a contact…): field names only.
+UNREADABLE_SKIP = ("message_id", "from", "chat", "date", "entities", "reply_to_message", "quote", "forward_origin",
+                   "is_topic_message", "message_thread_id", "edit_date", "link_preview_options", "via_bot")
+
+
+async def _unreadable(message: dict[str, Any], telegram_user_id: int, run_id: uuid.UUID) -> str:
+    """Nothing readable in it (2026-11-17): the person is told to send it as text, never left without an answer; the
+    audit keeps which fields came (names only), so a new Telegram message kind shows up in the log."""
+    kinds = sorted(k for k in message if k not in UNREADABLE_SKIP)[:8]
+    await log_action(agent=AGENT, action="message_unreadable", target_system="telegram", status="success",
+                     run_id=run_id, mode="read", payload={"fields": kinds})
+    if any(k.startswith(("new_chat", "left_chat", "pinned", "group_chat", "migrate")) for k in kinds):
+        return "ignored"  # service messages
+    try:
+        await _reply(telegram_user_id, run_id, "Бу хабарни ўқий олмадим — илтимос, оддий матн ёки файл қилиб "
+                                               "қайта юборинг.", reply_to=message.get("message_id"))
+    except TelegramError as exc:
+        log.warning("Unreadable-message note not sent: {}", type(exc).__name__)
+    return "unreadable"
 
 
 # ---------------------------------------------------------- callback buttons

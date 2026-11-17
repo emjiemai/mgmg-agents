@@ -165,6 +165,10 @@ counts only the role held now. Removal already did this (2026-10-14).
 
 **2026-11-09 — shared tasks:** copies with the same assigner and `source_message_id` are one shared task: the brief groups them (one row, the furthest state, «+N»), overdue/due-soon notices skip a copy while another copy awaits proof or is in review, the review card names the others (`task_register.shared_line`), and accepting one closes the rest (`store.close_shared_copies`, completion time of the accepted one; each colleague told).
 
+**2026-11-17 — rich messages:** a Director's task written as a Telegram list arrived as `rich_message` (no `text`,
+Bot API 10.1) and was ignored silently. `ops_manager.handle_update` now fills `text` from it
+(`integrations/telegram/rich.py`); a message with nothing readable is answered and logged (`message_unreadable`).
+
 **2026-11-14 — each copy is its own task (bug fix):** one task the Boss sent to 12 people (T-2026-11-0067…0078) was
 closed for all when one proof was accepted, and the 11 others were told «… бажарди». Removed: `close_shared_copies`,
 `move_shared_copies` (a new deadline moved every copy), the «colleague did it» clause in the reminder / overdue /

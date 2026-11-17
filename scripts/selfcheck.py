@@ -14398,6 +14398,90 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_rich_messages_1117() -> None:
+    """17.11.2026: the Boss's task written as a numbered list came as a Telegram rich message (Bot API 10.1,
+    ``rich_message``, no ``text``) and was dropped without a word. Now read as plain text; a message with nothing
+    readable gets an answer and a counts-only audit row."""
+    print("Telegram rich messages (17.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import ops_manager as om, store
+    from integrations.telegram import rich
+
+    boss = {"blocks": [
+        {"type": "paragraph", "text": ["Ўлик товарлар рўйхатини туз, ", {"type": "bold", "text": "3 га ажрат"}, "!!!"]},
+        {"type": "list", "items": [
+            {"label": "1.", "value": 1, "type": "1", "blocks": [{"type": "paragraph", "text": "Primus"}]},
+            {"label": "", "value": 2, "type": "1", "blocks": [{"type": "paragraph", "text": "Garmin"}]},
+            {"label": "", "has_checkbox": True, "is_checked": True, "blocks": [{"type": "paragraph", "text": "Londry"}]}]},
+        {"type": "heading", "size": 2, "text": {"type": "italic", "text": "Муддат: жума"}},
+        {"type": "table", "cells": [[{"text": "Бўлим", "is_header": True}, {"text": "Ким"}], [{"text": "Garmin"}, {"text": "Мурод"}]]},
+        {"type": "divider"},
+        {"type": "photo", "photo": [], "caption": {"text": "расм изоҳи"}},
+        {"type": "paragraph", "text": [{"type": "custom_emoji", "custom_emoji_id": "1", "alternative_text": "👍"}]}]}
+    check("rich message → the text the person sees", rich.plain_text(boss).split("\n"),
+          ["Ўлик товарлар рўйхатини туз, 3 га ажрат!!!", "1. Primus", "2. Garmin", "☑ Londry", "Муддат: жума",
+           "Бўлим | Ким", "Garmin | Мурод", "расм изоҳи", "👍"])
+    check_true("plain text is left as it was; nothing readable stays empty",
+               rich.readable({"text": "салом", "rich_message": boss})["text"] == "салом"
+               and rich.plain_text({"blocks": [{"type": "divider"}]}) == "" and rich.plain_text(None) == "")
+    deep = {"type": "paragraph", "text": "x"}
+    for _ in range(40):
+        deep = {"type": "blockquote", "blocks": [deep]}
+    check("a too-deep message can't recurse forever", rich.plain_text({"blocks": [deep]}), "")
+
+    director = {"id": "d", "telegram_user_id": 9, "status": "active", "role": "operatsion_direktor",
+                "full_name": "Бош", "display_name": "Бош"}
+    calls = []
+
+    async def none(*a, **k):
+        return None
+
+    async def emp(tg):
+        return director
+
+    async def typing(*a, **k):
+        calls.append("typing")
+
+    async def reply(uid, run_id, text, *a, **k):
+        calls.append(("reply", text))
+
+    async def logged(**k):
+        calls.append(("log", k.get("action"), k.get("payload")))
+
+    class BG:
+        def add_task(self, fn, *a, **k):
+            calls.append(("bg", fn.__name__, a[1] if len(a) > 1 else None))
+
+    names = [n for n in dir(store) if n.startswith(("goal_", "awaiting_", "get_permission", "clear_bot"))]
+    saved = [(store, n, getattr(store, n)) for n in names + ["get_employee_by_telegram_id"]] + \
+            [(om, n, getattr(om, n)) for n in ("_show_typing", "_reply", "log_action")]
+    for n in names:
+        setattr(store, n, none)
+    store.get_employee_by_telegram_id = emp
+    om._show_typing, om._reply, om.log_action = typing, reply, logged
+    base = {"message_id": 5, "from": {"id": 9}, "chat": {"id": 9, "type": "private"}, "date": 0}
+    try:
+        out = asyncio.run(om.handle_update({"message": {**base, "rich_message": boss}}, uuid.uuid4(), BG()))
+        check_true("the Boss's list-formatted task reaches the task dispatch as text",
+                   out == "queued" and any(c[0] == "bg" and c[1] == "_dispatch_director_task" and "1. Primus" in c[2]
+                                           for c in calls if isinstance(c, tuple)))
+        calls.clear()
+        out = asyncio.run(om.handle_update({"message": {**base, "sticker": {"file_id": "x"}}}, uuid.uuid4(), BG()))
+        check_true("nothing readable → an answer, never silence; the audit has field names only",
+                   out == "unreadable" and any(c[0] == "reply" and "ўқий олмадим" in c[1] for c in calls if isinstance(c, tuple))
+                   and any(c[0] == "log" and c[1] == "message_unreadable" and c[2] == {"fields": ["sticker"]}
+                           for c in calls if isinstance(c, tuple)))
+        calls.clear()
+        out = asyncio.run(om.handle_update({"message": {**base, "pinned_message": {}}}, uuid.uuid4(), BG()))
+        check("service messages stay quiet", (out, [c for c in calls if isinstance(c, tuple) and c[0] == "reply"]),
+              ("ignored", []))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+
 def test_sap_history_1116() -> None:
     """16.11.2026, F4 SAP history: the gateway's four history tools, the push calls them, the daily stock picture and
     the movement lines kept long, typed views the analyst can query."""
@@ -14981,6 +15065,7 @@ def main() -> int:
         test_reopen_fix_1114,
         test_ai_checker_1116,
         test_sap_history_1116,
+        test_rich_messages_1117,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,
