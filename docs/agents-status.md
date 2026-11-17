@@ -129,6 +129,7 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 - 2026-11-12: daily reports — the right day for a report typed while a morning question waits, absence notes as explanation cards (⬜ Сабабли), ↩️ move a late report to today, the work AI never parrots; the report-outside-the-ask crash (since 26.10) fixed.
 
 - 2026-11-13: task register F1 finished — checker manager, expected result, dependencies, escalation ladder + deputies, rework count, reminder gaps; helper and AI proof check built but off.
+- 2026-11-17: AI documenter — analyst makes designed PDF / DOCX / XLSX, Vega-Lite charts, Graphviz diagrams (spec 34).
 - 2026-11-17: fix — Telegram rich messages (lists/tables, no `text`) read as plain text; unreadable messages answered, not dropped.
 - 2026-11-16: SAP history (F4) — receipts, transfers, goods receipts/issues, open SO lines from the gateway; daily stock picture ~400 days, movements 2 years; analyst views.
 - 2026-11-16: AI checker — decides explanations, late reports, task proofs, deadline asks at once; Boss can undo (spec 33).

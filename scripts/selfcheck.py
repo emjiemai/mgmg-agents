@@ -9287,7 +9287,8 @@ def test_garmin_manager() -> None:
     check_true("the Boss is told (no buttons: changing the role closes it)", "ролига кўра" in text and keyboard is None)
     tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(ok_gm))]
     check("its tools: Garmin's SAP only, Billz, Garmin records, his team's report with files (22.10) — no general SAP, 1C, attendance or the Boss's records",
-          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data", "garmin_stock_list", "employee_report"])
+          tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data", "garmin_stock_list", "employee_report",
+                  "make_document", "make_chart", "make_diagram"])  # + the documenter (17.11): reads no system
     prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(ok_gm))
     check_true("its prompt keeps it on Garmin", "THIS PERSON RUNS GARMIN" in prompt and "garmin_sap" in prompt)
     check_true("the work AI gives it the public Garmin catalog too", "Garmin catalog" in ai_chat.system_prompt(gm, "ctx"))
@@ -9885,7 +9886,8 @@ def test_data_access() -> None:
                and "маълумотларини сўраш" in data_access.employee_notice({**acc, "lang": "uz"}))
 
     names = lambda scope: [t["function"]["name"] for t in analyst.tools_for(scope)]  # noqa: E731
-    check("Billz only: Billz's tool (and which systems are connected)", names({"billz"}), ["data_sources", "billz_sales"])
+    check("Billz only: Billz's tool (and which systems are connected) + the documenter (17.11)", names({"billz"}),
+          ["data_sources", "billz_sales", "make_document", "make_chart", "make_diagram"])
     check_true("SAP + 1C: their tools and the supplier-debt comparison",
                {"sap_receivables", "sap_records", "onec_balances", "onec_turnovers", "supplier_debt_compare"} <= set(names({"sap", "1c"}))
                and "supplier_debt_compare" not in names({"sap"}))
@@ -14398,6 +14400,139 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_documenter_1117() -> None:
+    """17.11.2026 (the owner): the AI documenter — designed PDF / DOCX / XLSX from a block spec — and charts
+    (Vega-Lite, vl-convert, in a short-lived process) and diagrams (Graphviz DOT), as analyst tools."""
+    print("AI documenter, charts, diagrams (17.11.2026)")
+    import asyncio
+    import io
+    import subprocess as _sp
+    from pathlib import Path
+
+    from integrations.org_bot import analyst
+    from integrations.reports import documenter as d
+
+    def refused(spec, fmt="pdf"):
+        try:
+            d.build(fmt, spec)
+        except d.DocError as exc:
+            return str(exc)
+        return ""
+
+    check_true("a spec needs a title and blocks; unknown block types and formats refused",
+               "title" in refused({"blocks": [{"type": "paragraph", "text": "x"}]})
+               and "type must be one of" in refused({"title": "T", "blocks": [{"type": "script"}]})
+               and "format must be one of" in refused({"title": "T", "blocks": [{"type": "divider"}]}, "exe")
+               and "columns and rows" in refused({"title": "T", "blocks": [{"type": "table", "columns": ["a"]}]}))
+    doc = d.normalize({"title": "Т", "blocks": [{"type": "table", "columns": ["Товар", "Сони"],
+                                                 "rows": [["A", 3], ["B"], ["C", 2.5, "extra"]], "alert_rows": [1, 9]}]})
+    table = doc.blocks[0]
+    check("table rows padded / cut to the columns, numeric columns found, bad alert rows dropped",
+          (table["rows"], table["numeric"], table["alert_rows"]), ([["A", 3], ["B", ""], ["C", 2.5]], [False, True], {1}))
+    check_true("text is escaped; **bold** is the only markup",
+               d.rich_html("<script>x</script> **муҳим**") == "&lt;script&gt;x&lt;/script&gt; <strong>муҳим</strong>")
+    spec = d.chart_spec({"mark": "bar", "config": {"font": "Comic Sans", "bar": {"color": "#000"}},
+                         "data": {"values": [{"a": "x", "b": 1}]}})
+    check_true("chart theme: the house font always, the model's own choices otherwise, the palette without red",
+               spec["config"]["font"] == "Noto Sans" and spec["config"]["bar"]["color"] == "#000"
+               and spec["config"]["bar"]["cornerRadiusEnd"] == 4 and d.ALERT not in d.PALETTE
+               and len(d.PALETTE) == 7 and "width" not in spec)
+    png = d.chart_png({"data": {"values": [{"b": "Primus", "n": 120}, {"b": "Garmin", "n": 45}]}, "mark": "bar",
+                       "encoding": {"x": {"field": "b", "type": "nominal", "title": "Бўлим"},
+                                    "y": {"field": "n", "type": "quantitative", "title": "Сони"}}})
+    check_true("a chart is drawn (real vl-convert, own process)", png[:4] == b"\x89PNG" and d.png_size(png)[0] > 100)
+    check_true("external chart data is refused", "not allowed" in refused(
+        {"title": "T", "blocks": [{"type": "chart", "vega_lite": {"data": {"url": "https://x.example/a.csv"},
+                                                                "mark": "bar"}}]}))
+    check_true("charts run in chart_worker, one at a time",
+               "integrations.reports.chart_worker" in inspect_source(d._draw_chart)
+               and "_CHART_LOCK" in inspect_source(d._draw_chart))
+
+    check_true("DOT that reads files is refused", "not allowed" in refused(
+        {"title": "T", "blocks": [{"type": "diagram", "dot": 'digraph { a [image="/etc/passwd"] }'}]}))
+    check_true("DOT must be a graph", "must start with" in refused(
+        {"title": "T", "blocks": [{"type": "diagram", "dot": "rm -rf /"}]}))
+    seen = {}
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" '
+           'fill="#f4f5f7"/></svg>')
+
+    def fake_run(cmd, input=None, capture_output=None, timeout=None, env=None, check=None, cwd=None):
+        seen["cmd"], seen["timeout"] = cmd, timeout
+        return _sp.CompletedProcess(cmd, 0, svg.encode(), b"")
+
+    saved_run = d.subprocess.run
+    d.subprocess.run = fake_run
+    try:
+        diagram = d.diagram_png('digraph { a [label="Сўров"]; a -> b }')
+    finally:
+        d.subprocess.run = saved_run
+    check_true("a diagram: dot with the house defaults, a timeout, drawn to PNG",
+               seen["cmd"][1] == "-Tsvg" and "-Gfontname=Noto Sans" in seen["cmd"] and "-Nstyle=rounded,filled" in seen["cmd"]
+               and seen["timeout"] == 15 and diagram[:4] == b"\x89PNG")
+
+    full = {"title": "Ўлик товарлар", "subtitle": "60 кундан ошган", "blocks": [
+        {"type": "kpis", "items": [{"label": "Позиция", "value": "195"}, {"label": "Ўлик", "value": "62", "alert": True}]},
+        {"type": "heading", "text": "Хулоса"}, {"type": "paragraph", "text": "Энг кўп **Primus**да."},
+        {"type": "note", "tone": "alert", "text": "Қарор керак."}, {"type": "bullets", "items": ["бир", "икки"]},
+        {"type": "table", "title": "Primus", "columns": ["Товар", "Сони", "Қиймати, $"],
+         "rows": [["Насос", 4, 5200.5], ["Фильтр", 8, 400]], "total": ["Жами", 12, 5600.5], "alert_rows": [0]},
+        {"type": "chart", "caption": "Бўлимлар", "vega_lite": {"mark": "bar"}}, {"type": "divider"}]}
+    saved_pictures = d._pictures
+    d._pictures = lambda doc: {i: png for i, b in enumerate(doc.blocks) if b["type"] in ("chart", "diagram")}
+    try:
+        pdf_bytes, pdf_name = d.build("pdf", full)
+        docx_bytes, _ = d.build("docx", full)
+        xlsx_bytes, _ = d.build("xlsx", full)
+    finally:
+        d._pictures = saved_pictures
+    import docx as _docx
+    import openpyxl
+    import pypdfium2 as pdfium
+
+    check_true("PDF: a designed page, named after the title", pdf_bytes[:4] == b"%PDF" and len(pdfium.PdfDocument(pdf_bytes)) >= 1
+               and pdf_name == "Ўлик товарлар.pdf")
+    word = _docx.Document(io.BytesIO(docx_bytes))
+    check_true("DOCX: title, table, the chart as a picture",
+               word.paragraphs[0].text == "Ўлик товарлар" and len(word.tables) == 2 and len(word.inline_shapes) == 1)
+    book = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    sheet = book["Primus"]
+    check_true("XLSX: each table a sheet, numbers as numbers, header frozen, the total row",
+               [c.value for c in sheet[1]] == ["Товар", "Сони", "Қиймати, $"] and sheet["C2"].value == 5200.5
+               and sheet.freeze_panes == "A2" and sheet["A4"].value == "Жами" and book.sheetnames[0] == "Умумий")
+    check("file names lose path characters", d.filename('a/b:c*"d', "pdf"), "a b c d.pdf")
+
+    # the analyst's tools
+    names = {t["function"]["name"] for t in analyst.TOOLS}
+    check_true("the analyst has make_document, make_chart, make_diagram — reading no system, so anyone with the analyst",
+               {"make_document", "make_chart", "make_diagram"} <= names
+               and all(analyst.TOOL_SYSTEMS[n] == set() for n in ("make_document", "make_chart", "make_diagram"))
+               and "make_document" in {t["function"]["name"] for t in analyst.tools_for({"sap"})})
+    files = []
+    analyst._files.set(files)
+    saved_build = d.build
+    d.build = lambda fmt, spec, today=None: (b"%PDF-1.7", "Ҳисобот.pdf")
+    try:
+        out = asyncio.run(analyst.make_document({"format": "pdf", "title": "Ҳисобот", "blocks": [{"type": "divider"}]}))
+        for _ in range(8):
+            asyncio.run(analyst.make_document({"title": "x", "blocks": [{"type": "divider"}]}))
+    finally:
+        d.build = saved_build
+    check_true("make_document attaches the file and tells the model to say so in one line; at most 6 files",
+               "sends it right after your answer" in out and files[0] == (b"%PDF-1.7", "Ҳисобот.pdf")
+               and len(files) == analyst.MAX_FILES_PER_ANSWER)
+    analyst._files.set([])
+    bad = asyncio.run(analyst.make_document({"title": "x", "blocks": [{"type": "nope"}]}))
+    check_true("a bad spec comes back to the model with the reason", "could not be made" in bad and "type must be one of" in bad)
+    from integrations.org_bot import ops_manager
+    check_true("charts / diagrams go as pictures, documents as files",
+               'filename.lower().endswith(".png")' in inspect_source(ops_manager._send_files))
+    root = Path(__file__).resolve().parents[1]
+    check_true("deploy: graphviz + the bundled font in the image, vl-convert pinned",
+               "graphviz" in (root / "Dockerfile").read_text(encoding="utf-8")
+               and "fc-cache" in (root / "Dockerfile").read_text(encoding="utf-8")
+               and "vl-convert-python==" in (root / "requirements.txt").read_text(encoding="utf-8"))
+
+
 def test_rich_messages_1117() -> None:
     """17.11.2026: the Boss's task written as a numbered list came as a Telegram rich message (Bot API 10.1,
     ``rich_message``, no ``text``) and was dropped without a word. Now read as plain text; a message with nothing
@@ -15066,6 +15201,7 @@ def main() -> int:
         test_ai_checker_1116,
         test_sap_history_1116,
         test_rich_messages_1117,
+        test_documenter_1117,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

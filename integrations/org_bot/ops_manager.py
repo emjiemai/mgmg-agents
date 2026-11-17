@@ -3667,7 +3667,9 @@ async def _send_files(director_id: int, run_id: uuid.UUID, files: list[tuple[byt
     ) as bot:
         for content, filename in files:
             try:
-                await bot.send_file(content, filename, str(director_id), reply_to=reply_to)
+                # A chart / diagram (17.11, documenter) is shown as a picture; documents go as files.
+                await bot.send_file(content, filename, str(director_id), reply_to=reply_to,
+                                    photo=filename.lower().endswith(".png") and len(content) < 9_000_000)
             except Exception as exc:  # noqa: BLE001 — the text answer already went
                 log.error("Sending {} to the Director failed: {}", filename, type(exc).__name__)
                 await bot.send_message("Файлни юбориб бўлмади — бироздан кейин яна сўранг.", chat_id=str(director_id))

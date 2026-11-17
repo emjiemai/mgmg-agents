@@ -50,6 +50,9 @@ TOOL_WORDS: dict[str, str] = {
     "employee_report": "ҳисоботни топяпман",
     "attendance": "Verifix'дан давоматни текширяпман",
     "company_data": "бот ёзувларини кўряпман",
+    "make_document": "ҳужжатни безатиб тайёрлаяпман",
+    "make_chart": "диаграмма чизяпман",
+    "make_diagram": "схема чизяпман",
 }
 # query_db: what the SQL reads, by its views (first match wins).
 VIEW_WORDS: tuple[tuple[str, str], ...] = (

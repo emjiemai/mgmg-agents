@@ -6,6 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# graphviz: the AI documenter's diagrams (integrations/reports/documenter.py, 2026-11-17).
 # libpango*: WeasyPrint lays out the report PDFs/images with Pango
 # (integrations/reports/; the fonts themselves are bundled there).
 # gnupg + postgresql-client-16: the encrypted backups (integrations/backup/).
@@ -15,6 +16,7 @@ WORKDIR /app
 # Debian release this image is built on.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata curl ca-certificates gnupg fonts-dejavu-core libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+        graphviz fontconfig \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     && . /etc/os-release \
@@ -27,6 +29,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# The bundled Noto Sans for Graphviz's text measuring (diagrams), the same font the reports and charts use.
+RUN mkdir -p /usr/local/share/fonts/mgmg && cp integrations/reports/fonts/*.ttf /usr/local/share/fonts/mgmg/ \
+    && fc-cache -f >/dev/null
 
 # Non-root: agents must never need host-level privileges.
 RUN useradd -m -u 1000 mgmg && chown -R mgmg:mgmg /app

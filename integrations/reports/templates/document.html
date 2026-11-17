@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{# The AI documenter's page (2026-11-17, integrations/reports/documenter.py): whatever the analyst wrote — headings,
+   text, lists, tables, key figures, notes, charts, diagrams — in the report design. Every text is escaped. #}
+{% block title %}{{ title }}{% endblock %}
+{% block style %}
+.doc-sub { margin-top: 3pt; font-size: 10pt; color: var(--ink-2); }
+.doc h2 { margin-top: 18pt; padding-bottom: 5pt; border-bottom: 1px solid var(--rule-strong); font-size: 13pt; font-weight: 700; break-after: avoid; }
+.doc h3 { margin-top: 12pt; font-size: 11pt; font-weight: 700; color: var(--ink); break-after: avoid; }
+.doc p.par { margin-top: 7pt; font-size: 10.5pt; line-height: 1.5; color: var(--ink); }
+.doc ul.list, .doc ol.list { margin: 6pt 0 0 0; padding-left: 15pt; font-size: 10.5pt; line-height: 1.5; }
+.doc ul.list { list-style: disc; }
+.doc ol.list { list-style: decimal; }
+.doc ul.list li, .doc ol.list li { margin-top: 2pt; padding-left: 2pt; }
+.doc .callout { margin-top: 10pt; padding: 8pt 11pt; border-left: 3px solid var(--rule-strong); background: var(--band); font-size: 10pt; line-height: 1.45; color: var(--ink-2); break-inside: avoid; }
+.doc .callout.ok { border-left-color: var(--ok); background: var(--ok-wash); color: var(--ok); }
+.doc .callout.warn { border-left-color: var(--warn); background: var(--warn-wash); color: var(--warn); }
+.doc .callout.alert { border-left-color: var(--alert); background: var(--alert-wash); color: var(--alert); }
+.doc .kpis { display: flex; gap: 8pt; margin-top: 12pt; break-inside: avoid; }
+.doc .kpi { flex: 1; padding: 9pt 10pt 8pt; background: var(--band); border-radius: 4pt; }
+.doc .kpi .v { font-size: 17pt; font-weight: 700; line-height: 1.1; font-feature-settings: "tnum" 1, "lnum" 1; }
+.doc .kpi .v.alert { color: var(--alert); }
+.doc .kpi .l { margin-top: 3pt; font-size: 8.5pt; color: var(--ink-2); }
+.doc .kpi .n { margin-top: 1pt; font-size: 8pt; color: var(--ink-3); }
+.doc .tbl { margin-top: 10pt; }
+.doc .tbl-title { margin-bottom: 5pt; font-size: 10.5pt; font-weight: 700; }
+.doc table thead { display: table-header-group; }
+.doc table tr { break-inside: avoid; }
+.doc tr.alert td { color: var(--alert); }
+.doc figure { margin: 12pt 0 0 0; break-inside: avoid; }
+.doc figure img { max-width: 100%; max-height: 225mm; display: block; }
+.doc figure.diagram img { margin: 0 auto; }
+.doc figcaption { margin-top: 4pt; font-size: 8.5pt; color: var(--ink-3); }
+.doc hr { margin: 14pt 0 0 0; border: 0; border-top: 1px solid var(--rule); }
+.doc .pagebreak { break-after: page; }
+{% endblock %}
+{% block body %}
+<header class="masthead">
+  <div>
+    <h1 style="white-space: normal">{{ title }}</h1>
+    <div class="when">{% if subtitle %}{{ subtitle }} · {% endif %}{{ when }}</div>
+  </div>
+  <div class="mark">ЭМЖИЕМ</div>
+</header>
+<main class="doc">
+{% for b in blocks %}
+  {% if b.type == "heading" %}
+    {% if b.level == 3 %}<h3>{{ b.html }}</h3>{% else %}<h2>{{ b.html }}</h2>{% endif %}
+  {% elif b.type == "paragraph" %}
+    <p class="par">{{ b.html }}</p>
+  {% elif b.type == "note" %}
+    <div class="callout {{ b.tone }}">{{ b.html }}</div>
+  {% elif b.type == "bullets" %}
+    <ul class="list">{% for x in b.html_items %}<li>{{ x }}</li>{% endfor %}</ul>
+  {% elif b.type == "numbered" %}
+    <ol class="list">{% for x in b.html_items %}<li>{{ x }}</li>{% endfor %}</ol>
+  {% elif b.type == "kpis" %}
+    <div class="kpis">
+    {% for k in b['items'] %}
+      <div class="kpi"><div class="v{% if k.alert %} alert{% endif %}">{{ k.value }}</div><div class="l">{{ k.label }}</div>{% if k.note %}<div class="n">{{ k.note }}</div>{% endif %}</div>
+    {% endfor %}
+    </div>
+  {% elif b.type == "table" %}
+    <div class="tbl">
+      {% if b.title %}<div class="tbl-title">{{ b.title }}</div>{% endif %}
+      <table>
+        <thead><tr>{% for c in b.columns %}<th{% if b.numeric[loop.index0] %} class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for row in b.shown_rows %}
+          <tr{% if loop.index0 in b.alert_rows %} class="alert"{% endif %}>{% for v in row %}<td{% if b.numeric[loop.index0] %} class="num"{% endif %}>{{ v }}</td>{% endfor %}</tr>
+        {% endfor %}
+        {% if b.shown_total %}
+          <tr class="total">{% for v in b.shown_total %}<td{% if b.numeric[loop.index0] %} class="num"{% endif %}>{{ v }}</td>{% endfor %}</tr>
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
+  {% elif b.type == "chart" or b.type == "diagram" %}
+    <figure class="{{ b.type }}"><img src="{{ b.src }}" style="width: {{ b.width_pt }}pt" alt="">{% if b.caption %}<figcaption>{{ b.caption }}</figcaption>{% endif %}</figure>
+  {% elif b.type == "divider" %}
+    <hr>
+  {% elif b.type == "pagebreak" %}
+    <div class="pagebreak"></div>
+  {% endif %}
+{% endfor %}
+</main>
+{% endblock %}

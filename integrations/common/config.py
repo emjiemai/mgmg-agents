@@ -377,6 +377,10 @@ class Settings(BaseSettings):
     # Message budget (F5, 2026-11-13, integrations/org_bot/budget.py): a person's OPS Manager messages a day; past
     # it, buttonless messages from these agents wait for tomorrow's one morning message. false = only count.
     message_budget_per_day: int = 12
+    # AI documenter (2026-11-17, integrations/reports/documenter.py): Graphviz for diagrams (the Docker image has
+    # it); GRAPHVIZ_LIB_DIR only for a Graphviz unpacked outside the system paths (a laptop's tests).
+    graphviz_dot: str = "dot"
+    graphviz_lib_dir: str = ""
     # AI checker (2026-11-16, integrations/org_bot/ai_checker.py): decides what waited for the Boss's tap.
     ai_checker_enabled: bool = True
     ai_checker_kinds: str = "explanation,late_report,task_proof,reschedule"
