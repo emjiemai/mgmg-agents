@@ -6,7 +6,9 @@ same day (an Excel split by department) is the kind of thing it is for.
 
 **Who:** everyone who uses the analyst — the Director, accounting / finance with data access, the Garmin manager.
 The tools read no system themselves (`TOOL_SYSTEMS = set()`): a document holds only what the person's own tools
-returned. The work AI (employees) has no tools today — later.
+returned. **Employees (17.11, later the same day):** the work AI gets the same three tools (`org_bot/doc_tools.py`, shared;
+`ai_chat.answer_with_tools`, ≤ 3 rounds, only these tools) — documents from what the employee wrote and general
+knowledge, never invented figures; a daily report is never made a file. Files go after the answer (`_send_files`).
 
 ## Tools (integrations/org_bot/analyst.py → integrations/reports/documenter.py)
 | Tool | What the model sends | Out |

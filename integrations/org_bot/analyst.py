@@ -43,6 +43,7 @@ from integrations.common.db import analyst_sql_ready, fetch_analyst, fetch_read_
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
+from integrations.org_bot import doc_tools
 from integrations.org_bot.knowledge import COMPANY_KNOWLEDGE
 from integrations.org_bot.prompt import GUARDRAILS
 
@@ -224,36 +225,11 @@ TOOLS: list[dict] = [
         "ёзди?». Default: today; or a date / a period up to 14 days.",
         {"name": {"type": "string", "description": "part of the person's name, as the asker wrote it"},
          "date": _DATE, "date_from": _DATE, "date_to": _DATE}, ("name",)),
-    # AI documenter (2026-11-17, integrations/reports/documenter.py): designed documents, charts, diagrams
-    _fn("make_document", "Make a designed DOCUMENT and the bot sends it after your answer: pdf (the designed page — "
-        "default), docx (Word, editable) or xlsx (Excel: every table a sheet). Use it whenever a report, letter, "
-        "list, plan, analysis or table is asked as a document / file / PDF / Word / Excel. Look the data up FIRST with "
-        "the other tools; put only real figures in it. Blocks, in order: heading {text, level 2|3}; paragraph {text}; "
-        "bullets / numbered {items: [text]}; table {title, columns: [..], rows: [[..]], total: [..] optional, "
-        "alert_rows: [row indexes] optional — numbers as numbers}; kpis {items: [{label, value, note, alert}]} (2–4 key "
-        "figures at the top); note {text, tone info|ok|warn|alert}; chart {vega_lite, caption}; diagram {dot, "
-        "caption}; divider; pagebreak. **bold** is the only markup. Uzbek Cyrillic.",
-        {"format": {"type": "string", "enum": ["pdf", "docx", "xlsx"]},
-         "title": {"type": "string"}, "subtitle": {"type": "string", "description": "period, source — optional"},
-         "blocks": {"type": "array", "items": {"type": "object"}}}, ("title", "blocks")),
-    _fn("make_chart", "Draw a CHART (bar, line, area, pie/donut, scatter, heatmap, stacked, small multiples…) as a "
-        "picture sent with your answer. vega_lite = a Vega-Lite v5 spec with the data INLINE (data.values, already "
-        "aggregated, at most a few hundred rows; never data.url). One y-axis only (two measures → two charts); at most "
-        "7 series (fold the rest into «Бошқа»); axis/legend titles in Uzbek Cyrillic; don't set colors or fonts — the "
-        "house theme does. Use it when asked for a chart / график / диаграмма, or when a trend reads better as one.",
-        {"vega_lite": {"type": "object"}, "title": {"type": "string", "description": "the picture's file name"}},
-        ("vega_lite",)),
-    _fn("make_diagram", "Draw a DIAGRAM (flowchart, process, org chart, structure, decision tree, timeline, "
-        "relations) as a picture sent with your answer. dot = Graphviz DOT text: digraph { rankdir=LR; a [label=\"…\"]; "
-        "a -> b [label=\"…\"]; } — labels in Uzbek Cyrillic, ≤ 60 boxes, clusters (subgraph cluster_x {label=\"…\"}) "
-        "for groups. Style comes from the house theme; only for emphasis use fillcolor=\"#fcecea\", color=\"#b3261e\" "
-        "(alert). No image / file attributes.",
-        {"dot": {"type": "string"}, "title": {"type": "string", "description": "the picture's file name"}},
-        ("dot",)),
     _fn("company_data", "The bot's own records and reference data. Sources: "
         + "; ".join(f"{k} = {v}" for k, v in COMPANY_SOURCES.items()),
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
 ]
+TOOLS += doc_tools.TOOLS  # AI documenter (2026-11-17): make_document, make_chart, make_diagram (doc_tools.py)
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
 # Which systems a tool reads (2026-10-10, data_access.py): an employee given
@@ -1317,59 +1293,20 @@ async def query_db(args: dict[str, Any]) -> str:
     return sql_table(names, rows, more)
 
 
-MAX_FILES_PER_ANSWER = 6
-
-
-def _attach(content: bytes, name: str) -> str | None:
-    """A made file goes out after the answer; None when this answer has no room for more."""
-    files = _files.get()
-    if files is None:
-        return "files can't be sent here"
-    if len(files) >= MAX_FILES_PER_ANSWER:
-        return f"at most {MAX_FILES_PER_ANSWER} files per answer"
-    files.append((content, name))
-    return None
+MAX_FILES_PER_ANSWER = doc_tools.MAX_FILES_PER_ANSWER
 
 
 async def make_document(args: dict[str, Any]) -> str:
-    """The AI documenter (17.11): a designed PDF / DOCX / XLSX from the model's block spec."""
-    from integrations.reports import documenter
-
-    fmt = str(args.get("format") or "pdf")
-    spec = {"title": args.get("title"), "subtitle": args.get("subtitle"), "blocks": args.get("blocks")}
-    try:
-        content, name = await asyncio.to_thread(documenter.build, fmt, spec, _today())
-    except documenter.DocError as exc:
-        return f"The document could not be made: {exc}. Fix the spec and call make_document again."
-    refused = _attach(content, name)
-    if refused:
-        return f"Not sent: {refused}."
-    return (f"Document ready: «{name}» ({len(content) // 1024} KB). The bot sends it right after your answer — say in "
-            "one line what is in it; don't repeat the whole document in the text.")
+    """The AI documenter (17.11): a designed PDF / DOCX / XLSX from the model's block spec (doc_tools.py)."""
+    return await doc_tools.run("make_document", args, _files.get(), _today())
 
 
 async def make_chart(args: dict[str, Any]) -> str:
-    """A chart (Vega-Lite → PNG, house theme), sent as a picture after the answer."""
-    from integrations.reports import documenter
-
-    try:
-        png = await asyncio.to_thread(documenter.chart_png, args.get("vega_lite"))
-    except documenter.DocError as exc:
-        return f"The chart could not be drawn: {exc}. Fix the spec and call make_chart again."
-    refused = _attach(png, documenter.filename(str(args.get("title") or "Диаграмма"), "png"))
-    return f"Not sent: {refused}." if refused else "Chart ready — it is sent as a picture after your answer."
+    return await doc_tools.run("make_chart", args, _files.get(), _today())
 
 
 async def make_diagram(args: dict[str, Any]) -> str:
-    """A diagram (Graphviz DOT → PNG, house theme), sent as a picture after the answer."""
-    from integrations.reports import documenter
-
-    try:
-        png = await asyncio.to_thread(documenter.diagram_png, args.get("dot"))
-    except documenter.DocError as exc:
-        return f"The diagram could not be drawn: {exc}. Fix the DOT text and call make_diagram again."
-    refused = _attach(png, documenter.filename(str(args.get("title") or "Схема"), "png"))
-    return f"Not sent: {refused}." if refused else "Diagram ready — it is sent as a picture after your answer."
+    return await doc_tools.run("make_diagram", args, _files.get(), _today())
 
 
 HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {

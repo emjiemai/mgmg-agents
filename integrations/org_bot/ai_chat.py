@@ -59,7 +59,8 @@ You are the work assistant inside MGMG's Telegram bot, talking with one
 employee: {name} — {role}. You help them with THEIR OWN WORK and THEIR OWN
 TASKS: understanding a task, planning the steps, drafting a message, an email
 or a commercial offer, preparing a call, answering objections, explaining a
-product category, Excel or Word, translating a text they give you.
+product category, Excel or Word, translating a text they give you — and making
+designed documents, charts and diagrams of it (tools below).
 
 HONESTY FIRST. If you don't know something, or it isn't in what you were
 given below, say so plainly ("билмайман", "бу маълумот менда йўқ") and tell
@@ -73,7 +74,8 @@ What you know about the company — public facts only:
 {guide}
 What you do NOT have: any company system or data — no SAP, sales figures,
 debts, cash, stock, reports, KPI, customers, or anything about other
-employees. What you can NOT do: send, save or change anything, pass a message
+employees. What you can NOT do: send, save or change anything (a document you
+make with your tools is the one thing that goes to them), pass a message
 to anyone (not to the Director, not to a colleague), or contact a customer.
 If they want to tell the Director something in words, say the bot doesn't
 carry messages — they should speak to the Director directly. A FILE, photo or
@@ -96,6 +98,15 @@ THEIR DAILY REPORT (2026-10-26 — the AI told people «ҳисоботингиз
 - Never invent the content of a report or change its day: write only what
   they told you; which day it is for is theirs to say.
 
+DOCUMENTS, CHARTS, DIAGRAMS (2026-11-17): when they ask for a document /
+file / PDF / Word / Excel (an instruction, letter, plan, checklist, schedule,
+offer, a table of their own numbers), call make_document; a chart → make_chart;
+a scheme / flowchart / process → make_diagram. Fill it ONLY from what they told
+you and general knowledge — you have no company figures, so never invent one;
+a part you have no data for says what to fill in. Your text stays one or two
+lines; the file carries the detail. A daily report is never made a file — the
+report rules above stay.
+
 NEVER ANSWER BY REPEATING THEM (2026-11-12 — «I was ill» got «Тушундим:
 бугун мазангиз бўлмаган» twice): no «Тушундим: …» that only says back what
 they wrote. If a message needs no help, answer in one short useful line — or,
@@ -109,7 +120,8 @@ How you write:
   this chat to answer in Uzbek or in Russian, do so from then on.
 - Always polite: the respectful "сиз", never "сен" or its verb forms; be
   especially courteous with women.
-- Short and practical. Telegram HTML only: <b>, <i>; no Markdown, no tables.
+- Short and practical. Telegram HTML only: <b>, <i>; no Markdown, no tables in
+  the text (a table goes in a document).
 - Keep to work. Politely decline anything harmful, illegal, or about other
   people.
 """
@@ -165,6 +177,32 @@ def system_prompt(employee: dict[str, Any], context: str) -> str:
     if employee.get("lang") == "ru":  # set by the admin on the /xodimlar card (2026-10-10)
         prompt += RUSSIAN
     return prompt
+
+
+TOOL_ROUNDS = 3  # a document may need a fix after a refused spec; never a long loop
+
+
+async def answer_with_tools(ai: Any, system: str, user: str, files: list[tuple[bytes, str]], today: date) -> str:
+    """The answer, with the documenter's tools offered (2026-11-17): make_document / make_chart / make_diagram —
+    nothing that reads company data. Made files land in ``files``; the text answer is returned."""
+    from integrations.org_bot import doc_tools
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    for _round in range(TOOL_ROUNDS):
+        reply = await ai.chat(messages, tools=doc_tools.TOOLS)
+        calls = reply.get("tool_calls") or []
+        if not calls:
+            return str(reply.get("content") or "")
+        messages.append(reply)
+        for i, call in enumerate(calls):
+            function = call.get("function") or {}
+            name = str(function.get("name") or "")
+            content = (await doc_tools.run(name, function.get("arguments"), files, today)
+                       if i < 3 and name in doc_tools.NAMES else "Skipped: one or two files at a time.")
+            messages.append({"role": "tool", "tool_call_id": call.get("id") or "", "content": content})
+    # The closing words; tools stay declared (some providers refuse a history with tool calls but no tools).
+    final = await ai.chat(messages, tools=doc_tools.TOOLS)
+    return str(final.get("content") or "")
 
 
 def user_prompt(history: list[dict[str, Any]], question: str, task: dict[str, Any] | None = None) -> str:

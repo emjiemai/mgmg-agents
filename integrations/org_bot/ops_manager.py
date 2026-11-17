@@ -1513,16 +1513,21 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
         tasks = await store.open_tasks_for_employee(telegram_user_id)
         waiting = await agenda.pending(employee)  # what the bot waits for from them (2026-10-24)
         await store.log_ai_turn(telegram_user_id, "employee", text)
+        files: list[tuple[bytes, str]] = []  # documents / charts / diagrams it made (doc_tools.py, 2026-11-17)
         async with OpenRouterClient(
             agent=ai_chat.AGENT,
             run_id=run_id,
             model_override=settings.ops_manager_bot_model,
             fallback_override=settings.ops_manager_bot_fallback_models,
         ) as ai:
-            raw = await ai.complete(
+            raw = await ai_chat.answer_with_tools(
+                ai,
                 ai_chat.system_prompt(employee, ai_chat.work_context(employee, tasks, today_local(), waiting)),
                 ai_chat.user_prompt(history, with_quote(text, quoted), task),
+                files, today_local(),
             )
+        if files and not raw.strip():
+            raw = "ҳужжат тайёр — қуйида юборяпман"
         answer = ai_chat.clean_answer(raw)
         # Never «your report was accepted» from the AI; a report draft gets a button that really sends it (2026-10-26).
         answer, _ = ai_chat.strip_false_claims(answer)
@@ -1533,6 +1538,7 @@ async def _answer_ai_chat_now(employee: dict[str, Any], text: str, task: dict[st
             keyboard = {"inline_keyboard": [[{"text": "📝 Ҳисобот сифатида юбориш", "callback_data": f"asrep:{held['id']}"}]]}
         await store.log_ai_turn(telegram_user_id, "assistant", answer)
         await _answer_reply(telegram_user_id, run_id, answer, reply_to, keyboard)
+        await _send_files(telegram_user_id, run_id, files, reply_to)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("AI chat failed for {}: {}", telegram_user_id, exc)
         try:

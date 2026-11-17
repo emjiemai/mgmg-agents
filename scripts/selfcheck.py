@@ -4865,6 +4865,10 @@ def test_ai_chat_and_sheet() -> None:
             assert "HONESTY FIRST" in system and "КП тайёрланг" in system
             return "Бу маълумот менда йўқ, раҳбарингиздан сўранг"
 
+        async def chat(self, messages, tools=None):  # the work AI calls with the documenter's tools (17.11)
+            return {"role": "assistant",
+                    "content": await self.complete(messages[0]["content"], messages[-1]["content"])}
+
     async def fake_reply(chat_id, run_id, text, reply_markup=None, reply_to=None):
         replies.append((text, reply_markup))
         return [1]
@@ -14526,6 +14530,39 @@ def test_documenter_1117() -> None:
     from integrations.org_bot import ops_manager
     check_true("charts / diagrams go as pictures, documents as files",
                'filename.lower().endswith(".png")' in inspect_source(ops_manager._send_files))
+    # the employees' work AI gets the same three tools (17.11, later the same day)
+    from integrations.org_bot import ai_chat, doc_tools
+
+    class ToolAI:
+        def __init__(self):
+            self.turns = []
+
+        async def chat(self, messages, tools=None):
+            self.turns.append(([t["function"]["name"] for t in tools or []], len(messages)))
+            if len(self.turns) == 1:
+                return {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "make_document", "arguments": json.dumps(
+                        {"format": "docx", "title": "Йўриқнома", "blocks": [{"type": "numbered", "items": ["бир"]}]})}},
+                    {"id": "c2", "type": "function", "function": {"name": "query_db", "arguments": "{}"}}]}
+            return {"role": "assistant", "content": "Йўриқнома тайёр."}
+
+    import json
+    staff_files = []
+    fake = ToolAI()
+    saved_build = d.build
+    d.build = lambda fmt, spec, today=None: (b"PK-docx", "Йўриқнома.docx")
+    try:
+        text = asyncio.run(ai_chat.answer_with_tools(fake, "system", "user", staff_files, None))
+    finally:
+        d.build = saved_build
+    check_true("work AI: offered only the three documenter tools, makes the file, then answers",
+               fake.turns[0][0] == ["make_document", "make_chart", "make_diagram"] and text == "Йўриқнома тайёр."
+               and staff_files == [(b"PK-docx", "Йўриқнома.docx")])
+    check_true("work AI: a tool outside the documenter is never run", set(doc_tools.NAMES) == {"make_document",
+               "make_chart", "make_diagram"} and fake.turns[1][1] == 5)
+    check_true("work AI: told to fill documents only from what the employee wrote; files sent after the answer",
+               "never invent one" in ai_chat.SYSTEM_PROMPT and "make_document" in ai_chat.SYSTEM_PROMPT
+               and "_send_files(telegram_user_id, run_id, files, reply_to)" in inspect_source(ops_manager._answer_ai_chat_now))
     root = Path(__file__).resolve().parents[1]
     check_true("deploy: graphviz + the bundled font in the image, vl-convert pinned",
                "graphviz" in (root / "Dockerfile").read_text(encoding="utf-8")
