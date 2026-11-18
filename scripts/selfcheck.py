@@ -14404,6 +14404,118 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_greetings_1118() -> None:
+    """18.11.2026, the Boss's task T-2026-11-0052: holiday and birthday greetings from two tabs of the duties sheet,
+    entered in advance; each person once; men's / women's days by the admin's ака / опа; the Director told of birthdays."""
+    print("holiday and birthday greetings (18.11.2026)")
+    import asyncio
+    import uuid
+    from datetime import date as _date
+    from pathlib import Path
+
+    from integrations.org_bot import greetings as g, tone
+
+    check("dates: every year / that year only / wrong", (g.parse_day("01.09"), g.parse_day("20.03.2026"), g.parse_day("31.13")),
+          ((1, 9, None), (20, 3, 2026), None))
+    check_true("a yearly date falls every year; a dated holiday only that year; a birth year is ignored",
+               g.falls_on("01.09", _date(2027, 9, 1)) and not g.falls_on("20.03.2026", _date(2027, 3, 20))
+               and g.falls_on("15.04.1990", _date(2026, 4, 15), yearly_only_date=True))
+    check_true("29.02 birthday greeted on 28.02 in a year without it",
+               g.falls_on("29.02.1996", _date(2026, 2, 28), yearly_only_date=True)
+               and not g.falls_on("29.02.1996", _date(2028, 2, 28), yearly_only_date=True))
+    people = [
+        {"id": "a", "full_name": "Алишер Каримов", "display_name": "A", "address_form": "aka", "role": "garmin_sotuv",
+         "telegram_user_id": 1, "status": "active"},
+        {"id": "b", "full_name": "Ширин Умматова", "display_name": "S", "address_form": "opa", "role": "garmin_sotuv",
+         "telegram_user_id": 2, "status": "active"},
+        {"id": "c", "full_name": "Рустам Ёркинов", "display_name": "R", "address_form": "", "role": "garmin_sotuv",
+         "telegram_user_id": 3, "status": "active"},
+        {"id": "d", "full_name": "Шухрат Умаров", "display_name": "B", "role": "operatsion_direktor",
+         "telegram_user_id": 9, "status": "active"}]
+    holidays = [list(g.HOLIDAY_COLUMNS)] + [list(h) for h in g.SEED_HOLIDAYS] + [["10.04.2026", "Рамазон ҳайити", "ҳамма", ""]]
+    plan, born, unmatched = g.occasions(_date(2026, 3, 8), holidays, [list(g.BIRTHDAY_COLUMNS)], people)
+    check("8 March: only women (опа) — never guessed, the Director not greeted by the bot", sorted(plan), ["b"])
+    plan, _, _ = g.occasions(_date(2026, 9, 1), holidays, [list(g.BIRTHDAY_COLUMNS)], people)
+    check("1 September: every employee, not the Director", sorted(plan), ["a", "b", "c"])
+    text = plan["a"][0].text
+    check_true("the greeting: their name with ака, the holiday, polite, no emoji, one line",
+               text.startswith("Алишер ака, Мустақиллик куни муборак") and tone.is_polite(text) and "\n" not in text
+               and "ЭМЖИЕМ" in text)
+    plan, _, _ = g.occasions(_date(2026, 4, 10), holidays, [list(g.BIRTHDAY_COLUMNS)], people)
+    check("a moving holiday entered with its year", [o.key for o in plan["c"]], ["Рамазон ҳайити"])
+    birthdays = [list(g.BIRTHDAY_COLUMNS), ["Умматова Ширин", "18.11.1998"], ["Ширин", "01.01"], ["Номаълум Одам", "18.11"],
+                 ["Алишер", "kecha"]]
+    plan, born, unmatched = g.occasions(_date(2026, 11, 18), holidays, birthdays, people)
+    check("a birthday by name in any order; unknown names counted, bad dates skipped",
+          (sorted(plan), [p["id"] for p in born], unmatched), (["b"], ["b"], 1))
+    check_true("the birthday greeting: polite, with опа", plan["b"][0].text.startswith("Ширин опа, туғилган кунингиз")
+               and tone.is_polite(plan["b"][0].text))
+    check("own text from the sheet is used", g.holiday_text("Алишер ака", "Наврўз", "Наврўз муборак!"),
+          "Алишер ака, Наврўз муборак!")
+    check_true("a name that fits two people matches nobody", g.match("Ширин", people + [
+        {"id": "x", "full_name": "Ширин Каримова", "display_name": "x"}]) is None)
+
+    # send_day: once per person and occasion; the Director told of birthdays
+    sent, claims = [], set()
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def send_message(self, text, chat_id=None, **k):
+            sent.append((chat_id, text))
+            return [1]
+
+    async def tabs(run_id):
+        return holidays, birthdays
+
+    async def staff():
+        return people
+
+    async def directors(role):
+        return [people[3]]
+
+    async def fetch(sql, params=None):
+        if sql.lstrip().startswith("INSERT INTO greetings_sent"):
+            key = tuple(params)
+            if key in claims:
+                return []
+            claims.add(key)
+            return [{"ok": 1}]
+        return []
+
+    async def nothing(*a, **k):
+        return None
+
+    import integrations.common.db as _db
+    import integrations.telegram.bot as _tb
+    from integrations.org_bot import store
+    saved = [(g, "read_tabs", g.read_tabs), (store, "list_active_employees", store.list_active_employees),
+             (store, "active_employees_by_role", store.active_employees_by_role), (_db, "fetch_all", _db.fetch_all),
+             (_db, "log_action", _db.log_action), (_db, "execute", _db.execute), (_tb, "TelegramBot", _tb.TelegramBot)]
+    g.read_tabs, store.list_active_employees, store.active_employees_by_role = tabs, staff, directors
+    _db.fetch_all, _db.log_action, _db.execute, _tb.TelegramBot = fetch, nothing, nothing, Bot
+    try:
+        first = asyncio.run(g.send_day(_date(2026, 11, 18), uuid.uuid4()))
+        again = asyncio.run(g.send_day(_date(2026, 11, 18), uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("sent once: Ширин's greeting, then the Director's note; a second run sends nothing",
+          (first["sent"], first["birthdays"], again["sent"], [c for c, _ in sent]), (1, 1, 0, ["2", "9", "9"]))
+    check_true("the Director's note names whose birthday it is", "Ширин Умматова" in sent[1][1] and "туғилган куни" in sent[1][1])
+    root = Path(__file__).resolve().parents[1]
+    check_true("in the 08:00 job, its table, its setting",
+               "agents/greetings/agent.py" in (root / "scripts" / "run_morning_agents.py").read_text(encoding="utf-8")
+               and "CREATE TABLE IF NOT EXISTS greetings_sent" in (root / "database" / "schema.sql").read_text(encoding="utf-8"))
+
+
 def test_proof_files_1118() -> None:
     """18.11.2026 (the owner: the proof had tables and the work done, not «4 characters»): a task proof's file is
     read for the AI checker — Word, Excel, PDF as text, a photo / scan as a picture; file ids kept on submit; the
@@ -15385,6 +15497,7 @@ def main() -> int:
         test_rich_messages_1117,
         test_documenter_1117,
         test_proof_files_1118,
+        test_greetings_1118,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

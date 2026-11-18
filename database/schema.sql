@@ -2174,3 +2174,14 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_id TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_kind TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_mime TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_name TEXT;
+
+-- Holiday and birthday greetings (2026-11-18, the Boss's task T-2026-11-0052, org_bot/greetings.py): one row per person,
+-- day and occasion — each greeting goes once.
+CREATE TABLE IF NOT EXISTS greetings_sent (
+    day          DATE         NOT NULL,
+    employee_id  UUID         NOT NULL REFERENCES employees(id),
+    kind         TEXT         NOT NULL CHECK (kind IN ('holiday', 'birthday')),
+    key          TEXT         NOT NULL,
+    sent_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (day, employee_id, kind, key)
+);

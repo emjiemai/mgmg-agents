@@ -43,6 +43,7 @@ AGENTS = [
     "agents/explanations/agent.py",  # absent yesterday / report not sent: asked why (a note); yesterday's answers summed up
     "agents/task-tracker/agent.py --morning",  # tasks due today / tomorrow, just overdue (notes; the Director's list)
     "agents/morning-notes/agent.py",  # 2026-10-24: each employee ONE message from the notes above, one question at most
+    "agents/greetings/agent.py",  # 2026-11-18 (T-0052): holiday and birthday greetings from the sheet's two tabs
     "agents/billz-sap-check/agent.py",  # did every shop cheque reach SAP? (needs the full SAP push)
     "agents/garmin-brief/agent.py",  # the Garmin manager's brief (after the check: it shows its result)
     "agents/lead-agent/agent.py",
