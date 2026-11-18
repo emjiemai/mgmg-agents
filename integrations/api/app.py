@@ -229,6 +229,19 @@ async def _startup() -> None:
     # PULSE ready before the Boss / the Garmin manager opens it: everyone, and the Garmin manager's team.
     app.state.pulse_warm = asyncio.create_task(pulse_data.keep_warm([None, report_calendar.TEAM_OF["garmin_manager"]]))
     app.state.reopen_fix = asyncio.create_task(_reopen_fix())
+    app.state.proof_files = asyncio.create_task(_proof_files_backfill())
+
+
+async def _proof_files_backfill() -> None:
+    """Once (2026-11-18): waiting task proofs whose files can now be read go through the AI checker again."""
+    from integrations.org_bot import ai_checker
+
+    try:
+        counts = await ai_checker.proof_files_backfill()
+        if counts is not None:
+            log.info("Proof files backfill: {}", counts)
+    except Exception as exc:  # noqa: BLE001 — never stops the service
+        log.error("Proof files backfill failed: {}", type(exc).__name__)
 
 
 async def _reopen_fix() -> None:

@@ -980,7 +980,11 @@ async def _consume_task_input(employee: dict[str, Any], task: dict[str, Any], me
         await _reply(telegram_user_id, run_id, "Далил сифатида фото, файл ёки қисқа матн юборинг.")
         return "evidence_empty"
     text, has_file = evidence
-    submitted = await store.submit_task(str(task["id"]), by, text, message.get("message_id") if has_file else None)
+    from integrations.org_bot import proof_files
+
+    proof_file = proof_files.file_of(message) if has_file else None  # kept so the checker can read it (18.11)
+    submitted = await store.submit_task(str(task["id"]), by, text, message.get("message_id") if has_file else None,
+                                        **({"file": proof_file} if proof_file else {}))
     if submitted is None:
         return "task_input_stale"
     if settings.task_proof_hint_enabled and submitted.get("expected_result"):
@@ -2070,7 +2074,8 @@ async def _handle_file_proof(rest: str, callback: dict[str, Any], run_id: uuid.U
                                  run_id)
     await store.resolve_employee_file(file_id, clicker_id, "task")
     # The original message, as if it had been sent as a reply to the card (copyMessage needs its id).
-    original = {"message_id": held["message_id"], held["kind"]: {"file_id": held.get("file_id")},
+    original = {"message_id": held["message_id"], held["kind"]: {"file_id": held.get("file_id"),
+                                                                 "mime_type": held.get("mime")},
                 "caption": held.get("caption")}
     return await _consume_task_input(employee, task, original, run_id)
 

@@ -69,8 +69,11 @@ while the facts say no report for that day is in the bot. A late report pasted a
 only a reference like «тепада», or text with no work in it.
 - task_proof: the typed proof an employee sent for a task. approve = the text shows the task (and the expected \
 result, if one is given) is done. reject = the text shows it is not done, partly done, or is unrelated; then pick \
-return_code: "e" proof not enough, "q" quality not acceptable, "r" a different result than asked, "o" other. If the \
-proof is a file with little or no text, you cannot see it: answer "unsure".
+return_code: "e" proof not enough, "q" quality not acceptable, "r" a different result than asked, "o" other. The \
+proof's FILE is given when it could be read (2026-11-18): proof_file.content = its text (PDF / Word / Excel — tables \
+as rows «a | b | c»), or the attached picture (a photo or a scanned page) — judge what the file shows against the task \
+like typed proof; a file that clearly shows the work done is enough even with no typed words. proof_has_file true \
+but no proof_file and no picture = it could not be read: "unsure".
 - reschedule: an employee asks to move a task's deadline. approve = a concrete reason outside their control or a \
 fair amount of work, and it is not moved many times already. reject = vague («улгурмадим», «вақт етмади» alone), or \
 moved 2+ times already with no new reason.
@@ -143,12 +146,15 @@ def parse(raw: dict[str, Any]) -> Verdict:
     return Verdict(decision, reason, code)
 
 
-async def judge(kind: str, facts: dict[str, Any], run_id: uuid.UUID) -> Verdict:
-    """One AI call. Errors → unsure."""
+async def judge(kind: str, facts: dict[str, Any], run_id: uuid.UUID, image: bytes | None = None,
+                image_mime: str = "image/jpeg") -> Verdict:
+    """One AI call (with the proof's picture when given — the image reading the cheques use). Errors → unsure."""
     try:
         async with OpenRouterClient(agent=AGENT, run_id=run_id, model_override=settings.ops_manager_bot_model,
                                     fallback_override=settings.ops_manager_bot_fallback_models) as ai:
-            raw = await ai.complete_json(SYSTEM, json.dumps({"kind": kind, **facts}, ensure_ascii=False, default=str))
+            text = json.dumps({"kind": kind, **facts}, ensure_ascii=False, default=str)
+            raw = (await ai.vision_json(SYSTEM, text, image, image_mime) if image is not None
+                   else await ai.complete_json(SYSTEM, text))
     except Exception as exc:  # noqa: BLE001
         log.warning("AI checker unavailable: {}", type(exc).__name__)
         return Verdict("unsure", "")
@@ -166,14 +172,15 @@ async def _snapshot(kind: str, ref_id: str) -> dict[str, Any] | None:
 
 
 async def _record(kind: str, ref_id: str, verdict: Verdict, card: Card | None, before: dict | None,
-                  after: dict | None) -> str:
+                  after: dict | None, read_file: bool = False) -> str:
     row = await fetch_one(
         """INSERT INTO ai_decisions (kind, ref_id, decision, reason, chat_id, card_message_id, card_is_caption,
-                                     before, after)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id::text AS id""",
+                                     before, after, read_file)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id::text AS id""",
         (kind, ref_id, verdict.decision, verdict.reason, card.chat_id if card else None,
          card.message_id if card else None, bool(card and card.is_caption),
-         json.dumps(before) if before is not None else None, json.dumps(after) if after is not None else None))
+         json.dumps(before) if before is not None else None, json.dumps(after) if after is not None else None,
+         read_file))
     return row["id"]
 
 
@@ -215,7 +222,7 @@ def _press(card: Card, decider: int) -> dict[str, Any]:
 
 
 async def _decide(kind: str, ref_id: str, verdict: Verdict, card: Card | None, decider: int | None,
-                  apply: Any, run_id: uuid.UUID, undoable: bool = True) -> str:
+                  apply: Any, run_id: uuid.UUID, undoable: bool = True, read_file: bool = False) -> str:
     """Apply (when sure), record, put the note under the card. Returns the outcome word (counts only in logs)."""
     applied = False
     before = after = None
@@ -227,7 +234,7 @@ async def _decide(kind: str, ref_id: str, verdict: Verdict, card: Card | None, d
     shown = verdict if applied or verdict.decision == "unsure" else Verdict("unsure", verdict.reason)
     if kind == "explanation" and verdict.decision == "reject":
         shown, applied = verdict, True  # nothing to press: the card keeps ⬜ for the Boss
-    decision_id = await _record(kind, ref_id, shown, card, before, after)
+    decision_id = await _record(kind, ref_id, shown, card, before, after, read_file)
     if card is not None:
         keyboard = undo_keyboard(decision_id) if applied and undoable and before is not None else None
         try:
@@ -238,7 +245,7 @@ async def _decide(kind: str, ref_id: str, verdict: Verdict, card: Card | None, d
             log.warning("AI checker note not sent: {}", type(exc).__name__)
     result = shown.decision if applied or shown.decision == "unsure" else "unsure"
     await log_action(agent=AGENT, action=f"ai_check_{kind}", target_system="postgres", status="success",
-                     run_id=run_id, mode="write", payload={"decision": result, "applied": applied})
+                     run_id=run_id, mode="write", payload={"decision": result, "applied": applied, "read_file": read_file})
     return result
 
 
@@ -289,16 +296,67 @@ async def review_late_report(report: dict[str, Any], employee: dict[str, Any],
                          lambda cb: late_report.handle_callback(prefix, str(report["id"]), cb, run_id), run_id)
 
 
+PROOF_PLACEHOLDERS = frozenset({"фото", "видео", "файл", "овозли хабар", "аудио", "анимация", "видео хабар"})
+
+
+async def proof_reading(task: dict[str, Any], run_id: uuid.UUID) -> Any:
+    """The proof's file as the AI may see it (proof_files.py, 18.11) — None when there's none or it can't be read.
+    A proof from before 18.11 has only its message id: the file is recovered from the employee's chat."""
+    from integrations.org_bot import proof_files
+
+    f = None
+    if task.get("evidence_file_id"):
+        f = proof_files.ProofFile(task["evidence_file_id"], task.get("evidence_file_kind") or "document",
+                                  task.get("evidence_file_mime") or "", task.get("evidence_file_name") or "")
+    elif task.get("evidence_message_id") and task.get("employee_telegram_user_id"):
+        held = await _held_file(task)
+        try:
+            f = held or await proof_files.recover(int(task["employee_telegram_user_id"]),
+                                                  int(task["evidence_message_id"]), run_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Proof file not recovered: {}", type(exc).__name__)
+    if not proof_files.readable(f):
+        return None
+    try:
+        data = await proof_files.download(f, run_id)
+    except Exception as exc:  # noqa: BLE001 — too big, gone: unsure
+        log.warning("Proof file not downloaded: {}", type(exc).__name__)
+        return None
+    reading = proof_files.extract(f, data)
+    return reading if (reading.text or reading.image) else None
+
+
+async def _held_file(task: dict[str, Any]) -> Any:
+    """A proof chosen from a held file («нима учун?» → топшириқ далили): its file id is in employee_files."""
+    from integrations.org_bot import proof_files
+
+    row = await fetch_one(
+        """SELECT file_id, kind, mime FROM employee_files WHERE telegram_user_id = %s AND message_id = %s
+             AND file_id IS NOT NULL ORDER BY created_at DESC LIMIT 1""",
+        (task["employee_telegram_user_id"], task["evidence_message_id"]))
+    return proof_files.ProofFile(row["file_id"], row["kind"], (row.get("mime") or "").lower()) if row else None
+
+
 async def review_task_proof(task: dict[str, Any], card: Card | None, has_file: bool,
                             run_id: uuid.UUID | None = None) -> str:
     from integrations.org_bot import ops_manager, store, task_register
 
     run_id = run_id or uuid.uuid4()
     task = {**task, **(await store.task_with_employee(str(task["id"])) or {})}  # the employee's chat and card
-    facts = {"task": task.get("task_summary") or "", "expected_result": task.get("expected_result"),
-             "proof_text": task.get("evidence_text") or "", "proof_has_file": has_file,
-             "returned_before": int(task.get("returns") or 0)}
-    verdict = await judge("task_proof", facts, run_id)
+    typed = str(task.get("evidence_text") or "")
+    if has_file and typed.strip() in PROOF_PLACEHOLDERS:
+        typed = ""  # «файл» / «фото» is the bot's own label, not what they wrote (18.11)
+    facts: dict[str, Any] = {"task": task.get("task_summary") or "", "expected_result": task.get("expected_result"),
+                             "proof_text": typed, "proof_has_file": has_file,
+                             "returned_before": int(task.get("returns") or 0)}
+    reading = await proof_reading(task, run_id) if has_file and settings.ai_checker_read_files else None
+    if reading is not None and reading.text:
+        facts["proof_file"] = {"type": reading.note, "content": reading.text}
+    elif reading is not None and reading.image:
+        facts["proof_file"] = {"type": reading.note, "content": "the attached picture"}
+    read = reading is not None and bool(reading.text or reading.image)
+    verdict = await judge("task_proof", facts, run_id, reading.image if read and reading.image else None,
+                          reading.image_mime if read else "image/jpeg")
     decider = task.get("director_telegram_user_id")
 
     async def apply(cb: dict[str, Any]) -> str:
@@ -311,7 +369,8 @@ async def review_task_proof(task: dict[str, Any], card: Card | None, has_file: b
                                      f"🤖 Изоҳ: {escape(verdict.reason)}", reply_to=task.get("telegram_message_id"))
         return out
 
-    return await _decide("task_proof", str(task["id"]), verdict, card, int(decider) if decider else None, apply, run_id)
+    return await _decide("task_proof", str(task["id"]), verdict, card, int(decider) if decider else None, apply, run_id,
+                         read_file=read)
 
 
 async def review_reschedule(task: dict[str, Any], reason: str, card: Card | None,
@@ -438,7 +497,7 @@ async def self_test(run_id: uuid.UUID | None = None) -> list[tuple[str, str, str
     return out
 
 
-async def run_backlog(run_id: uuid.UUID | None = None) -> dict[str, int]:
+async def run_backlog(run_id: uuid.UUID | None = None, only_tasks: bool = False) -> dict[str, int]:
     """Admin Bot «/aicheck»: what already waited for the Boss before the checker existed — each card is sent to him
     again (the old one may be days up the chat) and judged like a new one. Counts only; once per item
     (anything already in ``ai_decisions`` is skipped)."""
@@ -452,6 +511,8 @@ async def run_backlog(run_id: uuid.UUID | None = None) -> dict[str, int]:
         return counts
     boss = int(directors[0]["telegram_user_id"])
     items = await store.waiting_for_boss()
+    if only_tasks:  # 18.11: the proofs whose files can now be read
+        items = {"explanations": [], "late_reports": [], "tasks": items["tasks"]}
     if not any(items.values()):
         return counts
     async with _bot(run_id) as bot:
@@ -512,4 +573,31 @@ async def run_backlog(run_id: uuid.UUID | None = None) -> dict[str, int]:
         counts[out] = counts.get(out, 0) + 1
     await log_action(agent=AGENT, action="ai_check_backlog", target_system="postgres", status="success",
                      run_id=run_id, mode="write", payload=counts)
+    return counts
+
+
+PROOF_FILES_JOB = "ai_proof_files_backfill"
+PROOF_FILES_DAY = date(2026, 11, 18)
+
+
+async def proof_files_backfill() -> dict[str, int] | None:
+    """Once (API start-up, 18.11): the task proofs the checker could only call «unsure» because their files couldn't be
+    read are checked again, now with the file. A job_runs lease keeps it to one run; IT gets counts only."""
+    from integrations.common import job_runs
+    from integrations.org_bot import reopen_fix
+
+    if not enabled("task_proof") or not settings.ai_checker_read_files or not await reopen_fix._schema_ready():
+        return None
+    if not await job_runs.claim(PROOF_FILES_JOB, PROOF_FILES_DAY):
+        return None
+    counts = await run_backlog(only_tasks=True)
+    await job_runs.finish(PROOF_FILES_JOB, PROOF_FILES_DAY)
+    from integrations.org_bot import admin
+
+    try:
+        await admin.tell_admin(f"🤖 Файлли далиллар AI текширувчида қайта кўрилди: тасдиқлади {counts.get('approve', 0)}, "
+                               f"қайтарди {counts.get('reject', 0)}, аниқ эмас (раҳбарга қолди) {counts.get('unsure', 0)}, "
+                               f"ўтказиб юборилди {counts.get('skipped', 0)}.", uuid.uuid4())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Backfill counts not told: {}", type(exc).__name__)
     return counts

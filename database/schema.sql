@@ -2166,3 +2166,11 @@ CREATE TABLE IF NOT EXISTS ai_decisions (
     undone_by        BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_ai_decisions_ref ON ai_decisions (kind, ref_id);
+-- 2026-11-18 (the owner): a task proof's FILE is read for the checker (org_bot/proof_files.py) — read_file marks a
+-- decision made with the file's content, so /aicheck re-checks proofs it could only call «unsure» before.
+ALTER TABLE ai_decisions ADD COLUMN IF NOT EXISTS read_file BOOLEAN NOT NULL DEFAULT false;
+-- The proof's file, kept with the task (before 18.11 only the message id was, so it couldn't be read again).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_id TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_kind TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_mime TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_name TEXT;

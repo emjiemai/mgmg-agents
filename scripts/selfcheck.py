@@ -2964,8 +2964,8 @@ def test_file_as_task_proof_1105() -> None:
         check_true("every button's data fits Telegram's 64 bytes", all(len(d.encode()) <= 64 for d in datas))
         out = asyncio.run(ops_manager._handle_callback({**cb, "data": picked}, uuid.uuid4(), None))
         check("the picked task gets the file as its proof",
-              (out, consumed[-1]), ("task_submitted", (tasks[1]["id"], {"message_id": 77, "document": {"file_id": "X"},
-                                                                         "caption": None})))
+              (out, consumed[-1]), ("task_submitted", (tasks[1]["id"], {"message_id": 77, "document": {
+                  "file_id": "X", "mime_type": None}, "caption": None})))
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
@@ -3255,7 +3255,7 @@ def test_task_proof_and_brief_1104() -> None:
             async def send_message(self, text, chat_id=None, reply_markup=None):
                 return [77]
 
-        async def submit(task_id, by, text, msg_id):
+        async def submit(task_id, by, text, msg_id, file=None):
             return {**state["task"], "status": "review", "awaiting": None, "evidence_text": text}
 
         async def still_waiting(tg):
@@ -5960,7 +5960,7 @@ def test_task_register() -> None:
     async def none_waiting(tg):
         return []
 
-    async def submit(task_id, by, text, msg_id):
+    async def submit(task_id, by, text, msg_id, file=None):
         if state["task"].get("awaiting") != "evidence":
             return None
         state["task"] = {**state["task"], "status": "review", "awaiting": None, "evidence_text": text}
@@ -6120,7 +6120,7 @@ def test_review_fixes() -> None:
     reopened: list = []
     replies: list = []
 
-    async def submit(task_id, by, text, msg_id):
+    async def submit(task_id, by, text, msg_id, file=None):
         return {**task, "status": "review", "evidence_text": text}
 
     async def reopen(task_id):
@@ -13109,7 +13109,7 @@ def test_task_accepter_1112() -> None:
     accepter_row = {"value": mgr}
     reopened: list = []
 
-    async def submit(task_id, by, text, msg_id):
+    async def submit(task_id, by, text, msg_id, file=None):
         return {**task, "status": "review", "evidence_text": text, "evidence_message_id": msg_id}
 
     async def review_accepter(t):
@@ -13586,7 +13586,7 @@ def test_task_expected_1112() -> None:
     the_task = {"id": "t1", "code": "T-2026-11-0201", "task_summary": "Ҳисобот", "director_telegram_user_id": 9,
                 "status": "started", "awaiting": "evidence", "telegram_message_id": 5, "expected_result": "Excel файл"}
 
-    async def submit(task_id, by, text, msg_id):
+    async def submit(task_id, by, text, msg_id, file=None):
         return {**the_task, "status": "review", "evidence_text": text, "evidence_message_id": msg_id}
 
     async def set_hint(task_id, hint):
@@ -14404,6 +14404,145 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_proof_files_1118() -> None:
+    """18.11.2026 (the owner: the proof had tables and the work done, not «4 characters»): a task proof's file is
+    read for the AI checker — Word, Excel, PDF as text, a photo / scan as a picture; file ids kept on submit; the
+    proofs it once called «unsure» re-checked once with the file."""
+    print("AI checker reads task-proof files (18.11.2026)")
+    import asyncio
+    import io
+    import uuid
+
+    from integrations.org_bot import ai_checker as ac, proof_files as pf, store
+
+    import docx as _docx
+    from openpyxl import Workbook
+
+    word = _docx.Document()
+    word.add_paragraph("Витрина нархлари янгиланди")
+    table = word.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text, table.cell(1, 0).text, table.cell(1, 1).text = "Товар", "Нарх", "Fenix 8", "999"
+    buf = io.BytesIO()
+    word.save(buf)
+    reading = pf.extract(pf.ProofFile("x", "document", pf.DOCX, "ҳисобот.docx"), buf.getvalue())
+    check_true("Word: paragraphs and table rows", "Витрина нархлари янгиланди" in reading.text
+               and "Fenix 8 | 999" in reading.text and reading.note.startswith("Word"))
+    wb = Workbook()
+    wb.active.title = "Сотув"
+    wb.active.append(["Сана", "Сумма"])
+    wb.active.append(["17.11", 1500])
+    buf = io.BytesIO()
+    wb.save(buf)
+    reading = pf.extract(pf.ProofFile("x", "document", "", "data.xlsx"), buf.getvalue())
+    check_true("Excel (by file name): each sheet's rows", "[варақ: Сотув]" in reading.text and "17.11 | 1500" in reading.text)
+    from integrations.reports import render
+    pdf_bytes = render.html_to_pdf("<html><body><p>Топшириқ бажарилди: 24 та нарх ёрлиғи алмаштирилди, ҳисобот илова қилинди.</p>"
+                                   "</body></html>")
+    reading = pf.extract(pf.ProofFile("x", "document", "application/pdf", "a.pdf"), pdf_bytes)
+    check_true("PDF: its text", "нарх" in reading.text and reading.note.startswith("PDF"))
+    blank = render.html_to_pdf("<html><body></body></html>")
+    reading = pf.extract(pf.ProofFile("x", "document", "application/pdf", "scan.pdf"), blank)
+    check_true("a scanned PDF (no text): the first page as a picture", reading.image is not None and not reading.text
+               and reading.image[:2] == b"\xff\xd8")
+    reading = pf.extract(pf.ProofFile("x", "photo", "image/jpeg"), b"\xff\xd8\xff-photo")
+    check_true("a photo: the picture itself", reading.image == b"\xff\xd8\xff-photo" and not reading.text)
+    check_true("video / voice / archives: not readable", not pf.readable(pf.ProofFile("x", "video", "video/mp4"))
+               and not pf.readable(pf.ProofFile("x", "document", "application/zip", "a.zip"))
+               and pf.readable(pf.ProofFile("x", "document", pf.XLSX, "a.xlsx")))
+    check_true("a broken file is empty, never a crash",
+               pf.extract(pf.ProofFile("x", "document", pf.DOCX, "a.docx"), b"not a docx").text == "")
+    big = pf._cut("ж" * (pf.TEXT_MAX + 50))
+    check_true("long text is cut with a note", len(big) < pf.TEXT_MAX + 60 and "кесилди" in big)
+    check("file_of: a photo's largest size; a document with its type and name",
+          (pf.file_of({"photo": [{"file_id": "s"}, {"file_id": "L"}]}),
+           pf.file_of({"document": {"file_id": "D", "mime_type": "Application/PDF", "file_name": "a.pdf"}}),
+           pf.file_of({"text": "x"})),
+          (pf.ProofFile("L", "photo", "image/jpeg"), pf.ProofFile("D", "document", "application/pdf", "a.pdf"), None))
+    check_true("submit_task keeps the proof's file id, type and name",
+               "evidence_file_id = %s" in inspect_source(store.submit_task)
+               and "evidence_file_name = %s" in inspect_source(store.submit_task))
+
+    # the checker: placeholder dropped, file content given, read_file recorded; a picture goes to the image reading
+    seen = {}
+
+    async def with_employee(task_id):
+        return {"employee_telegram_user_id": 50, "director_telegram_user_id": 9, "telegram_message_id": 3}
+
+    async def judge(kind, facts, run_id, image=None, image_mime="image/jpeg"):
+        seen["facts"], seen["image"] = facts, image
+        return ac.Verdict("unsure", "")
+
+    async def decide(kind, ref_id, verdict, card, decider, apply, run_id, undoable=True, read_file=False):
+        seen["read_file"] = read_file
+        return verdict.decision
+
+    def reading_of(r):
+        async def fake(task, run_id):
+            return r
+        return fake
+
+    saved = [(store, "task_with_employee", store.task_with_employee), (ac, "judge", ac.judge), (ac, "_decide", ac._decide),
+             (ac, "proof_reading", ac.proof_reading)]
+    store.task_with_employee, ac.judge, ac._decide = with_employee, judge, decide
+    task = {"id": "t1", "task_summary": "Нархларни янгиланг", "evidence_text": "файл", "returns": 0}
+    try:
+        ac.proof_reading = reading_of(pf.Reading(text="Fenix 8 | 999", note="Word, 1 жадвал"))
+        asyncio.run(ac.review_task_proof(task, ac.Card(9, 5, True), True, uuid.uuid4()))
+        check_true("«файл» is not the proof text; the file's content is given; read_file recorded",
+                   seen["facts"]["proof_text"] == "" and seen["facts"]["proof_file"] == {"type": "Word, 1 жадвал",
+                                                                                         "content": "Fenix 8 | 999"}
+                   and seen["image"] is None and seen["read_file"] is True)
+        ac.proof_reading = reading_of(pf.Reading(image=b"img", note="расм"))
+        asyncio.run(ac.review_task_proof(task, ac.Card(9, 5, True), True, uuid.uuid4()))
+        check_true("a picture goes to the AI's image reading", seen["image"] == b"img" and seen["read_file"] is True)
+        ac.proof_reading = reading_of(None)
+        asyncio.run(ac.review_task_proof(task, ac.Card(9, 5, True), True, uuid.uuid4()))
+        check_true("unreadable file → no proof_file, read_file false (stays with the Boss)",
+                   "proof_file" not in seen["facts"] and seen["read_file"] is False)
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+
+    # recovering an old proof's file: forwarded silently within the same chat, the forward deleted
+    calls = []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def _call(self, method, payload, **k):
+            calls.append((method, payload))
+            if method == "forwardMessage":
+                return {"message_id": 99, "document": {"file_id": "OLD", "mime_type": pf.XLSX, "file_name": "a.xlsx"}}
+            return True
+
+    saved_bot = pf.TelegramBot
+    pf.TelegramBot = Bot
+    try:
+        recovered = asyncio.run(pf.recover(50, 7))
+    finally:
+        pf.TelegramBot = saved_bot
+    check_true("an old proof's file id recovered by a silent forward in the same chat, the copy deleted",
+               recovered == pf.ProofFile("OLD", "document", pf.XLSX, "a.xlsx")
+               and calls[0] == ("forwardMessage", {"chat_id": "50", "from_chat_id": "50", "message_id": 7,
+                                                   "disable_notification": True})
+               and calls[1] == ("deleteMessage", {"chat_id": "50", "message_id": 99}))
+    waiting = inspect_source(store.waiting_for_boss)
+    check_true("/aicheck re-checks a file proof once (unsure, file not read before), never a text-only one twice",
+               "a.read_file" in waiting and "t.evidence_message_id IS NULL" in waiting)
+    from pathlib import Path
+    check_true("the waiting proofs run once on start-up (job_runs lease), counts to IT",
+               "proof_files_backfill" in (Path(__file__).resolve().parents[1] / "integrations" / "api" / "app.py").read_text(
+                   encoding="utf-8") and "job_runs.claim(PROOF_FILES_JOB" in inspect_source(ac.proof_files_backfill)
+               and "only_tasks=True" in inspect_source(ac.proof_files_backfill))
+
+
 def test_documenter_1117() -> None:
     """17.11.2026 (the owner): the AI documenter — designed PDF / DOCX / XLSX from a block spec — and charts
     (Vega-Lite, vl-convert, in a short-lived process) and diagrams (Graphviz DOT), as analyst tools."""
@@ -14764,7 +14903,7 @@ def test_ai_checker_1116() -> None:
     async def snapshot(kind, ref_id):
         return {"status": "asked"} if not calls or calls[-1][0] != "after" else {"status": "submitted"}
 
-    async def record(kind, ref_id, verdict, card, before, after):
+    async def record(kind, ref_id, verdict, card, before, after, read_file=False):
         records.append((kind, verdict.decision, before is not None))
         return "d1"
 
@@ -15239,6 +15378,7 @@ def main() -> int:
         test_sap_history_1116,
         test_rich_messages_1117,
         test_documenter_1117,
+        test_proof_files_1118,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

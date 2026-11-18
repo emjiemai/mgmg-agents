@@ -46,3 +46,14 @@ budget). `TASK_PROOF_HINT_ENABLED` (advisory line) is superseded by this for dec
   Both run in the background (a dozen AI calls outlast Telegram's webhook wait).
 
 Test: `test_ai_checker_1116`.
+
+## Proof files (2026-11-18, the owner)
+A task proof sent as a file used to reach the checker as the word «файл» (`task_register.evidence_of`'s label) — the
+AI could only say unsure. Now (`proof_files.py`, `AI_CHECKER_READ_FILES`): the file is downloaded once and read —
+Word paragraphs + tables, Excel rows per sheet (≤ 300 each), PDF text (≤ 20 pages; a scan → page 1 as a picture),
+photos / images via `vision_json`; ≤ 12 000 characters, ≤ 15 MB; video, voice and archives stay unsure. The label
+«файл» / «фото» is not passed as proof text. Nothing read is stored or logged; `ai_decisions.read_file` marks a
+decision made with the file. File ids are kept at submit (`tasks.evidence_file_id/kind/mime/name`); a proof from
+before is found in `employee_files` or recovered by a silent `forwardMessage` within the employee's own chat (the
+copy deleted at once). Start-up runs the waiting file proofs once (`proof_files_backfill`, job_runs lease, counts to
+IT); `/aicheck` re-checks a file proof whose decision was unsure without the file.

@@ -384,6 +384,8 @@ class Settings(BaseSettings):
     # AI checker (2026-11-16, integrations/org_bot/ai_checker.py): decides what waited for the Boss's tap.
     ai_checker_enabled: bool = True
     ai_checker_kinds: str = "explanation,late_report,task_proof,reschedule"
+    # 2026-11-18 (the owner): a task proof's file (photo, PDF, Word, Excel) is read for the checker (proof_files.py).
+    ai_checker_read_files: bool = True
     message_budget_enforce: bool = True
     message_budget_defer_agents: str = "duty-tasks,task-tracker"
 

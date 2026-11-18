@@ -1189,16 +1189,21 @@ async def mark_proof_reminded(task_id: str) -> None:
     await execute("UPDATE tasks SET proof_reminded_at = now() WHERE id = %s", (task_id,))
 
 
-async def submit_task(task_id: str, by: str, evidence_text: str, evidence_message_id: int | None) -> dict[str, Any] | None:
-    """Done, with proof: waits for the one who assigned it (status 'review'). Once."""
+async def submit_task(task_id: str, by: str, evidence_text: str, evidence_message_id: int | None,
+                      file: Any = None) -> dict[str, Any] | None:
+    """Done, with proof: waits for the one who assigned it (status 'review'). Once.
+
+    ``file`` (proof_files.ProofFile, 2026-11-18): the proof's file, kept so the AI checker can read it."""
     row = await fetch_one(
         """
         UPDATE tasks SET status = 'review', completed_at = now(), completed_by = %s, evidence_text = %s, proposed_due = NULL,
-                         evidence_message_id = %s, awaiting = NULL, awaiting_since = NULL
+                         evidence_message_id = %s, awaiting = NULL, awaiting_since = NULL,
+                         evidence_file_id = %s, evidence_file_kind = %s, evidence_file_mime = %s, evidence_file_name = %s
         WHERE id = %s AND status IN ('sent', 'started', 'blocked') AND awaiting = 'evidence'
         RETURNING *
         """,
-        (by, evidence_text, evidence_message_id, task_id),
+        (by, evidence_text, evidence_message_id, getattr(file, "file_id", None), getattr(file, "kind", None),
+         getattr(file, "mime", None) or None, getattr(file, "name", None) or None, task_id),
     )
     if row is not None:
         await log_task_event(task_id, "submitted", by, evidence_text)
@@ -3691,9 +3696,13 @@ async def waiting_for_boss() -> dict[str, list[dict[str, Any]]]:
             f"""SELECT r.* FROM daily_reports r WHERE r.status = 'asked' AND r.late_content IS NOT NULL
                   AND r.late_decision IS NULL AND {seen.format(ref="r.id::text")} ORDER BY r.report_date""",
             ("late_report",)),
+        # A proof the checker could only call «unsure» because its file couldn't be read (before 18.11) is checked
+        # again once, now with the file (read_file).
         "tasks": await fetch_all(
-            f"""SELECT t.id FROM tasks t WHERE t.status = 'review' AND {seen.format(ref="t.id::text")}
-                ORDER BY t.completed_at""", ("task_proof",)),
+            """SELECT t.id FROM tasks t WHERE t.status = 'review'
+                 AND NOT EXISTS (SELECT 1 FROM ai_decisions a WHERE a.kind = 'task_proof' AND a.ref_id = t.id::text
+                                 AND (a.decision <> 'unsure' OR a.read_file OR t.evidence_message_id IS NULL))
+               ORDER BY t.completed_at"""),
     }
 
 
