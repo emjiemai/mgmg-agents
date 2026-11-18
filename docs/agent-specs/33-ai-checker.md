@@ -57,3 +57,5 @@ decision made with the file. File ids are kept at submit (`tasks.evidence_file_i
 before is found in `employee_files` or recovered by a silent `forwardMessage` within the employee's own chat (the
 copy deleted at once). Start-up runs the waiting file proofs once (`proof_files_backfill`, job_runs lease, counts to
 IT); `/aicheck` re-checks a file proof whose decision was unsure without the file.
+
+A task whose summary is only «Медиа файл» (given as a file with no caption) is never judged — unsure, the Boss decides (18.11, T-2026-11-0056).

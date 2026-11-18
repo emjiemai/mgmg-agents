@@ -14495,6 +14495,12 @@ def test_proof_files_1118() -> None:
         ac.proof_reading = reading_of(pf.Reading(image=b"img", note="расм"))
         asyncio.run(ac.review_task_proof(task, ac.Card(9, 5, True), True, uuid.uuid4()))
         check_true("a picture goes to the AI's image reading", seen["image"] == b"img" and seen["read_file"] is True)
+        seen.clear()
+        ac.proof_reading = reading_of(pf.Reading(text="x", note="PDF"))
+        out = asyncio.run(ac.review_task_proof({**task, "task_summary": "Медиа файл"}, ac.Card(9, 5, True), True,
+                                               uuid.uuid4()))
+        check_true("a task given as a file with no words → unsure, the AI isn't even asked (T-0056, 18.11)",
+                   out == "unsure" and "facts" not in seen)
         ac.proof_reading = reading_of(None)
         asyncio.run(ac.review_task_proof(task, ac.Card(9, 5, True), True, uuid.uuid4()))
         check_true("unreadable file → no proof_file, read_file false (stays with the Boss)",

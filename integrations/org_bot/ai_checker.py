@@ -296,6 +296,7 @@ async def review_late_report(report: dict[str, Any], employee: dict[str, Any],
                          lambda cb: late_report.handle_callback(prefix, str(report["id"]), cb, run_id), run_id)
 
 
+TASK_FILE_LABELS = frozenset({"Медиа файл"})  # a task the Boss sent as a file with no caption (ops_manager)
 PROOF_PLACEHOLDERS = frozenset({"фото", "видео", "файл", "овозли хабар", "аудио", "анимация", "видео хабар"})
 
 
@@ -349,6 +350,11 @@ async def review_task_proof(task: dict[str, Any], card: Card | None, has_file: b
     facts: dict[str, Any] = {"task": task.get("task_summary") or "", "expected_result": task.get("expected_result"),
                              "proof_text": typed, "proof_has_file": has_file,
                              "returned_before": int(task.get("returns") or 0)}
+    if str(task.get("task_summary") or "").strip() in TASK_FILE_LABELS:
+        # The Boss gave the task as a file with no words (18.11, T-2026-11-0056 «Медиа файл» was returned as «another
+        # result»): what was asked is unknown to the AI — the Boss decides.
+        verdict = Verdict("unsure", "топшириқнинг ўзи файл билан берилган, нима сўралганини AI билмайди")
+        return await _decide("task_proof", str(task["id"]), verdict, card, None, None, run_id)
     reading = await proof_reading(task, run_id) if has_file and settings.ai_checker_read_files else None
     if reading is not None and reading.text:
         facts["proof_file"] = {"type": reading.note, "content": reading.text}
