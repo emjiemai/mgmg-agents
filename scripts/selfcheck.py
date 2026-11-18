@@ -14465,6 +14465,8 @@ def test_split_task_card_1118() -> None:
     check_true("sending: a too-long card sends the Director's text first and keeps the last part's id",
                "len(split_message(card)) > 1" in whole and "message_id = ids[-1] if ids else None" in whole
                and "set_task_raw_above" in whole and "card_raw_above" in inspect_source(store.set_task_raw_above))
+    check_true("▶️ on an already-accepted task redraws the card (a stale card fixes itself)",
+               "_refresh_task_card(owner, run_id, owner)" in inspect_source(om._handle_task_start))
 
 
 def test_greetings_1118() -> None:

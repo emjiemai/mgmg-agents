@@ -731,6 +731,8 @@ async def _handle_task_start(task_id: str, callback: dict[str, Any], run_id: uui
             await _answer(query_id, "Бу топшириқ сизга берилмаган")
             return "not_assignee"
         await _answer(query_id, "Аллақачон қабул қилинган")
+        if owner is not None:  # a stale card (18.11: T-0055's split card still showed ▶️) gets its right buttons
+            await _refresh_task_card(owner, run_id, owner)
         return "already_started"
     await _answer(query_id, "Қабул қилинди")
     await _refresh_task_card(task, run_id)
