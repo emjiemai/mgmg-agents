@@ -987,6 +987,11 @@ async def permission_counts_between(start: date, end: date) -> dict[str, int]:
     return {row["status"]: int(row["n"]) for row in rows}
 
 
+async def set_task_raw_above(task_id: str) -> None:
+    """The card was too long for one message: the Director's text went just above it (18.11)."""
+    await execute("UPDATE tasks SET card_raw_above = true WHERE id = %s", (task_id,))
+
+
 async def set_task_message_id(task_id: str, message_id: int) -> None:
     """Record a task card's Telegram message id, for later in-place edits.
 

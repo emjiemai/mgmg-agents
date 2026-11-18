@@ -14404,6 +14404,69 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_split_task_card_1118() -> None:
+    """18.11.2026 (T-2026-11-0055): a task card too long for one message went in two parts; ▶️ said «accepted» but the
+    buttons on part 2 never changed — the stored id was part 1's. New long cards: the Director's text first, the card
+    in one message; old split cards: the status on part 1, the buttons redrawn on the last part."""
+    print("long task cards keep working buttons (18.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import ops_manager as om, store, task_register
+    from integrations.telegram.bot import split_message
+
+    long_raw = "Мисол\n" + "\n".join(f"{i}. ходим вазифаси — ҳар куни 2 та таклиф, 3 та қўнғироқ, ой режаси" for i in range(120))
+    base = om._task_card_text("Автоматик делегация", long_raw, None, "T-2026-11-0055")
+    check_true("the old card really needed two messages", len(split_message(base)) > 1)
+    short = om._task_card_text("Автоматик делегация", long_raw, None, "T-2026-11-0055", raw_above=True)
+    check_true("with the text above, the card is one message pointing to it", len(split_message(short)) == 1
+               and "юқоридаги хабарда" in short and "Директордан:" not in short)
+
+    calls = []
+
+    class Bot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def _edit_message(self, chat_id, message_id, text, reply_markup=None):
+            calls.append(("edit", message_id, reply_markup))
+
+        async def _call(self, method, payload, **k):
+            calls.append((method, payload.get("message_id"), payload.get("reply_markup")))
+            return True
+
+    full = {"id": "t", "code": "T-2026-11-0055", "task_summary": "Автоматик делегация", "raw_message": long_raw,
+            "status": "started", "employee_telegram_user_id": 50, "telegram_message_id": 700, "has_media": False,
+            "card_raw_above": False, "priority": 2}
+    saved = om.TelegramBot
+    om.TelegramBot = Bot
+    try:
+        asyncio.run(om._refresh_task_card(full, uuid.uuid4(), full))
+        old_calls = list(calls)
+        calls.clear()
+        asyncio.run(om._refresh_task_card({**full, "card_raw_above": True}, uuid.uuid4(), {**full, "card_raw_above": True}))
+    finally:
+        om.TelegramBot = saved
+    parts = len(split_message(base))
+    check_true("old split card: status on part 1 with no buttons, the buttons redrawn on the last part (started → no ▶️)",
+               old_calls[0] == ("edit", 700, {"inline_keyboard": []})
+               and old_calls[1][0] == "editMessageReplyMarkup" and old_calls[1][1] == 700 + parts - 1
+               and old_calls[1][2] == task_register.keyboard(full)
+               and "▶️" not in str(old_calls[1][2]))
+    check("a one-message card: one edit with its buttons", [(c[0], c[1]) for c in calls], [("edit", 700)])
+    import inspect as _inspect
+    whole = _inspect.getsource(om)
+    check_true("sending: a too-long card sends the Director's text first and keeps the last part's id",
+               "len(split_message(card)) > 1" in whole and "message_id = ids[-1] if ids else None" in whole
+               and "set_task_raw_above" in whole and "card_raw_above" in inspect_source(store.set_task_raw_above))
+
+
 def test_greetings_1118() -> None:
     """18.11.2026, the Boss's task T-2026-11-0052: holiday and birthday greetings from two tabs of the duties sheet,
     entered in advance; each person once; men's / women's days by the admin's ака / опа; the Director told of birthdays."""
@@ -15498,6 +15561,7 @@ def main() -> int:
         test_documenter_1117,
         test_proof_files_1118,
         test_greetings_1118,
+        test_split_task_card_1118,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

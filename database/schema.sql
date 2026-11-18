@@ -2171,6 +2171,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_decisions_ref ON ai_decisions (kind, ref_id);
 ALTER TABLE ai_decisions ADD COLUMN IF NOT EXISTS read_file BOOLEAN NOT NULL DEFAULT false;
 -- The proof's file, kept with the task (before 18.11 only the message id was, so it couldn't be read again).
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_id TEXT;
+-- 18.11 (T-0055's buttons never changed): a card too long for one message — the Director's text sent just above it.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS card_raw_above BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_kind TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_mime TEXT;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS evidence_file_name TEXT;

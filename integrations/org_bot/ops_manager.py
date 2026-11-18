@@ -59,7 +59,7 @@ from integrations.org_bot.roles import (
 )
 from integrations.sap.models import doc_balance
 from integrations.telegram import rich as telegram_rich
-from integrations.telegram.bot import TelegramBot, TelegramError, escape, sanitize_model_html
+from integrations.telegram.bot import TelegramBot, TelegramError, escape, sanitize_model_html, split_message
 
 AGENT = "ops-manager-bot"
 log = setup_logging(AGENT)
@@ -459,7 +459,7 @@ async def _handle_callback(callback: dict[str, Any], run_id: uuid.UUID, backgrou
 
 
 def _task_card_text(task_summary: str, raw_message: str | None = None, due_date: date | None = None, code: str = "",
-                    priority: int | None = None, expected_result: str | None = None) -> str:
+                    priority: int | None = None, expected_result: str | None = None, raw_above: bool = False) -> str:
     """The base text/caption every task card starts with — recomputed (not
     stored) so edits can append a status line without needing to fetch or
     guess the message's current content.
@@ -480,7 +480,10 @@ def _task_card_text(task_summary: str, raw_message: str | None = None, due_date:
     if expected:
         text += f"\n\n{expected}"
     if raw_message and raw_message.strip() and raw_message.strip() != task_summary.strip():
-        text += f"\n\n<i>Директордан:</i>\n{escape(raw_message.strip())}"
+        # 18.11: a card too long for one message went out in parts and its buttons never changed — the Director's
+        # whole text then goes as its own message just above, and the card (one message) points to it.
+        text += ("\n\n<i>Директорнинг тўлиқ матни — юқоридаги хабарда.</i>" if raw_above
+                 else f"\n\n<i>Директордан:</i>\n{escape(raw_message.strip())}")
     deadline = task_tracker.deadline_line(due_date, today_local())
     if deadline:
         text += f"\n\n{deadline}"
@@ -670,17 +673,37 @@ async def _refresh_task_card(task: dict[str, Any], run_id: uuid.UUID, full: dict
     if not full or not full.get("telegram_message_id"):
         return
     status = task_register.status_line(full)
+    parts = 1
     if full.get("has_media"):
         text = _task_caption(full, status)
     else:
-        text = (_task_card_text(full["task_summary"], full.get("raw_message"), full.get("due_date"),
-                                task_register.code_of(full), full.get("priority"), full.get("expected_result"))
-                + "\n\n" + status)
+        base = _task_card_text(full["task_summary"], full.get("raw_message"), full.get("due_date"),
+                               task_register.code_of(full), full.get("priority"), full.get("expected_result"),
+                               raw_above=bool(full.get("card_raw_above")))
+        text = base + "\n\n" + status
+        if not full.get("card_raw_above"):
+            parts = legacy_card_parts(base)
+    chat, first = str(full["employee_telegram_user_id"]), int(full["telegram_message_id"])
     async with TelegramBot(
         agent=AGENT, run_id=run_id, bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()
     ) as bot:
-        await _edit_task_card(bot, str(full["employee_telegram_user_id"]), full["telegram_message_id"],
-                              bool(full.get("has_media")), text, task_register.keyboard(full))
+        if parts == 1:
+            await _edit_task_card(bot, chat, first, bool(full.get("has_media")), text, task_register.keyboard(full))
+            return
+        # A card sent in parts before 18.11: the status goes on part 1 (as before), the buttons stay on the last
+        # part — the one that has them (sent right after part 1, so its id follows) — redrawn there.
+        await _edit_task_card(bot, chat, first, False, text, {"inline_keyboard": []})
+        try:
+            await bot._call("editMessageReplyMarkup", {  # noqa: SLF001
+                "chat_id": chat, "message_id": first + parts - 1, "reply_markup": task_register.keyboard(full)},
+                mode="notify", target_ref=chat)
+        except TelegramError as exc:
+            log.warning("Split task card's buttons not redrawn: {}", exc)
+
+
+def legacy_card_parts(base: str) -> int:
+    """How many messages a card was sent in before 18.11 (its text without the status line, as sent)."""
+    return len(split_message(base))
 
 
 async def _tell_assigner(task: dict[str, Any], text: str, run_id: uuid.UUID,
@@ -3302,14 +3325,18 @@ async def _send_task_cards(draft: dict[str, Any], employees: list[dict[str, Any]
                     )
                     message_id = result.get("message_id") if result else None
                 else:
+                    card_args = (draft["task_summary"], draft["raw_message"], due_date, task_register.code_of(task),
+                                 task.get("priority"), draft.get("expected_result"))
+                    card = _task_card_text(*card_args) + (f"\n\n{waiting}" if waiting else "")
+                    if len(split_message(card)) > 1:  # too long for one message (18.11, T-0055)
+                        await bot.send_message(f"<i>Директордан · {escape(task_register.code_of(task))}:</i>\n"
+                                               f"{escape((draft['raw_message'] or '').strip())}",
+                                               chat_id=str(employee["telegram_user_id"]))
+                        card = _task_card_text(*card_args, raw_above=True) + (f"\n\n{waiting}" if waiting else "")
+                        await store.set_task_raw_above(str(task["id"]))
                     ids = await bot.send_message(
-                        _task_card_text(draft["task_summary"], draft["raw_message"], due_date, task_register.code_of(task),
-                                        task.get("priority"), draft.get("expected_result"))
-                        + (f"\n\n{waiting}" if waiting else ""),
-                        chat_id=str(employee["telegram_user_id"]),
-                        reply_markup=task_register.keyboard(task),
-                    )
-                    message_id = ids[0] if ids else None
+                        card, chat_id=str(employee["telegram_user_id"]), reply_markup=task_register.keyboard(task))
+                    message_id = ids[-1] if ids else None  # the part with the buttons
             except TelegramError as exc:
                 log.error("Could not send the task to {}: {}", names.person_name(employee), exc)
                 continue
