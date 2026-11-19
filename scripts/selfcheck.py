@@ -3524,7 +3524,7 @@ def test_sap_entry_and_testing() -> None:
     check_true("/kiritish: the Director everyone, a manager his team; in their menus",
                "sap_entry.build(None, today_local())" in inspect_source(ops_manager)
                and "sap_entry.build(report_calendar.TEAM_OF[employee[\"role\"]]" in inspect_source(ops_manager)
-               and "kiritish" in dict(menus.DIRECTOR) and "kiritish" in dict(menus.GARMIN_MANAGER))
+               and _director_reaches("kiritish") and "kiritish" in dict(menus.GARMIN_MANAGER))
 
     # ---- an unreadable register sheet: the last good register stays, Google's reason said, hourly retry
     saved = [(duties, n, getattr(duties, n)) for n in ("read_sheet", "fetch_all", "fetch_one", "execute", "log_action")]
@@ -3569,7 +3569,7 @@ def test_sap_entry_and_testing() -> None:
                and '"sinov"' in inspect_source(admin.handle_admin_message))
     check_true("the Director's /tahlil: the week's review now, to him only (IT gets no copy)",
                "/tahlil" in duty_review.COMMANDS and "if not only_chat:" in inspect_source(duty_review.run)
-               and "tahlil" in dict(menus.DIRECTOR))
+               and _director_reaches("tahlil"))
 
 
 def test_rollout() -> None:
@@ -3633,7 +3633,6 @@ def test_plan_facts_and_review() -> None:
     from integrations.org_bot import duty_review as dr
     from integrations.org_bot import duty_tasks, ops_manager
     from integrations.org_bot import plan_facts as pf
-    from integrations.telegram import menus
 
     check("names folded for SAP's spelling", [pf.fold(x) for x in ("Ходжиев Абдурашид", "Ёрқинов Рустам", "Мирпўлатов")],
           ["хожиев абдурашид", "еркинов рустам", "мирпулатов"])
@@ -3739,7 +3738,7 @@ def test_plan_facts_and_review() -> None:
                dr.REVIEW_AT == (16, 30) and dr.FRIDAY == 4 and "duty_tasks.is_on()" in inspect_source(dr.tick)
                and 'claim(now.date(), "review")' in inspect_source(dr.tick)
                and "plan_facts.collect(force=True)" in load_source("integrations/api/app.py") and "duty_review.tick(" in load_source("integrations/api/app.py")
-               and "reja" in dict(menus.DIRECTOR) and "/reja" in ops_manager.PLAN_COMMANDS)
+               and _director_reaches("reja") and "/reja" in ops_manager.PLAN_COMMANDS)
     check_true("an accepted change goes to IT to edit the register — the register stays people's document",
                "реестрда ўзгартиринг" in inspect_source(dr.handle_callback))
 
@@ -4039,7 +4038,7 @@ def test_reconcile() -> None:
                and ops_manager.may_reconcile({"role": "buxgalteriya", "data_access": ["sap", "1c", "billz"]})
                and not ops_manager.may_reconcile({"role": "buxgalteriya", "data_access": ["billz"]})
                and not ops_manager.may_reconcile({"role": "it", "data_access": ["sap", "1c"]}))
-    check_true("in the menus of the Director and accounting", "farqlar" in dict(menus.DIRECTOR) and "farqlar" in dict(menus.ACCOUNTING)
+    check_true("in the menus of the Director and accounting", _director_reaches("farqlar") and "farqlar" in dict(menus.ACCOUNTING)
                and menus.role_menu("buxgalteriya") == menus.ACCOUNTING)
     check_true("the API sends it at 09:00, once a day", "reconcile.tick(" in load_source("integrations/api/app.py")
                and "CREATE TABLE IF NOT EXISTS reconcile_runs" in load_source("database/schema.sql"))
@@ -6674,8 +6673,9 @@ def test_command_menus() -> None:
     check_true("every Admin menu command is one Admin Bot handles", all("/" + c in admin_handles for c, _ in menus.ADMIN))
     check_true("every OPS Manager menu command is one it handles",
                all("/" + c in ops_handles for c, _ in menus.EMPLOYEE + menus.DIRECTOR + menus.GARMIN_MANAGER + menus.B2B_SALES + menus.ACCOUNTING))
-    check_true("the Director's menu has /maqsad /baho; the employees' doesn't",
-               {"maqsad", "baho"} <= {c for c, _ in menus.DIRECTOR} and not {"maqsad", "baho"} & {c for c, _ in menus.EMPLOYEE})
+    check_true("the Director reaches /maqsad /baho (menu or in words, 19.11); the employees' menu doesn't have them",
+               _director_reaches("maqsad") and _director_reaches("baho")
+               and not {"maqsad", "baho"} & {c for c, _ in menus.EMPLOYEE})
 
     calls: list[tuple[str, str, dict]] = []
 
@@ -8113,7 +8113,7 @@ def test_excused_and_late_reports() -> None:
     check_true("the morning «no report» question carries the send-now button; no report is asked on an excused day",
                "late_report.ask_button(days[-1])" in load_source("integrations/org_bot/morning_notes.py")
                and "excused_between(day, day)" in load_source("agents/daily-reports/agent.py"))
-    check_true("/sababli in the Director's and the Garmin manager's menus", "sababli" in [c for c, _ in menus.DIRECTOR]
+    check_true("/sababli in the Director's and the Garmin manager's menus", _director_reaches("sababli")
                and "sababli" in [c for c, _ in menus.GARMIN_MANAGER] and "sababli" not in [c for c, _ in menus.EMPLOYEE])
     check_true("the calendar shows a removed ask as grey", report_calendar.cell(None, d22, datetime(2026, 10, 23, 9), True) == "none")
 
@@ -8846,7 +8846,7 @@ def test_garmin_stock_for_ordering() -> None:
           (["Товар", "Код", "Garmin Abay", "Garmin-Minor", "Жами қолдиқ"], 4, True))
     prompt = analyst.employee_prompt("М", "x", {"sap_garmin"})
     check_true("/qoldiq for the Garmin manager and the Director; the analyst says what is left and never what to buy",
-               "qoldiq" in [c for c, _ in menus.GARMIN_MANAGER] and "qoldiq" in [c for c, _ in menus.DIRECTOR]
+               "qoldiq" in [c for c, _ in menus.GARMIN_MANAGER] and _director_reaches("qoldiq")
                and "garmin_stock_list" in {t["function"]["name"] for t in analyst.tools_for({"sap_garmin", "billz", "garmin"})}
                and "never advise what to buy" in prompt and "буюртма учун" not in str(menus.GARMIN_MANAGER)
                and "never count it in what is left" in prompt)
@@ -9160,7 +9160,7 @@ def test_old_stock_and_live_views() -> None:
     src = inspect.getsource(ops_manager)
     check_true("/eski for both, in their menus", "old_stock.send(telegram_user_id, None, run_id)" in src
                and "old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)" in src
-               and "eski" in [c for c, _ in menus.DIRECTOR] and "eski" in [c for c, _ in menus.GARMIN_MANAGER])
+               and _director_reaches("eski") and "eski" in [c for c, _ in menus.GARMIN_MANAGER])
 
     check_true("1C and Billz in /db: read live, only while the platform tables are open",
                set(db_viewer.LIVE_VIEWS) == {"1c_balances", "1c_turnovers", "billz_cheques", "billz_shops"}
@@ -11480,6 +11480,14 @@ def _test_reports_body() -> None:
             text_of(render.render_html(template, image=False, **values)),
             allow={"KPI", "OPS", "Manager", "Admin", "Bot", "IT", "Billz", "SAP", "GARMIN", "ABAY", "Rustam", "Band",
                    "Render", "BILLZ", "CHECK", "TRIAL", "false", "OKR", "C"}) == [])
+
+
+def _director_reaches(command: str) -> bool:
+    """A command the Director can still use (19.11): in his trimmed ☰ menu, or a screen he asks for in words."""
+    from integrations.org_bot import screens
+    from integrations.telegram import menus
+
+    return command in dict(menus.DIRECTOR) or f"/{command}" in {c for _, c in screens.SCREENS.values()}
 
 
 def test_sap_gateway_code() -> None:
@@ -14404,6 +14412,119 @@ def test_task_ladder_1112() -> None:
                and "ADD COLUMN IF NOT EXISTS deputy_employee_id" in schema)
 
 
+def test_screens_1119() -> None:
+    """19.11.2026 (the owner: "keep the important ones in the menu, the others should be capabilities — when the Boss
+    asks anything, it does it"): the Director's menu trimmed to seven; every old command still reachable — typed, or
+    asked in words (router → bot_ekranlari → the analyst's open_screen → the same function the command runs)."""
+    print("the Director's screens by asking in words (19.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.org_bot import analyst, ops_manager, prompt, roles, screens
+    from integrations.org_bot.roles import DIRECTOR_ROLE
+    from integrations.telegram import menus
+
+    old = ["kpi", "maqsad", "maqsadlar", "baho", "hisobotlar", "sababli", "lidlar", "farqlar", "vazifalar", "reja",
+           "kiritish", "tahlil", "qoldiq", "eski", "pulse", "bekor"]
+    check("the menu keeps seven", [c for c, _ in menus.DIRECTOR],
+          ["pulse", "kpi", "hisobotlar", "vazifalar", "lidlar", "maqsad", "bekor"])
+    check("every old command still reachable (menu or in words)", [c for c in old if not _director_reaches(c)], [])
+    tools = {t["function"]["name"] for t in analyst.tools_for(None)}
+    check_true("open_screen for the Director only — never for someone given data access",
+               "open_screen" in tools and "open_screen" not in {t["function"]["name"] for t in analyst.tools_for({"sap", "1c", "billz"})})
+    check_true("the router knows the bot's screens and the rule beats «can't change»",
+               "bot_ekranlari" in roles.AGENT_SLUGS and 'target_agent="bot_ekranlari"' in prompt.CLASSIFY_SYSTEM_PROMPT
+               and "overrides the change/approve" in prompt.CLASSIFY_SYSTEM_PROMPT)
+
+    queued = []
+    analyst._screens.set(queued)
+    asyncio.run(analyst.open_screen({"screen": "excused", "person": "Абдурашид  Хожиев"}))
+    bad = asyncio.run(analyst.open_screen({"screen": "delete_everything"}))
+    for _ in range(5):
+        asyncio.run(analyst.open_screen({"screen": "kpi"}))
+    check_true("open_screen queues (key, person); unknown refused; at most three",
+               queued[0] == ("excused", "Абдурашид Хожиев") and "No such screen" in bad and len(queued) == screens.MAX_PER_ANSWER)
+    check_true("after the answer the queued screens open", "screens.open_all(director_id, result.screens, run_id)"
+               in inspect_source(ops_manager._answer_question))
+
+    # open_screen: the same function each command runs; actions only open the card
+    calls = []
+    boss = {"id": "b", "telegram_user_id": 9, "status": "active", "role": DIRECTOR_ROLE}
+    staff = [{"id": "e1", "full_name": "Хожиев Абдурашид", "display_name": "A", "role": "garmin_sotuv", "status": "active"}]
+
+    async def by_tg(tg):
+        return boss if tg == 9 else {"id": "x", "telegram_user_id": tg, "status": "active", "role": "garmin_sotuv"}
+
+    async def everyone():
+        return staff
+
+    async def days_of(eid, a, b):
+        calls.append(("days_of", eid))
+        return set()
+
+    async def reply(uid, run_id, text, keyboard=None, *a, **k):
+        calls.append(("reply", text[:30], bool(keyboard)))
+
+    async def kg(prefix, rest, cb, run_id):
+        calls.append(("kpi_callback", prefix, rest, cb["from"]["id"]))
+        return "kpi_goal_started"
+
+    async def leads(chat, run_id):
+        calls.append(("leads", chat))
+        return "leads_sent"
+
+    from integrations.org_bot import kpi_flow, lead_tracker, store
+    saved = [(store, "get_employee_by_telegram_id", store.get_employee_by_telegram_id),
+             (store, "list_active_employees", store.list_active_employees), (store, "excused_days_of", store.excused_days_of),
+             (ops_manager, "_reply", ops_manager._reply), (kpi_flow, "handle_callback", kpi_flow.handle_callback),
+             (lead_tracker, "send_director", lead_tracker.send_director)]
+    store.get_employee_by_telegram_id, store.list_active_employees, store.excused_days_of = by_tg, everyone, days_of
+    ops_manager._reply, kpi_flow.handle_callback, lead_tracker.send_director = reply, kg, leads
+    run = uuid.uuid4()
+    try:
+        out = [asyncio.run(screens.open_screen(9, "excused", "Абдурашид", run)),
+               asyncio.run(screens.open_screen(9, "set_goal", "Хожиев Абдурашид", run)),
+               asyncio.run(screens.open_screen(9, "leads", "", run)),
+               asyncio.run(screens.open_screen(9, "rating_cards", "", run)),
+               asyncio.run(screens.open_screen(50, "kpi", "", run))]
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("excused → that person's day grid (with buttons); set_goal → the goal card for him; leads → its card; "
+          "simple KPI → no rating cards; not the Director → refused",
+          out, ["excused_shown", "kpi_goal_started", "leads_sent", "rating_simple_mode", "screen_refused"])
+    check_true("the grid is the person's, sent with its buttons; the goal starts for the named person, as the Director",
+               ("days_of", "e1") in calls and ("kpi_callback", "kg", "e1", 9) in calls
+               and any(c[0] == "reply" and c[2] for c in calls))
+
+    opened, told = [], []
+
+    async def fake_open(chat, key, person, run_id):
+        if key == "plans":
+            raise RuntimeError("down")
+        opened.append(key)
+        return "ok"
+
+    async def note(uid, run_id, text, *a, **k):
+        told.append(text)
+
+    async def nothing(**k):
+        return None
+
+    saved = [(screens, "open_screen", screens.open_screen), (screens, "log_action", screens.log_action),
+             (ops_manager, "_reply", ops_manager._reply)]
+    screens.open_screen, screens.log_action, ops_manager._reply = fake_open, nothing, note
+    try:
+        n = asyncio.run(screens.open_all(9, [("kpi", ""), ("kpi", ""), ("plans", ""), ("pulse", ""), ("goals", "")], run))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("each screen once, at most three tried; one that fails is told with its command, the rest still open",
+               opened == ["kpi", "pulse"] and n == 2 and any("/reja" in t for t in told))
+    check_true("the fallback (analyst down) lists every screen with its command",
+               all(cmd in screens.fallback_text() for _, cmd in screens.SCREENS.values()))
+
+
 def test_split_task_card_1118() -> None:
     """18.11.2026 (T-2026-11-0055): a task card too long for one message went in two parts; ▶️ said «accepted» but the
     buttons on part 2 never changed — the stored id was part 1's. New long cards: the Director's text first, the card
@@ -15564,6 +15685,7 @@ def main() -> int:
         test_proof_files_1118,
         test_greetings_1118,
         test_split_task_card_1118,
+        test_screens_1119,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

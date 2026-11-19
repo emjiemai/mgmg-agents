@@ -134,6 +134,13 @@ AGENTS: list[Agent] = [
         "who didn't come, who is on sick leave / vacation / a business trip, arrival and leaving times — "
         "today so far, yesterday, and each employee's last 30 days",
     ),
+    # 2026-11-19 (screens.py): the bot's own screens and button actions, asked in words instead of the ☰ menu.
+    Agent("bot_ekranlari", "Бот экранлари ва амаллари",
+          "the bot's OWN screens and button actions: report calendar, KPI table, goals, rating cards, excused days, B2B "
+          "lead statistics and stop/start, SAP-1C-Billz differences Excel, duties register and the daily duty cards "
+          "on/off, plans vs fact, who didn't enter SAP, weekly duties analysis, Garmin stock Excel, old stock, PULSE "
+          "link; actions the Director confirms with a button (excuse a day, set a monthly goal, stop/start leads or "
+          "daily cards)"),
     Agent("all_systems", "Барча тизимлар", "combined summary from the operational systems above (not the Garmin catalog — that's product reference, not an operational status)"),
     Agent("garmin_catalog", "Garmin каталоги", "static product+price snapshot from garmin.com.uz — see prompt.py's GARMIN_CATALOG"),
     # SAP Business One gateway data, pushed periodically from the gateway's

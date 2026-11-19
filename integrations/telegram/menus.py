@@ -52,22 +52,16 @@ EMPLOYEE: list[tuple[str, str]] = [
     ("ism", "Исмни ўзгартиришни сўраш"),
     ("bekor", "Бошланган ишни бекор қилиш"),
 ]
+# The Director's menu keeps what he opens most (2026-11-19, the owner: "keep the important ones, the others should be
+# capabilities"). Everything else — /maqsadlar /baho /sababli /farqlar /reja /kiritish /tahlil /qoldiq /eski — he asks
+# for in words (screens.py: the analyst opens the same screen); the typed commands still work.
 DIRECTOR: list[tuple[str, str]] = [
-    ("kpi", "Ходимлар KPI жадвали"),
-    ("maqsad", "Ходимга ойлик мақсад қўйиш"),
-    ("maqsadlar", "Мақсадлар ва натижалар"),
-    ("baho", "Ойлик баҳолаш карталари"),
-    ("hisobotlar", "Ҳисоботлар календари: ким юборди, ким юбормади"),
-    ("sababli", "Ходимнинг сабабли кунини белгилаш (кулранг)"),
-    ("lidlar", "B2B лидлар: статистика, жадвал, тўхтатиш / бошлаш"),
-    ("farqlar", "SAP ↔ 1C ↔ Billz солиштириш: фарқлар ва хатолар (Excel)"),
-    ("vazifalar", "Вазифалар реестри: ким нима қилади, ойлик режалар"),
-    ("reja", "Ойлик режа ва факт (SAP)"),
-    ("kiritish", "SAP'га ким киритмади: чеклар, кеч киритилган счётлар"),
-    ("tahlil", "Ҳафталик вазифалар таҳлили — ҳозир"),
-    ("qoldiq", "Garmin қолдиғи: товарлар ва қанча қолгани (Excel)"),
-    ("eski", "Бир йилга яқинлашган ва ошган товарлар"),
     ("pulse", "PULSE: компания ва ходимлар графиги"),
+    ("kpi", "Ходимлар KPI жадвали"),
+    ("hisobotlar", "Ҳисоботлар календари: ким юборди, ким юбормади"),
+    ("vazifalar", "Вазифалар реестри ва кунлик карталар (▶️ / ⏸)"),
+    ("lidlar", "B2B лидлар: статистика, тўхтатиш / бошлаш"),
+    ("maqsad", "Ходимга ойлик мақсад қўйиш"),
     ("bekor", "Бошланган ишни бекор қилиш"),
 ]
 

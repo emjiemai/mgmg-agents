@@ -50,6 +50,7 @@ TOOL_WORDS: dict[str, str] = {
     "employee_report": "ҳисоботни топяпман",
     "attendance": "Verifix'дан давоматни текширяпман",
     "company_data": "бот ёзувларини кўряпман",
+    "open_screen": "керакли экранни очяпман",
     "make_document": "ҳужжатни безатиб тайёрлаяпман",
     "make_chart": "диаграмма чизяпман",
     "make_diagram": "схема чизяпман",

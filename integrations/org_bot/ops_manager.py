@@ -3688,6 +3688,10 @@ async def _answer_question(
                 await _reply_and_log(director_id, run_id, text, reply_to)
                 await _send_files(director_id, run_id, result.files, reply_to)
                 await _send_media(director_id, run_id, result.media, reply_to)
+                if result.screens:  # the bot's own screens he asked for in words (screens.py, 19.11)
+                    from integrations.org_bot import screens
+
+                    await screens.open_all(director_id, result.screens, run_id)
                 return
             log.warning("Analyst returned nothing, answering from {} alone", agent_slug)
         await progress.done()
@@ -3776,6 +3780,13 @@ async def _answer_from_agent(
 # each fetcher reads whatever that agent already computed and stored.
 
 
+async def _fetch_screens_data() -> str:
+    """The bot's own screens and their commands (screens.py, 19.11) — the fallback when the analyst is down."""
+    from integrations.org_bot import screens
+
+    return await screens.data()
+
+
 async def _fetch_agent_data(agent_slug: str) -> str:
     """Dispatch to the per-agent data fetcher below.
 
@@ -3817,6 +3828,7 @@ async def _fetch_agent_data(agent_slug: str) -> str:
         "lidlar": _fetch_lead_handout_data,
         "davomat": _fetch_attendance_data,
         "garmin_lidlar": _fetch_garmin_leads_data,
+        "bot_ekranlari": _fetch_screens_data,
         "billz_savdo": _fetch_billz_data,
         "pul_qoldigi": _fetch_cash_balance_data,
     }

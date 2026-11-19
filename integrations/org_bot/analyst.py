@@ -43,7 +43,7 @@ from integrations.common.db import analyst_sql_ready, fetch_analyst, fetch_read_
 from integrations.common.logging_setup import setup_logging
 from integrations.common.money import format_money, format_money_by_currency
 from integrations.common.timeutil import now_local, to_local, today_local
-from integrations.org_bot import doc_tools
+from integrations.org_bot import doc_tools, screens
 from integrations.org_bot.knowledge import COMPANY_KNOWLEDGE
 from integrations.org_bot.prompt import GUARDRAILS
 
@@ -230,6 +230,17 @@ TOOLS: list[dict] = [
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
 ]
 TOOLS += doc_tools.TOOLS  # AI documenter (2026-11-17): make_document, make_chart, make_diagram (doc_tools.py)
+# The bot's own screens by asking in words (2026-11-19, screens.py) — the Director only.
+TOOLS.append(_fn(
+    "open_screen", "Open one of the BOT'S OWN SCREENS for the Director — sent right after your answer, exactly as "
+    "its command sends it: " + "; ".join(f"{k} = {v[0]} ({v[1]})" for k, v in screens.SCREENS.items()) + ". Use it "
+    "when he asks to see / open / get one of these, or to do one of their actions — mark a day excused, set a monthly "
+    "goal, stop / start the B2B leads or the daily duty cards: he confirms with the screen's own buttons (you can't "
+    "change anything yourself). person = the employee's name for set_goal / excused when he names one. Say in one "
+    "line what is coming; don't retype the screen.",
+    {"screen": {"type": "string", "enum": list(screens.SCREENS)},
+     "person": {"type": "string", "description": "for set_goal / excused: the employee's name as he wrote it"}},
+    ("screen",)))
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
 # Which systems a tool reads (2026-10-10, data_access.py): an employee given
@@ -252,6 +263,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "employee_report": {"garmin"},  # the Director; the Garmin manager for his team (data_access.ROLE_SCOPES)
     "attendance": None,
     "company_data": None,
+    "open_screen": None,  # the bot's own screens (19.11) — the Director's only
     "make_document": set(),  # lays out what was looked up — reads no system itself
     "make_chart": set(),
     "make_diagram": set(),
@@ -325,6 +337,15 @@ if asked to change data, say plainly that you can only look things up.
   supplier_debt_compare with excel=true. The bot attaches the .xlsx to your
   answer itself — say in one line that the full table is in the file; never
   say you can't send files.
+- THE BOT'S OWN SCREENS (2026-11-19): asked to see or open one of the bot's
+  own screens (report calendar, KPI table, goals, excused days, B2B leads,
+  SAP ↔ 1C ↔ Billz Excel, duties register, plans vs fact, who didn't enter SAP,
+  weekly analysis, Garmin stock, old stock, PULSE) or to do one of their
+  actions (mark a day excused, set a monthly goal, stop / start the leads or
+  the daily cards) → open_screen. He confirms actions with the screen's own
+  buttons; never say you can't — and never say it is done before he taps.
+  For a question you can answer from data, answer it; add the screen only
+  when he asks to see it or the answer is that screen.
 - DOCUMENTS, CHARTS, DIAGRAMS (2026-11-17): asked for a document / report /
   file / PDF / Word / Excel / letter / plan → look the data up first, then
   make_document (pdf unless Word or Excel is asked; Excel when it is mostly a
@@ -434,8 +455,12 @@ class Answer:
     media: list[dict[str, Any]] = field(default_factory=list)
     # query_db's counts for the audit row (2026-11-09): calls, errors, rows, ms, views — never the SQL or the rows
     sql: dict[str, Any] = field(default_factory=dict)
+    # The bot's own screens to open after the answer (2026-11-19, screens.py): (key, person)
+    screens: list[tuple[str, str]] = field(default_factory=list)
 
 
+# Screens the Director asked to open during one answer (2026-11-19).
+_screens: ContextVar[list[tuple[str, str]] | None] = ContextVar("analyst_screens", default=None)
 # Files a tool made during one answer (the workbook), picked up by ``answer``.
 _files: ContextVar[list[tuple[bytes, str]] | None] = ContextVar("analyst_files", default=None)
 # The Director's own words asking for a file — the workbook goes even if the model forgets excel=true.
@@ -1296,6 +1321,21 @@ async def query_db(args: dict[str, Any]) -> str:
 MAX_FILES_PER_ANSWER = doc_tools.MAX_FILES_PER_ANSWER
 
 
+async def open_screen(args: dict[str, Any]) -> str:
+    """Queue one of the bot's own screens for after the answer (screens.py, 19.11)."""
+    key = str(args.get("screen") or "")
+    if key not in screens.SCREENS:
+        return f"No such screen {key!r}; one of: {', '.join(screens.SCREENS)}."
+    queued = _screens.get()
+    if queued is None:
+        return "Screens can't be opened here."
+    if len(queued) >= screens.MAX_PER_ANSWER:
+        return f"At most {screens.MAX_PER_ANSWER} screens per answer."
+    queued.append((key, " ".join(str(args.get("person") or "").split())[:80]))
+    return (f"«{screens.SCREENS[key][0]}» will be sent right after your answer ({screens.SCREENS[key][1]}). Say so in "
+            "one line; don't retype it.")
+
+
 async def make_document(args: dict[str, Any]) -> str:
     """The AI documenter (17.11): a designed PDF / DOCX / XLSX from the model's block spec (doc_tools.py)."""
     return await doc_tools.run("make_document", args, _files.get(), _today())
@@ -1326,6 +1366,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[str]]] = {
     "garmin_stock_list": garmin_stock_list,
     "employee_report": employee_report,
     "company_data": company_data,
+    "open_screen": open_screen,
     "make_document": make_document,
     "make_chart": make_chart,
     "make_diagram": make_diagram,
@@ -1447,6 +1488,7 @@ async def answer(
     _sql_scope.set((scope,))
     _sql_state.set(result.sql)
     _files.set(result.files)
+    _screens.set(result.screens)
     _kind_cache.set({})
     _media.set(result.media)
     # Reports: the Director anyone's; the Garmin manager his team's (report_calendar.TEAM_OF); nobody else's.

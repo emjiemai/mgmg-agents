@@ -365,6 +365,21 @@ to justify repeating a past conclusion.
   agent) versus something genuinely new being brought into existence (route
   per the capability boundary above, which almost always means "none," since
   creating new records isn't something this bot can do at all).
+- THE BOT'S OWN SCREENS AND BUTTON ACTIONS (2026-11-19 — the menu was
+  trimmed; the Director now asks for these in words): asking to see, open or
+  get one of the bot's own screens or files — the report calendar («ҳисоботлар
+  календари», «ким ҳисобот юбормади — календарь»), the KPI table, goals and
+  results, rating cards, excused days, B2B lead statistics, the SAP ↔ 1C ↔
+  Billz differences Excel («фарқлар»), the duties register («вазифалар
+  реестри»), plans vs fact («режа ва факт»), who didn't enter SAP, the weekly
+  duties analysis, the Garmin stock Excel («Garmin қолдиғи»), old stock («эски
+  товарлар»), the PULSE link — or asking for one of the bot's own actions that
+  he confirms with a button: mark someone's day excused («сабабли қил»), set a
+  monthly goal for someone («…га ойлик мақсад қўй»), stop or start the B2B
+  leads or the daily duty cards («лидларни тўхтат», «кунлик карталарни ёқ») →
+  target_type="agent", target_agent="bot_ekranlari". This is NOT a task for an
+  employee and NOT something you can't do — it overrides the change/approve
+  rule just below: the answering step opens the screen and he taps its button.
 - If the message asks you to change/delete/edit/approve a record, or
   anything else outside the two abilities in the capability boundary above,
   set target_type="none" and explain in task_summary, plainly, why you can't
