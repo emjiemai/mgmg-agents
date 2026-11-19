@@ -233,6 +233,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
 - **17.11 — AI documenter (`reports/documenter.py`, spec 34):** analyst tools `make_document` (PDF via `document.html` / DOCX / XLSX from a block spec), `make_chart` (Vega-Lite → vl-convert in a short-lived `chart_worker` process — V8 memory), `make_diagram` (Graphviz DOT in the Docker image, file attributes refused); house theme = dataviz palette without red. Pictures go as photos. **Employees too** (same day): the work AI gets the same tools via `doc_tools.py`
   (`ai_chat.answer_with_tools`), filled only from what they wrote.
 - **18.11 — greetings (T-0052, `greetings.py`, spec 35):** duties sheet tabs «Байрамлар» (seeded with fixed holidays; Кимга ҳамма/эркаклар/аёллар by ака/опа) and «Туғилган кунлар» (name match); 08:00 one line per person, once (`greetings_sent`); the Director told of birthdays.
+- **19.11 — Director menu = 7** (/pulse /kpi /hisobotlar /vazifalar /lidlar /maqsad /bekor); everything else asked in words: router `bot_ekranlari` → analyst `open_screen` → `screens.py` runs the command's own function (actions = their card, he taps; never the AI). Typed commands still work.
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).

@@ -184,3 +184,5 @@ The owner: don't send the AI whole data sets — send the structure and let it f
 
 
 **2026-11-17 — documents, charts, diagrams:** tools `make_document` (pdf / docx / xlsx), `make_chart` (Vega-Lite), `make_diagram` (Graphviz) — see spec 34; offered to every analyst user (they read no system).
+
+**2026-11-19 — the bot's own screens:** tool `open_screen` (Director only) — the router's `bot_ekranlari` requests; the screen opens after the answer by the command's own function (spec 36).
