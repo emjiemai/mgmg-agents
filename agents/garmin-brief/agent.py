@@ -276,7 +276,7 @@ def view(data: GarminData, now: datetime | None = None) -> dict[str, Any]:
     notice = "Баъзи маълумотлар олинмади: " + ", ".join(data.errors) if data.errors else None
     return {"title": "Garmin кунлик ҳисоботи", "date": fmt_date(today), "when": when,
             "foot": "Дўконлар — Billz · сотув — SAP (Garmin омборлари, 08:00 гача киритилгани) · шикоятлар — QR саҳифа · "
-                    "лидлар — Garmin бот. Эски товарлар: /eski. Батафсил: OPS Manager'дан сўранг.",
+                    "лидлар — Garmin бот. Эски товарлар, қолдиқ, KPI: OPS Manager'дан сўзда сўранг.",
             "figures": [shop, sap, stock, complaints, leads], "blocks": blocks, "lower_bound": False, "notice": notice}
 
 
@@ -296,6 +296,18 @@ def text(view_data: dict[str, Any]) -> str:
     if view_data.get("notice"):
         lines += ["", view_data["notice"]]
     return "\n".join(lines)
+
+
+async def team_calendar(today: date) -> tuple[bytes | None, str] | None:
+    """His team's report calendar for the month of yesterday (picture + caption, or its text); None if it failed."""
+    from integrations.org_bot import report_calendar
+
+    try:
+        png, cal = await report_calendar.picture(day=today - timedelta(days=1), roles=report_calendar.TEAM_OF[ROLE])
+    except Exception as exc:  # noqa: BLE001 — the brief itself still goes
+        log.error("Team calendar failed: {}", type(exc).__name__)
+        return None
+    return png, report_calendar.caption(cal) if png is not None else report_calendar.text_fallback(cal)
 
 
 async def _sent_today(day: date) -> bool:
@@ -344,6 +356,7 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
         return 0
     run_id = uuid.uuid4()
     sent = 0
+    calendar = await team_calendar(today)
     async with TelegramBot(agent=AGENT, run_id=run_id,
                            bot_token=settings.ops_manager_bot_telegram_bot_token.get_secret_value()) as bot:
         for person in people:
@@ -356,6 +369,16 @@ async def run(dry_run: bool = False, force: bool = False) -> int:
                 sent += 1
             except TelegramError as exc:
                 log.error("Garmin brief not delivered to one person: {}", exc)
+                continue
+            # His team's report calendar right after (2026-11-19: /hisobotlar left his menu, as the Boss's).
+            try:
+                if calendar is not None and calendar[0] is not None:
+                    await bot.send_file(calendar[0], "hisobotlar.png", str(person["telegram_user_id"]), calendar[1],
+                                        photo=True)
+                elif calendar is not None:
+                    await bot.send_message(calendar[1], chat_id=str(person["telegram_user_id"]))
+            except TelegramError as exc:
+                log.warning("Team calendar not delivered: {}", type(exc).__name__)
     await log_action(agent=AGENT, action="garmin_brief_sent", target_system="telegram",
                      status="success" if sent else "failure", run_id=run_id, mode="notify",
                      payload={"people": sent, "errors": len(data.errors)})

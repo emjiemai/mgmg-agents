@@ -379,6 +379,9 @@ class Settings(BaseSettings):
     message_budget_per_day: int = 12
     # Holiday / birthday greetings (2026-11-18, T-0052, org_bot/greetings.py): from the duties sheet's two tabs.
     greetings_enabled: bool = True
+    # The Boss's morning package after the brief picture (2026-11-19, org_bot/morning_digest.py): the report calendar,
+    # yesterday's sales in detail, the reports in full, what everyone did.
+    morning_digest_enabled: bool = True
     # AI documenter (2026-11-17, integrations/reports/documenter.py): Graphviz for diagrams (the Docker image has
     # it); GRAPHVIZ_LIB_DIR only for a Graphviz unpacked outside the system paths (a laptop's tests).
     graphviz_dot: str = "dot"

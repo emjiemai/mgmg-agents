@@ -744,7 +744,7 @@ def test_brief_rendering() -> None:
     empty.note_failure("sap_orders", RuntimeError("connection refused"))
     text = brief.render(empty)
     check_true("title and time on one line", "CEO кунлик ҳисоботи" in text.splitlines()[0] and "Тошкент" in text.splitlines()[0])
-    check_true("goals and tasks that couldn't be read say so", text.count("маълумот олиб бўлмади") >= 2)
+    check_true("goals and tasks are out of the text brief too (19.11)", "Ойлик мақсадлар" not in text and "Топшириқлар" not in text)
     check_true("a missing feed reads 'маълумот йўқ', never a number", "📈 Кечаги сотув: <i>маълумот йўқ</i>" in text)
     check_true("two number lines: sales and payments — no «Касса» (16.10), no «Захира» / «Мижоз қарзи» (04.11)",
                all(k in text for k in ("Кечаги сотув", "Бугунги тўловлар"))
@@ -3489,7 +3489,6 @@ def test_sap_entry_and_testing() -> None:
     import uuid
 
     from integrations.org_bot import admin, duties, duty_review, duty_tasks, ops_manager, sap_entry
-    from integrations.telegram import menus
 
     people = [{"full_name": "Рустам Ёркинов"}, {"full_name": "Ширин Умматова"}, {"full_name": "Абдурашид Хожиев"},
               {"full_name": "Шухрат Умаров"}, {"full_name": "Умаров Мурод"}]
@@ -3521,10 +3520,10 @@ def test_sap_entry_and_testing() -> None:
     check_true("the gateway sends the entering user's and the salesperson's names",
                'USR."U_NAME" AS "UserName"' in load_source("sap-gateway/src/sales-by-date.js")
                and 'S."SlpName"' in load_source("sap-gateway/src/sales-by-date.js"))
-    check_true("/kiritish: the Director everyone, a manager his team; in their menus",
+    check_true("/kiritish: the Director everyone, a manager his team; both reach it (menu or in words, 19.11)",
                "sap_entry.build(None, today_local())" in inspect_source(ops_manager)
                and "sap_entry.build(report_calendar.TEAM_OF[employee[\"role\"]]" in inspect_source(ops_manager)
-               and _director_reaches("kiritish") and "kiritish" in dict(menus.GARMIN_MANAGER))
+               and _director_reaches("kiritish") and _garmin_reaches("kiritish"))
 
     # ---- an unreadable register sheet: the last good register stays, Google's reason said, hourly retry
     saved = [(duties, n, getattr(duties, n)) for n in ("read_sheet", "fetch_all", "fetch_one", "execute", "log_action")]
@@ -3915,7 +3914,7 @@ def test_duties_register() -> None:
                                                 "profiles": 11, "unmatched": 2, "problems": 0, "problem_list": [],
                                                 "unmatched_list": ["Жамолиддин", "Рушан"]}))
     check_true("/vazifalar everywhere: the employee's own, the Director's register, the admin's sync",
-               duties.COMMANDS == admin.DUTIES_COMMANDS and "vazifalar" in dict(menus.EMPLOYEE) and "vazifalar" in dict(menus.DIRECTOR)
+               duties.COMMANDS == admin.DUTIES_COMMANDS and "vazifalar" in dict(menus.EMPLOYEE) and _director_reaches("vazifalar")
                and "vazifalar" in dict(menus.ADMIN) and "duties.director_card()" in inspect_source(ops_manager)
                and "duties.own_view(employee)" in inspect_source(ops_manager))
     check_true("read every morning from 07:30, once; history of every change; the sheet's id a setting",
@@ -4619,8 +4618,8 @@ def test_lead_tracker() -> None:
                and "renderLeads" in js and "/pulse/api/leads?days=" in js)
 
     # ---- menus, KPI, old buttons
-    check_true("menus: the admin's and the Director's /lidlar; B2B сотув their own open leads",
-               "lidlar" in dict(menus.ADMIN) and "lidlar" in dict(menus.DIRECTOR) and menus.role_menu("b2b_sotuv") == menus.B2B_SALES
+    check_true("menus: the admin's /lidlar (the Director asks in words, 19.11); B2B сотув their own open leads",
+               "lidlar" in dict(menus.ADMIN) and _director_reaches("lidlar") and menus.role_menu("b2b_sotuv") == menus.B2B_SALES
                and "lidlar" in dict(menus.B2B_SALES) and set(menus.EMPLOYEE) <= set(menus.B2B_SALES))
     emp = [{"id": "e1", "full_name": "Алишер", "role": "b2b_sotuv"}]
     lead_rows = [{"employee_id": "e1", "asked": 4, "answered": 3, "closed": 2, "done": 1}]
@@ -7062,12 +7061,15 @@ def test_own_week_and_team_calendar() -> None:
     cb = inspect.getsource(kpi_flow.handle_callback)
     check_true("his buttons reach only his team; ratings refused", "_in_team(team, person.get(\"role\"))" in cb
                and 'prefix == "kr" and not director' in cb)
-    check_true("his menu: team calendar, excused days, KPI, goals, results, old stock, competitors, PULSE — no /hisobot, "
-               "/ruxsat or /ism", [c for c, _ in menus.GARMIN_MANAGER] == ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "qoldiq", "eski",
-                                                         "raqobat", "vazifalar", "kiritish", "pulse", "bekor"])  # + duties, SAP entry
+    check_true("his menu is PULSE only (19.11); team calendar, excused days, KPI, goals, results, stock, old stock, "
+               "competitors, duties, SAP entry asked in words — no /hisobot, /ruxsat or /ism",
+               [c for c, _ in menus.GARMIN_MANAGER] == ["pulse"]
+               and all(_garmin_reaches(c) for c in ("hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija",
+                                                    "qoldiq", "eski", "raqobat", "vazifalar", "kiritish"))
+               and not any(_garmin_reaches(c) for c in ("hisobot", "ruxsat", "ism")))
     check_true("the bot knows who he is", "Murod" in knowledge.COMPANY_KNOWLEDGE and "brother" in knowledge.COMPANY_KNOWLEDGE)
-    check_true("his ☰ menu has /hisobotlar; the employees' doesn't",
-               ("hisobotlar" in [c for c, _ in menus.role_menu("garmin_manager")])
+    check_true("he reaches /hisobotlar (in words; the calendar also comes after his brief); the employees' menu hasn't it",
+               _garmin_reaches("hisobotlar")
                and "hisobotlar" not in [c for c, _ in menus.EMPLOYEE] and menus.role_menu("londry") is None)
     check_true("employees' /hisobotlar only for a role with a team", "report_calendar.TEAM_OF.get(" in inspect.getsource(ops_manager))
     shown = inspect.getsource(ops_manager._show_today_report)
@@ -8113,8 +8115,8 @@ def test_excused_and_late_reports() -> None:
     check_true("the morning «no report» question carries the send-now button; no report is asked on an excused day",
                "late_report.ask_button(days[-1])" in load_source("integrations/org_bot/morning_notes.py")
                and "excused_between(day, day)" in load_source("agents/daily-reports/agent.py"))
-    check_true("/sababli in the Director's and the Garmin manager's menus", _director_reaches("sababli")
-               and "sababli" in [c for c, _ in menus.GARMIN_MANAGER] and "sababli" not in [c for c, _ in menus.EMPLOYEE])
+    check_true("/sababli for the Director and the Garmin manager (asked in words, 19.11)", _director_reaches("sababli")
+               and _garmin_reaches("sababli") and "sababli" not in [c for c, _ in menus.EMPLOYEE])
     check_true("the calendar shows a removed ask as grey", report_calendar.cell(None, d22, datetime(2026, 10, 23, 9), True) == "none")
 
 
@@ -8846,7 +8848,7 @@ def test_garmin_stock_for_ordering() -> None:
           (["Товар", "Код", "Garmin Abay", "Garmin-Minor", "Жами қолдиқ"], 4, True))
     prompt = analyst.employee_prompt("М", "x", {"sap_garmin"})
     check_true("/qoldiq for the Garmin manager and the Director; the analyst says what is left and never what to buy",
-               "qoldiq" in [c for c, _ in menus.GARMIN_MANAGER] and _director_reaches("qoldiq")
+               _garmin_reaches("qoldiq") and _director_reaches("qoldiq")
                and "garmin_stock_list" in {t["function"]["name"] for t in analyst.tools_for({"sap_garmin", "billz", "garmin"})}
                and "never advise what to buy" in prompt and "буюртма учун" not in str(menus.GARMIN_MANAGER)
                and "never count it in what is left" in prompt)
@@ -8899,7 +8901,6 @@ def test_garmin_competitors() -> None:
     from integrations.garmin import competitors as c
     from integrations.org_bot import analyst, ops_manager
     from integrations.reports import render
-    from integrations.telegram import menus
 
     # model names, as sellers and our site write them
     for title, key in (("Garmin Fenix 8 47mm Amoled", "fenix 8"), ("fēnix 8 — 47 mm, Solar", "fenix 8"),
@@ -9009,8 +9010,8 @@ def test_garmin_competitors() -> None:
                "agents/garmin-competitors/agent.py" in load_source("scripts/run_morning_agents.py")
                and settings.garmin_competitors_weekday == 3 and settings.garmin_competitors_enabled
                and 'ROLE = "garmin_manager"' in load_source("agents/garmin-competitors/agent.py"))
-    check_true("/raqobat in the Garmin manager's ☰ menu, answered in the background",
-               ("raqobat", "Рақобатчилар: Garmin'ни бошқалар қанчага сотмоқда") in menus.GARMIN_MANAGER
+    check_true("/raqobat for the Garmin manager (typed or asked in words, 19.11), answered in the background",
+               _garmin_reaches("raqobat")
                and "background.add_task(_send_competitors" in inspect.getsource(ops_manager._handle_employee_message))
     check_true("/raqobat reuses today's web search (search credits); the weekly run searches fresh",
                "fresh_web=False" in inspect.getsource(ops_manager._send_competitors)
@@ -9130,7 +9131,6 @@ def test_old_stock_and_live_views() -> None:
 
     from integrations.api import db_viewer
     from integrations.org_bot import old_stock, ops_manager
-    from integrations.telegram import menus
 
     today = date(2026, 10, 17)
     stock = [{"ItemCode": "A", "ItemName": "fenix 6", "WhsCode": "05", "OnHand": 2, "StockValue": 900},
@@ -9158,9 +9158,9 @@ def test_old_stock_and_live_views() -> None:
                and "(\"garmin_manager\", await old_stock.garmin_codes_now())" in agent_src
                and "agents/old-stock/agent.py" in load_source("scripts/run_morning_agents.py"))
     src = inspect.getsource(ops_manager)
-    check_true("/eski for both, in their menus", "old_stock.send(telegram_user_id, None, run_id)" in src
+    check_true("/eski for both (typed or asked in words)", "old_stock.send(telegram_user_id, None, run_id)" in src
                and "old_stock.send(telegram_user_id, await old_stock.garmin_codes_now(), run_id)" in src
-               and _director_reaches("eski") and "eski" in [c for c, _ in menus.GARMIN_MANAGER])
+               and _director_reaches("eski") and _garmin_reaches("eski"))
 
     check_true("1C and Billz in /db: read live, only while the platform tables are open",
                set(db_viewer.LIVE_VIEWS) == {"1c_balances", "1c_turnovers", "billz_cheques", "billz_shops"}
@@ -9292,7 +9292,7 @@ def test_garmin_manager() -> None:
     tools = [t["function"]["name"] for t in analyst.tools_for(data_access.granted(ok_gm))]
     check("its tools: Garmin's SAP only, Billz, Garmin records, his team's report with files (22.10) — no general SAP, 1C, attendance or the Boss's records",
           tools, ["data_sources", "billz_sales", "garmin_sap", "garmin_data", "garmin_stock_list", "employee_report",
-                  "make_document", "make_chart", "make_diagram"])  # + the documenter (17.11): reads no system
+                  "make_document", "make_chart", "make_diagram", "open_screen"])  # + the documenter (17.11), his screens (19.11)
     prompt = analyst.employee_prompt("Синов Менежер", "Garmin менежер", data_access.granted(ok_gm))
     check_true("its prompt keeps it on Garmin", "THIS PERSON RUNS GARMIN" in prompt and "garmin_sap" in prompt)
     check_true("the work AI gives it the public Garmin catalog too", "Garmin catalog" in ai_chat.system_prompt(gm, "ctx"))
@@ -11375,13 +11375,13 @@ def _test_reports_body() -> None:
     check("the numbers: sales and payments — no «Касса» (16.10), no «Захира» / «Мижоз қарзи» (04.11)", list(by_label),
           ["Кечаги сотув", "Бугунги тўловлар"])
     lead = {b["title"]: b for b in v["lead"]}
-    check("the brief leads with goals, tasks and reports", list(lead),
-          ["Ойлик мақсадлар", "Топшириқлар", "Ҳисобот юбормаганлар"])
-    goal_rows = lead["Ойлик мақсадлар"]["rows"]
+    check("the picture leads with the reports — goals and tasks left it (19.11, the owner)", list(lead),
+          ["Ҳисобот юбормаганлар"])
+    goal_rows = brief.goals_block(data)["rows"]  # the helpers stay (tested) though the picture no longer shows them
     check_true("goals: no result first, then the furthest behind; a met goal last and not red",
                "натижа ёзилмаган" in goal_rows[0]["what"] and "4 / 20 (20%)" in goal_rows[1]["what"]
                and goal_rows[2]["alert"] is False and "10 / 10 (100%)" in goal_rows[2]["what"])
-    task_block = lead["Топшириқлар"]
+    task_block = brief.tasks_block(data)
     check("tasks: overdue, blocked, in review, due today — not one due later", [r["what"].split(" · ")[0] for r in task_block["rows"]],
           ["3 кун ўтди", "тўсиқ", "текширувда", "бугун"])
     check_true("...counted in the head line, red when overdue or blocked",
@@ -11409,9 +11409,9 @@ def _test_reports_body() -> None:
     check_true("no emoji in the picture (drawn icons only)", "🔴" not in brief_html and "📈" not in brief_html)
     check_true("no «Касса» anywhere in the brief", "Касса" not in brief_html and "Касса" not in brief.caption(data)
                and "Касса" not in brief.render(data))
-    check_true("the text brief leads with goals and tasks",
-               brief.render(data).index("Ойлик мақсадлар") < brief.render(data).index("Топшириқлар")
-               < brief.render(data).index("Рақамлар"))
+    check_true("the text brief has no goals or tasks either, and its foot no /maqsad (19.11)",
+               "Ойлик мақсадлар" not in brief.render(data) and "Топшириқлар" not in brief.render(data)
+               and "/maqsad" not in brief.FOOT and "Рақамлар" in brief.render(data))
 
     # ---- the reports: values
     kpi_people = []
@@ -11488,6 +11488,16 @@ def _director_reaches(command: str) -> bool:
     from integrations.telegram import menus
 
     return command in dict(menus.DIRECTOR) or f"/{command}" in {c for _, c in screens.SCREENS.values()}
+
+
+def _garmin_reaches(command: str) -> bool:
+    """A command the Garmin manager can still use (19.11): his ☰ menu (PULSE), or his team screen asked in words —
+    for a manager /natija opens the same goals list as /maqsadlar (kpi_flow.handle_message)."""
+    from integrations.org_bot import screens
+    from integrations.telegram import menus
+
+    command = "maqsadlar" if command == "natija" else command
+    return command in dict(menus.GARMIN_MANAGER) or f"/{command}" in {c for _, c in screens.GARMIN_SCREENS.values()}
 
 
 def test_sap_gateway_code() -> None:
@@ -14425,12 +14435,12 @@ def test_screens_1119() -> None:
     from integrations.telegram import menus
 
     old = ["kpi", "maqsad", "maqsadlar", "baho", "hisobotlar", "sababli", "lidlar", "farqlar", "vazifalar", "reja",
-           "kiritish", "tahlil", "qoldiq", "eski", "pulse", "bekor"]
-    check("the menu keeps seven", [c for c, _ in menus.DIRECTOR],
-          ["pulse", "kpi", "hisobotlar", "vazifalar", "lidlar", "maqsad", "bekor"])
+           "kiritish", "tahlil", "qoldiq", "eski", "pulse"]  # /bekor: shown inside each flow that can be cancelled
+    check("the menu is PULSE only (later on 19.11: «only /pulse should be kept»)", [c for c, _ in menus.DIRECTOR],
+          ["pulse"])
     check("every old command still reachable (menu or in words)", [c for c in old if not _director_reaches(c)], [])
     tools = {t["function"]["name"] for t in analyst.tools_for(None)}
-    check_true("open_screen for the Director only — never for someone given data access",
+    check_true("open_screen for the Director — never for someone given data access (accounting)",
                "open_screen" in tools and "open_screen" not in {t["function"]["name"] for t in analyst.tools_for({"sap", "1c", "billz"})})
     check_true("the router knows the bot's screens and the rule beats «can't change»",
                "bot_ekranlari" in roles.AGENT_SLUGS and 'target_agent="bot_ekranlari"' in prompt.CLASSIFY_SYSTEM_PROMPT
@@ -14523,6 +14533,338 @@ def test_screens_1119() -> None:
                opened == ["kpi", "pulse"] and n == 2 and any("/reja" in t for t in told))
     check_true("the fallback (analyst down) lists every screen with its command",
                all(cmd in screens.fallback_text() for _, cmd in screens.SCREENS.values()))
+
+
+def test_garmin_screens_and_digest_1119() -> None:
+    """19.11.2026 (the owner): the Garmin manager's menu trimmed the same way — PULSE only, his team screens asked in
+    words; the Boss's morning package after the brief picture (goals and tasks out of it): the report calendar,
+    yesterday's sales in detail, the reports in full, what everyone did — «we need to prove that this system is
+    already working»."""
+    print("the Garmin manager's screens and the Boss's morning package (19.11.2026)")
+    import asyncio
+    import uuid
+
+    from integrations.common import db as common_db
+    from integrations.common.config import settings
+    from integrations.org_bot import (analyst, excused, kpi_flow, morning_digest as md, old_stock, ops_manager,
+                                      report_calendar, rollout, screens, store)
+    from integrations.org_bot.roles import DIRECTOR_ROLE
+    from integrations.telegram import bot as bot_module, menus
+
+    # ---- the Garmin manager: PULSE in the menu, every other command a screen of his team
+    check("his menu is PULSE only", [c for c, _ in menus.GARMIN_MANAGER], ["pulse"])
+    old = ["hisobotlar", "sababli", "kpi", "maqsad", "maqsadlar", "natija", "qoldiq", "eski", "raqobat", "vazifalar",
+           "kiritish", "pulse"]
+    check("every old command of his still reachable (menu or in words)", [c for c in old if not _garmin_reaches(c)], [])
+    check_true("…/natija is his goals list (the same function for a manager) and /bekor shows inside the flows",
+               "return await _list_goals(user_id, run_id, _team(employee))" in inspect_source(kpi_flow.handle_message)
+               and "/bekor" in kpi_flow.CANCEL_HINT)
+    check_true("Director-only screens are not his", not {"leads", "reconcile", "plans", "weekly_review", "rating_cards"}
+               & set(screens.GARMIN_SCREENS) and screens.for_role("garmin_manager") is screens.GARMIN_SCREENS
+               and screens.for_role(DIRECTOR_ROLE) is screens.SCREENS and screens.for_role("londry") == {})
+    gm_tools = {t["function"]["name"] for t in analyst.tools_for({"sap_garmin", "billz", "garmin"})}
+    check_true("the analyst offers him open_screen; accounting never",
+               "open_screen" in gm_tools and "open_screen" not in {t["function"]["name"] for t in analyst.tools_for({"sap", "1c", "billz"})})
+    tool = analyst.screen_tool(screens.GARMIN_SCREENS, "this person")
+    check_true("…built from HIS list (no leads / stop-start wording); the Director's from his",
+               tool["function"]["parameters"]["properties"]["screen"]["enum"] == list(screens.GARMIN_SCREENS)
+               and "B2B leads" not in tool["function"]["description"]
+               and "B2B leads" in analyst.screen_tool(screens.SCREENS, "the Director")["function"]["description"]
+               and 'screens.for_role(employee.get("role"))' in inspect_source(analyst.answer)
+               and "_screen_keys.set(screen_keys)" in inspect_source(analyst.answer))
+    queued = []
+    token = analyst._screen_keys.set(screens.GARMIN_SCREENS)
+    analyst._screens.set(queued)
+    try:
+        refused = asyncio.run(analyst.open_screen({"screen": "leads"}))
+        asyncio.run(analyst.open_screen({"screen": "competitors"}))
+    finally:
+        analyst._screen_keys.reset(token)
+    check_true("his open_screen refuses the Director's screens and queues his", "No such screen" in refused
+               and queued == [("competitors", "")])
+    check_true("his prompt names his screens; his answers open them",
+               "HIS SCREENS" in analyst.employee_prompt("М", "Garmin менежер", {"sap_garmin", "billz", "garmin"})
+               and "screens.open_all(telegram_user_id, result.screens, run_id)" in inspect_source(ops_manager._answer_data_question_now))
+
+    gm = {"id": "g", "telegram_user_id": 77, "status": "active", "role": "garmin_manager", "full_name": "Мурод Умаров"}
+    team = [{"id": "e2", "telegram_user_id": 102, "full_name": "Хожиев Абдурашид", "role": "garmin_sotuv", "status": "active"}]
+    calls = []
+
+    async def by_tg(tg):
+        return gm
+
+    async def calendar(chat, run_id, roles=None):
+        calls.append(("calendar", roles))
+        return "report_calendar"
+
+    async def team_view(me, today):
+        calls.append(("team_view", me["id"]))
+        return "жамоа куни"
+
+    async def reply(uid, run_id, text, keyboard=None, *a, **k):
+        calls.append(("reply", text[:12], bool(keyboard)))
+
+    async def codes():
+        return frozenset({"G.A._01"})
+
+    async def old_send(chat, codes_, run_id):
+        calls.append(("old_stock", codes_))
+        return "old_stock_sent"
+
+    async def competitors(chat, run_id):
+        calls.append(("competitors", chat))
+
+    async def people_of(viewer):
+        return team
+
+    async def days_of(*a):
+        calls.append(("days_of",))
+        return set()
+
+    saved = [(store, "get_employee_by_telegram_id", store.get_employee_by_telegram_id),
+             (store, "excused_days_of", store.excused_days_of),
+             (ops_manager, "_send_report_calendar", ops_manager._send_report_calendar), (ops_manager, "_reply", ops_manager._reply),
+             (ops_manager, "_send_competitors", ops_manager._send_competitors), (rollout, "team_view", rollout.team_view),
+             (old_stock, "garmin_codes_now", old_stock.garmin_codes_now), (old_stock, "send", old_stock.send),
+             (excused, "_people", excused._people)]
+    store.get_employee_by_telegram_id, store.excused_days_of = by_tg, days_of
+    ops_manager._send_report_calendar, ops_manager._reply, ops_manager._send_competitors = calendar, reply, competitors
+    rollout.team_view, old_stock.garmin_codes_now, old_stock.send, excused._people = team_view, codes, old_send, people_of
+    run = uuid.uuid4()
+    try:
+        out = [asyncio.run(screens.open_screen(77, k, person, run)) for k, person in
+               (("leads", ""), ("report_calendar", ""), ("duties", ""), ("old_stock", ""), ("competitors", ""),
+                ("excused", "Ширин Умматова"), ("excused", "Абдурашид"))]
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check("his screens: leads refused; calendar, duties, old stock, competitors, excused — his team's",
+          out, ["screen_refused", "report_calendar", "duties_team_sent", "old_stock_sent", "competitors_sent",
+                "excused_shown", "excused_shown"])
+    check_true("…the team calendar, his /vazifalar day, the Garmin warehouses, the competitor check; someone outside "
+               "his team gets the people list, his own man the day grid",
+               ("calendar", ("garmin_sotuv",)) in calls and ("team_view", "g") in calls
+               and ("old_stock", frozenset({"G.A._01"})) in calls and ("competitors", 77) in calls
+               and calls.count(("days_of",)) == 1)
+
+    # ---- the brief: the picture without goals and tasks; the package right after it; his calendar after his brief
+    brief_src = load_source("agents/ceo-daily-brief/agent.py")
+    check_true("the CEO brief sends the package after the picture and never fails over it",
+               brief_src.index("await store(run_id, data, message, message_id)") < brief_src.index("morning_digest.send(run_id)")
+               and "lead: list[dict[str, Any]] = []" in brief_src)
+    garmin_src = load_source("agents/garmin-brief/agent.py")
+    check_true("the Garmin manager gets his team's calendar after his brief; its foot points to words, not /eski",
+               "calendar = await team_calendar(today)" in garmin_src and "report_calendar.TEAM_OF[ROLE]" in garmin_src
+               and "Эски товарлар: /eski" not in garmin_src)
+
+    # ---- sales: SAP invoices by salesperson, the shop's cheques by seller
+    day = date(2026, 11, 18)
+    people = [
+        {"id": "e1", "telegram_user_id": 101, "full_name": "Ширин Умматова", "display_name": "Ширин", "role": "buxgalteriya"},
+        {"id": "e2", "telegram_user_id": 102, "full_name": "Хожиев Абдурашид", "display_name": "Абдурашид", "role": "garmin_sotuv"},
+        {"id": "e3", "telegram_user_id": 103, "full_name": "Эшонов Шахзод", "display_name": "Шахзод", "role": "b2b_sotuv"},
+        {"id": "e4", "telegram_user_id": 104, "full_name": "Ёркинов Рустам", "display_name": "Рустам", "role": "londry"},
+        {"id": "e5", "telegram_user_id": 105, "full_name": "Каримова Дилноза", "display_name": "Дилноза", "role": "londry"},
+        {"id": "e6", "telegram_user_id": 106, "full_name": "Тошматов Бобур", "display_name": "Бобур", "role": "londry"},
+    ]
+    inv = {"ObjType": "13", "DocEntry": 501, "DocNum": 7001, "DocDate": "2026-11-18", "CANCELED": "N",
+           "CardName": "OOO Texnopark", "SlpName": "Эшонов Шахзод", "UserName": "m1", "DocTotalSy": "24100000"}
+    sap = [{**inv, "Dscription": "Fenix 8", "Quantity": "2.000000", "GTotalSC": "19610000"},
+           {**inv, "Dscription": "Forerunner 265", "Quantity": "1", "GTotalSC": "4490000"},
+           {"ObjType": "13", "DocEntry": 502, "DocDate": "2026-11-18", "CANCELED": "N", "CardName": "Чакана харидор",
+            "SlpName": "-No Sales Employee-", "UserName": "Гармин (филиал Абай)", "DocTotalSy": "1000000",
+            "Dscription": "Ремешок", "Quantity": "1", "GTotalSC": "1000000"},
+           {**inv, "ObjType": "14", "DocEntry": 90, "DocTotalSy": "500000", "Dscription": "Кабель", "Quantity": "1",
+            "GTotalSC": "500000"},
+           {**inv, "DocEntry": 503, "CANCELED": "Y", "CardName": "Бекор қилинган"},
+           {**inv, "DocEntry": 504, "DocDate": "2026-11-17", "CardName": "Олдинги кун"}]
+    shop = [{"shop_name": "GARMIN ABAY", "seller_full_name": "Абдурашид Хожиев", "product_name": "Forerunner 165",
+             "net_sold_measurement_value": 1, "net_sales": 4500000},
+            {"shop_name": "GARMIN ABAY", "seller_full_name": "Абдурашид Хожиев", "product_name": "Ремешок 22",
+             "net_sold_measurement_value": 2, "net_sales": 600000},
+            {"shop_name": "GARMIN ABAY", "seller_full_name": "", "product_name": "Instinct 2",
+             "net_sold_measurement_value": -1, "net_sales": -3000000}]
+    now = datetime(2026, 11, 19, 8, 0, tzinfo=TASHKENT)
+    stale = datetime(2026, 11, 18, 21, 30, tzinfo=TASHKENT)
+    sales = md.sales_text(day, sap, stale, shop, people, now)
+    check_true("sales: the SAP head counts invoices less the return, as the brief's figure",
+               "SAP · 2 та ҳисоб-фактура · 24,6 млн сўм</b> · 1 та қайтариш" in sales)
+    check_true("…by salesperson (the bot's name), each invoice's customer, products × pieces with the price",
+               "👤 <b>Эшонов Шахзод</b> — 23,6 млн сўм · 2 та ҳужжат" in sales and "🧾 OOO Texnopark — 24 100 000 сўм" in sales
+               and "• Fenix 8 — 2 × 9 805 000 = 19 610 000 сўм" in sales and "• Forerunner 265 — 4 490 000 сўм" in sales
+               and "↩️ қайтариш · OOO Texnopark — −500 000 сўм" in sales)
+    check_true("…no salesperson: who entered it; cancelled and other days left out; stale SAP said",
+               "Сотувчи кўрсатилмаган · киритган: Гармин (филиал Абай)" in sales and "Бекор қилинган" not in sales
+               and "Олдинги кун" not in sales and "⚠️ SAP маълумоти 18.11 21:30 ҳолатига" in sales)
+    check_true("…the shop's cheques by seller (Billz), returns marked, the overlap with SAP said",
+               "<b>Дўкон кассаси (Billz) · GARMIN ABAY · 2,1 млн сўм</b>" in sales
+               and "👤 <b>Хожиев Абдурашид</b> — 5,1 млн сўм" in sales and "• Ремешок 22 — 2 × 300 000 = 600 000 сўм" in sales
+               and "↩️ Instinct 2 — 3 000 000 сўм" in sales and "SAP'га ҳам киритилади" in sales)
+    check_true("…Uzbek Cyrillic apart from SAP's and the shop's own product / company names",
+               latin_words(sales, allow={"OOO", "Texnopark", "Fenix", "Forerunner", "GARMIN", "ABAY", "Instinct", "Excel"}) == [])
+    many = [{**inv, "Dscription": f"Товар {i}", "Quantity": "1", "GTotalSC": "1000"} for i in range(140)]
+    big = md.sales_text(day, many, now, None, people, now, billz_on=False)
+    check_true("a huge day is capped with «+N» and the full list offered in words; no Billz section when it's off",
+               "+яна" in big and "Тўлиқ рўйхатни сўранг" in big and "Billz" not in big and "⚠️ SAP" not in big)
+    check_true("SAP unreadable / nothing sold: said, not hidden",
+               "<b>SAP:</b> маълумот олиб бўлмади" in md.sales_text(day, None, None, [], people, now)
+               and "санали ҳисоб-фактура йўқ" in md.sales_text(day, [], now, [], people, now)
+               and "кеча сотув йўқ" in md.sales_text(day, [], now, [], people, now))
+
+    # ---- the reports in full
+    def at(h, m, d=18):
+        return datetime(2026, 11, d, h, m, tzinfo=TASHKENT)
+
+    base = {"report_date": day, "content": None, "submitted_at": None, "auto_built": False, "media_count": 0,
+            "late_content": None, "late_sent_at": None, "late_decision": None}
+    rows = [{**base, "status": "submitted", "content": "Бугун 5 та счёт киритдим\nТўловлар <текширилди> & тайёр",
+             "submitted_at": at(17, 42), "pid": "e1", "role": "buxgalteriya", "display_name": "Ширин Умматова"},
+            {**base, "status": "submitted", "content": "[чатдан тузилди] мижоз билан учрашдим", "submitted_at": at(22, 0),
+             "auto_built": True, "media_count": 2, "pid": "e2", "role": "garmin_sotuv", "display_name": "Хожиев Абдурашид"},
+            {**base, "status": "asked", "late_content": "Кеч қолдим, лекин ишладим", "late_sent_at": at(23, 10),
+             "pid": "e3", "role": "b2b_sotuv", "display_name": "Эшонов Шахзод"},
+            {**base, "status": "asked", "pid": "e4", "role": "londry", "display_name": "Ёркинов Рустам"},
+            {**base, "status": "excused", "pid": "e5", "role": "londry", "display_name": "Каримова Дилноза"},
+            {**base, "status": "submitted", "content": "сўз " * 400, "submitted_at": at(18, 5), "pid": "e6",
+             "role": "londry", "display_name": "Тошматов Бобур"}]
+    rep = md.reports_text(rows)
+    check_true("reports: the head counts sent, built from chat, late, missed, excused",
+               "5 кишидан 3 таси юборди (1 таси чатдан тузилди) · 1 та кечиккан · 1 таси юбормади · 1 таси сабабли" in rep)
+    check_true("…each in full, escaped, with its time; chat-built and files said; the marker dropped",
+               "Тўловлар &lt;текширилди&gt; &amp; тайёр" in rep and "Бухгалтерия · 17:42" in rep
+               and "22:00 да чатдан тузилди · 📎 2 та файл" in rep and "[чатдан тузилди]" not in rep
+               and "мижоз билан учрашдим" in rep)
+    check_true("…a late one after the sent ones, with its state; who didn't send listed; the hint asks for files",
+               rep.index("Кеч қолдим") > rep.index("Тўловлар") and "кечиккан · 18.11 23:10 · қарор кутилмоқда" in rep
+               and "🔴 <b>Юбормаганлар (1):</b> Ёркинов Рустам (Londry)" in rep and "Каримова" not in rep.split("Юбормаганлар")[1]
+               and "«Хожиев Абдурашиднинг ҳисоботидаги файлларни юбор»" in rep)
+    check_true("…a long one-line report is broken into lines the splitter keeps whole", all(len(x) <= md.WRAP + 60 for x in rep.splitlines()))
+    check_true("nobody asked → no reports message", md.reports_text([]) is None)
+
+    # ---- what everyone did
+    acts = md.DayActions(
+        events=[{"at": at(10, 12), "event": "accepted", "code": "T-2026-11-0080", "pid": "e1"},
+                {"at": at(15, 10), "event": "submitted", "code": "T-2026-11-0072", "pid": "e1"},
+                {"at": at(9, 0), "event": "created", "code": "T-2026-11-0081", "pid": "e3"}],
+        duties=[{"pid": "e1", "done": 3, "not_done": 1, "missed": 0, "useless": 0}],
+        resolved=[{"resolved_by": "Хожиев Абдурашид"}], complaints_new=2,
+        leads=[{"telegram_user_id": 103, "status": "done", "n": 1}, {"telegram_user_id": 103, "status": "in_progress", "n": 2}],
+        explained=[{"pid": "e4", "kind": "report"}], ai_questions=[{"telegram_user_id": 101, "n": 4}],
+        messages={"sent": 132, "people": 23}, checker={"approve": 3, "reject": 1, "unsure": 1}, tasks_given=5)
+    staff = [p for p in people if p["id"] != "e6"] + [{**people[5], "id": "e7", "telegram_user_id": 107,
+                                                         "full_name": "Носиров Жасур"}]
+    text = md.actions_text(day, staff, rows, acts)
+    check_true("actions: the bot's own work first — messages, reports, tasks given, steps, AI checker, complaints",
+               "🤖 Бот: 23 кишига 132 та хабар юборди · 3 / 5 ҳисобот қабул қилди · 5 та янги топшириқ тарқатди · "
+               "топшириқлар бўйича 2 та қадамни ёзди · AI текширувчи 4 та қарор чиқарди (3 ✅, 1 ❌), 1 тасини сизга "
+               "қолдирди · шикоятлар: 2 та келди, 1 та ҳал бўлди" in text)
+    check_true("…each person's day: report time, task steps with codes, duty cards, AI questions",
+               "📝 ҳисобот 17:42 · 📌 T-2026-11-0080 бошлади 10:12, T-2026-11-0072 бажардим деди 15:10 · "
+               "📋 кунлик карталар: 3 ✅ 1 ⛔ · 💬 AI'га 4 та савол" in text)
+    check_true("…complaints closed by name, lead answers, an explanation, a late report",
+               "📝 ҳисобот чатдан тузилди · ✅ 1 та шикоятни ҳал қилди" in text
+               and "📝 кечиккан ҳисобот · 🎯 лидлар: сотилди 1, жараёнда 2" in text
+               and "📝 ҳисобот йўқ · ✍️ тушунтириш ёзди" in text)
+    check_true("…someone with nothing at all named at the end; an excused day isn't «nothing»; the Director never listed",
+               "⚪ <b>Бот орқали ҳеч нарса қилмаганлар (1):</b> Носиров Жасур" in text and "Каримова" not in text
+               and "Менюда фақат PULSE қолди" in text)
+    check_true("…Uzbek Cyrillic", latin_words(text, allow={"T", "PULSE", "B2B"}) == [])
+    check_true("the day's actions are read from the bot's own tables, by Tashkent date",
+               all(t in inspect_source(md.day_actions) for t in ("task_events", "duty_tasks", "client_feedback", "lead_checkins",
+                                                                 "explanations", "ai_chat_turns", "message_budget", "ai_decisions"))
+               and "AT TIME ZONE 'Asia/Tashkent'" in inspect_source(md.day_actions))
+
+    # ---- build: a part that fails is skipped, the rest still go
+    async def no_picture(**k):
+        raise RuntimeError("no fonts")
+
+    async def no_sap(day_):
+        raise RuntimeError("down")
+
+    async def the_rows(today):
+        return rows
+
+    async def nothing_done(day_):
+        return md.DayActions()
+
+    async def everyone():
+        return people + [{"id": "b", "telegram_user_id": 9, "full_name": "Бош", "role": DIRECTOR_ROLE}]
+
+    saved = [(report_calendar, "picture", report_calendar.picture), (md, "sap_sales", md.sap_sales),
+             (md, "report_rows", md.report_rows), (md, "day_actions", md.day_actions),
+             (store, "list_active_employees", store.list_active_employees), (md, "shop_sales", md.shop_sales)]
+    report_calendar.picture, md.sap_sales, md.report_rows, md.day_actions = no_picture, no_sap, the_rows, nothing_done
+    store.list_active_employees = everyone
+
+    async def no_shop(day_, run_id):
+        return []
+
+    md.shop_sales = no_shop
+    try:
+        calendar_part, texts, counts = asyncio.run(md.build(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+    check_true("build: the calendar failed and was skipped; sales (SAP unreadable said), reports, actions still built",
+               calendar_part is None and counts["failed"] == ["calendar"] and [p for p, _ in texts] == ["sales", "reports", "actions"]
+               and "маълумот олиб бўлмади" in texts[0][1] and "Бош" not in texts[2][1])
+
+    # ---- send: once a day, the calendar first, then the texts in order; counts only in the log
+    sent, logged = [], []
+
+    class FakeBot:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def send_file(self, content, name, chat, caption=None, photo=False, **k):
+            sent.append(("photo", chat, name, photo))
+            return 1
+
+        async def send_message(self, text_, chat_id=None, **k):
+            sent.append(("text", chat_id, text_))
+            return 1
+
+    async def built(run_id):
+        return (b"png", "🗓 календарь"), [("sales", "S"), ("reports", "R"), ("actions", "A")], {"parts": ["calendar"], "failed": []}
+
+    async def directors(role):
+        return [{"telegram_user_id": 9}] if role == DIRECTOR_ROLE else []
+
+    async def record(**k):
+        logged.append(k)
+
+    already = {"v": False}
+
+    async def sent_today(day_):
+        return already["v"]
+
+    saved = [(md, "build", md.build), (md, "_sent_today", md._sent_today), (store, "active_employees_by_role", store.active_employees_by_role),
+             (common_db, "log_action", common_db.log_action), (bot_module, "TelegramBot", bot_module.TelegramBot)]
+    flags = (settings.dry_run, settings.bots_frozen, settings.morning_digest_enabled)
+    md.build, md._sent_today, store.active_employees_by_role = built, sent_today, directors
+    common_db.log_action, bot_module.TelegramBot = record, FakeBot
+    settings.dry_run, settings.bots_frozen, settings.morning_digest_enabled = False, False, True
+    try:
+        first = asyncio.run(md.send(uuid.uuid4()))
+        already["v"] = True
+        second = asyncio.run(md.send(uuid.uuid4()))
+        settings.morning_digest_enabled, already["v"] = False, False
+        off = asyncio.run(md.send(uuid.uuid4()))
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        settings.dry_run, settings.bots_frozen, settings.morning_digest_enabled = flags
+    check("send: the calendar photo, then sales, reports, actions", sent,
+          [("photo", "9", "hisobotlar.png", True), ("text", "9", "S"), ("text", "9", "R"), ("text", "9", "A")])
+    check_true("…once a day; off with MORNING_DIGEST_ENABLED=false; the log has counts and part names only",
+               first["sent"] == 1 and second["sent"] == 0 and off["sent"] == 0 and len(logged) == 1
+               and logged[0]["payload"] == {"parts": ["calendar"], "failed": [], "directors": 1})
 
 
 def test_split_task_card_1118() -> None:
@@ -15686,6 +16028,7 @@ def main() -> int:
         test_greetings_1118,
         test_split_task_card_1118,
         test_screens_1119,
+        test_garmin_screens_and_digest_1119,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

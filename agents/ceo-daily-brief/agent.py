@@ -417,8 +417,6 @@ def render(data: BriefData) -> str:
         "",
         f"⚠️ <b>{escape(sap_notice(data))}</b>\n" if sap_notice(data) else None,
         _render_compass(),
-        _render_goals(data),
-        _render_tasks(data),
         _render_missed_reports(data),
         render_five(data),
         _render_shop_sales(data),
@@ -604,8 +602,8 @@ def _figure_row(figure: Figure | None, key: str, label: str, icon: str, unit_wor
 _people_block = brief_parts.people_block
 
 
-FOOT = ("Мақсадлар — /maqsad · топшириқлар ва ҳисоботлар — бот · сотув — SAP · "
-        "дўконлар — Billz · давомат — Verifix. Батафсил: OPS Manager'дан сўранг.")
+FOOT = ("Ҳисоботлар — бот · сотув — SAP · дўконлар — Billz · давомат — Verifix. "
+        "Батафсил: OPS Manager'дан сўзда сўранг.")
 TASK_TEXT = 42  # a task's words shown in a row
 
 
@@ -783,7 +781,9 @@ def view(data: BriefData) -> dict[str, Any]:
         pay["sub"] = f"{data.payments.unclear} тасида сана аниқ эмас"
 
     blocks: list[dict[str, Any]] = []
-    lead = [goals_block(data), tasks_block(data)]
+    # «Ойлик мақсадлар» and «Топшириқлар» left the picture (2026-11-19, the owner): the morning package after it
+    # (org_bot/morning_digest.py) shows what each person did; overdue tasks still come from the task tracker's list.
+    lead: list[dict[str, Any]] = []
 
     # daily reports
     if data.report_rows is None:
@@ -1059,6 +1059,14 @@ async def run(dry_run: bool = False) -> int:
         )
 
     await store(run_id, data, message, message_id)
+    # Right after the picture (2026-11-19): the report calendar, yesterday's sales in detail, the reports in full and
+    # what everyone did — the proof the system works (org_bot/morning_digest.py). Never fails the brief.
+    try:
+        from integrations.org_bot import morning_digest
+
+        await morning_digest.send(run_id)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Morning digest failed: {}", type(exc).__name__)
     if settings.dry_run:
         return 0
     return 0 if message_id else 1

@@ -52,37 +52,21 @@ EMPLOYEE: list[tuple[str, str]] = [
     ("ism", "Исмни ўзгартиришни сўраш"),
     ("bekor", "Бошланган ишни бекор қилиш"),
 ]
-# The Director's menu keeps what he opens most (2026-11-19, the owner: "keep the important ones, the others should be
-# capabilities"). Everything else — /maqsadlar /baho /sababli /farqlar /reja /kiritish /tahlil /qoldiq /eski — he asks
-# for in words (screens.py: the analyst opens the same screen); the typed commands still work.
+# The Director's menu is PULSE only (2026-11-19, the owner: "only /pulse should be kept"; earlier that day seven). The
+# report calendar comes every morning after the brief (morning_digest.py); everything else — /kpi /hisobotlar
+# /vazifalar /lidlar /maqsad /maqsadlar /baho /sababli /farqlar /reja /kiritish /tahlil /qoldiq /eski — he asks for in
+# words (screens.py: the analyst opens the same screen). The typed commands still work; /bekor is shown inside the
+# flows that can be cancelled.
 DIRECTOR: list[tuple[str, str]] = [
     ("pulse", "PULSE: компания ва ходимлар графиги"),
-    ("kpi", "Ходимлар KPI жадвали"),
-    ("hisobotlar", "Ҳисоботлар календари: ким юборди, ким юбормади"),
-    ("vazifalar", "Вазифалар реестри ва кунлик карталар (▶️ / ⏸)"),
-    ("lidlar", "B2B лидлар: статистика, тўхтатиш / бошлаш"),
-    ("maqsad", "Ходимга ойлик мақсад қўйиш"),
-    ("bekor", "Бошланган ишни бекор қилиш"),
 ]
 
 
-# The Garmin manager (2026-10-17): the employees' menu plus his team's report calendar.
-# The Garmin manager runs Garmin at the Boss's level (2026-10-17): his team's calendar, KPI and goals —
-# no report, KPI card or permission request of his own.
+# The Garmin manager runs Garmin at the Boss's level (2026-10-17): his team's calendar, KPI and goals — no report, KPI
+# card or permission request of his own. Trimmed the same way (2026-11-19): PULSE only; his team's report calendar
+# comes after his morning brief, the rest he asks for in words (screens.GARMIN_SCREENS).
 GARMIN_MANAGER: list[tuple[str, str]] = [
-    ("hisobotlar", "Garmin сотув жамоаси ҳисоботлари календари"),
-    ("sababli", "Жамоадаги ходимнинг сабабли кунини белгилаш"),
-    ("kpi", "Garmin сотув жамоаси KPI жадвали"),
-    ("maqsad", "Жамоадаги ходимга ойлик мақсад қўйиш"),
-    ("maqsadlar", "Жамоа мақсадлари ва натижалари"),
-    ("natija", "Жамоа мақсадлари натижасини киритиш"),
-    ("qoldiq", "Garmin қолдиғи: товарлар ва қанча қолгани (Excel)"),
-    ("eski", "Garmin омборларида бир йилга яқинлашган ва ошган товарлар"),
-    ("raqobat", "Рақобатчилар: Garmin'ни бошқалар қанчага сотмоқда"),
-    ("vazifalar", "Вазифаларим ва жамоанинг бугунги куни"),
-    ("kiritish", "Жамоа: SAP'га ким киритмади"),
     ("pulse", "PULSE: жамоа графиги"),
-    ("bekor", "Бошланган ишни бекор қилиш"),
 ]
 
 

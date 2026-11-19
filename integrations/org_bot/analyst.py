@@ -230,17 +230,22 @@ TOOLS: list[dict] = [
         {"source": {"type": "string", "enum": list(COMPANY_SOURCES)}}, ("source",)),
 ]
 TOOLS += doc_tools.TOOLS  # AI documenter (2026-11-17): make_document, make_chart, make_diagram (doc_tools.py)
-# The bot's own screens by asking in words (2026-11-19, screens.py) — the Director only.
-TOOLS.append(_fn(
-    "open_screen", "Open one of the BOT'S OWN SCREENS for the Director — sent right after your answer, exactly as "
-    "its command sends it: " + "; ".join(f"{k} = {v[0]} ({v[1]})" for k, v in screens.SCREENS.items()) + ". Use it "
-    "when he asks to see / open / get one of these, or to do one of their actions — mark a day excused, set a monthly "
-    "goal, stop / start the B2B leads or the daily duty cards: he confirms with the screen's own buttons (you can't "
-    "change anything yourself). person = the employee's name for set_goal / excused when he names one. Say in one "
-    "line what is coming; don't retype the screen.",
-    {"screen": {"type": "string", "enum": list(screens.SCREENS)},
-     "person": {"type": "string", "description": "for set_goal / excused: the employee's name as he wrote it"}},
-    ("screen",)))
+# The bot's own screens by asking in words (2026-11-19, screens.py): the Director's, or the Garmin manager's (his team's)
+# — the same tool name, built per asker from that role's list.
+def screen_tool(screens_: dict[str, tuple[str, str]], who: str) -> dict:
+    return _fn(
+        "open_screen", f"Open one of the BOT'S OWN SCREENS for {who} — sent right after your answer, exactly as its "
+        "command sends it: " + "; ".join(f"{k} = {v[0]} ({v[1]})" for k, v in screens_.items()) + ". Use it when they "
+        "ask to see / open / get one of these, or to do one of their actions — mark a day excused, set a monthly goal"
+        + (", stop / start the B2B leads or the daily duty cards" if "leads" in screens_ else "")
+        + ": they confirm with the screen's own buttons (you can't change anything yourself). person = the employee's "
+        "name for set_goal / excused when one is named. Say in one line what is coming; don't retype the screen.",
+        {"screen": {"type": "string", "enum": list(screens_)},
+         "person": {"type": "string", "description": "for set_goal / excused: the employee's name as written"}},
+        ("screen",))
+
+
+TOOLS.append(screen_tool(screens.SCREENS, "the Director"))
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
 # Which systems a tool reads (2026-10-10, data_access.py): an employee given
@@ -263,7 +268,7 @@ TOOL_SYSTEMS: dict[str, set[str] | None] = {
     "employee_report": {"garmin"},  # the Director; the Garmin manager for his team (data_access.ROLE_SCOPES)
     "attendance": None,
     "company_data": None,
-    "open_screen": None,  # the bot's own screens (19.11) — the Director's only
+    "open_screen": {"garmin"},  # the bot's own screens (19.11): the Director's; the Garmin manager's team screens
     "make_document": set(),  # lays out what was looked up — reads no system itself
     "make_chart": set(),
     "make_diagram": set(),
@@ -429,6 +434,10 @@ WHOLE STOCK (27.10.2026): «барча товарлар остаткаси / қ�
 the whole list / Excel). Say what is left — product names and pieces — and nothing more: never advise what to buy
 or order, never mark items as «кам / кўп / тугаган»; that decision is his. The «Faulty Product Garmin» warehouse
 holds broken goods: never count it in what is left (as /qoldiq doesn't); mention it only if he asks about faulty goods.
+HIS SCREENS (19.11.2026 — his ☰ menu is PULSE only): his team's KPI table, report calendar, goals and results (set a
+goal, enter results), excused days, the team's daily duty cards, who didn't enter SAP, the Garmin stock Excel, old
+stock, competitors, the PULSE link are HIS — asked to see / open / do one of these → open_screen (the bot sends the
+same screen his command sends; he confirms actions with its buttons). Never say these are the Director's only.
 «Garmin Abay» (G.A._01, the shop) and «Garmin-Abay» (04) are two different warehouses in SAP — name them as SAP does.
 STOCK = QUANTITY (27.10.2026, his words: «остатка — суммаси эмас, товар кол-воси»): «қолдиқ», «остаток / остатка»,
 «кол-во / колво», «нечта қолди», «қанча товар бор» mean how many PIECES are on hand — garmin_sap kind
@@ -459,8 +468,9 @@ class Answer:
     screens: list[tuple[str, str]] = field(default_factory=list)
 
 
-# Screens the Director asked to open during one answer (2026-11-19).
+# Screens the Director / the Garmin manager asked to open during one answer (2026-11-19), and that asker's list.
 _screens: ContextVar[list[tuple[str, str]] | None] = ContextVar("analyst_screens", default=None)
+_screen_keys: ContextVar[dict[str, tuple[str, str]]] = ContextVar("analyst_screen_keys", default=screens.SCREENS)
 # Files a tool made during one answer (the workbook), picked up by ``answer``.
 _files: ContextVar[list[tuple[bytes, str]] | None] = ContextVar("analyst_files", default=None)
 # The Director's own words asking for a file — the workbook goes even if the model forgets excel=true.
@@ -1324,16 +1334,17 @@ MAX_FILES_PER_ANSWER = doc_tools.MAX_FILES_PER_ANSWER
 async def open_screen(args: dict[str, Any]) -> str:
     """Queue one of the bot's own screens for after the answer (screens.py, 19.11)."""
     key = str(args.get("screen") or "")
-    if key not in screens.SCREENS:
-        return f"No such screen {key!r}; one of: {', '.join(screens.SCREENS)}."
+    mine = _screen_keys.get()
+    if key not in mine:
+        return f"No such screen {key!r}; one of: {', '.join(mine)}."
     queued = _screens.get()
     if queued is None:
         return "Screens can't be opened here."
     if len(queued) >= screens.MAX_PER_ANSWER:
         return f"At most {screens.MAX_PER_ANSWER} screens per answer."
     queued.append((key, " ".join(str(args.get("person") or "").split())[:80]))
-    return (f"«{screens.SCREENS[key][0]}» will be sent right after your answer ({screens.SCREENS[key][1]}). Say so in "
-            "one line; don't retype it.")
+    return (f"«{mine[key][0]}» will be sent right after your answer ({mine[key][1]}). Say so in one line; don't "
+            "retype it.")
 
 
 async def make_document(args: dict[str, Any]) -> str:
@@ -1479,6 +1490,12 @@ async def answer(
 
         system = system + "\n\n" + sql_catalog.render(scope)  # the same text per asker: the provider caches it
     tools = tools_for(scope, sql=sql_on)
+    # The screens tool lists the asker's own screens (2026-11-19): the Garmin manager's are his team's.
+    screen_keys = screens.SCREENS if employee is None else screens.for_role(employee.get("role"))
+    if employee is not None:
+        tools = [t for t in tools if t["function"]["name"] != "open_screen"] + (
+            [screen_tool(screen_keys, "this person")] if screen_keys and any(
+                t["function"]["name"] == "open_screen" for t in tools) else [])
     allowed = None if scope is None else {t["function"]["name"] for t in tools}
     messages: list[dict] = [
         {"role": "system", "content": system},
@@ -1489,6 +1506,7 @@ async def answer(
     _sql_state.set(result.sql)
     _files.set(result.files)
     _screens.set(result.screens)
+    _screen_keys.set(screen_keys)
     _kind_cache.set({})
     _media.set(result.media)
     # Reports: the Director anyone's; the Garmin manager his team's (report_calendar.TEAM_OF); nobody else's.

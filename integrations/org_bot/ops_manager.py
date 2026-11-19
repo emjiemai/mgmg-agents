@@ -1618,6 +1618,10 @@ async def _answer_data_question_now(employee: dict[str, Any], text: str, scope: 
         await _answer_reply(telegram_user_id, run_id, answer, reply_to)
         await _send_files(telegram_user_id, run_id, result.files, reply_to)
         await _send_media(telegram_user_id, run_id, result.media, reply_to)
+        if result.screens:  # the Garmin manager's team screens asked for in words (screens.py, 19.11)
+            from integrations.org_bot import screens
+
+            await screens.open_all(telegram_user_id, result.screens, run_id)
     except Exception as exc:  # noqa: BLE001 — a background failure must be told, not raised
         log.error("Data question failed for {}: {}", telegram_user_id, type(exc).__name__)
         await log_action(agent=AGENT, action="data_question", target_system="openrouter", status="failure",

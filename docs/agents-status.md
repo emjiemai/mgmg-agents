@@ -129,6 +129,7 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 - 2026-11-12: daily reports — the right day for a report typed while a morning question waits, absence notes as explanation cards (⬜ Сабабли), ↩️ move a late report to today, the work AI never parrots; the report-outside-the-ask crash (since 26.10) fixed.
 
 - 2026-11-13: task register F1 finished — checker manager, expected result, dependencies, escalation ladder + deputies, rework count, reminder gaps; helper and AI proof check built but off.
+- 2026-11-19: menus PULSE only (Director, Garmin manager — his team screens in words); brief without goals/tasks; the Boss's morning package after it: calendar, sales in detail, reports in full, everyone's actions (spec 37).
 - 2026-11-19: Director menu trimmed to 7; the rest asked in words — the analyst opens the same screens (spec 36).
 - 2026-11-18: fix — long task cards: buttons updated (Director's text above, card one message; old split cards fixed).
 - 2026-11-18: holiday and birthday greetings (T-0052) from the duties sheet's two tabs, 08:00.

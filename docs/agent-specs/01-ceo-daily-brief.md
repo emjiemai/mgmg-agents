@@ -137,6 +137,9 @@ and SAP-cash sections were removed.
 - 2026-09-22: cut to reports only, at the business's request.
 - 2026-09-25: CRM "Reportlar" section removed — the in-house CRM isn't used.
 - 2026-09-25: A2 restored — the owner's plan specifies these five numbers.
+- 2026-11-19: «Ойлик мақсадлар» and «Топшириқлар» out of the picture and the text (the owner); right after the
+  picture the morning package — report calendar, yesterday's sales in detail, the reports in full, everyone's
+  actions (spec 37).
 
 ## Runbook
 
