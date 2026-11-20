@@ -57,6 +57,15 @@ PROJECT_CODE = "vhr"
 TIMESHEET_PAGE = 100  # the documented maximum for timesheet$export
 LIST_PAGE = 500  # ...and for the other lists
 MAX_PAGES = 50
+# «Нет лицензии» (401, since 07.11): no more calls for this long — PULSE asked every 9 minutes, four failures each
+# time (2026-11-20). A fresh process (the 08:00 tech report) still checks once.
+NO_LICENCE_PAUSE = 1800.0
+_no_licence_until = 0.0
+
+
+def _check_licence_pause() -> None:
+    if time.monotonic() < _no_licence_until:
+        raise VerifixError("Verifix: no licence (401 «Нет лицензии») — not asked again for 30 minutes")
 
 
 class VerifixError(RuntimeError):
@@ -162,6 +171,7 @@ class VerifixClient:
 
     async def _list(self, path: str, body: dict[str, Any], limit: int) -> list[dict[str, Any]]:
         """Every page of a list method."""
+        _check_licence_pause()
         async with audited(
             agent=self.agent, action="list", target_system="verifix", run_id=self.run_id, target_ref=path
         ) as ctx:
@@ -205,6 +215,9 @@ class VerifixClient:
 def _body(response: httpx.Response, path: str) -> Any:
     """The JSON answer, or a readable error (never the secret)."""
     if response.status_code >= 400:
+        if response.status_code == 401 and "лиценз" in response.text.lower():
+            global _no_licence_until
+            _no_licence_until = time.monotonic() + NO_LICENCE_PAUSE
         raise VerifixError(f"{path}: HTTP {response.status_code} — {response.text[:200]}")
     try:
         return json.loads(response.text)

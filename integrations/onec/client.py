@@ -30,6 +30,21 @@ from integrations.common.db import audited
 from integrations.common.http import request_with_retry
 from integrations.common.logging_setup import setup_logging
 
+# At most this many OData reads at once per process (2026-11-20: three questions read ~50 at once, Clobus answered
+# 429 and the answers never came).
+MAX_PARALLEL = 3
+_gates: dict[int, Any] = {}
+
+
+def _gate() -> Any:
+    import asyncio
+
+    loop = id(asyncio.get_running_loop())
+    if loop not in _gates:
+        _gates.clear()
+        _gates[loop] = asyncio.Semaphore(MAX_PARALLEL)
+    return _gates[loop]
+
 log = setup_logging("onec")
 
 
@@ -73,8 +88,8 @@ class OneCClient:
         """GET one OData resource (e.g. ``ChartOfAccounts_Хозрасчетный``) as JSON."""
         assert self._http is not None
         path = quote(resource, safe="/()=',$:")
-        async with audited(agent=self.agent, action="odata_get", target_system="1c", run_id=self.run_id,
-                           target_ref=resource[:200]):
+        async with _gate(), audited(agent=self.agent, action="odata_get", target_system="1c", run_id=self.run_id,
+                                    target_ref=resource[:200]):
             response = await request_with_retry(
                 self._http, "GET", path, params={"$format": "json", **(params or {})}
             )

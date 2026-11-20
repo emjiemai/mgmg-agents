@@ -14570,8 +14570,8 @@ def test_garmin_screens_and_digest_1119() -> None:
                tool["function"]["parameters"]["properties"]["screen"]["enum"] == list(screens.GARMIN_SCREENS)
                and "B2B leads" not in tool["function"]["description"]
                and "B2B leads" in analyst.screen_tool(screens.SCREENS, "the Director")["function"]["description"]
-               and 'screens.for_role(employee.get("role"))' in inspect_source(analyst.answer)
-               and "_screen_keys.set(screen_keys)" in inspect_source(analyst.answer))
+               and 'screens.for_role(employee.get("role"))' in inspect_source(analyst._answer)
+               and "_screen_keys.set(screen_keys)" in inspect_source(analyst._answer))
     queued = []
     token = analyst._screen_keys.set(screens.GARMIN_SCREENS)
     analyst._screens.set(queued)
@@ -14865,6 +14865,118 @@ def test_garmin_screens_and_digest_1119() -> None:
     check_true("…once a day; off with MORNING_DIGEST_ENABLED=false; the log has counts and part names only",
                first["sent"] == 1 and second["sent"] == 0 and off["sent"] == 0 and len(logged) == 1
                and logged[0]["payload"] == {"parts": ["calendar"], "failed": [], "directors": 1})
+
+
+def test_night_fixes_1120() -> None:
+    """20.11.2026 (the owner: errors in the night logs; the Render mail «mgmg-api exceeded its memory limit» 22:34): three
+    1C questions waited forever with no answer or error; two heavy answers at once took the instance over 512 MB; 1C
+    answered 429 to ~50 reads at once; PULSE asked an unlicensed Verifix every 9 minutes."""
+    print("night fixes: deadlines, answer slots, 1C reads, Verifix licence (20.11.2026)")
+    import asyncio
+
+    import httpx
+
+    from integrations.onec import client as onec_client
+    from integrations.org_bot import analyst
+    from integrations.verifix import client as vx
+
+    # a tool that never answers is told so, not waited for
+    async def stuck(args):
+        await asyncio.sleep(5)
+        return "never"
+
+    analyst.HANDLERS["_stuck_test"] = stuck
+    saved = analyst.TOOL_SECONDS
+    analyst.TOOL_SECONDS = 0.05
+    try:
+        text = asyncio.run(analyst.run_tool("_stuck_test", "{}"))
+    finally:
+        analyst.TOOL_SECONDS = saved
+        analyst.HANDLERS.pop("_stuck_test", None)
+    check_true("a tool silent past its deadline → «did not answer», the model answers from the rest",
+               "did not answer within" in text and "answer from the rest" in text)
+    src = inspect_source(analyst._answer)
+    check_true("a whole answer stops looking after ANSWER_SECONDS and answers anyway",
+               "time.monotonic() > deadline" in src and analyst.ANSWER_SECONDS <= 300)
+
+    # at most two answers look things up at once; a waiting one is told
+    running, peak, said = [0], [0], []
+
+    async def fake_answer(*a, **k):
+        running[0] += 1
+        peak[0] = max(peak[0], running[0])
+        await asyncio.sleep(0.02)
+        running[0] -= 1
+        return "ok"
+
+    async def say(progress, text_):
+        said.append(text_)
+
+    saved = (analyst._answer, analyst._say)
+    analyst._answer, analyst._say = fake_answer, say
+
+    async def five():
+        return await asyncio.gather(*(analyst.answer("q", "", None) for _ in range(5)))
+
+    try:
+        out = asyncio.run(five())
+    finally:
+        analyst._answer, analyst._say = saved
+    check_true("five questions at once: at most two look things up, the others wait their turn (told so)",
+               out == ["ok"] * 5 and peak[0] == analyst.ANSWER_SLOTS == 2 and any("навбатда" in t for t in said))
+
+    # 1C: at most three reads at once
+    live, top = [0], [0]
+
+    async def slow_request(http, method, path, **k):
+        live[0] += 1
+        top[0] = max(top[0], live[0])
+        await asyncio.sleep(0.01)
+        live[0] -= 1
+        return httpx.Response(200, text='{"value": []}', request=httpx.Request("GET", "http://x/" + path))
+
+    class Audit:
+        def __init__(self, **k):
+            pass
+
+        async def __aenter__(self):
+            return {"payload": {}}
+
+        async def __aexit__(self, *a):
+            return False
+
+    saved = (onec_client.request_with_retry, onec_client.audited)
+    onec_client.request_with_retry, onec_client.audited = slow_request, Audit
+
+    async def many():
+        c = onec_client.OneCClient.__new__(onec_client.OneCClient)
+        c.agent, c.run_id, c._http = "t", None, object()
+        await asyncio.gather(*(c.get(f"R{i}") for i in range(12)))
+
+    try:
+        asyncio.run(many())
+    finally:
+        onec_client.request_with_retry, onec_client.audited = saved
+    check("1C: twelve reads asked at once run at most three at a time", top[0], onec_client.MAX_PARALLEL)
+
+    # Verifix: «no licence» → not asked again for 30 minutes
+    vx._no_licence_until = 0.0
+    licence = httpx.Response(401, text="Нет лицензии для входа в систему!", request=httpx.Request("POST", "http://v/x"))
+    try:
+        vx._body(licence, "/x")
+    except vx.VerifixError:
+        pass
+    blocked = False
+    try:
+        vx._check_licence_pause()
+    except vx.VerifixError:
+        blocked = True
+    paused = vx._no_licence_until
+    vx._no_licence_until = 0.0
+    check_true("Verifix «Нет лицензии» → no calls for 30 minutes (before the audit row is written)",
+               blocked and paused > 0 and "_check_licence_pause()" in inspect_source(vx.VerifixClient._list)
+               and inspect_source(vx.VerifixClient._list).index("_check_licence_pause()")
+               < inspect_source(vx.VerifixClient._list).index("audited("))
 
 
 def test_split_task_card_1118() -> None:
@@ -16029,6 +16141,7 @@ def main() -> int:
         test_split_task_card_1118,
         test_screens_1119,
         test_garmin_screens_and_digest_1119,
+        test_night_fixes_1120,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

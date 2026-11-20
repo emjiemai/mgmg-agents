@@ -50,6 +50,24 @@ from integrations.org_bot.prompt import GUARDRAILS
 AGENT = "ops-manager-bot"
 log = setup_logging("analyst")
 
+# 2026-11-20 (19.11 night: three 1C questions waited forever, no answer, no error; two heavy answers at once took
+# the 512 MB instance over its memory): a tool that doesn't answer in TOOL_SECONDS is told so; after ANSWER_SECONDS
+# the model answers from what it found; at most ANSWER_SLOTS answers look things up at once (the rest wait).
+TOOL_SECONDS = 90
+ANSWER_SECONDS = 240
+ANSWER_SLOTS = 2
+_slots: dict[int, asyncio.Semaphore] = {}
+
+
+def answer_slots() -> asyncio.Semaphore:
+    """This event loop's answer slots (a semaphore belongs to one loop)."""
+    loop = id(asyncio.get_running_loop())
+    if loop not in _slots:
+        _slots.clear()
+        _slots[loop] = asyncio.Semaphore(ANSWER_SLOTS)
+    return _slots[loop]
+
+
 TOOL_CHARS = 12000  # one tool's answer, at most (the rest is cut, and the model is told); 30k → 12k on 09.11: the
 # answer round's time grows with the prompt (10–20k chars ≈ 7 s, 30–40k ≈ 17 s, measured)
 LIVE_BILLZ_SECONDS = 30  # billz_sap_check: longer than this, the stored 08:00 check answers instead
@@ -1404,7 +1422,11 @@ async def run_tool(name: str, raw_args: Any, allowed: set[str] | None = None) ->
         args = {}
     started = time.monotonic()
     try:
-        text = await handler(args)
+        text = await asyncio.wait_for(handler(args), TOOL_SECONDS)
+    except asyncio.TimeoutError:
+        log.warning("Tool {} gave no answer in {}s", name, TOOL_SECONDS)
+        return (f"{name} did not answer within {TOOL_SECONDS} seconds (the system is slow or busy). Say this part "
+                "couldn't be read now and answer from the rest; suggest asking again in a few minutes.")
     except Exception as exc:  # noqa: BLE001 — a system that's down is an answer, not a crash
         log.warning("Tool {} failed after {:.1f}s: {}", name, time.monotonic() - started, type(exc).__name__)
         return f"{name} could not be read right now ({type(exc).__name__}: {str(exc)[:200]}). Say it's unavailable."
@@ -1465,6 +1487,18 @@ async def answer(
     question: str, history: str, run_id: uuid.UUID, hint: str | None = None, *,
     employee: dict[str, Any] | None = None, scope: set[str] | None = None, progress: Any = None,
 ) -> Answer:
+    """``_answer`` in one of the ANSWER_SLOTS (2026-11-20: memory) — a waiting question is told it waits."""
+    slots = answer_slots()
+    if slots.locked():
+        await _say(progress, "Олдинги саволлар жавоб топилмоқда, навбатда турибди…")
+    async with slots:
+        return await _answer(question, history, run_id, hint, employee=employee, scope=scope, progress=progress)
+
+
+async def _answer(
+    question: str, history: str, run_id: uuid.UUID, hint: str | None = None, *,
+    employee: dict[str, Any] | None = None, scope: set[str] | None = None, progress: Any = None,
+) -> Answer:
     """Look things up with the tools until the model answers; at most ``ops_analyst_max_rounds`` rounds.
 
     The Director by default; with ``employee`` and ``scope`` (2026-10-10,
@@ -1518,7 +1552,11 @@ async def answer(
         agent=AGENT, run_id=run_id,
         model_override=settings.ops_manager_bot_model, fallback_override=settings.ops_manager_bot_fallback_models,
     ) as ai:
+        deadline = time.monotonic() + ANSWER_SECONDS
         for _round in range(max(1, settings.ops_analyst_max_rounds)):
+            if time.monotonic() > deadline:  # looked long enough (2026-11-20) — answer from what was found
+                log.warning("Analyst stopped looking after {}s", ANSWER_SECONDS)
+                break
             result.rounds += 1
             reply = await ai.chat(messages, tools)
             calls = reply.get("tool_calls") or []
