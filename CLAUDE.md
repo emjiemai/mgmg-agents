@@ -241,7 +241,7 @@ A2, A3, A4, B1, B2, B4, E1, F2 — the Lead Agent, resumed 2026-09-30). Goal:
   brief picture without goals/tasks, then the report calendar, yesterday's sales in detail (SAP invoices by
   salesperson: customer, product × pieces, so'm; Billz cheques by seller), the reports in full, what everyone did +
   the bot's own work. Once a day, `MORNING_DIGEST_ENABLED`. The Garmin manager: his team's calendar after his brief.
-- **20.11 — analyst limits** (19.11 night: memory restart, silent 1C answers): 90 s per tool, 4 min per answer, 2 answers at once; 1C 3 reads at once; Verifix «Нет лицензии» → 30 min pause.
+- **20.11 — analyst limits** (19.11 night: memory restart, silent 1C answers): 90 s per tool, 4 min per answer, 2 answers at once; 1C 3 reads at once; Verifix «Нет лицензии» → 30 min pause. 1C chart / name catalogs kept 30 min, a names read ≤ 20 s (else no names, figures still go).
 - **PULSE** (2026-10-22, spec 28, `integrations/pulse/`, `/pulse`): the Boss's live dashboard — index over sales, six
   tickers, today's tape, people ranked, one person's day; /pulse link for the Director (all) and the Garmin manager (team).
   Daily score = attendance 40 + report 30 + tasks 30. Design system: PRODUCT.md / DESIGN.md (impeccable skill).

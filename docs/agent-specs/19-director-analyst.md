@@ -188,3 +188,5 @@ The owner: don't send the AI whole data sets — send the structure and let it f
 **2026-11-19 — the bot's own screens:** tool `open_screen` (Director only) — the router's `bot_ekranlari` requests; the screen opens after the answer by the command's own function (spec 36).
 
 **2026-11-20 — limits after the 19.11 night (memory restart, silent 1C answers):** `TOOL_SECONDS` 90 per tool (then «did not answer», the model answers from the rest), `ANSWER_SECONDS` 240 per answer, `ANSWER_SLOTS` 2 answers at once (a waiting one is told «навбатда»); 1C OData at most `MAX_PARALLEL` 3 reads at once; Verifix «Нет лицензии» → 30 minutes without calls.
+
+**2026-11-20 (2) — 1C chart and names kept** (14:18 «1Cdan to'liq hisobot»: each 1C tool call re-read the chart and every name catalog — five times in four minutes — and a catalog read hung ~60 s three times, so the turnover part ran out of its 90 s): `_onec_list` keeps the chart and each catalog's `Ref_Key, Description` for `ONEC_KEEP_SECONDS` (30 min, in memory); a names read past `ONEC_NAMES_SECONDS` (20 s) uses the older copy, or answers without names — the figures still go.

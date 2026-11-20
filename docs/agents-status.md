@@ -130,6 +130,7 @@ shared Verifix, kept copy, warm 08–21, gzip, WOFF2 fonts).
 
 - 2026-11-13: task register F1 finished — checker manager, expected result, dependencies, escalation ladder + deputies, rework count, reminder gaps; helper and AI proof check built but off.
 - 2026-11-20: night fixes — analyst tool / answer deadlines, 2 answers at once (memory), 1C 3 reads at once (429), Verifix licence pause.
+- 2026-11-20: 1C chart and name catalogs kept 30 min; a names read past 20 s no longer costs the figures. Test questions: `docs/test-checklist-2026-11-20.md`.
 - 2026-11-19: menus PULSE only (Director, Garmin manager — his team screens in words); brief without goals/tasks; the Boss's morning package after it: calendar, sales in detail, reports in full, everyone's actions (spec 37).
 - 2026-11-19: Director menu trimmed to 7; the rest asked in words — the analyst opens the same screens (spec 36).
 - 2026-11-18: fix — long task cards: buttons updated (Director's text above, card one message; old split cards fixed).

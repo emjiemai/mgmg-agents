@@ -14979,6 +14979,53 @@ def test_night_fixes_1120() -> None:
                < inspect_source(vx.VerifixClient._list).index("audited("))
 
 
+def test_onec_kept_lists_1120() -> None:
+    """20.11.2026 14:18 («1Cdan to'liq hisobot» after the deploy): each 1C tool call read the chart and the name
+    catalogs again, and one catalog read hung ~60 s three times — the turnover part ran out of its 90 s. The chart and
+    names are kept 30 minutes; a names read past 20 s gives up (the stale copy, or no names) and the figures still go."""
+    print("1C chart and names kept, a slow names read never costs the figures (20.11.2026)")
+    import asyncio
+
+    from integrations.org_bot import analyst
+
+    reads: list[str] = []
+
+    class Fake:
+        def __init__(self, hang: set[str]):
+            self.hang = hang
+
+        async def get(self, entity, params=None):
+            reads.append(entity)
+            if entity in self.hang:
+                await asyncio.sleep(5)
+            return {"value": [{"Ref_Key": "k1", "Description": "Ном", "Code": "4010"}]}
+
+    types = {"StandardODATA.Catalog_Контрагенты": {"k1"}}
+    saved = (analyst._onec_kept.copy(), analyst.ONEC_NAMES_SECONDS)
+    analyst._onec_kept.clear()
+    analyst.ONEC_NAMES_SECONDS = 0.05
+    try:
+        first = asyncio.run(analyst._onec_names(Fake(set()), types))
+        again = asyncio.run(analyst._onec_names(Fake(set()), types))
+        kept_reads = len(reads)
+        analyst._onec_kept.clear()
+        reads.clear()
+        slow = asyncio.run(analyst._onec_names(Fake({"Catalog_Контрагенты"}), types))
+        analyst._onec_kept["Catalog_Контрагенты"] = (0.0, [{"Ref_Key": "k1", "Description": "Эски"}])  # stale copy
+        stale = asyncio.run(analyst._onec_names(Fake({"Catalog_Контрагенты"}), types))
+    finally:
+        analyst._onec_kept.clear()
+        analyst._onec_kept.update(saved[0])
+        analyst.ONEC_NAMES_SECONDS = saved[1]
+    check_true("1C names: read once, then kept (the second tool call doesn't read the catalog again)",
+               first == again == {"k1": "Ном"} and kept_reads == 1)
+    check_true("1C names: a catalog that hangs past the cap → no names, the answer goes on (no 60 s wait)",
+               slow == {})
+    check_true("1C names: hanging catalog with an older copy → the older names are used", stale == {"k1": "Эски"})
+    check_true("1C chart kept the same way", "_onec_list(client, discover.CHART" in inspect_source(analyst._onec_rows)
+               and analyst.ONEC_KEEP_SECONDS == 1800)
+
+
 def test_split_task_card_1118() -> None:
     """18.11.2026 (T-2026-11-0055): a task card too long for one message went in two parts; ▶️ said «accepted» but the
     buttons on part 2 never changed — the stored id was part 1's. New long cards: the Director's text first, the card
@@ -16142,6 +16189,7 @@ def main() -> int:
         test_screens_1119,
         test_garmin_screens_and_digest_1119,
         test_night_fixes_1120,
+        test_onec_kept_lists_1120,
         test_report_day_and_absence_1112,
         test_politeness_days_off_announcements,
         test_ai_chat_and_sheet,

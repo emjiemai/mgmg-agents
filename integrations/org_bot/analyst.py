@@ -803,15 +803,41 @@ def _digits(value: Any) -> str | None:
     return text if text.isdigit() and 1 <= len(text) <= 6 else None
 
 
+# 2026-11-20 (14:18 «1Cdan to'liq hisobot»): every 1C tool call read the chart and each name catalog again (five
+# times in four minutes), and a catalog read sometimes hangs ~60 s at Clobus — the turnover part never came. The
+# chart and the names are kept ONEC_KEEP_SECONDS (they change rarely); a names read is capped at ONEC_NAMES_SECONDS
+# and then the last kept copy (or no names) is used, so a slow catalog never costs the figures.
+ONEC_KEEP_SECONDS = 1800
+ONEC_NAMES_SECONDS = 20
+_onec_kept: dict[str, tuple[float, list[dict]]] = {}
+
+
+async def _onec_list(client: Any, entity: str, select: str, cap: float | None = None) -> list[dict]:
+    """One 1C list (the chart, a catalog) — the kept copy while fresh, else read (within ``cap`` seconds; past it
+    the stale copy if any, else the timeout is raised)."""
+    kept = _onec_kept.get(entity)
+    if kept and time.monotonic() - kept[0] < ONEC_KEEP_SECONDS:
+        return kept[1]
+    try:
+        read = client.get(entity, {"$select": select})
+        rows = ((await asyncio.wait_for(read, cap)) if cap else (await read)).get("value", [])
+    except Exception:
+        if kept:  # a stale copy beats nothing
+            return kept[1]
+        raise
+    _onec_kept[entity] = (time.monotonic(), rows)
+    return rows
+
+
 async def _onec_names(client: Any, types: dict[str, set[str]]) -> dict[str, str]:
-    """Counterparty / item names for the subconto keys found, one catalog read per type."""
+    """Counterparty / item names for the subconto keys found, one (kept) catalog list per type."""
     names: dict[str, str] = {}
     for kind, keys in types.items():
         entity = kind.split(".", 1)[-1]  # "StandardODATA.Catalog_Контрагенты" -> "Catalog_Контрагенты"
         if not entity.startswith("Catalog_") or not keys:
             continue
         try:
-            rows = (await client.get(entity, {"$select": "Ref_Key,Description"})).get("value", [])
+            rows = await _onec_list(client, entity, "Ref_Key,Description", ONEC_NAMES_SECONDS)
         except Exception as exc:  # noqa: BLE001 — a name we can't read isn't worth failing the answer
             log.warning("1C {} names not readable: {}", entity, type(exc).__name__)
             continue
@@ -825,7 +851,7 @@ async def _onec_rows(resource: str) -> tuple[list[dict], dict[str, tuple[str, st
     from integrations.onec.client import OneCClient
 
     async with OneCClient(agent=AGENT) as client:
-        chart = (await client.get(discover.CHART, {"$select": "Ref_Key,Code,Description"})).get("value", [])
+        chart = await _onec_list(client, discover.CHART, "Ref_Key,Code,Description")
         rows = (await client.get(f"{discover.REGISTER}/{resource}")).get("value", [])
         types: dict[str, set[str]] = defaultdict(set)
         for row in rows:
